@@ -1,0 +1,10 @@
+{
+  "version": "1.5.1",
+  "url": "index-1.5.1.html",
+  "sha256": "1cdb501b06372c1348c6bfb34ba683f3dc0cfd12379af2405c4f34303ea65d8a",
+  "signature": "2TyA2wCktqIzR59DvC4Lc6YCHYsNQ2JPG7NtNwuSw8JZG2J59akroGdE5xS7yUK0Zn0qERpo38kvJy6xRcziAg==",
+  "minAppVersion": "0",
+  "notes": "Testing the update pipeline",
+  "installerUrl": "",
+  "publishedAt": "2026-09-24T21:17:39.980Z"
+}
