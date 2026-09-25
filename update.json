@@ -1,10 +1,10 @@
 {
-  "version": "1.8.2",
-  "url": "index-1.8.2.html",
-  "sha256": "2882f4edc5d08209944ce793bb95fc0d9fd24ab3a8ec1216e13f85536cf8bd2a",
-  "signature": "rNRfKp75RH8p1j7Zbu6I1X3D9KgcbF1gv2vQWQ4Ua8dvWeYZn1wa8GhH7DiJirUcBLzWRRgf5lHLpQDiR3lKAA==",
+  "version": "1.9.0",
+  "url": "index-1.9.0.html",
+  "sha256": "6c2262f9db79bb76ea63bff7496fc3aceb7e87e8ea40d612e02927005c79458a",
+  "signature": "Bo/rrCr1B4C0iPN3slE8DZFnaSvzCOI0d2PBWWZSYH2qwG1fYuOtgl8kbCodeluPtHFvA72jXsL4KM9efshBAA==",
   "minAppVersion": "0",
-  "notes": "Package tracking: click an order number to track it",
+  "notes": "Clean emails can now clear Spam",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T03:56:07.168Z"
+  "publishedAt": "2026-09-25T04:10:30.025Z"
 }
