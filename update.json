@@ -1,10 +1,10 @@
 {
-  "version": "1.9.4",
-  "url": "index-1.9.4.html",
-  "sha256": "fdaded9b5997cc495b1a541cd5f133cf2eeedaac34dfa3b5e4b28be174597904",
-  "signature": "5Xqxh1HSiJXPSeWGp4lfa5KgRHHHJbH/Bzbp+zXo3A75E+e/aJCsA+G+OmdRCGo4Dr5Ia5QEjAnuSFSlJPX3Dw==",
+  "version": "1.9.5",
+  "url": "index-1.9.5.html",
+  "sha256": "b47629814caae16fb9aeb90440f70702037b2761a44b4693022134fb1912adc5",
+  "signature": "sApTdV9ImWxkde80dIHVzJ+jun3MHJNI56py38ziUClHnk4Pu1DA2nL/+rDx/3u8Roq7uJK5E0xjnmu9FbpHCg==",
   "minAppVersion": "0",
-  "notes": "Compact order cards",
+  "notes": "Filter orders by inbox; Sync button on the Orders page",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T04:58:53.938Z"
+  "publishedAt": "2026-09-25T05:08:30.316Z"
 }
