@@ -1,10 +1,10 @@
 {
-  "version": "1.9.27",
-  "url": "index-1.9.27.html",
-  "sha256": "54870f0978eb5eda76dffffbb022bc72dba7612eee082b5c1a0588d7262faac6",
-  "signature": "/yBanWUKDJFPWzPmTQZmUDi+A9JBpahNQLv/vvm5asarSc1dgsE4JTMz74rdg0XWmvBQhA2M1/XSWdVOdl+wDg==",
+  "version": "1.9.28",
+  "url": "index-1.9.28.html",
+  "sha256": "bf144838d8be38955c233283ec0606fc42936c2e60e914cbbd2350f25b949dd8",
+  "signature": "LzR5oiAg3ekb/+s5yRxsOBuIYRkxgpF8rwtOlOIYZ8lIfthlMClkw+IVG8yBmiZUFL6JqJ4VQIInI8AXwBuiDA==",
   "minAppVersion": "0",
-  "notes": "Success card: placed orders only by default",
+  "notes": "Success card: custom date range; full product names",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T16:27:16.727Z"
+  "publishedAt": "2026-09-25T16:37:29.248Z"
 }
