@@ -1,10 +1,10 @@
 {
   "version": "1.6.2",
   "url": "index-1.6.2.html",
-  "sha256": "ce28a8e10be4cc6c737707488757c8603b6c52644502789a7d61b1f114fdb142",
-  "signature": "YxlpItW6X2ZGq4QGx32YH3N2vWces1f6J/aqW/P3SkCkcCIOMzghrz5l5nZLkwgyA/xd3bQ+c56WALqQ1/0ZBA==",
+  "sha256": "dba50c42dd5fbe3b06d3113ea977290fcb803c90bb2cb3a9f3380db88623a965",
+  "signature": "TsB/029P1tCmNGFdUJL4EBJJ4evCopqnFiSWWu50fY/SneQyvhb5ql590VW8hYNXFYPjNB5gNAJlHfsXAxFHAA==",
   "minAppVersion": "0",
   "notes": "Any password, lighter theme",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T02:36:24.016Z"
+  "publishedAt": "2026-09-25T02:40:19.655Z"
 }

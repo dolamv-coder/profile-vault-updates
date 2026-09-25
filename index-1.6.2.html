@@ -10,15 +10,15 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..800&display=swap">
 <style>
 :root{
-  --desk:#0C0D0F; --sheet:#151719; --sheet-2:#1E2124;
-  --ink:#F4F5F6; --ink-2:#A8ADB4; --ink-3:#71767E;
-  --line:#2A2E33; --line-2:#212428;
-  --accent:#E4342F; --accent-2:#F0524D; --on-accent:#FFFFFF;
+  --desk:#111419; --sheet:#1A1E25; --sheet-2:#232833;
+  --ink:#EEF1F5; --ink-2:#9BA3AF; --ink-3:#6B7482;
+  --line:#2C323C; --line-2:#242a33;
+  --accent:#E23B36; --accent-2:#F05650; --on-accent:#FFFFFF;
   --caution:#F5B300; --on-caution:#000000;
-  --danger:#F0524D; --ok:#3FBE7A;
-  --stock:#EDECE7; --stock-ink:#0C0D0F;
-  --btn-ink-bg:#F4F5F6; --btn-ink-fg:#0C0D0F;
-  --scrim:rgba(0,0,0,.66);
+  --danger:#F0605A; --ok:#43C583; --info:#4A9DF0; --violet:#8B7BF0;
+  --stock:#EDECE7; --stock-ink:#12151A;
+  --btn-ink-bg:#EEF1F5; --btn-ink-fg:#12151A;
+  --scrim:rgba(6,8,12,.62);
   --font:"Archivo","Helvetica Neue",Arial,system-ui,sans-serif;
   box-sizing:border-box;
   padding-top:env(safe-area-inset-top,0px);
@@ -48,7 +48,7 @@ img,svg{max-width:100%}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 
 /* buttons */
-.btn{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:0 14px;border-radius:6px;border:1px solid var(--line);background:var(--sheet);cursor:pointer;font-weight:600;font-size:14px;white-space:nowrap;text-decoration:none}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:0 14px;border-radius:8px;border:1px solid var(--line);background:var(--sheet);cursor:pointer;font-weight:600;font-size:14px;white-space:nowrap;text-decoration:none}
 .btn:hover{border-color:var(--ink-3)}
 .btn svg{width:18px;height:18px;flex:none}
 .btn-primary{background:var(--accent);color:var(--on-accent);border:1px solid var(--accent)}
@@ -84,7 +84,7 @@ img,svg{max-width:100%}
 .topbar .wordmark{font-size:19px;white-space:nowrap}
 .search{position:relative;max-width:460px;width:100%}
 .search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:17px;height:17px;color:var(--ink-3);pointer-events:none}
-.search input{width:100%;height:38px;border:1px solid var(--line);border-radius:6px;background:var(--sheet);padding:0 12px 0 36px;font-size:16px}
+.search input{width:100%;height:40px;border:1px solid var(--line);border-radius:10px;background:var(--sheet-2);padding:0 12px 0 36px;font-size:16px}
 .top-actions{display:flex;gap:4px;align-items:center}
 .top-update{animation:pulse 2.4s ease-in-out infinite}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(228,52,47,.5)}50%{box-shadow:0 0 0 5px rgba(228,52,47,0)}}
@@ -133,7 +133,7 @@ img,svg{max-width:100%}
 .grid-cards{grid-template-columns:repeat(auto-fill,minmax(270px,1fr))}
 
 /* profile slip */
-.slip{background:var(--sheet);border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.slip{background:var(--sheet);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
 .slip.is-sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .slip-head{display:flex;align-items:center;gap:10px;min-width:0}
 .slip-head input[type=checkbox]{width:18px;height:18px;flex:none;accent-color:var(--accent);margin:0}
@@ -227,7 +227,7 @@ img,svg{max-width:100%}
 .field{display:flex;flex-direction:column;gap:5px;min-width:0}
 .field label,.flabel{font-size:13px;font-weight:600;color:var(--ink)}
 .field .opt{font-weight:400;color:var(--ink-3)}
-.field input,.field select,.field textarea{width:100%;min-height:42px;border:1px solid var(--line);border-radius:6px;background:var(--sheet);padding:8px 11px;font-size:16px}
+.field input,.field select,.field textarea{width:100%;min-height:42px;border:1px solid var(--line);border-radius:8px;background:var(--sheet-2);padding:8px 11px;font-size:16px}
 .field textarea{min-height:120px;font-size:13px;font-family:ui-monospace,Menlo,Consolas,monospace;resize:vertical}
 .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--ink)}
 .field .hint{font-size:12px;color:var(--ink-3)}
@@ -255,14 +255,21 @@ img,svg{max-width:100%}
 .swatches button[aria-pressed="true"]{outline:2px solid var(--accent);outline-offset:2px}
 .preview{margin-bottom:18px}
 .preview .cc{max-width:340px;margin:0 auto}
-.panelbox{border:1px solid var(--line);border-radius:10px;background:var(--sheet);padding:16px;margin:0 0 16px}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
-.stat{border:1px solid var(--line-2);border-radius:8px;padding:12px 14px;background:var(--sheet-2)}
-.stat-label{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
-.stat-n{font-size:30px;font-weight:800;font-stretch:112%;line-height:1.1;font-variant-numeric:tabular-nums}
+.panelbox{border:1px solid var(--line);border-radius:14px;background:var(--sheet);padding:18px;margin:0 0 18px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.stat{border:1px solid var(--line);border-radius:12px;padding:16px 16px;background:var(--sheet-2);display:flex;flex-direction:column;gap:2px}
+.stat-top{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+.stat-ic{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:9px;flex:none}
+.stat-ic svg{width:17px;height:17px;stroke-width:1.9}
+.stat-ic-accent{background:rgba(226,59,54,.16);color:var(--accent-2)}
+.stat-ic-info{background:rgba(74,157,240,.16);color:var(--info)}
+.stat-ic-violet{background:rgba(139,123,240,.16);color:var(--violet)}
+.stat-ic-ok{background:rgba(67,197,131,.16);color:var(--ok)}
+.stat-label{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.stat-n{font-size:28px;font-weight:800;font-stretch:110%;line-height:1.15;font-variant-numeric:tabular-nums;color:var(--ink)}
 .stat-sub{font-size:12px;color:var(--ink-3)}
 .submit-bar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:14px;padding-top:14px;border-top:1px solid var(--line-2)}
-.store{border:1px solid var(--line);border-radius:10px;background:var(--sheet);margin:0 0 14px;overflow:hidden}
+.store{border:1px solid var(--line);border-radius:12px;background:var(--sheet);margin:0 0 14px;overflow:hidden}
 .store.is-full{box-shadow:inset 3px 0 0 var(--accent)}
 .store-head{display:flex;align-items:center;gap:12px;padding:12px 14px}
 .store-title{font-size:19px;font-weight:800;font-stretch:112%;line-height:1.2}
@@ -443,6 +450,10 @@ const P = {
   x:'<path d="M6 6l12 12M18 6 6 18"/>',
   dup:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/><path d="M14 11v6M11 14h6"/>',
   check:'<path d="m5 13 4 4L19 7"/>',
+  box:'<path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/>',
+  truck:'<path d="M3 6h11v9H3z"/><path d="M14 9h4l3 3v3h-7z"/><circle cx="7" cy="18" r="1.6"/><circle cx="17.5" cy="18" r="1.6"/>',
+  store:'<path d="M4 9h16l-1-4H5z"/><path d="M5 9v10h14V9"/><path d="M9 19v-5h6v5"/>',
+  dollar:'<path d="M12 2v20M16 6a4 3 0 0 0-4-2c-2.2 0-4 1.2-4 3s1.8 3 4 3 4 1.2 4 3-1.8 3-4 3a4 3 0 0 1-4-2"/>',
   chevD:'<path d="m6 9 6 6 6-6"/>',
   chevR:'<path d="m9 6 6 6-6 6"/>',
   folder:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'
@@ -689,7 +700,7 @@ function renderLock(msg){
       creating ? `
         <p>Create a master password. Everything you add is encrypted with it and stays on this device. It can't be recovered, so store it in your password manager.</p>
         <input class="sr" type="text" name="username" autocomplete="username" value="Profile Vault" tabindex="-1" aria-hidden="true">
-        <div class="field" style="margin-bottom:12px"><label for="pw1">Master password</label><input id="pw1" type="password" autocomplete="new-password" minlength="8" required><span class="hint">At least 8 characters. A short phrase works well.</span></div>
+        <div class="field" style="margin-bottom:12px"><label for="pw1">Master password</label><input id="pw1" type="password" autocomplete="new-password" required><span class="hint">Any password you like. Longer ones are harder for someone else to guess.</span></div>
         <div class="field" style="margin-bottom:16px"><label for="pw2">Confirm password</label><input id="pw2" type="password" autocomplete="new-password" required></div>
         <div class="field"><span class="err" id="lock-err" role="alert"></span></div>
         <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center;margin-top:6px" id="lock-go">Create vault</button>` : `
@@ -714,7 +725,7 @@ function renderLock(msg){
     err.textContent = "";
     const pw = pw1.value;
     if (creating){
-      if (pw.length < 8){ err.textContent = "Use at least 8 characters."; return; }
+      if (!pw){ err.textContent = "Enter a password."; return; }
       if (pw !== $("#pw2").value){ err.textContent = "The passwords don't match."; return; }
       go.disabled = true; go.textContent = "Creating…";
       try {
@@ -2353,7 +2364,7 @@ function openSettings(){
         <form id="st-pw" class="form-grid" autocomplete="on">
           <input class="sr" type="text" name="username" autocomplete="username" value="Profile Vault" tabindex="-1" aria-hidden="true">
           ${fieldHTML({type:"password", name:"cur", label:"Current password", ac:"current-password", showOpt:false})}
-          ${fieldHTML({type:"password", name:"n1", label:"New password", ac:"new-password", cls:"c3", showOpt:false})}
+          ${fieldHTML({type:"password", name:"n1", label:"New password", ac:"new-password", cls:"c3", showOpt:false, hint:"Any password you like."})}
           ${fieldHTML({type:"password", name:"n2", label:"Confirm new password", ac:"new-password", cls:"c3", showOpt:false})}
           <div class="c6"><button class="btn" type="submit" id="st-pw-go">Change password</button></div>
         </form>
@@ -2398,7 +2409,7 @@ function openSettings(){
         e.preventDefault();
         const cur = $('[name="cur"]', panel).value, n1 = $('[name="n1"]', panel).value, n2 = $('[name="n2"]', panel).value;
         ["cur","n1","n2"].forEach(k => setErr(panel, k, ""));
-        if (n1.length < 8){ setErr(panel, "n1", "Use at least 8 characters."); return; }
+        if (!n1){ setErr(panel, "n1", "Enter a new password."); return; }
         if (n1 !== n2){ setErr(panel, "n2", "The passwords don't match."); return; }
         const b = $("#st-pw-go", panel); b.disabled = true; b.textContent = "Changing…";
         try {
@@ -2898,9 +2909,9 @@ function renderOrders(){
   const all = S.orders || [];
   const spend = all.reduce((n,o) => n + orderMoney(o.total), 0);
   const active = all.filter(o => !["delivered","canceled"].includes(o.stage || "placed")).length;
-  const stat = (label,n,sub) => `<div class="stat"><div class="stat-label">${label}</div><div class="stat-n">${n}</div><div class="stat-sub">${sub}</div></div>`;
+  const stat = (label,n,sub,icon,tone) => `<div class="stat"><div class="stat-top">${icon?`<span class="stat-ic stat-ic-${tone||"accent"}">${ic(icon)}</span>`:""}<div class="stat-label">${label}</div></div><div class="stat-n">${n}</div><div class="stat-sub">${sub}</div></div>`;
   const stores = allStoreOptions().map(x => [storeKeyOf(x), x.name, all.filter(o => storeKeyOf(o) === storeKeyOf(x)).length]).filter(x => x[2]);
-  const head = `<div class="view-head"><div><h1 class="view-title">Orders</h1><p class="view-sub">Purchases pulled from your order emails — update test</p></div>
+  const head = `<div class="view-head"><div><h1 class="view-title">Orders</h1><p class="view-sub">Purchases pulled from your order emails</p></div>
     <div class="view-tools"><button class="btn" data-act="email-import">${ic("imp")}Add from email</button><button class="btn btn-primary" data-act="new-order">${ic("plus")}Add order</button></div></div>`;
   if (!all.length) return head + `<div class="empty"><h2>No orders yet</h2><p>Connect an inbox in Settings and paste your order emails, or add one by hand. Every confirmation becomes a tracked order.</p><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn" data-act="settings">Open settings</button><button class="btn btn-primary" data-act="email-import">${ic("imp")}Add from email</button></div></div>`;
   const stageChip = (k,n) => `<button class="chip" data-act="order-stage" data-id="${k}" aria-pressed="${(UI.orderStage||"all")===k}">${k==="all"?"All":stageLabel(k)}${n!=null?` <span class="chip-n">${n}</span>`:""}</button>`;
@@ -2921,7 +2932,7 @@ function renderOrders(){
     </article>`;
   }).join("")}</div>` : `<div class="empty"><h2>Nothing matches</h2><p>Try another store, status, or search term.</p></div>`;
   return `${head}
-    <div class="panelbox"><div class="stats">${stat("Orders",all.length,"tracked")}${stat("Active",active,"not yet delivered")}${stat("Stores",stores.length,"you've ordered from")}${stat("Spent",fmtMoney(spend),"across all orders")}</div></div>
+    <div class="panelbox"><div class="stats">${stat("Orders",all.length,"tracked","box","accent")}${stat("Active",active,"not yet delivered","truck","info")}${stat("Stores",stores.length,"you've ordered from","store","violet")}${stat("Spent",fmtMoney(spend),"across all orders","dollar","ok")}</div></div>
     ${stores.length ? `<div class="chips">${[["all","All stores",all.length]].concat(stores).map(([k,n,c]) => `<button class="chip chip-store" data-act="store" data-id="${esc(k)}" aria-pressed="${UI.store===k}">${esc(n)} <span class="chip-n">${c}</span></button>`).join("")}</div>` : ""}
     <div class="chips">${stageChip("all")}${ORDER_STAGES.map(([k]) => stageChip(k, stageCounts[k])).join("")}</div>
     ${body}`;
@@ -3387,7 +3398,7 @@ function renderCheckouts(){
   const hit = new Set(all.map(c => c.profileId)).size;
   const now = new Date(), mk = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
   const thisMonth = all.filter(c => String(c.at || "").startsWith(mk)).length;
-  const stat = (label, n, sub) => `<div class="stat"><div class="stat-label">${label}</div><div class="stat-n">${n}</div><div class="stat-sub">${sub}</div></div>`;
+  const stat = (label, n, sub, icon, tone) => `<div class="stat"><div class="stat-top">${icon?`<span class="stat-ic stat-ic-${tone||"accent"}">${ic(icon)}</span>`:""}<div class="stat-label">${label}</div></div><div class="stat-n">${n}</div><div class="stat-sub">${sub}</div></div>`;
   const stores = allStoreOptions().map(o => [storeKeyOf(o), o.name, all.filter(c => storeKeyOf(c) === storeKeyOf(o)).length]).filter(x => x[2]);
   const head = `<div class="view-head"><div><h1 class="view-title">Checkouts</h1><p class="view-sub">Profiles that successfully checked out</p></div>
     <div class="view-tools"><button class="btn btn-primary" data-act="new-checkout" ${S.profiles.length ? "" : "disabled"}>${ic("plus")}Log a checkout</button></div></div>`;
@@ -3554,7 +3565,7 @@ function renderSubmit(){
     return `<div class="view-head"><div><h1 class="view-title">Submit</h1><p class="view-sub">Stage profiles per store, then send them</p></div></div>
       <div class="empty"><h2>Nothing to submit yet</h2><p>Profiles show up here once you pick their retailers. Open a profile and tick the stores it checks out on.</p><button class="btn btn-primary" data-act="view" data-id="profiles">Go to profiles</button></div>`;
   }
-  const stat = (label, n, sub) => `<div class="stat"><div class="stat-label">${label}</div><div class="stat-n">${n}</div><div class="stat-sub">${sub}</div></div>`;
+  const stat = (label, n, sub, icon, tone) => `<div class="stat"><div class="stat-top">${icon?`<span class="stat-ic stat-ic-${tone||"accent"}">${ic(icon)}</span>`:""}<div class="stat-label">${label}</div></div><div class="stat-n">${n}</div><div class="stat-sub">${sub}</div></div>`;
   const body = groups.map(g => {
     const open = !UI.closed.has(g.key);
     const rows = q ? g.rows.filter(r => profileHay(r.p).includes(q) || norm(g.name).includes(q)) : g.rows;
