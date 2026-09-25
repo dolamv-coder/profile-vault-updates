@@ -1,10 +1,10 @@
 {
-  "version": "1.9.3",
-  "url": "index-1.9.3.html",
-  "sha256": "54956442724e44dd9ca64072be22fe818caa429ac816f74899e7617421205122",
-  "signature": "S8vfHulLERsSe4HcZeYSu2P+5HW872Iw1dJr1YvfDJFp0kc2B5ws9vI6dH3MIcdyAXLO2juP/8bOPvErRqwjAQ==",
+  "version": "1.9.4",
+  "url": "index-1.9.4.html",
+  "sha256": "fdaded9b5997cc495b1a541cd5f133cf2eeedaac34dfa3b5e4b28be174597904",
+  "signature": "5Xqxh1HSiJXPSeWGp4lfa5KgRHHHJbH/Bzbp+zXo3A75E+e/aJCsA+G+OmdRCGo4Dr5Ia5QEjAnuSFSlJPX3Dw==",
   "minAppVersion": "0",
-  "notes": "Auto-clean promo emails every 10 minutes",
+  "notes": "Compact order cards",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T04:48:47.534Z"
+  "publishedAt": "2026-09-25T04:58:53.938Z"
 }
