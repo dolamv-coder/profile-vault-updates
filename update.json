@@ -1,10 +1,10 @@
 {
-  "version": "1.7.0",
-  "url": "index-1.7.0.html",
-  "sha256": "dba50c42dd5fbe3b06d3113ea977290fcb803c90bb2cb3a9f3380db88623a965",
-  "signature": "Z3+kEXIaRRDjG3wEkMV1ePi3V3+RDXbEJpOZ3vPmfjqGnTSKKYjFSmL6rB3WhxLjQppee8WDySwUPFxz6S7mCA==",
+  "version": "1.7.1",
+  "url": "index-1.7.1.html",
+  "sha256": "1b4a59fb4d57362d1d7259d6085a4410ad102ea019b063ac4f67408e15b986f5",
+  "signature": "LJFvrza5UW+FlzR8inP4A3sGmd0xtplq+Cb3L5Y3psRxKZKdWKR/ZotY9PTSVZYoSKSYYBJZHJ5i53EkJwFJBw==",
   "minAppVersion": "0",
-  "notes": "New: Clean emails (needs the new download)",
+  "notes": "Clean emails, version shown in the corner",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T02:49:05.901Z"
+  "publishedAt": "2026-09-25T03:05:43.054Z"
 }
