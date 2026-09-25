@@ -1,10 +1,10 @@
 {
-  "version": "1.9.32",
-  "url": "index-1.9.32.html",
-  "sha256": "58b9c81fc78eedf382dd806f7b592e47a924908021b8f1b9d270d22ffe4238ac",
-  "signature": "Zdzy3JdOVz3dqbfGbBx8zj/YsnYxWslCSNIiEvYstOPql6LGQ6XODflFvdxn7KDZqq6Tu/gqEqQNeCzmkaurAQ==",
+  "version": "1.9.33",
+  "url": "index-1.9.33.html",
+  "sha256": "eeba155644117ccd3e71dc60f4f020cc41c8c67ecc7c42a276eafbb0e65f2b82",
+  "signature": "0W+HLu/3cRvI8y9vuFguP1PdAzdt3qiXv54F3gk1GoobUmhunpq4nXXT92yBl9VSis3DxCcbtThLhfiolwETDA==",
   "minAppVersion": "0",
-  "notes": "Delivered date from the carrier (store email body); original send times for forwarded emails",
+  "notes": "Delivered orders show the delivery date on the card; store's delivery email time in the drop-down",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T17:35:21.974Z"
+  "publishedAt": "2026-09-25T18:26:31.055Z"
 }
