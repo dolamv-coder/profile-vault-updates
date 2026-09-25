@@ -1,10 +1,10 @@
 {
-  "version": "1.9.36",
-  "url": "index-1.9.36.html",
-  "sha256": "fa5d5f9b4dfbac1bd18fb0d98c64d0e38e6d6657ff079de3ead977c9e03146e3",
-  "signature": "yqotSdQ/Vl3ArZM1DIDpirBw7OKbFjwvQk4Ph7kWZc7y09NVolCTOJvogSHqGF+jDyz+NYqk9eMw07dGcmB4AQ==",
+  "version": "1.9.37",
+  "url": "index-1.9.37.html",
+  "sha256": "f7ebcf2346421d0ee090413a7aacde100986d8cc0143e881c0cfe70c9a5bcd85",
+  "signature": "0Ki0PP0wWHf5t2jZsZNWFAub5EEDD7G3TY6FF1czmN6qbSbc93IllqNBEXdUWOMJCY19x1T1HGIlq+BZ2MhXCg==",
   "minAppVersion": "0",
-  "notes": "Profile Vault is now Orbit",
+  "notes": "Phone tracker moved to the new Orbit address (orders.orbit-app.workers.dev) with the Orbit look",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T20:28:28.082Z"
+  "publishedAt": "2026-09-25T20:55:54.573Z"
 }
