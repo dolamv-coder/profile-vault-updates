@@ -1,10 +1,10 @@
 {
-  "version": "1.7.1",
-  "url": "index-1.7.1.html",
-  "sha256": "1b4a59fb4d57362d1d7259d6085a4410ad102ea019b063ac4f67408e15b986f5",
-  "signature": "LJFvrza5UW+FlzR8inP4A3sGmd0xtplq+Cb3L5Y3psRxKZKdWKR/ZotY9PTSVZYoSKSYYBJZHJ5i53EkJwFJBw==",
+  "version": "1.7.2",
+  "url": "index-1.7.2.html",
+  "sha256": "f05952df7aebdb005577be96b0e6b3f376f51146609fccd08d04b481ac1ff112",
+  "signature": "ENJXbwHp3Or/50Yv4bUGv16GAe+SfOjTjQOAKHEohAZ81ZX7MB2FIn1ETLJNOYdj6f/wY408gbjl6S6GK5eJBA==",
   "minAppVersion": "0",
-  "notes": "Clean emails, version shown in the corner",
+  "notes": "Clean emails keeps bills and important emails safe",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T03:05:43.054Z"
+  "publishedAt": "2026-09-25T03:22:33.387Z"
 }
