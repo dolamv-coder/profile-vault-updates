@@ -1,10 +1,10 @@
 {
-  "version": "1.9.30",
-  "url": "index-1.9.30.html",
-  "sha256": "cfff1eb78f74884f051e20cd5df603f698efba0dedbb5fcdca46236cb1f1f77b",
-  "signature": "oXPRVNwCuHuPSm9llJI4jd7z0MN/WOvZMI/9ff/EOaDb2nIp+Jq2Tx1bzn3JTXEITgJ7L7Y/fuanjGWYbWcvCQ==",
+  "version": "1.9.31",
+  "url": "index-1.9.31.html",
+  "sha256": "0d745aad4db90744f1276b024c445f6440618ce76dd7e30ee914520389c68e2a",
+  "signature": "pzLp1XvkotQLbq42JRb+f20jpH7nqWMUgbiSuxcKdk2ggG+oxcvC/XmjniBGlnG3yq/KgeFs4N8xma7qxaJWDA==",
   "minAppVersion": "0",
-  "notes": "Orders: full delivery address shown on every card",
+  "notes": "Orders: Address drop-down with shipped and delivered dates",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T17:19:37.857Z"
+  "publishedAt": "2026-09-25T17:23:55.491Z"
 }
