@@ -1,10 +1,10 @@
 {
-  "version": "1.9.28",
-  "url": "index-1.9.28.html",
-  "sha256": "bf144838d8be38955c233283ec0606fc42936c2e60e914cbbd2350f25b949dd8",
-  "signature": "LzR5oiAg3ekb/+s5yRxsOBuIYRkxgpF8rwtOlOIYZ8lIfthlMClkw+IVG8yBmiZUFL6JqJ4VQIInI8AXwBuiDA==",
+  "version": "1.9.29",
+  "url": "index-1.9.29.html",
+  "sha256": "8891e1cee8811bde120e108094095a3c6c6a92ec5ec0480e91837d0c03887ee0",
+  "signature": "ofAvzbcvjCQDIZ08/527NI4D+WcgI1NmAh2t9QPbaytPQGiZSLEXLuEeaA/OJaI+sS8YYt6xzkuensnZ5Hu7Ag==",
   "minAppVersion": "0",
-  "notes": "Success card: custom date range; full product names",
+  "notes": "Orders: full delivery address, Share button next to tracking",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T16:37:29.248Z"
+  "publishedAt": "2026-09-25T16:48:02.551Z"
 }
