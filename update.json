@@ -1,10 +1,10 @@
 {
-  "version": "1.9.26",
-  "url": "index-1.9.26.html",
-  "sha256": "3668a941d3a25f16681db25216395016a990509972a4facfa522aa45169b6e93",
-  "signature": "CT9InngAsace/d4Ri++MXXlyrleemL3xQWiZYYMVaeRf4JaskLzUVNHmw2MUag8Id7l8xqQudG7CFl7ANXjXAw==",
+  "version": "1.9.27",
+  "url": "index-1.9.27.html",
+  "sha256": "54870f0978eb5eda76dffffbb022bc72dba7612eee082b5c1a0588d7262faac6",
+  "signature": "/yBanWUKDJFPWzPmTQZmUDi+A9JBpahNQLv/vvm5asarSc1dgsE4JTMz74rdg0XWmvBQhA2M1/XSWdVOdl+wDg==",
   "minAppVersion": "0",
-  "notes": "Orders: 'Items have arrived' marks delivered; order dates and prices fixed from confirmations",
+  "notes": "Success card: placed orders only by default",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T16:24:19.795Z"
+  "publishedAt": "2026-09-25T16:27:16.727Z"
 }
