@@ -1,10 +1,10 @@
 {
-  "version": "1.5.1",
-  "url": "index-1.5.1.html",
-  "sha256": "1cdb501b06372c1348c6bfb34ba683f3dc0cfd12379af2405c4f34303ea65d8a",
-  "signature": "2TyA2wCktqIzR59DvC4Lc6YCHYsNQ2JPG7NtNwuSw8JZG2J59akroGdE5xS7yUK0Zn0qERpo38kvJy6xRcziAg==",
+  "version": "1.6.0",
+  "url": "index-1.6.0.html",
+  "sha256": "ce28a8e10be4cc6c737707488757c8603b6c52644502789a7d61b1f114fdb142",
+  "signature": "py1SXu8iWdErjulArPFyFcf6CnT01knUDLzme3iIwMUTI30aDPB0jsmwC2IC+U6EI/UwQbtX21oGrakKaNIyAw==",
   "minAppVersion": "0",
-  "notes": "Testing the update pipeline",
+  "notes": "Lighter theme, any password",
   "installerUrl": "",
-  "publishedAt": "2026-09-24T21:18:05.225Z"
+  "publishedAt": "2026-09-25T02:28:09.974Z"
 }
