@@ -1,10 +1,10 @@
 {
-  "version": "1.9.25",
-  "url": "index-1.9.25.html",
-  "sha256": "bbbb98767b9550b3a4363bc764eb45084fbc8f48b8c8dcc40c8e234cf21207f4",
-  "signature": "V2DTpwQThnSsP0QiUU7+ULcqAmLTPNL4rUnomDQsLZt0I7KwKLEWAGCZScGDIrQTD/AaMYmX2s5vrC71DTCbDA==",
+  "version": "1.9.26",
+  "url": "index-1.9.26.html",
+  "sha256": "3668a941d3a25f16681db25216395016a990509972a4facfa522aa45169b6e93",
+  "signature": "CT9InngAsace/d4Ri++MXXlyrleemL3xQWiZYYMVaeRf4JaskLzUVNHmw2MUag8Id7l8xqQudG7CFl7ANXjXAw==",
   "minAppVersion": "0",
-  "notes": "Success card: all stores by default, with its own store and inbox pickers",
+  "notes": "Orders: 'Items have arrived' marks delivered; order dates and prices fixed from confirmations",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T16:16:36.066Z"
+  "publishedAt": "2026-09-25T16:24:19.795Z"
 }
