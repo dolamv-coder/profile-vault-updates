@@ -1,10 +1,10 @@
 {
-  "version": "1.9.19",
-  "url": "index-1.9.19.html",
-  "sha256": "f78ea74fc5ea2390723f4a4fff6d2e1e578db41b54c74526c9b1ac67cb5fc1f0",
-  "signature": "wdEv/9LgP2f92f04lHwB7extgsJCjJmeuVV1DSrUHuwQWH1126JbQ4chdznoviFWR4DYPvMBBW7ZTf4LBuBQCw==",
+  "version": "1.9.20",
+  "url": "index-1.9.20.html",
+  "sha256": "bd565620d5ca940fe465a6f28fcde609cf7333f194abcf4910200708290ba509",
+  "signature": "mWflCsxBNQSfXF8OAwIulRA/8AVRjYGj5IEnHGW5uBVC/F5RJ+mHiMnfJySsQWRZq5FHZaAFKQEbb6dnrDd7BQ==",
   "minAppVersion": "0",
-  "notes": "Phone tracker for everyone: built-in relay with your license, QR code setup",
+  "notes": "Update notices everywhere: top bar button, lock screen, Windows notification",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T14:13:29.836Z"
+  "publishedAt": "2026-09-25T14:29:43.786Z"
 }
