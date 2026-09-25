@@ -1,10 +1,10 @@
 {
-  "version": "1.9.2",
-  "url": "index-1.9.2.html",
-  "sha256": "35337b17952b6a37e157197e1175ee522f5e721537dab5216db8f8c7b5b31a98",
-  "signature": "utfg/PxeOu9ghL3z6JLOVstf5ozQXdjYXPa3OJSjh8JCBtBFtqvOzUMDZQCmpxrw20urAs8wXLW3BFpU64JQBw==",
+  "version": "1.9.3",
+  "url": "index-1.9.3.html",
+  "sha256": "54956442724e44dd9ca64072be22fe818caa429ac816f74899e7617421205122",
+  "signature": "S8vfHulLERsSe4HcZeYSu2P+5HW872Iw1dJr1YvfDJFp0kc2B5ws9vI6dH3MIcdyAXLO2juP/8bOPvErRqwjAQ==",
   "minAppVersion": "0",
-  "notes": "Unlocks as soon as the password is typed; smaller text",
+  "notes": "Auto-clean promo emails every 10 minutes",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T04:28:42.451Z"
+  "publishedAt": "2026-09-25T04:48:47.534Z"
 }
