@@ -1,10 +1,10 @@
 {
-  "version": "1.9.10",
-  "url": "index-1.9.10.html",
-  "sha256": "3a2dc9901299f6df4f3b627ab952291ba83cef6aa9d74b6b0319aa08f7bea465",
-  "signature": "Z/iw3OTYj5CsQlsz6njDZbEgeKCqnT3hUPczdRaziLCQwKAEO+whqyTMKyKcBd2KVegv2ZJqSb1mEhYjGBdCCg==",
+  "version": "1.9.11",
+  "url": "index-1.9.11.html",
+  "sha256": "78af64812cb4fa18d4f7132f187b638fa248dc121c20f5c7739f7bc901bc275b",
+  "signature": "VBzZgr6MhvLC+f5aVVxawdAo8iW3PQAEAqaUnpdlvSNf3IyRzMpJMk1DJhlEwJBTVB0LvbdQkDZ3S06iCnGJDw==",
   "minAppVersion": "0",
-  "notes": "License: saved key is remembered; retry screen when offline; readable key box",
+  "notes": "Space themes: dark, light, or match your computer",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T06:34:28.864Z"
+  "publishedAt": "2026-09-25T06:50:42.589Z"
 }
