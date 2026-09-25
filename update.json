@@ -1,10 +1,10 @@
 {
-  "version": "1.8.1",
-  "url": "index-1.8.1.html",
-  "sha256": "8c1e83129b9c16f410ab3f1a67785f5b1a07f719d20bda40496a64dbf4b08b4d",
-  "signature": "LcZirQom3Mnis/R8nCRzKOSNBxlTrRhOgTpXSaAjAx3i0PkXUAtM/l/+nqKB/vrDw5fUfnZBIatSP1g5SOlrAA==",
+  "version": "1.8.2",
+  "url": "index-1.8.2.html",
+  "sha256": "2882f4edc5d08209944ce793bb95fc0d9fd24ab3a8ec1216e13f85536cf8bd2a",
+  "signature": "rNRfKp75RH8p1j7Zbu6I1X3D9KgcbF1gv2vQWQ4Ua8dvWeYZn1wa8GhH7DiJirUcBLzWRRgf5lHLpQDiR3lKAA==",
   "minAppVersion": "0",
-  "notes": "Unlocks as soon as the password is right",
+  "notes": "Package tracking: click an order number to track it",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T03:37:47.836Z"
+  "publishedAt": "2026-09-25T03:56:07.168Z"
 }
