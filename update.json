@@ -1,10 +1,10 @@
 {
-  "version": "1.9.33",
-  "url": "index-1.9.33.html",
-  "sha256": "eeba155644117ccd3e71dc60f4f020cc41c8c67ecc7c42a276eafbb0e65f2b82",
-  "signature": "0W+HLu/3cRvI8y9vuFguP1PdAzdt3qiXv54F3gk1GoobUmhunpq4nXXT92yBl9VSis3DxCcbtThLhfiolwETDA==",
+  "version": "1.9.34",
+  "url": "index-1.9.34.html",
+  "sha256": "1cececffa3d24041bdac9b1d2a8b9cec7aee21bd0bb3079d2e8def405c7078a1",
+  "signature": "UxFTUjoVABmZH7Tp8tPFy1tk2kSr0kD7Ak5hlHzyCs+MuqupzUs8DiaNmqqSg/Kc4TdGTQQYo5sUXUaTxybnCA==",
   "minAppVersion": "0",
-  "notes": "Delivered orders show the delivery date on the card; store's delivery email time in the drop-down",
+  "notes": "Alerts: stuck orders and cancellations on your computer and phone, plus a Needs attention filter",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T18:26:31.055Z"
+  "publishedAt": "2026-09-25T19:08:16.173Z"
 }
