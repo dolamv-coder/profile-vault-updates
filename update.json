@@ -1,10 +1,10 @@
 {
-  "version": "1.9.8",
-  "url": "index-1.9.8.html",
-  "sha256": "a38ab1ccc7b541d16fb21df033e551047c5733972ce9406879ff1d9a6040f31a",
-  "signature": "ZB6qwsDA5A59ftYPQ0C2tyMaD9Ur41sLC+OM8Dm5bE9mCr9pDDxhEFy83sJBcw285NdWYK/8vsKUM4jys8emDA==",
+  "version": "1.9.9",
+  "url": "index-1.9.9.html",
+  "sha256": "6de7fc7e39af4c93876fe2753a6b82d22c9c8bb67dbd374fbee53814c8c3878c",
+  "signature": "UPA9NFJ9W3pN/nN2G3KQgaZ4bWl344CivpgV/YoscsvrItZ13NE9Y8ksexOGN9n345nwOA5+ULENcavxYELEBA==",
   "minAppVersion": "0",
-  "notes": "Product photos as order icons",
+  "notes": "License keys: activate Profile Vault with a key",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T05:39:14.577Z"
+  "publishedAt": "2026-09-25T06:28:05.078Z"
 }
