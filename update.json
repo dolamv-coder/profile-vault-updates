@@ -1,10 +1,10 @@
 {
-  "version": "1.9.22",
-  "url": "index-1.9.22.html",
-  "sha256": "b927c1e3f996f4e8090721765b4e0bc5ada6ba2193d194b8fd9050adc874c861",
-  "signature": "WyA/dSL5wVZNBe3r99/+GXeePUffscf8jx+kl5tK6wtmdudn28l4HG0ZCkQOYm8nSWdUt0aSmhpbz/cb7C2eDQ==",
+  "version": "1.9.23",
+  "url": "index-1.9.23.html",
+  "sha256": "d598d0226c0a1e0d6da5264b9f9d24c3da365723ab2b4efdb224fb3e2a627d73",
+  "signature": "dQ7L03NFehIuBleCgNdfj6TTuzj7/vz+HGIOTeoVFBOPxoULMKxnCf8nW2YCpfQPONyKR4BV2pYCELV0dnA0Dw==",
   "minAppVersion": "0",
-  "notes": "Phone passcode: minimum 4 characters",
+  "notes": "Clean emails: auto-clean all inboxes, 30-day first sweep, clear all of Spam",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T14:48:43.039Z"
+  "publishedAt": "2026-09-25T14:55:57.066Z"
 }
