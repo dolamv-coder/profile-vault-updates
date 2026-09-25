@@ -1,10 +1,10 @@
 {
-  "version": "1.9.21",
-  "url": "index-1.9.21.html",
-  "sha256": "b5f956942662a6485fd3045142b9e2bec432ab37cab06220309bf2e578d41d7f",
-  "signature": "3bORODW5Fb5lsRIiASIx0YOCj5A+uOaBYkzbRaFlyryo8WHTAcUDawX1dnFKjPfjt0h/hCFGgXrGEZUJQ+knDw==",
+  "version": "1.9.22",
+  "url": "index-1.9.22.html",
+  "sha256": "b927c1e3f996f4e8090721765b4e0bc5ada6ba2193d194b8fd9050adc874c861",
+  "signature": "WyA/dSL5wVZNBe3r99/+GXeePUffscf8jx+kl5tK6wtmdudn28l4HG0ZCkQOYm8nSWdUt0aSmhpbz/cb7C2eDQ==",
   "minAppVersion": "0",
-  "notes": "Generate success: Today, Yesterday, Weekly, Monthly or All, as an image or text",
+  "notes": "Phone passcode: minimum 4 characters",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T14:46:18.214Z"
+  "publishedAt": "2026-09-25T14:48:43.039Z"
 }
