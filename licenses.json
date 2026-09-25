@@ -1,4 +1,4 @@
 {
-  "body": "{\"v\":1,\"issued\":\"2026-09-25T15:08:49.944Z\",\"keys\":[{\"h\":\"44abd29c4e0689a813804a000bc502b81f0b0fbba7c2a3b2704e41ee051005a1\"},{\"h\":\"672ec865db443d66eeb323e6903dd3f3d8d4579a31ee0544fcfd41a8ae65cdb7\"},{\"h\":\"0fc733230b42a38c37de702a6c1b26f77d02656d8d0deea979213e4ce45c4f0c\"}]}",
-  "sig": "1Eog3Qmh/APzcCXD7RHoo2cEYfwsgcp6gRAxRAlS3+/qIGXxXiIQG7QEX+v/5jbij8G3XWXWpm8k4AWGtoxaBA=="
+  "body": "{\"v\":1,\"issued\":\"2026-09-25T15:13:09.733Z\",\"keys\":[{\"h\":\"44abd29c4e0689a813804a000bc502b81f0b0fbba7c2a3b2704e41ee051005a1\"},{\"h\":\"672ec865db443d66eeb323e6903dd3f3d8d4579a31ee0544fcfd41a8ae65cdb7\"},{\"h\":\"0fc733230b42a38c37de702a6c1b26f77d02656d8d0deea979213e4ce45c4f0c\"},{\"h\":\"c67912656d5b4edcbb49975741061726ffd129e9edab18195559bfee2f54b246\"}]}",
+  "sig": "R3IBF9IixUGRKSdQhjRY34NLRbOZSHp9kTss8rwDblOCcoudAsWmPo3YDndMReSwxcRd7NETP9Q1nhzV0HHtvQ=="
 }
