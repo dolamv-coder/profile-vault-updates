@@ -1,10 +1,10 @@
 {
-  "version": "1.9.20",
-  "url": "index-1.9.20.html",
-  "sha256": "bd565620d5ca940fe465a6f28fcde609cf7333f194abcf4910200708290ba509",
-  "signature": "mWflCsxBNQSfXF8OAwIulRA/8AVRjYGj5IEnHGW5uBVC/F5RJ+mHiMnfJySsQWRZq5FHZaAFKQEbb6dnrDd7BQ==",
+  "version": "1.9.21",
+  "url": "index-1.9.21.html",
+  "sha256": "b5f956942662a6485fd3045142b9e2bec432ab37cab06220309bf2e578d41d7f",
+  "signature": "3bORODW5Fb5lsRIiASIx0YOCj5A+uOaBYkzbRaFlyryo8WHTAcUDawX1dnFKjPfjt0h/hCFGgXrGEZUJQ+knDw==",
   "minAppVersion": "0",
-  "notes": "Update notices everywhere: top bar button, lock screen, Windows notification",
+  "notes": "Generate success: Today, Yesterday, Weekly, Monthly or All, as an image or text",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T14:29:43.786Z"
+  "publishedAt": "2026-09-25T14:46:18.214Z"
 }
