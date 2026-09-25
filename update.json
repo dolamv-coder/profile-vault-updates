@@ -1,10 +1,10 @@
 {
-  "version": "1.9.15",
-  "url": "index-1.9.15.html",
-  "sha256": "7f26eb7b21530f36c669dc350934f89bc91869125eac596266e09cb7b89e6506",
-  "signature": "9+mL8RVqT71FXvy4nW3OXe4WlumW8c4qLrIAxLTnZJeUh7qYo+1BqtBaqVoqQY9+uqkcIlCF4o3BP6erOw33Cw==",
+  "version": "1.9.16",
+  "url": "index-1.9.16.html",
+  "sha256": "df476b75ceb45b620ff51881437e28b0bbcdf7a66c6cf33d8e091a0bd821c226",
+  "signature": "T1946ew3Cz4AyfV2hfpvkyUUuvd0AY0awXOwRtiZr/HjKAVkSD2RimARf91yb1ns1Wjp0XhYicdlb519AS3sAA==",
   "minAppVersion": "0",
-  "notes": "Card groups: presets or your own, filter, move selected cards",
+  "notes": "Card groups by bank; Amex, Discover and RedCards file themselves",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T08:52:51.947Z"
+  "publishedAt": "2026-09-25T08:56:12.923Z"
 }
