@@ -1,10 +1,10 @@
 {
-  "version": "1.9.7",
-  "url": "index-1.9.7.html",
-  "sha256": "07158428b2b3b8bb1f27ad41510fb46119339e95f90227c029f804110435bc3e",
-  "signature": "xsqHNCgsCwIR1FUcSFhiqw1ImbgPfmGVXYXrpzI4ngy7433ha4et6SunV5AxRjQGYgFBc8C3PGrfsjWMIYptBg==",
+  "version": "1.9.8",
+  "url": "index-1.9.8.html",
+  "sha256": "a38ab1ccc7b541d16fb21df033e551047c5733972ce9406879ff1d9a6040f31a",
+  "signature": "ZB6qwsDA5A59ftYPQ0C2tyMaD9Ur41sLC+OM8Dm5bE9mCr9pDDxhEFy83sJBcw285NdWYK/8vsKUM4jys8emDA==",
   "minAppVersion": "0",
-  "notes": "Space theme: livelier twinkling stars",
+  "notes": "Product photos as order icons",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T05:34:10.637Z"
+  "publishedAt": "2026-09-25T05:39:14.577Z"
 }
