@@ -1,10 +1,10 @@
 {
-  "version": "1.7.2",
-  "url": "index-1.7.2.html",
-  "sha256": "f05952df7aebdb005577be96b0e6b3f376f51146609fccd08d04b481ac1ff112",
-  "signature": "ENJXbwHp3Or/50Yv4bUGv16GAe+SfOjTjQOAKHEohAZ81ZX7MB2FIn1ETLJNOYdj6f/wY408gbjl6S6GK5eJBA==",
+  "version": "1.8.0",
+  "url": "index-1.8.0.html",
+  "sha256": "ff81572678cc54c2e7e34539b3f64d72e386c159344d7cd9041127ebbba50426",
+  "signature": "BRXafiITnqAI3ArCLQxqrA6BD5SeMQOff1skE3o9T40Vyr3XC77osbMxD71M0qxZAmVm1288AQcvk+88lgRSDw==",
   "minAppVersion": "0",
-  "notes": "Clean emails keeps bills and important emails safe",
+  "notes": "Order status sync: canceled, shipped, delivered",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T03:22:33.387Z"
+  "publishedAt": "2026-09-25T03:33:10.141Z"
 }
