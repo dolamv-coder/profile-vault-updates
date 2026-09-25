@@ -1,10 +1,10 @@
 {
-  "version": "1.9.12",
-  "url": "index-1.9.12.html",
-  "sha256": "139af9b0bf8693fac23a790c3c4025327aa91ca1de54ea64d8e43bc435799cb7",
-  "signature": "5+1QDRuISBaqKH6NO3bCNttCystdwI1OzmbthxgFuAHZf8bpUjXH9Rp8qQsEuoE/St7f7FimRr39AvYNd8tWDQ==",
+  "version": "1.9.13",
+  "url": "index-1.9.13.html",
+  "sha256": "87c97d3cebb9280bc1226f768dccd0e651c4e50880eeaa511de72619e4cc29b4",
+  "signature": "iNjKLpDExuTDFv/GttkrVKaJlAUHk7SKd+0f7TR1U0mJyrnn9XEEhPeTAbhQg5UfxDxLLXrhcvg5kWtKI2HYDw==",
   "minAppVersion": "0",
-  "notes": "Space: more and brighter stars, shooting stars",
+  "notes": "Sidebar: profile groups show only when Profiles is open",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T07:04:33.811Z"
+  "publishedAt": "2026-09-25T07:21:44.497Z"
 }
