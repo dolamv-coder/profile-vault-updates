@@ -1,10 +1,10 @@
 {
-  "version": "1.6.2",
-  "url": "index-1.6.2.html",
+  "version": "1.7.0",
+  "url": "index-1.7.0.html",
   "sha256": "dba50c42dd5fbe3b06d3113ea977290fcb803c90bb2cb3a9f3380db88623a965",
-  "signature": "TsB/029P1tCmNGFdUJL4EBJJ4evCopqnFiSWWu50fY/SneQyvhb5ql590VW8hYNXFYPjNB5gNAJlHfsXAxFHAA==",
+  "signature": "Z3+kEXIaRRDjG3wEkMV1ePi3V3+RDXbEJpOZ3vPmfjqGnTSKKYjFSmL6rB3WhxLjQppee8WDySwUPFxz6S7mCA==",
   "minAppVersion": "0",
-  "notes": "Any password, lighter theme",
+  "notes": "New: Clean emails (needs the new download)",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T02:40:19.655Z"
+  "publishedAt": "2026-09-25T02:49:05.901Z"
 }
