@@ -1,10 +1,10 @@
 {
-  "version": "1.9.16",
-  "url": "index-1.9.16.html",
-  "sha256": "df476b75ceb45b620ff51881437e28b0bbcdf7a66c6cf33d8e091a0bd821c226",
-  "signature": "T1946ew3Cz4AyfV2hfpvkyUUuvd0AY0awXOwRtiZr/HjKAVkSD2RimARf91yb1ns1Wjp0XhYicdlb519AS3sAA==",
+  "version": "1.9.17",
+  "url": "index-1.9.17.html",
+  "sha256": "70767bf80d031c07abcf7b1581f4ae308701a3cd2723ebe7da7a97020db1b362",
+  "signature": "cZ7t5CFnfWOFeSZSEUudQVT9FWxl5xpqCaRptPKsOB0r+7joUwugCPKlfsuOk8eRi7HkJyJOOZfHXey5kIGgBw==",
   "minAppVersion": "0",
-  "notes": "Card groups by bank; Amex, Discover and RedCards file themselves",
+  "notes": "Move verified order emails out of Spam on sync",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T08:56:12.923Z"
+  "publishedAt": "2026-09-25T12:18:02.585Z"
 }
