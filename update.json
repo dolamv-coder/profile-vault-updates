@@ -1,10 +1,10 @@
 {
-  "version": "1.9.24",
-  "url": "index-1.9.24.html",
-  "sha256": "860fd8fe4d1982ab91887edf45d6a5bb952f323e98448f8e53bb2927541bc9e2",
-  "signature": "D/s/VllJMYB2clDQeRH3fsLXLqPOzeTcR86ywyBDV7ZVrdOvar/2lm2MzwZIljuTkNenta2dTgHVv8osjaZdDg==",
+  "version": "1.9.25",
+  "url": "index-1.9.25.html",
+  "sha256": "bbbb98767b9550b3a4363bc764eb45084fbc8f48b8c8dcc40c8e234cf21207f4",
+  "signature": "V2DTpwQThnSsP0QiUU7+ULcqAmLTPNL4rUnomDQsLZt0I7KwKLEWAGCZScGDIrQTD/AaMYmX2s5vrC71DTCbDA==",
   "minAppVersion": "0",
-  "notes": "New theme: Deep space blue",
+  "notes": "Success card: all stores by default, with its own store and inbox pickers",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T15:34:59.596Z"
+  "publishedAt": "2026-09-25T16:16:36.066Z"
 }
