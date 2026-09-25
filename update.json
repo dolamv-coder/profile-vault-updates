@@ -1,10 +1,10 @@
 {
-  "version": "1.9.34",
-  "url": "index-1.9.34.html",
-  "sha256": "1cececffa3d24041bdac9b1d2a8b9cec7aee21bd0bb3079d2e8def405c7078a1",
-  "signature": "UxFTUjoVABmZH7Tp8tPFy1tk2kSr0kD7Ak5hlHzyCs+MuqupzUs8DiaNmqqSg/Kc4TdGTQQYo5sUXUaTxybnCA==",
+  "version": "1.9.36",
+  "url": "index-1.9.36.html",
+  "sha256": "fa5d5f9b4dfbac1bd18fb0d98c64d0e38e6d6657ff079de3ead977c9e03146e3",
+  "signature": "yqotSdQ/Vl3ArZM1DIDpirBw7OKbFjwvQk4Ph7kWZc7y09NVolCTOJvogSHqGF+jDyz+NYqk9eMw07dGcmB4AQ==",
   "minAppVersion": "0",
-  "notes": "Alerts: stuck orders and cancellations on your computer and phone, plus a Needs attention filter",
+  "notes": "Profile Vault is now Orbit",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T19:08:16.173Z"
+  "publishedAt": "2026-09-25T20:28:28.082Z"
 }
