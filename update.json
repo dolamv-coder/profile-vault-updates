@@ -1,10 +1,10 @@
 {
-  "version": "1.9.31",
-  "url": "index-1.9.31.html",
-  "sha256": "0d745aad4db90744f1276b024c445f6440618ce76dd7e30ee914520389c68e2a",
-  "signature": "pzLp1XvkotQLbq42JRb+f20jpH7nqWMUgbiSuxcKdk2ggG+oxcvC/XmjniBGlnG3yq/KgeFs4N8xma7qxaJWDA==",
+  "version": "1.9.32",
+  "url": "index-1.9.32.html",
+  "sha256": "58b9c81fc78eedf382dd806f7b592e47a924908021b8f1b9d270d22ffe4238ac",
+  "signature": "Zdzy3JdOVz3dqbfGbBx8zj/YsnYxWslCSNIiEvYstOPql6LGQ6XODflFvdxn7KDZqq6Tu/gqEqQNeCzmkaurAQ==",
   "minAppVersion": "0",
-  "notes": "Orders: Address drop-down with shipped and delivered dates",
+  "notes": "Delivered date from the carrier (store email body); original send times for forwarded emails",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T17:23:55.491Z"
+  "publishedAt": "2026-09-25T17:35:21.974Z"
 }
