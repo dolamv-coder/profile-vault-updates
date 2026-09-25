@@ -1,10 +1,10 @@
 {
-  "version": "1.9.0",
-  "url": "index-1.9.0.html",
-  "sha256": "6c2262f9db79bb76ea63bff7496fc3aceb7e87e8ea40d612e02927005c79458a",
-  "signature": "Bo/rrCr1B4C0iPN3slE8DZFnaSvzCOI0d2PBWWZSYH2qwG1fYuOtgl8kbCodeluPtHFvA72jXsL4KM9efshBAA==",
+  "version": "1.9.1",
+  "url": "index-1.9.1.html",
+  "sha256": "beb9f0cee5ee0cab2fc3ea1db7ce4e9e6a156142cb3e1aed877575d011f178e7",
+  "signature": "nnFUErL3X8zcY9Lqqj5BXeAlAbhmwLfM3rXtsBxBExAgXNX+fXi51epRHwyCK7/UVJoBFeuJAtjYw+YI2T7YCA==",
   "minAppVersion": "0",
-  "notes": "Clean emails can now clear Spam",
+  "notes": "Clean emails checks Inbox and Spam in one scan",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T04:10:30.025Z"
+  "publishedAt": "2026-09-25T04:21:16.768Z"
 }
