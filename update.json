@@ -1,10 +1,10 @@
 {
-  "version": "1.9.11",
-  "url": "index-1.9.11.html",
-  "sha256": "78af64812cb4fa18d4f7132f187b638fa248dc121c20f5c7739f7bc901bc275b",
-  "signature": "VBzZgr6MhvLC+f5aVVxawdAo8iW3PQAEAqaUnpdlvSNf3IyRzMpJMk1DJhlEwJBTVB0LvbdQkDZ3S06iCnGJDw==",
+  "version": "1.9.12",
+  "url": "index-1.9.12.html",
+  "sha256": "139af9b0bf8693fac23a790c3c4025327aa91ca1de54ea64d8e43bc435799cb7",
+  "signature": "5+1QDRuISBaqKH6NO3bCNttCystdwI1OzmbthxgFuAHZf8bpUjXH9Rp8qQsEuoE/St7f7FimRr39AvYNd8tWDQ==",
   "minAppVersion": "0",
-  "notes": "Space themes: dark, light, or match your computer",
+  "notes": "Space: more and brighter stars, shooting stars",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T06:50:42.589Z"
+  "publishedAt": "2026-09-25T07:04:33.811Z"
 }
