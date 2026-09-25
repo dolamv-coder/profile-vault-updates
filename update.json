@@ -1,10 +1,10 @@
 {
-  "version": "1.9.13",
-  "url": "index-1.9.13.html",
-  "sha256": "87c97d3cebb9280bc1226f768dccd0e651c4e50880eeaa511de72619e4cc29b4",
-  "signature": "iNjKLpDExuTDFv/GttkrVKaJlAUHk7SKd+0f7TR1U0mJyrnn9XEEhPeTAbhQg5UfxDxLLXrhcvg5kWtKI2HYDw==",
+  "version": "1.9.14",
+  "url": "index-1.9.14.html",
+  "sha256": "05817c361a0777f4e451d95e9cec1728cd54e8011b3eb20d36d989953aa95009",
+  "signature": "Ik7gsWRriBLzU/4dx+kTAn+HMchgcisJhDXm4wUwAXacGkrSy7JcPyj046m6pYYjJohpn2dp2F1tHA1HAYLmCA==",
   "minAppVersion": "0",
-  "notes": "Sidebar: profile groups show only when Profiles is open",
+  "notes": "Profiles: size, only-one-checkout, address Standardize, ZIP/state check, quick Duplicate",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T07:21:44.497Z"
+  "publishedAt": "2026-09-25T08:34:39.606Z"
 }
