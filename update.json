@@ -1,10 +1,10 @@
 {
-  "version": "1.9.17",
-  "url": "index-1.9.17.html",
-  "sha256": "70767bf80d031c07abcf7b1581f4ae308701a3cd2723ebe7da7a97020db1b362",
-  "signature": "cZ7t5CFnfWOFeSZSEUudQVT9FWxl5xpqCaRptPKsOB0r+7joUwugCPKlfsuOk8eRi7HkJyJOOZfHXey5kIGgBw==",
+  "version": "1.9.18",
+  "url": "index-1.9.18.html",
+  "sha256": "c601657e2f9ef7898ce216ee26cf2ab1b3d4ea05ee6d313911bbf4374f4bd5c9",
+  "signature": "aerZWoAO6jhehIXMZzuhR0bVOr6KkCWYz5P1KDoTSs6nZu+Q2t/04t0ARSoMCAKNVI/1lVvdpUQTMvFKd7ChCQ==",
   "minAppVersion": "0",
-  "notes": "Move verified order emails out of Spam on sync",
+  "notes": "Phone tracker: see your orders on your phone (encrypted)",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T12:18:02.585Z"
+  "publishedAt": "2026-09-25T13:50:55.922Z"
 }
