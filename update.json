@@ -1,10 +1,10 @@
 {
-  "version": "1.9.18",
-  "url": "index-1.9.18.html",
-  "sha256": "c601657e2f9ef7898ce216ee26cf2ab1b3d4ea05ee6d313911bbf4374f4bd5c9",
-  "signature": "aerZWoAO6jhehIXMZzuhR0bVOr6KkCWYz5P1KDoTSs6nZu+Q2t/04t0ARSoMCAKNVI/1lVvdpUQTMvFKd7ChCQ==",
+  "version": "1.9.19",
+  "url": "index-1.9.19.html",
+  "sha256": "f78ea74fc5ea2390723f4a4fff6d2e1e578db41b54c74526c9b1ac67cb5fc1f0",
+  "signature": "wdEv/9LgP2f92f04lHwB7extgsJCjJmeuVV1DSrUHuwQWH1126JbQ4chdznoviFWR4DYPvMBBW7ZTf4LBuBQCw==",
   "minAppVersion": "0",
-  "notes": "Phone tracker: see your orders on your phone (encrypted)",
+  "notes": "Phone tracker for everyone: built-in relay with your license, QR code setup",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T13:50:55.922Z"
+  "publishedAt": "2026-09-25T14:13:29.836Z"
 }
