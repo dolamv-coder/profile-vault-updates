@@ -1,10 +1,10 @@
 {
-  "version": "1.9.23",
-  "url": "index-1.9.23.html",
-  "sha256": "d598d0226c0a1e0d6da5264b9f9d24c3da365723ab2b4efdb224fb3e2a627d73",
-  "signature": "dQ7L03NFehIuBleCgNdfj6TTuzj7/vz+HGIOTeoVFBOPxoULMKxnCf8nW2YCpfQPONyKR4BV2pYCELV0dnA0Dw==",
+  "version": "1.9.24",
+  "url": "index-1.9.24.html",
+  "sha256": "860fd8fe4d1982ab91887edf45d6a5bb952f323e98448f8e53bb2927541bc9e2",
+  "signature": "D/s/VllJMYB2clDQeRH3fsLXLqPOzeTcR86ywyBDV7ZVrdOvar/2lm2MzwZIljuTkNenta2dTgHVv8osjaZdDg==",
   "minAppVersion": "0",
-  "notes": "Clean emails: auto-clean all inboxes, 30-day first sweep, clear all of Spam",
+  "notes": "New theme: Deep space blue",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T14:55:57.066Z"
+  "publishedAt": "2026-09-25T15:34:59.596Z"
 }
