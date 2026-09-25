@@ -1,10 +1,10 @@
 {
-  "version": "1.9.1",
-  "url": "index-1.9.1.html",
-  "sha256": "beb9f0cee5ee0cab2fc3ea1db7ce4e9e6a156142cb3e1aed877575d011f178e7",
-  "signature": "nnFUErL3X8zcY9Lqqj5BXeAlAbhmwLfM3rXtsBxBExAgXNX+fXi51epRHwyCK7/UVJoBFeuJAtjYw+YI2T7YCA==",
+  "version": "1.9.2",
+  "url": "index-1.9.2.html",
+  "sha256": "35337b17952b6a37e157197e1175ee522f5e721537dab5216db8f8c7b5b31a98",
+  "signature": "utfg/PxeOu9ghL3z6JLOVstf5ozQXdjYXPa3OJSjh8JCBtBFtqvOzUMDZQCmpxrw20urAs8wXLW3BFpU64JQBw==",
   "minAppVersion": "0",
-  "notes": "Clean emails checks Inbox and Spam in one scan",
+  "notes": "Unlocks as soon as the password is typed; smaller text",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T04:21:16.768Z"
+  "publishedAt": "2026-09-25T04:28:42.451Z"
 }
