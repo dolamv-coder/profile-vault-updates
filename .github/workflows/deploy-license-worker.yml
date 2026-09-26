@@ -1,0 +1,67 @@
+name: Deploy license worker
+
+# Runs when a change to the worker lands on main, or by hand from the Actions tab.
+# Needs, under Settings > Secrets and variables > Actions:
+#   secret   CLOUDFLARE_API_TOKEN   token that can edit Workers and D1
+#   secret   CLOUDFLARE_ACCOUNT_ID
+#   variable D1_DATABASE_ID         id of the orbit-license D1 database
+on:
+  push:
+    branches: [main]
+    paths: ["license-worker/**", "!license-worker/**/*.md"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-license-worker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: license-worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: license-worker/package-lock.json
+
+      - run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Point wrangler.toml at the real database
+        env:
+          D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+        run: |
+          if ! [[ "$D1_DATABASE_ID" =~ ^[0-9a-f-]{36}$ ]]; then
+            echo "::error::Set the D1_DATABASE_ID repository variable (npx wrangler d1 list shows it)."
+            exit 1
+          fi
+          sed -i "s/00000000-0000-0000-0000-000000000000/$D1_DATABASE_ID/" wrangler.toml
+          grep -q "$D1_DATABASE_ID" wrangler.toml
+
+      - name: Update database tables
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npm run db:init
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npm run deploy
+
+      - name: Check it answers
+        run: |
+          sleep 5
+          curl -fsS https://orbit-license.orbit-app.workers.dev/discord/ready
