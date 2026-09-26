@@ -1,10 +1,10 @@
 {
-  "version": "1.9.42",
-  "url": "index-1.9.42.html",
-  "sha256": "c600b38a88ebbf93a5df3a3d7a2ddb3ca8bf4c9423a16d5788a64a6cec0ed432",
-  "signature": "Abn2Sa9hYxWYTJrecfVl4U1oplpqVE3ZFP2blXreXb4vne9ah7nB5yJnl9Es/QyqK68oeYesaavqbWLxBJY5DA==",
+  "version": "1.9.43",
+  "url": "index-1.9.43.html",
+  "sha256": "2e58a0b41cb75faa3a69a381a96eb6fe5ad126117fcf6e700cb9607db53210ec",
+  "signature": "6D93lLtDm0Swo4decYVc/qLLxQKLMo6eroa37Irrr+TdMuYLzEwgxacktTByNU1ZNFc7MwEX46a2dWsHb2MEDQ==",
   "minAppVersion": "0",
-  "notes": "Waits for your key to be approved and activates by itself; easier email setup with step-by-step app password help.",
+  "notes": "Profiles page: new Compact and List layouts.",
   "installerUrl": "",
-  "publishedAt": "2026-09-26T18:53:48.215Z"
+  "publishedAt": "2026-09-26T20:53:36.668Z"
 }
