@@ -10,6 +10,9 @@ database_name = "orbit-license"
 database_id = "00000000-0000-0000-0000-000000000000"
 
 [vars]
+# "true": each Discord sign-in becomes a request posted to DISCORD_WEBHOOK_URL, and you approve
+# or deny it from the link in that message. "" hands out keys straight away.
+REQUIRE_APPROVAL = "true"
 # Optional: only members of this Discord server get a key (right-click the server > Copy Server ID).
 REQUIRED_GUILD_ID = ""
 # Optional: Discord accounts younger than this many days are turned away. 0 turns the check off.
@@ -19,5 +22,5 @@ MIN_ACCOUNT_AGE_DAYS = "0"
 #   DISCORD_CLIENT_ID      Discord application's Client ID
 #   DISCORD_CLIENT_SECRET  Discord application's Client Secret
 #   LICENSE_SIGNING_KEY    private JWK from scripts/gen-key.mjs
-#   DISCORD_WEBHOOK_URL    optional: channel webhook that's told about each new key
+#   DISCORD_WEBHOOK_URL    channel webhook for key requests (required when REQUIRE_APPROVAL is "true")
 #   ADMIN_TOKEN            optional: enables /admin/* (list, revoke, restore)

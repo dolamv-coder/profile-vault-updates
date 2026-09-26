@@ -1,8 +1,13 @@
 # Orbit license worker
 
-Gives new users a license key automatically. In Orbit (1.9.41 and later), a new user
-clicks **Continue with Discord**, signs in with Discord in their browser, and Orbit
-activates by itself a few seconds later. You don't have to do anything.
+Gives new users a license key through Discord. In Orbit (1.9.41 and later), a new user
+clicks **Continue with Discord** and signs in with Discord in their browser. Then either:
+
+- **You approve each request** (`REQUIRE_APPROVAL = "true"`, the setting in
+  `wrangler.toml`): the request appears in your Discord channel with a link to approve or
+  deny it. See [Approving each key yourself](#approving-each-key-yourself).
+- **Or keys are handed out straight away** (`REQUIRE_APPROVAL = ""`): Orbit activates by
+  itself a few seconds after sign-in, and you don't have to do anything.
 
 - Each Discord account gets one key. Signing in again gives the same key back.
 - Keys are listed (as SHA-256 hashes) in a list this worker signs with its own key.
@@ -74,8 +79,9 @@ Run these in a terminal inside this `license-worker` folder.
    - `ADMIN_TOKEN`: any long random password. It turns on the list, revoke and
      restore commands below.
    - `DISCORD_WEBHOOK_URL`: a webhook for one of your channels (Channel settings >
-     Integrations > Webhooks). The worker posts there each time someone gets a new
-     key. The key itself is never posted.
+     Integrations > Webhooks). Required when approving requests yourself (see below);
+     otherwise the worker posts there each time someone gets a new key. Keys themselves
+     are never posted.
 
 5. **Add the redirect in Discord.** On the application's **OAuth2** page, under
    **Redirects**, add this and save:
@@ -87,6 +93,50 @@ Run these in a terminal inside this `license-worker` folder.
 6. **Check it.** Open https://orbit-license.orbit-app.workers.dev/discord/ready in a
    browser. It should say `{"ready":true}`. Until it does, Orbit hides the Discord
    button, so nothing breaks while you set up.
+
+## Approving each key yourself
+
+With `REQUIRE_APPROVAL = "true"`, each new Discord account that signs in is posted to a
+channel of yours:
+
+> 📝 **New Orbit key request** from **@name** · Discord ID … · account created …
+> [Review: approve or deny](…)
+
+The link opens a page with **Approve** and **Deny** buttons. Approving issues the key;
+the message in your channel then changes to ✅ Approved or ⛔ Denied, and keeps the link
+so you can change your mind later (denying someone you approved turns their key off).
+Opening the link by itself changes nothing: only the buttons do.
+
+What the person sees:
+- **Orbit 1.9.42 and later** says it's waiting for your approval and activates by itself
+  once you approve, even if they closed Orbit in between (for up to 7 days).
+- **Orbit 1.9.41** says "Request sent" and asks them to click Continue with Discord
+  again after you approve. Doing that activates it straight away.
+
+People who already have a key always get it back without a new request.
+
+### Setting it up
+
+1. **Make a private channel** in your Discord server, for example `#orbit-requests`, that
+   only you can see. Anyone who can see the messages there can approve requests.
+2. In that channel: **Edit Channel → Integrations → Webhooks → New Webhook**, then
+   **Copy Webhook URL**.
+3. In this folder:
+
+   ```
+   npx wrangler secret put DISCORD_WEBHOOK_URL
+   npm run db:init
+   npm run deploy
+   ```
+
+   Paste the webhook address when asked. `db:init` adds the table for requests; running it
+   again is safe and keeps the keys already issued. Type `y` when it asks to proceed.
+
+Until the webhook is set, `/discord/ready` says `false` and Orbit hides the Discord
+button, so requests can't get lost.
+
+To go back to handing keys out straight away, set `REQUIRE_APPROVAL = ""` in
+`wrangler.toml` and run `npm run deploy`.
 
 ## Limiting who gets a key
 
@@ -107,6 +157,9 @@ These need `ADMIN_TOKEN`. In PowerShell, use `curl.exe` rather than `curl`.
 ```
 # Every key issued, newest first
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/licenses
+
+# Every request and your decision
+curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/applications
 
 # Turn a key off (by key, or by Discord ID with {"discord_id":"..."})
 curl.exe -X POST -H "Authorization: Bearer YOUR_ADMIN_TOKEN" -d "{\"key\":\"PVLT-XXXX-XXXX-XXXX-XXXX\"}" https://orbit-license.orbit-app.workers.dev/admin/revoke
@@ -133,5 +186,7 @@ npm test
 ```
 
 Runs the worker in Wrangler's local runtime with a local database and a mock Discord,
-then goes through sign-in, key pickup, repeat sign-in, cancelled and refused sign-ins,
-the account-age and server checks, revoke and restore, and the rate limit.
+once handing out keys straight away and once with approval on. It goes through sign-in,
+key pickup, repeat sign-in, cancelled and refused sign-ins, the account-age and server
+checks, revoke and restore, the rate limit, and requests being posted, approved, denied
+and changed.

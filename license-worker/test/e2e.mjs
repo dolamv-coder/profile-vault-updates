@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const WORKER_PORT = 8791, DISCORD_PORT = 8792, GUILD = "999000111";
-const BASE = `http://127.0.0.1:${WORKER_PORT}`;
+const WORKER_PORT = 8791, APPROVAL_PORT = 8795, DISCORD_PORT = 8792, GUILD = "999000111";
+let BASE = `http://127.0.0.1:${WORKER_PORT}`;
 const tmp = mkdtempSync(join(tmpdir(), "orbit-license-test-"));
 
 // Discord IDs are snowflakes: the top bits are the account's creation time.
@@ -22,9 +22,11 @@ const USERS = {
   fresh: { id: snowflake(Date.now() - 2 * 86400000), username: "fresh", guilds: [GUILD] },
   outsider: { id: snowflake(Date.parse("2018-01-01")), username: "outsider", guilds: ["123"] },
   robot: { id: snowflake(Date.parse("2018-01-01")), username: "robot", guilds: [GUILD], bot: true },
+  carol: { id: snowflake(Date.parse("2021-03-01")), username: "carol_x", guilds: [] },
+  dave:  { id: snowflake(Date.parse("2021-04-01")), username: "dave", guilds: [] },
 };
 
-const webhookPosts = [];
+const webhookPosts = [], webhookEdits = [];
 const discord = createServer(async (req, res) => {
   let body = ""; for await (const c of req) body += c;
   const send = (code, data) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(data)); };
@@ -36,31 +38,48 @@ const discord = createServer(async (req, res) => {
   }
   if (req.url === "/users/@me" && USERS[who]) { const u = USERS[who]; return send(200, { id: u.id, username: u.username, bot: !!u.bot }); }
   if (req.url === "/users/@me/guilds" && USERS[who]) return send(200, USERS[who].guilds.map((id) => ({ id })));
-  if (req.url === "/webhook") { webhookPosts.push(JSON.parse(body)); return send(204, {}); }
+  const u = new URL(req.url, "http://x");
+  if (req.method === "POST" && u.pathname === "/webhook") {
+    const m = { id: "msg" + (webhookPosts.length + 1), wait: u.searchParams.get("wait"), ...JSON.parse(body) };
+    webhookPosts.push(m); return send(200, { id: m.id });
+  }
+  if (req.method === "PATCH" && u.pathname.startsWith("/webhook/messages/")) {
+    webhookEdits.push({ id: u.pathname.split("/").pop(), ...JSON.parse(body) }); return send(200, {});
+  }
   send(404, {});
 });
 
 const { publicKey, privateKey } = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
 const privJwk = await crypto.subtle.exportKey("jwk", privateKey);
-writeFileSync(join(tmp, "test.env"), [
+const common = [
   `DISCORD_CLIENT_ID=test-client`,
   `DISCORD_CLIENT_SECRET=test-secret`,
   `LICENSE_SIGNING_KEY=${JSON.stringify({ kty: "EC", crv: "P-256", x: privJwk.x, y: privJwk.y, d: privJwk.d })}`,
   `ADMIN_TOKEN=test-admin-token`,
   `DISCORD_WEBHOOK_URL=http://127.0.0.1:${DISCORD_PORT}/webhook`,
   `DISCORD_API_BASE=http://127.0.0.1:${DISCORD_PORT}`,
-  `REQUIRED_GUILD_ID=${GUILD}`,
-  `MIN_ACCOUNT_AGE_DAYS=30`,
-].join("\n"));
+];
 
 const env = { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost", CI: "1" };
 const wrangler = join(root, "node_modules", ".bin", "wrangler");
-execFileSync(wrangler, ["d1", "execute", "orbit-license", "--local", "--persist-to", tmp, "--file", "schema.sql"], { cwd: root, env, stdio: "pipe" });
-
+const workers = [];
+// Starts a worker with its own empty database. `vars` override wrangler.toml's [vars].
+async function startWorker(name, port, vars) {
+  const dir = join(tmp, name);
+  execFileSync(wrangler, ["d1", "execute", "orbit-license", "--local", "--persist-to", dir, "--file", "schema.sql"], { cwd: root, env, stdio: "pipe" });
+  writeFileSync(join(tmp, name + ".env"), [...common, ...vars].join("\n"));
+  const dev = spawn(wrangler, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(port), "--persist-to", dir,
+    "--env-file", join(tmp, name + ".env"), "--show-interactive-dev-session=false"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+  let log = ""; dev.stdout.on("data", (d) => log += d); dev.stderr.on("data", (d) => log += d);
+  workers.push(dev);
+  BASE = `http://127.0.0.1:${port}`;
+  for (let i = 0; ; i++) {
+    try { if ((await fetch(BASE + "/discord/ready")).ok) return; } catch {}
+    if (i > 120) throw new Error("wrangler dev didn't start:\n" + log);
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
 await new Promise((r) => discord.listen(DISCORD_PORT, "127.0.0.1", r));
-const dev = spawn(wrangler, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(WORKER_PORT), "--persist-to", tmp,
-  "--env-file", join(tmp, "test.env"), "--show-interactive-dev-session=false"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
-let devLog = ""; dev.stdout.on("data", (d) => devLog += d); dev.stderr.on("data", (d) => devLog += d);
 
 let passed = 0;
 const test = async (name, fn) => {
@@ -90,12 +109,8 @@ async function signIn(r, code, extra = "") {
 const admin = (path, body) => fetch(BASE + path, { method: body ? "POST" : "GET", headers: { authorization: "Bearer test-admin-token", "content-type": "application/json" }, body: body && JSON.stringify(body) });
 
 try {
-  for (let i = 0; ; i++) {
-    try { if ((await fetch(BASE + "/discord/ready")).ok) break; } catch {}
-    if (i > 120) throw new Error("wrangler dev didn't start:\n" + devLog);
-    await new Promise((r) => setTimeout(r, 500));
-  }
-
+  console.log("Automatic mode");
+  await startWorker("auto", WORKER_PORT, ["REQUIRE_APPROVAL=", `REQUIRED_GUILD_ID=${GUILD}`, "MIN_ACCOUNT_AGE_DAYS=30"]);
   let aliceKey, firstIssued;
   await test("ready reports configured", async () => assert.deepEqual(await getJson("/discord/ready"), { ready: true }));
   await test("empty list is signed", async () => {
@@ -222,9 +237,117 @@ try {
     for (let i = 0; i < 25; i++) last = await get("/discord/start?r=" + rid());
     assert.equal(last.status, 429);
   });
+
+  console.log("\nApproval mode");
+  await startWorker("approval", APPROVAL_PORT, ["REQUIRE_APPROVAL=true", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0"]);
+  webhookPosts.length = 0;
+  let carolR, carolLink, carolKey;
+  const reviewPost = (link, action, t) => fetch(link.split("?")[0], { method: "POST", redirect: "manual",
+    body: new URLSearchParams({ t: t ?? new URL(link).searchParams.get("t"), action }) });
+  const linkIn = (content) => (content.match(/\((http[^)]+\/review\/[^)]+)\)/) || [])[1];
+  await test("sign-in creates a request instead of a key", async () => {
+    carolR = rid();
+    const { page } = await signIn(carolR, "carol");
+    assert.equal(page.status, 200);
+    assert.match(await page.text(), /Request sent/);
+    const s = await getJson("/discord/status/" + carolR);
+    assert.equal(s.status, "review"); assert.match(s.error, /approves/);
+    assert.equal(s.key, undefined);
+    assert.deepEqual((await verifyList(await getJson("/licenses"))).keys, []);
+  });
+  await test("the request is posted to the owner's channel with a review link", async () => {
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(webhookPosts.length, 1);
+    const m = webhookPosts[0];
+    assert.equal(m.wait, "true"); assert.equal(m.flags, 4);
+    assert.match(m.content, /New Orbit key request/);
+    assert.match(m.content, /@carol\\_x/, "username markdown is escaped");
+    assert.match(m.content, new RegExp("Discord ID " + USERS.carol.id));
+    carolLink = linkIn(m.content);
+    assert.ok(carolLink.startsWith(BASE + "/review/" + USERS.carol.id + "?t="));
+  });
+  await test("signing in again while waiting doesn't post again", async () => {
+    const r = rid(); await signIn(r, "carol");
+    assert.equal((await getJson("/discord/status/" + r)).status, "review");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(webhookPosts.length, 1);
+  });
+  await test("the review page shows the request and changes nothing by itself", async () => {
+    const res = await fetch(carolLink);
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /@carol_x/); assert.match(html, /Waiting for your decision/);
+    assert.match(html, /value="approve"/); assert.match(html, /value="deny"/);
+    assert.equal((await getJson("/discord/status/" + carolR)).status, "review");
+  });
+  await test("a wrong or missing review token is refused", async () => {
+    assert.equal((await fetch(carolLink.replace(/t=[^&]+/, "t=wrong"))).status, 404);
+    assert.equal((await fetch(BASE + "/review/" + USERS.carol.id)).status, 404);
+    assert.equal((await reviewPost(carolLink, "approve", "wrong")).status, 404);
+    assert.equal((await getJson("/discord/status/" + carolR)).status, "review");
+  });
+  await test("approving issues the key, and the waiting app picks it up", async () => {
+    const res = await reviewPost(carolLink, "approve");
+    assert.equal(res.status, 200); assert.match(await res.text(), /Approved/);
+    const s = await getJson("/discord/status/" + carolR);
+    assert.equal(s.status, "issued"); assert.match(s.key, /^PVLT-/);
+    const b = await verifyList(s.list);
+    assert.deepEqual(b.keys.map((k) => k.h), [await keyHash(s.key)]);
+    carolKey = s.key;
+  });
+  await test("the channel message is updated with the decision", async () => {
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(webhookEdits.length, 1);
+    assert.equal(webhookEdits[0].id, webhookPosts[0].id);
+    assert.match(webhookEdits[0].content, /Approved/);
+    assert.equal(linkIn(webhookEdits[0].content), carolLink, "link still there to change the decision");
+    assert.equal(webhookPosts.length, 1, "no separate 'key issued' notice");
+  });
+  await test("once approved, signing in gives the key straight away", async () => {
+    const r = rid(); await signIn(r, "carol");
+    const s = await getJson("/discord/status/" + r);
+    assert.equal(s.status, "issued"); assert.equal(s.key, carolKey);
+  });
+  let daveR, daveLink;
+  await test("denying tells the app the request was declined", async () => {
+    daveR = rid(); await signIn(daveR, "dave");
+    await new Promise((r) => setTimeout(r, 300));
+    daveLink = linkIn(webhookPosts[1].content);
+    const res = await reviewPost(daveLink, "deny");
+    assert.match(await res.text(), /Denied/);
+    const s = await getJson("/discord/status/" + daveR);
+    assert.equal(s.status, "error"); assert.match(s.error, /declined/);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.match(webhookEdits.at(-1).content, /Denied/);
+  });
+  await test("a denied account signing in again is told, without a new post", async () => {
+    const r = rid(); const { page } = await signIn(r, "dave");
+    assert.equal(page.status, 403);
+    assert.match((await getJson("/discord/status/" + r)).error, /declined/);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(webhookPosts.length, 2);
+  });
+  await test("changing a denial to approval issues the key", async () => {
+    await reviewPost(daveLink, "approve");
+    const r = rid(); await signIn(r, "dave");
+    assert.equal((await getJson("/discord/status/" + r)).status, "issued");
+  });
+  await test("denying after approval turns the key off", async () => {
+    await reviewPost(carolLink, "deny");
+    const b = await verifyList(await getJson("/licenses"));
+    const h = await keyHash(carolKey);
+    assert.ok(!b.keys.some((k) => k.h === h));
+    const r = rid(); const { page } = await signIn(r, "carol");
+    assert.equal(page.status, 403);
+    assert.match((await getJson("/discord/status/" + r)).error, /declined/);
+  });
+  await test("admin lists requests and decisions", async () => {
+    const { applications } = await (await admin("/admin/applications")).json();
+    assert.deepEqual(applications.map((a) => [a.username, a.status]).sort(), [["carol_x", "denied"], ["dave", "approved"]]);
+  });
   console.log(`\n${passed} passed`);
 } finally {
-  dev.kill("SIGTERM");
+  for (const w of workers) w.kill("SIGTERM");
   discord.close();
   rmSync(tmp, { recursive: true, force: true });
 }

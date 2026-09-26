@@ -29,6 +29,10 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   It serves a second signed list in the same format at `/licenses`, signed with
   its own key (public half is `LICENSE_AUTO_PUB` in the HTML). The app saves which
   list a key came from as `src` (`"gh"` or `"auto"`) in the `pv-license` record.
+  With `REQUIRE_APPROVAL = "true"` (in `wrangler.toml`) sign-ins become requests
+  posted to `DISCORD_WEBHOOK_URL`, approved or denied at `/review/:discord_id`;
+  `/discord/status` then answers `review` until decided. 1.9.42+ keeps waiting on
+  `review`; 1.9.41 shows the message and asks the user to try again later.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 

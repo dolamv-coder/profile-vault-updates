@@ -32,3 +32,14 @@ CREATE TABLE IF NOT EXISTS list_state (
   sig           TEXT
 );
 INSERT OR IGNORE INTO list_state (id, version, built_version) VALUES (1, 1, 0);
+
+-- With REQUIRE_APPROVAL on: one key request per Discord account, and the owner's decision.
+CREATE TABLE IF NOT EXISTS applications (
+  discord_id         TEXT PRIMARY KEY,
+  username           TEXT NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | denied
+  review_token       TEXT NOT NULL,
+  created_at         INTEGER NOT NULL,
+  decided_at         INTEGER,
+  webhook_message_id TEXT
+);
