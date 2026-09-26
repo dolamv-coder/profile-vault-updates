@@ -1,10 +1,10 @@
 {
-  "version": "1.9.43",
-  "url": "index-1.9.43.html",
-  "sha256": "2e58a0b41cb75faa3a69a381a96eb6fe5ad126117fcf6e700cb9607db53210ec",
-  "signature": "6D93lLtDm0Swo4decYVc/qLLxQKLMo6eroa37Irrr+TdMuYLzEwgxacktTByNU1ZNFc7MwEX46a2dWsHb2MEDQ==",
+  "version": "1.9.44",
+  "url": "index-1.9.44.html",
+  "sha256": "c6d43edbf0cf9489395d7e475fe7040edff2aec88b33828fe3671134e7d56c39",
+  "signature": "Hy+ta0jKqPGGQj3cmDj5mXTZ4RtbKuRqfP9ZB3cYCmrXioQlmx8Xn5nZ8aKBth5S6qPcrSfWRndfadgoUSjkAA==",
   "minAppVersion": "0",
-  "notes": "Profiles page: new Compact and List layouts.",
+  "notes": "Target now shows a red bullseye in the store filter.",
   "installerUrl": "",
-  "publishedAt": "2026-09-26T20:53:36.668Z"
+  "publishedAt": "2026-09-26T21:11:39.276Z"
 }
