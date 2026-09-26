@@ -1,10 +1,10 @@
 {
-  "version": "1.9.39",
-  "url": "index-1.9.39.html",
-  "sha256": "93bc87abae833707abaf658f1f654382e0e0d8ee54d9cb6ea2cc80218697a360",
-  "signature": "ToWD5Hu7ciot9HKYSpUfgoHECsMk/dx3S3a8oxVY2YaMPARwN6M3G94O2xeFdKAaUxNbFWCdFoVe++41SjBHCQ==",
+  "version": "1.9.40",
+  "url": "index-1.9.40.html",
+  "sha256": "54bb3ce0287137aa9d2540593f351c9c018f015662ea51ddd026b1b476ec7dd3",
+  "signature": "3mC/SZhjT74MhNVfzeZ8b/ErnXr6QyK9Eub5hBOTPsi8ttGpbjMzCziv4hpSvNniflymOFqEfGMUlC5a3YOxBg==",
   "minAppVersion": "0",
-  "notes": "Phone app: Select and delete orders; Orbit applies deletes from your phone",
+  "notes": "License screen: request a key with Discord (Continue with Discord)",
   "installerUrl": "",
-  "publishedAt": "2026-09-26T06:52:17.466Z"
+  "publishedAt": "2026-09-26T13:18:55.109Z"
 }
