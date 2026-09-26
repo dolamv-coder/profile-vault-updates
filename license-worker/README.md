@@ -130,7 +130,7 @@ People who already have a key always get it back without a new request.
    ```
 
    Paste the webhook address when asked. `db:init` adds the table for requests; running it
-   again is safe and keeps the keys already issued. Type `y` when it asks to proceed.
+   again is safe and keeps the keys already issued.
 
 Until the webhook is set, `/discord/ready` says `false` and Orbit hides the Discord
 button, so requests can't get lost.
