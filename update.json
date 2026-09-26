@@ -1,10 +1,10 @@
 {
-  "version": "1.9.41",
-  "url": "index-1.9.41.html",
-  "sha256": "b365e65b15d9ce24ed9f8adf811570c228ea377b162ddd5c0ffbbf9aff136242",
-  "signature": "dHJq2Sz1ZY5GQ3CDvl4xRLrPPhA/AG/uObnfxWY8EDi6QkBt3Mvf94WLc/ZpLdMk7Ar4zqNPZhyHlxUh3/diAg==",
+  "version": "1.9.42",
+  "url": "index-1.9.42.html",
+  "sha256": "c600b38a88ebbf93a5df3a3d7a2ddb3ca8bf4c9423a16d5788a64a6cec0ed432",
+  "signature": "Abn2Sa9hYxWYTJrecfVl4U1oplpqVE3ZFP2blXreXb4vne9ah7nB5yJnl9Es/QyqK68oeYesaavqbWLxBJY5DA==",
   "minAppVersion": "0",
-  "notes": "License keys: Continue with Discord now hands out your key automatically",
+  "notes": "Waits for your key to be approved and activates by itself; easier email setup with step-by-step app password help.",
   "installerUrl": "",
-  "publishedAt": "2026-09-26T16:04:49.092Z"
+  "publishedAt": "2026-09-26T18:53:48.215Z"
 }
