@@ -18,12 +18,19 @@ The release feed for installed copies of Orbit. It is not the full source tree.
 - `update.json`: points installed apps at the current release (`version`,
   `url`, `sha256`, `signature`, `notes`, `publishedAt`). Apps accept an update
   only if the signature verifies against the publisher key built into them.
-- `licenses.json`: signed list of SHA-256 hashes of valid license keys, fetched
-  by the app from
+- `licenses.json`: signed list of SHA-256 hashes of license keys made by hand,
+  fetched by the app from
   `raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/licenses.json`.
   Each hash is `sha256("pvlt:" + normalized key)`. `body` is signed with
   ECDSA P-256 (the public key is `LICENSE_PUB` in the HTML). Apps work offline
   for 30 days after their last successful check.
+- `license-worker/`: the Cloudflare Worker (`orbit-license`, D1 database) that
+  hands out keys automatically after "Continue with Discord" (app 1.9.41+).
+  It serves a second signed list in the same format at `/licenses`, signed with
+  its own key (public half is `LICENSE_AUTO_PUB` in the HTML). The app saves which
+  list a key came from as `src` (`"gh"` or `"auto"`) in the `pv-license` record.
+  Setup and admin commands are in `license-worker/README.md`; `npm test` there
+  runs it end to end in Wrangler's local runtime.
 
 - GitHub Releases: the app links new users to
   `releases/latest/download/Orbit-Windows.zip` on this repo.
@@ -58,11 +65,9 @@ As of 2026-09-26, none of these are in `dolamv-coder/profile-vault-updates` or
     such as deleting orders.
   - Web push forwarding: the app encrypts alerts itself (RFC 8291), and the
     relay only forwards them.
-  - `GET /discord/ready`, `GET /discord/start?r=…`,
-    `GET /discord/status/:r`: the "Continue with Discord" license request from
-    1.9.40. `/discord/callback` is the OAuth redirect URI, handled inside the
-    worker. It must be registered in the Discord app's OAuth2 redirects, and
-    the worker needs the Discord client ID and secret as secrets.
+  - `GET /discord/ready`, `/discord/start`, `/discord/status/:r`: the manual
+    "Continue with Discord" key request used by 1.9.40 only. From 1.9.41 the
+    app sends these to the license worker in `license-worker/` instead.
 
   To recover the source, open the Cloudflare dashboard, go to Workers & Pages,
   open `orders` and choose Edit code. Or use the Cloudflare Developer Platform
