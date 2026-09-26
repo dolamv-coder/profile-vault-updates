@@ -102,7 +102,9 @@ channel of yours:
 > 📝 **New Orbit key request** from **@name** · Discord ID … · account created …
 > [Review: approve or deny](…)
 
-The link opens a page with **Approve** and **Deny** buttons. Approving issues the key;
+The link opens a page with **Approve** and **Deny** buttons. Approving issues the key
+and shows it on that page with a **Copy key** button, in case you want to send it to
+someone yourself (it's never posted in the channel);
 the message in your channel then changes to ✅ Approved or ⛔ Denied, and keeps the link
 so you can change your mind later (denying someone you approved turns their key off).
 Opening the link by itself changes nothing: only the buttons do.

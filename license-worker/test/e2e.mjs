@@ -277,6 +277,7 @@ try {
     assert.equal(res.status, 200);
     const html = await res.text();
     assert.match(html, /@carol_x/); assert.match(html, /Waiting for your decision/);
+    assert.doesNotMatch(html, /PVLT-/, "no key before approval");
     assert.match(html, /value="approve"/); assert.match(html, /value="deny"/);
     assert.equal((await getJson("/discord/status/" + carolR)).status, "review");
   });
@@ -291,6 +292,7 @@ try {
     assert.equal(res.status, 200); assert.match(await res.text(), /Approved/);
     const s = await getJson("/discord/status/" + carolR);
     assert.equal(s.status, "issued"); assert.match(s.key, /^PVLT-/);
+    assert.ok((await (await fetch(carolLink)).text()).includes(s.key), "review page shows the key once approved");
     const b = await verifyList(s.list);
     assert.deepEqual(b.keys.map((k) => k.h), [await keyHash(s.key)]);
     carolKey = s.key;
@@ -340,6 +342,7 @@ try {
     const r = rid(); const { page } = await signIn(r, "carol");
     assert.equal(page.status, 403);
     assert.match((await getJson("/discord/status/" + r)).error, /declined/);
+    assert.doesNotMatch(await (await fetch(carolLink)).text(), /PVLT-/, "no key once denied");
   });
   await test("admin lists requests and decisions", async () => {
     const { applications } = await (await admin("/admin/applications")).json();

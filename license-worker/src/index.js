@@ -277,11 +277,16 @@ async function review(request, env, ctx, url, discordId) {
   }
   const cur = await env.DB.prepare("SELECT * FROM applications WHERE discord_id = ?").bind(discordId).first();
   const label = { pending: "Waiting for your decision", approved: "Approved", denied: "Denied" }[cur.status] || cur.status;
+  const lic = cur.status === "approved"
+    ? await env.DB.prepare("SELECT license_key FROM licenses WHERE discord_id = ? AND revoked_at IS NULL").bind(discordId).first() : null;
+  const keyBlock = lic ? `<p class="small">License key:</p><p class="key" id="key">${esc(lic.license_key)}</p>
+     <button class="copy" type="button" onclick="navigator.clipboard.writeText(document.getElementById('key').textContent).then(()=>{this.textContent='Copied'})">Copy key</button>` : "";
   const btn = (a, text, cls) => `<form method="post"><input type="hidden" name="t" value="${esc(t)}"><input type="hidden" name="action" value="${a}"><button class="${cls}" type="submit">${text}</button></form>`;
   return page(200, "Key request", done || label,
     `<p class="who">@${esc(cur.username)}</p>
      <p class="small">Discord ID ${esc(cur.discord_id)}<br>Account created ${day(accountCreated(cur.discord_id))}<br>Requested ${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC</p>
      ${done ? `<p class="small">Status: ${esc(label)}</p>` : ""}
+     ${keyBlock}
      <div class="row">${cur.status !== "approved" ? btn("approve", "Approve", "ok") : ""}${cur.status !== "denied" ? btn("deny", "Deny", "no") : ""}</div>`);
 }
 
@@ -444,6 +449,7 @@ function page(statusCode, title, msg, extra = "") {
   .row form{flex:1;margin:0}
   button{width:100%;padding:12px;border:0;border-radius:10px;font:600 16px system-ui,sans-serif;cursor:pointer;color:#fff}
   button.ok{background:#1f9d5c} button.no{background:#c4372f}
+  button.copy{width:auto;padding:8px 14px;font-size:14px;background:#2a3f7a}
 </style></head><body><main><h1>Orbit</h1><h2>${esc(title)}</h2>${msg ? `<p>${esc(msg)}</p>` : ""}${extra}</main></body></html>`,
     { status: statusCode, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
 }
