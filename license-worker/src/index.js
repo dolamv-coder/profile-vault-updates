@@ -144,8 +144,13 @@ async function callback(env, ctx, url) {
     }
   }
 
-  // Accounts that already have a key always get it straight back.
+  // Accounts that already have a key always get it straight back. A denial stands even
+  // if approval is turned off later.
   const existing = await env.DB.prepare("SELECT discord_id FROM licenses WHERE discord_id = ?").bind(user.id).first();
+  if (!existing) {
+    const prior = await env.DB.prepare("SELECT status FROM applications WHERE discord_id = ?").bind(user.id).first();
+    if (prior && prior.status === "denied") return fail("Request declined", DECLINED_MSG);
+  }
   if (approvalOn(env) && !existing) {
     const app = await ensureApplication(env, ctx, url.origin, user.id, username);
     if (app.status === "denied") return fail("Request declined", DECLINED_MSG);
@@ -234,13 +239,14 @@ async function status(env, r) {
 
 // ---- approval ------------------------------------------------------------------------
 
-// One request per Discord account. Only the first sign-in posts to the owner's channel.
+// One request per Discord account, posted to the owner's channel once. If that post never
+// made it (Discord rate limit or outage), the next sign-in by the same account posts it again.
 async function ensureApplication(env, ctx, origin, discordId, username) {
   const res = await env.DB.prepare(
     "INSERT OR IGNORE INTO applications (discord_id, username, review_token, created_at) VALUES (?, ?, ?, ?)"
   ).bind(discordId, username, randomId(24), Date.now()).run();
   const app = await env.DB.prepare("SELECT * FROM applications WHERE discord_id = ?").bind(discordId).first();
-  if (res.meta && res.meta.changes) {
+  if ((res.meta && res.meta.changes) || (app.status === "pending" && !app.webhook_message_id)) {
     ctx.waitUntil((async () => {
       const id = await webhookPost(env, { content: reviewMessage(origin, app) });
       if (id) await env.DB.prepare("UPDATE applications SET webhook_message_id = ? WHERE discord_id = ?").bind(id, discordId).run();
@@ -315,11 +321,17 @@ async function webhookPost(env, payload) {
   if (!env.DISCORD_WEBHOOK_URL) return null;
   const u = new URL(env.DISCORD_WEBHOOK_URL);
   u.searchParams.set("wait", "true");
-  const r = await fetch(u, {
+  const send = () => fetch(u, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ ...payload, flags: SUPPRESS_EMBEDS, allowed_mentions: { parse: [] } }),
   });
+  let r = await send();
+  if (r.status === 429) {
+    // Discord limits how often a webhook can post; wait as long as it asks (briefly) and try once more.
+    const wait = Number((await r.json().catch(() => ({}))).retry_after) || 1;
+    if (wait <= 10) { await new Promise((ok) => setTimeout(ok, wait * 1000)); r = await send(); }
+  }
   if (!r.ok) { console.error("webhook post", r.status, await r.text()); return null; }
   const m = await r.json().catch(() => null);
   return m && m.id || null;
@@ -384,8 +396,9 @@ async function admin(request, env, path) {
   }
   if (request.method === "GET" && path === "/admin/applications") {
     const { results } = await env.DB.prepare(
-      "SELECT discord_id, username, status, created_at, decided_at FROM applications ORDER BY created_at DESC").all();
-    return json({ applications: results });
+      "SELECT discord_id, username, status, created_at, decided_at, review_token FROM applications ORDER BY created_at DESC").all();
+    const origin = new URL(request.url).origin;
+    return json({ applications: results.map(({ review_token, ...a }) => ({ ...a, review_url: `${origin}/review/${a.discord_id}?t=${review_token}` })) });
   }
   if (request.method === "POST" && (path === "/admin/revoke" || path === "/admin/restore")) {
     const b = await request.json().catch(() => ({}));

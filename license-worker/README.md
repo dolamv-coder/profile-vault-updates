@@ -137,8 +137,12 @@ People who already have a key always get it back without a new request.
 Until the webhook is set, `/discord/ready` says `false` and Orbit hides the Discord
 button, so requests can't get lost.
 
+If posting a request to your channel fails (for example Discord is down), it's posted
+again the next time that person signs in, and every request's review link is also in
+the `/admin/applications` list below.
+
 To go back to handing keys out straight away, set `REQUIRE_APPROVAL = ""` in
-`wrangler.toml` and run `npm run deploy`.
+`wrangler.toml` and run `npm run deploy`. People you denied stay denied.
 
 ## Limiting who gets a key
 
@@ -160,7 +164,7 @@ These need `ADMIN_TOKEN`. In PowerShell, use `curl.exe` rather than `curl`.
 # Every key issued, newest first
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/licenses
 
-# Every request and your decision
+# Every request and your decision, each with its review link
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/applications
 
 # Turn a key off (by key, or by Discord ID with {"discord_id":"..."})

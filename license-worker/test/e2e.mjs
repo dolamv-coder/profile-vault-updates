@@ -24,9 +24,12 @@ const USERS = {
   robot: { id: snowflake(Date.parse("2018-01-01")), username: "robot", guilds: [GUILD], bot: true },
   carol: { id: snowflake(Date.parse("2021-03-01")), username: "carol_x", guilds: [] },
   dave:  { id: snowflake(Date.parse("2021-04-01")), username: "dave", guilds: [] },
+  erin:  { id: snowflake(Date.parse("2021-05-01")), username: "erin", guilds: [] },
+  frank: { id: snowflake(Date.parse("2021-06-01")), username: "frank", guilds: [] },
+  gina:  { id: snowflake(Date.parse("2021-07-01")), username: "gina", guilds: [] },
 };
 
-const webhookPosts = [], webhookEdits = [];
+const webhookPosts = [], webhookEdits = [], webhookFail = [];
 const discord = createServer(async (req, res) => {
   let body = ""; for await (const c of req) body += c;
   const send = (code, data) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(data)); };
@@ -40,6 +43,10 @@ const discord = createServer(async (req, res) => {
   if (req.url === "/users/@me/guilds" && USERS[who]) return send(200, USERS[who].guilds.map((id) => ({ id })));
   const u = new URL(req.url, "http://x");
   if (req.method === "POST" && u.pathname === "/webhook") {
+    if (webhookFail.length) {
+      const code = webhookFail.shift();
+      return code === 429 ? send(429, { message: "You are being rate limited.", retry_after: 0.3 }) : send(code, { message: "fail" });
+    }
     const m = { id: "msg" + (webhookPosts.length + 1), wait: u.searchParams.get("wait"), ...JSON.parse(body) };
     webhookPosts.push(m); return send(200, { id: m.id });
   }
@@ -63,10 +70,11 @@ const common = [
 const env = { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost", CI: "1" };
 const wrangler = join(root, "node_modules", ".bin", "wrangler");
 const workers = [];
-// Starts a worker with its own empty database. `vars` override wrangler.toml's [vars].
-async function startWorker(name, port, vars) {
-  const dir = join(tmp, name);
-  execFileSync(wrangler, ["d1", "execute", "orbit-license", "--local", "--persist-to", dir, "--file", "schema.sql"], { cwd: root, env, stdio: "pipe" });
+// Starts a worker with its own empty database, or on an earlier run's database (`db`).
+// `vars` override wrangler.toml's [vars].
+async function startWorker(name, port, vars, db) {
+  const dir = join(tmp, db || name);
+  if (!db) execFileSync(wrangler, ["d1", "execute", "orbit-license", "--local", "--persist-to", dir, "--file", "schema.sql"], { cwd: root, env, stdio: "pipe" });
   writeFileSync(join(tmp, name + ".env"), [...common, ...vars].join("\n"));
   const dev = spawn(wrangler, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(port), "--persist-to", dir,
     "--env-file", join(tmp, name + ".env"), "--show-interactive-dev-session=false"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
@@ -344,9 +352,57 @@ try {
     assert.match((await getJson("/discord/status/" + r)).error, /declined/);
     assert.doesNotMatch(await (await fetch(carolLink)).text(), /PVLT-/, "no key once denied");
   });
-  await test("admin lists requests and decisions", async () => {
+  await test("admin lists requests and decisions, with working review links", async () => {
     const { applications } = await (await admin("/admin/applications")).json();
     assert.deepEqual(applications.map((a) => [a.username, a.status]).sort(), [["carol_x", "denied"], ["dave", "approved"]]);
+    const dave = applications.find((a) => a.username === "dave");
+    assert.equal(dave.review_token, undefined);
+    assert.equal(dave.review_url, daveLink);
+    assert.equal((await fetch(dave.review_url)).status, 200);
+  });
+  await test("a request whose channel post failed is posted again on the next sign-in", async () => {
+    const before = webhookPosts.length;
+    webhookFail.push(500);
+    const r1 = rid(); await signIn(r1, "erin");
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(webhookPosts.length, before, "first post failed");
+    assert.equal((await getJson("/discord/status/" + r1)).status, "review");
+    const r2 = rid(); await signIn(r2, "erin");
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(webhookPosts.length, before + 1);
+    assert.match(webhookPosts.at(-1).content, /@erin/);
+    const r3 = rid(); await signIn(r3, "erin");
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(webhookPosts.length, before + 1, "not posted again once it went through");
+  });
+  await test("a rate-limited post waits as Discord asks and goes through", async () => {
+    const before = webhookPosts.length;
+    webhookFail.push(429);
+    await signIn(rid(), "gina");
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.equal(webhookPosts.length, before + 1);
+    assert.match(webhookPosts.at(-1).content, /@gina/);
+  });
+  await test("denying someone before they had a key", async () => {
+    const erinLink = linkIn(webhookPosts.find((m) => /@erin/.test(m.content)).content);
+    await reviewPost(erinLink, "deny");
+    const r = rid(); const { page } = await signIn(r, "erin");
+    assert.equal(page.status, 403);
+  });
+
+  console.log("\nApproval switched off again, same database");
+  workers.pop().kill("SIGTERM");
+  await new Promise((r) => setTimeout(r, 1500));
+  await startWorker("approval-off", APPROVAL_PORT + 1, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0"], "approval");
+  await test("denied accounts stay declined", async () => {
+    const r = rid(); const { page } = await signIn(r, "erin");
+    assert.equal(page.status, 403);
+    assert.match((await getJson("/discord/status/" + r)).error, /declined/);
+  });
+  await test("new accounts get a key straight away again", async () => {
+    const r = rid(); await signIn(r, "frank");
+    const s = await getJson("/discord/status/" + r);
+    assert.equal(s.status, "issued"); assert.match(s.key, /^PVLT-/);
   });
   console.log(`\n${passed} passed`);
 } finally {

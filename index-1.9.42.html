@@ -6911,7 +6911,7 @@ const LIC_STORE = "pv-license";
 const licNorm = (k) => String(k || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 const licFormat = (k) => { const n = licNorm(k); return /^PVLT[A-Z0-9]{16}$/.test(n) ? "PVLT-" + n.slice(4).match(/.{4}/g).join("-") : String(k || "").trim().toUpperCase(); };
 function licRead(){ try { return JSON.parse(localStorage.getItem(LIC_STORE) || "null"); } catch(e){ return null; } }
-function licWrite(v){ try { if (v) localStorage.setItem(LIC_STORE, JSON.stringify(v)); else localStorage.removeItem(LIC_STORE); } catch(e){} }
+function licWrite(v){ try { if (v) localStorage.setItem(LIC_STORE, JSON.stringify(v)); else localStorage.removeItem(LIC_STORE); } catch(e){} stopKeyRequest(); }
 async function licHash(k){
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("pvlt:" + licNorm(k)));
   return Array.from(new Uint8Array(d)).map(b => b.toString(16).padStart(2, "0")).join("");
@@ -7003,13 +7003,23 @@ setInterval(licRefresh, 6 * 60 * 60 * 1000);
 // gives them a key, and the app picks it up and activates on its own. Shown only once the
 // worker is set up.
 const DISCORD_ICON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M20.3 4.4A19.7 19.7 0 0 0 15.4 3l-.6 1.3a18.3 18.3 0 0 0-5.6 0L8.6 3a19.6 19.6 0 0 0-4.9 1.5C.6 9.1-.3 13.7.1 18.2a19.8 19.8 0 0 0 6 3l1.3-2.1a12.8 12.8 0 0 1-2-1l.5-.4a14.1 14.1 0 0 0 12.2 0l.5.4c-.6.4-1.3.7-2 1l1.3 2.1a19.7 19.7 0 0 0 6-3c.5-5.2-.8-9.8-3.6-13.8ZM8 15.4c-1.2 0-2.2-1.1-2.2-2.4S6.8 10.6 8 10.6s2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Z"/></svg>`;
-let keyReqPoll = null;
+// One wait for a Discord key at a time: each watch() takes the next number, and an older
+// wait that's in the middle of a check when a newer one starts stops by itself.
+let keyReqPoll = null, keyReqGen = 0;
+// Any license being saved or removed ends a wait that's still going (and forgets it).
+function stopKeyRequest(){ keyReqGen++; clearTimeout(keyReqPoll); try { localStorage.removeItem("orbit-keyreq"); } catch(e){} }
 async function keyRequestBox(){
   const box = $("#lic-discord"); if (!box) return;
-  try { const r = await fetch(LICENSE_RELAY + "/discord/ready", {cache:"no-store"}); if (!r.ok || !(await r.json()).ready) return; } catch(e){ return; }
-  if (!box.isConnected) return;
+  const SIGNIN_WAIT = 15 * 60 * 1000, REVIEW_WAIT = 7 * 86400000;
+  let saved = null; try { saved = JSON.parse(localStorage.getItem("orbit-keyreq") || "null"); } catch(e){}
+  const resume = saved && saved.r && saved.at && Date.now() - saved.at < (saved.review ? REVIEW_WAIT : SIGNIN_WAIT);
+  let ready = false;
+  try { const r = await fetch(LICENSE_RELAY + "/discord/ready", {cache:"no-store"}); ready = r.ok && !!(await r.json()).ready; } catch(e){}
+  // A request that's already waiting keeps being checked even if this check failed (offline for a moment).
+  if ((!ready && !resume) || !box.isConnected) return;
   box.hidden = false;
   const msg = $("#lic-dc-msg"), go = $("#lic-dc-go");
+  go.hidden = !ready;
   const say = (t, tone) => { msg.textContent = t; msg.classList.toggle("is-ok", tone === "ok"); msg.classList.toggle("is-err", tone === "err"); };
   const activate = async (s) => {
     const key = licFormat(s.key), c = await licCheck(key, s.list, "auto");
@@ -7024,21 +7034,26 @@ async function keyRequestBox(){
   };
   // Waits for the browser sign-in to finish, then (when the seller approves keys by hand) for
   // the seller's decision. The app may be closed and reopened meanwhile.
-  const SIGNIN_WAIT = 15 * 60 * 1000, REVIEW_WAIT = 7 * 86400000;
   const reviewText = "Request sent. Waiting for the seller to approve it. Orbit activates by itself once it's approved, so you can close it and come back later.";
   const watch = (r, started, review) => {
+    const gen = ++keyReqGen;
     clearTimeout(keyReqPoll);
     say(review ? reviewText : "Finish signing in with Discord in your browser…");
+    let heard = review;   // the worker has answered about this request with something other than "unknown"
     const tick = async () => {
-      if (!$("#lic-dc-msg")) return;
+      if (gen !== keyReqGen || !$("#lic-dc-msg")) return;
       if (Date.now() - started > (review ? REVIEW_WAIT : SIGNIN_WAIT)){
         try { localStorage.removeItem("orbit-keyreq"); } catch(e){}
         say(review ? "Your request wasn't answered in time. Click Continue with Discord to ask again." : "Sign-in timed out. Click Continue with Discord to try again.", "err");
         return;
       }
-      let s = null; try { s = await (await fetch(LICENSE_RELAY + "/discord/status/" + r, {cache:"no-store"})).json(); } catch(e){}
-      if (!$("#lic-dc-msg")) return;
-      if (!s || s.status === "pending" || s.status === "review"){
+      // A server error is treated like being offline: try again next time.
+      let s = null;
+      try { const res = await fetch(LICENSE_RELAY + "/discord/status/" + r, {cache:"no-store"}); s = res.status >= 500 ? null : await res.json(); } catch(e){}
+      if (gen !== keyReqGen || !$("#lic-dc-msg")) return;
+      if (s && s.status && s.status !== "unknown") heard = true;
+      // Until the browser has opened the sign-in page, the worker doesn't know this request yet.
+      if (!s || !s.status || s.status === "pending" || s.status === "review" || (s.status === "unknown" && !heard)){
         if (s && s.status === "review" && !review){
           review = true;
           try { localStorage.setItem("orbit-keyreq", JSON.stringify({r, at:started, review:true})); } catch(e){}
@@ -7053,8 +7068,7 @@ async function keyRequestBox(){
     };
     keyReqPoll = setTimeout(tick, 3000);
   };
-  let saved = null; try { saved = JSON.parse(localStorage.getItem("orbit-keyreq") || "null"); } catch(e){}
-  if (saved && saved.r && saved.at && Date.now() - saved.at < (saved.review ? REVIEW_WAIT : SIGNIN_WAIT)) watch(saved.r, saved.at, !!saved.review);
+  if (resume) watch(saved.r, saved.at, !!saved.review);
   go.addEventListener("click", () => {
     // A random id links this app to the browser sign-in, so the app can collect the key.
     const r = phB64u(crypto.getRandomValues(new Uint8Array(18))), at = Date.now();
