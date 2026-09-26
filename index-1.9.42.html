@@ -5274,54 +5274,68 @@ const STORES = [["target","Target"],["walmart","Walmart"],["bestbuy","Best Buy"]
 const PROVIDERS = [["gmail","Gmail","imap.gmail.com"],["outlook","Outlook / Hotmail","outlook.office365.com"],["yahoo","Yahoo","imap.mail.yahoo.com"],["icloud","iCloud","imap.mail.me.com"],["aol","AOL","imap.aol.com"],["zoho","Zoho","imap.zoho.com"],["custom","Other (custom IMAP server)",""]];
 const PROVIDER_BY_DOMAIN = {"gmail.com":"gmail","googlemail.com":"gmail","outlook.com":"outlook","hotmail.com":"outlook","live.com":"outlook","msn.com":"outlook","yahoo.com":"yahoo","ymail.com":"yahoo","icloud.com":"icloud","me.com":"icloud","mac.com":"icloud","aol.com":"aol","zoho.com":"zoho"};
 // How to get the password each provider wants from mail apps. `shape` is what its app
-// passwords look like with spaces removed (only used for a gentle warning), and `strip`
-// marks providers whose app passwords never contain spaces, though people paste them with some.
+// passwords look like with spaces removed (only used for a gentle warning), `strip` marks
+// providers whose app passwords never contain spaces (people paste them with some), and
+// `account` those where the password has to be made in the same account as the inbox.
+// "{paste}" becomes where to paste it, which depends on where the steps are shown.
 const APP_PW = {
-  gmail:{strip:true, shape:/^[a-z]{16}$/i, shapeText:"16 letters",
-    steps:["Turn on 2-Step Verification for your Google account, if it isn't on already.", "Open App passwords, type Orbit as the name and press Create.", "Copy the 16-letter password Google shows and paste it here. The spaces don't matter."],
+  gmail:{strip:true, account:true, shape:/^[a-z]{16}$/i, shapeText:"16 letters", placeholder:"16-letter app password", authuser:true,
+    steps:["Turn on 2-Step Verification for your Google account, if it isn't on already.", "Open App passwords, type Orbit as the name and press Create.", "Copy the 16-letter password Google shows and {paste}. The spaces don't matter."],
     links:[["Turn on 2-Step Verification", "https://myaccount.google.com/signinoptions/two-step-verification"], ["Open App passwords", "https://myaccount.google.com/apppasswords"]]},
-  yahoo:{strip:true, shape:/^[a-z]{16}$/i, shapeText:"16 letters",
-    steps:["Open Account security and sign in.", "Choose Generate app password, type Orbit as the name and press Generate.", "Copy the password and paste it here."],
+  yahoo:{strip:true, account:true, shape:/^[a-z]{16}$/i, shapeText:"16 letters", placeholder:"16-letter app password",
+    steps:["Open Account security and sign in.", "Choose Generate app password, type Orbit as the name and press Generate.", "Copy the password and {paste}."],
     links:[["Open Yahoo account security", "https://login.yahoo.com/account/security"]]},
-  aol:{strip:true, shape:/^[a-z]{16}$/i, shapeText:"16 letters",
-    steps:["Open Account security and sign in.", "Choose Generate app password, type Orbit as the name and press Generate.", "Copy the password and paste it here."],
+  aol:{strip:true, account:true, shape:/^[a-z]{16}$/i, shapeText:"16 letters", placeholder:"16-letter app password",
+    steps:["Open Account security and sign in.", "Choose Generate app password, type Orbit as the name and press Generate.", "Copy the password and {paste}."],
     links:[["Open AOL account security", "https://login.aol.com/account/security"]]},
-  icloud:{strip:true, shape:/^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$/i, shapeText:"four groups of 4 letters joined by dashes",
-    steps:["Open your Apple Account page and sign in.", "Go to Sign-In and Security, then App-Specific Passwords, and create one named Orbit.", "Copy it and paste it here. It looks like abcd-efgh-ijkl-mnop."],
+  icloud:{strip:true, account:true, shape:/^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$/i, shapeText:"four groups of 4 letters joined by dashes", placeholder:"abcd-efgh-ijkl-mnop",
+    steps:["Open your Apple Account page and sign in.", "Go to Sign-In and Security, then App-Specific Passwords, and create one named Orbit.", "Copy it and {paste}. It looks like abcd-efgh-ijkl-mnop."],
     links:[["Open Apple Account", "https://account.apple.com"]]},
-  outlook:{
-    steps:["Microsoft often doesn't allow app passwords for Outlook and Hotmail. If your account offers them: Security, Advanced security options, App passwords, Create a new app password.", "If it doesn't, set Outlook to forward your order emails to a Gmail address, and add that Gmail inbox here instead."],
-    links:[["Open Microsoft account security", "https://account.microsoft.com/security"]]},
-  zoho:{
-    steps:["In Zoho Mail settings, open Mail Accounts and turn on IMAP access.", "If you use two-factor sign-in, create an app password in Zoho Accounts under Security, App Passwords, and paste it here. Otherwise your normal Zoho password works."],
+  outlook:{account:true, placeholder:"App password",
+    steps:["Turn on two-step verification for your Microsoft account first. App passwords only appear once it's on.", "Open Advanced security options, find App passwords and choose Create a new app password. Copy it and {paste}.", "If there's no App passwords option, or signing in still fails, set Outlook to forward your order emails to a Gmail address, and add that Gmail inbox instead."],
+    links:[["Open Microsoft account security", "https://account.microsoft.com/security"], ["Open Advanced security options", "https://account.live.com/proofs/Manage/additional"]]},
+  zoho:{account:true, placeholder:"App password or Zoho password",
+    steps:["In Zoho Mail settings, open Mail Accounts and turn on IMAP access.", "If you sign in to Zoho with two-factor verification, create an app password in Zoho Accounts under Security, App Passwords, and {paste}. Otherwise use your normal Zoho password."],
     links:[["Open Zoho Accounts", "https://accounts.zoho.com/home"]]},
-  custom:{
+  custom:{placeholder:"Password for mail apps",
     steps:["Use the password your email provider gives for mail apps. Their help pages may call it an app password or IMAP password.", "The same help pages list the IMAP server name. The port is almost always 993."],
     links:[]},
 };
 const cleanAppPw = (provider, pw) => APP_PW[provider] && APP_PW[provider].strip ? String(pw || "").replace(/\s+/g, "") : String(pw || "");
-function appPwGuideHTML(provider, typed){
+// o.email: the inbox's address, if typed yet. o.typed: an address has been typed (no provider
+// detected). o.help: shown in the help dialog, which has no password box of its own.
+function appPwGuideHTML(provider, o = {}){
   const g = APP_PW[provider];
-  if (!g) return `<p class="item-sub" style="margin:0">${typed ? "Choose your email provider above to see how to get its password. For your own or a work domain, choose Other." : "Type your email above to see how to get the password for your provider."}</p>`;
+  if (!g) return `<p class="item-sub" style="margin:0">${o.typed ? "Choose your email provider above to see how to get its password. If your address runs on Google Workspace choose Gmail, on iCloud+ choose iCloud, on Microsoft 365 choose Outlook / Hotmail; otherwise choose Other." : "Type your email above to see how to get the password for your provider."}</p>`;
   const name = provider === "custom" ? "your provider" : providerName(provider);
+  const paste = o.help ? "paste it into App password when you add or edit your inbox (Settings, Email import)" : "paste it here";
+  const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(o.email || "") ? o.email : "";
+  const steps = (g.account && email ? [`Do this in the account for ${email}. If you have more than one, check which one is signed in (top corner of the page).`] : []).concat(g.steps.map(x => x.replace("{paste}", paste)));
+  const href = (u) => g.authuser && email ? u + (u.includes("?") ? "&" : "?") + "authuser=" + encodeURIComponent(email) : u;
   return `<p style="margin:0 0 10px"><strong>How to get the password for ${esc(name)}</strong></p>
-    <ol class="how">${g.steps.map(x => `<li>${esc(x)}</li>`).join("")}</ol>
-    ${g.links.length ? `<div class="set-actions" style="margin-top:12px">${g.links.map(([t, u]) => `<a class="btn btn-sm" href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>`).join("")}</div>` : ""}`;
+    <ol class="how">${steps.map(x => `<li>${esc(x)}</li>`).join("")}</ol>
+    ${g.links.length ? `<div class="set-actions" style="margin-top:12px">${g.links.map(([t, u]) => `<a class="btn btn-sm" href="${esc(href(u))}" target="_blank" rel="noopener">${esc(t)}</a>`).join("")}</div>` : ""}`;
 }
 // Mail servers turn down a wrong password in many different words; say what to do instead.
-// kind: "auth" (password refused), "net" (couldn't reach the server) or "" (anything else).
-function mailError(provider, err){
+// kind: "auth" (password refused), "net" (couldn't reach the server, timed out, or a temporary
+// problem on its side) or "" (anything else, shown as the server said it).
+// Timeouts and temporary failures often mention authentication too, so they're checked first.
+function mailError(provider, err, email){
   const raw = String(err || "").trim();
   const name = provider && provider !== "custom" && PROVIDERS.some(p => p[0] === provider) ? providerName(provider) : "Your email provider";
-  if (/authenticat|invalid credentials|login failed|log ?in (was )?(denied|rejected|failed)|password|web ?login required|534-5\.7/i.test(raw)){
-    const text = provider === "outlook" ? `${name} didn't accept the password. Microsoft often blocks app passwords for Outlook and Hotmail: forward your order emails to a Gmail address and add that inbox instead.`
-      : APP_PW[provider] && APP_PW[provider].strip ? `${name} didn't accept the password. It needs an app password, not your normal password. Make sure you copied all of it, or create a new one.`
+  if (/timed? ?out|timeout|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|getaddrinfo|ECONNREFUSED|ECONNRESET|socket hang up|network|offline|temporar|UNAVAILABLE|try again later|too many (simultaneous )?connections/i.test(raw)){
+    return {kind:"net", raw, text:provider === "custom" ? "Couldn't reach the mail server, or it had a temporary problem. Check the server name and port and your internet connection, then try again."
+      : "Couldn't reach your email provider, or it had a temporary problem. Check your internet connection and try again in a few minutes."};
+  }
+  if (/PRIVACYREQUIRED|plaintext|non-secure|STARTTLS|(TLS|SSL) required/i.test(raw)){
+    return {kind:"", raw, text:"The mail server only accepts secure connections. Use port 993, or the SSL/TLS port your provider lists."};
+  }
+  if (/AUTHENTICATIONFAILED|authentication failed|AUTHENTICATE failed|invalid credentials|login failed|log ?in (was )?(denied|rejected|failed)|(wrong|incorrect|invalid|bad) (username or |user name or )?password|password (is )?(wrong|incorrect|invalid)|application-specific password|web ?login required|534-5\.7|authenticated but not connected/i.test(raw)){
+    const who = email || "this address";
+    const text = provider === "outlook" ? `${name} didn't accept the password. Check two-step verification is on and use an app password. If Microsoft doesn't offer one, forward your order emails to a Gmail address and add that inbox instead.`
+      : APP_PW[provider] && APP_PW[provider].strip ? `${name} didn't accept the password for ${who}. Use an app password (not your normal password) made while signed in as ${who}, and paste all of it.`
       : `${name} didn't accept the email or password. Check both and try again.`;
     return {kind:"auth", text, raw};
-  }
-  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo|ECONNREFUSED|ETIMEDOUT|ECONNRESET|timed? ?out|network|offline/i.test(raw)){
-    return {kind:"net", raw, text:provider === "custom" ? "Couldn't reach the mail server. Check the server name and port, and your internet connection."
-      : "Couldn't reach your email provider, or it stopped answering. Check your internet connection and try again."};
   }
   return {kind:"", text:raw, raw};
 }
@@ -5405,7 +5419,7 @@ function retailerList(p, pemail){
 function imapFields(i, requirePw){
   return `<div class="form-grid">
     ${fieldHTML({name:"i_email", label:"Email", value:i.email, type:"email", placeholder:"you@gmail.com", showOpt:false, attrs:'inputmode="email"'})}
-    ${fieldHTML({name:"i_password", label:"App password", type:"password", ac:"new-password", placeholder:requirePw ? "16-character app password" : "Leave blank to keep the current one", showOpt:false, hint:"Gmail, Yahoo, iCloud and AOL need an app password here, not your normal password."})}
+    ${fieldHTML({name:"i_password", label:"App password", type:"password", ac:"new-password", placeholder:requirePw ? ((APP_PW[i.provider] || {}).placeholder || "App password") : "Leave blank to keep the current one", showOpt:false, hint:"Gmail, Yahoo, iCloud and AOL need an app password here, not your normal password."})}
     ${fieldHTML({type:"select", name:"i_provider", label:"Provider", options:opt(PROVIDERS.map(p => [p[0], p[1]]), i.provider || "", "Detected from your email"), showOpt:false})}
     <div class="c6" id="i-custom" style="display:${i.provider === "custom" ? "contents" : "none"}">
       ${fieldHTML({name:"i_host", label:"IMAP server", value:i.host, placeholder:"imap.example.com", cls:"c4", showOpt:false})}
@@ -5413,31 +5427,36 @@ function imapFields(i, requirePw){
     </div>
   </div>
   <p class="note note-warn" id="i-pw-warn" hidden style="margin:10px 0 0"></p>
-  <div class="how-card" id="i-guide" style="margin:14px 0 0">${appPwGuideHTML(i.provider || "")}</div>`;
+  <div class="how-card" id="i-guide" style="margin:14px 0 0">${appPwGuideHTML(i.provider || "", {email:i.email})}</div>`;
 }
 function wireImap(panel){
   const em = $('[name="i_email"]', panel), pv = $('[name="i_provider"]', panel), custom = $("#i-custom", panel);
   const pw = $('[name="i_password"]', panel), guide = $("#i-guide", panel), warn = $("#i-pw-warn", panel);
-  let touched = !!pv.value, shown = pv.value + "|";
+  const keepPh = /^Leave blank/.test(pw.placeholder);
+  let touched = !!pv.value, shown = "";
   const checkPw = () => {
     const g = APP_PW[pv.value], v = cleanAppPw(pv.value, pw.value);
     const ok = !g || !g.shape || !v || g.shape.test(v);
     warn.hidden = ok;
     if (!ok) warn.textContent = `That doesn't look like a ${providerName(pv.value)} app password, which is ${g.shapeText}. Your normal password won't work here.`;
   };
+  // The steps name the typed address, so they follow the email as well as the provider.
   const showGuide = () => {
-    const typed = /@[^@\s]+\.[^@\s]+$/.test(em.value.trim()), k = pv.value + "|" + (pv.value ? "" : typed);
-    if (k !== shown){ shown = k; guide.innerHTML = appPwGuideHTML(pv.value, typed); }
+    const email = em.value.trim(), typed = /@[^@\s]+\.[^@\s]+$/.test(email), k = pv.value + "|" + email;
+    if (k !== shown){ shown = k; guide.innerHTML = appPwGuideHTML(pv.value, {typed, email}); }
+    if (!keepPh) pw.placeholder = (APP_PW[pv.value] || {}).placeholder || "App password";
     checkPw();
   };
   pv.addEventListener("change", () => { touched = true; custom.style.display = pv.value === "custom" ? "contents" : "none"; showGuide(); });
   em.addEventListener("input", () => {
-    if (touched) return;
-    const d = (em.value.split("@")[1] || "").toLowerCase().trim();
-    if (PROVIDER_BY_DOMAIN[d]){ pv.value = PROVIDER_BY_DOMAIN[d]; custom.style.display = "none"; }
+    if (!touched){
+      const d = (em.value.split("@")[1] || "").toLowerCase().trim();
+      if (PROVIDER_BY_DOMAIN[d]){ pv.value = PROVIDER_BY_DOMAIN[d]; custom.style.display = "none"; }
+    }
     showGuide();
   });
   pw.addEventListener("change", checkPw);
+  showGuide();
 }
 function readImap(panel, existingPw){
   const i = { email:val(panel,"i_email"), password:$('[name="i_password"]', panel).value, provider:val(panel,"i_provider"), host:val(panel,"i_host"), port:val(panel,"i_port") };
@@ -5548,7 +5567,7 @@ function openInboxEditor(existing){
   const isNew = existing._new;
   openLayer({
     title: isNew ? "Add inbox" : "Edit inbox", small:false, dismiss:false,
-    body:`<p style="margin:0 0 16px;color:var(--ink-2)">${isNew ? "Enter your email and an app password. Your provider is detected from the address." : "Leave the password blank to keep the current one."}</p><form id="i-form" novalidate>${imapFields(isNew ? {} : existing, isNew)}</form><p class="note" id="i-test-out" hidden style="margin:12px 0 0"></p>`,
+    body:`<p style="margin:0 0 16px;color:var(--ink-2)">${isNew ? "Enter your email and an app password. Your provider is detected from the address." : "Leave the password blank to keep the current one."}</p>${!isNew && existing.syncError ? `<p class="note note-warn" style="margin:0 0 16px">${esc(mailError(existing.provider, existing.syncError, existing.email).text)}</p>` : ""}<form id="i-form" novalidate>${imapFields(isNew ? {} : existing, isNew)}</form><p class="note" id="i-test-out" hidden style="margin:12px 0 0"></p>`,
     foot:`<button class="btn" data-close>Cancel</button>${DESK ? `<button class="btn" id="i-test">Test</button>` : ""}<button class="btn btn-primary" id="i-save">${isNew && DESK ? "Save and sync" : "Save inbox"}</button>`,
     mount:(panel, close) => {
       wireImap(panel);
@@ -5558,19 +5577,22 @@ function openInboxEditor(existing){
         if (r.bad) return;
         if (S.inboxes.some(i => i.id !== existing.id && norm(i.email) === norm(r.inbox.email))){ setErr(panel,"i_email","You already saved this inbox."); return; }
         let saved;
+        const newPw = !isNew && r.inbox.password !== existing.password;
         if (isNew){ saved = Object.assign({id:uid(), createdAt:Date.now(), auto:true}, r.inbox); S.inboxes.push(saved); } else { Object.assign(existing, r.inbox, {syncError:""}); saved = existing; }
         persist(); render(); toast(isNew ? "Inbox added" : "Inbox saved"); close();
-        if (DESK && isNew) syncOneInbox(saved, false);
+        if (DESK && (isNew || newPw)) syncOneInbox(saved, false);
       };
       const tb = $("#i-test", panel);
       if (tb) tb.addEventListener("click", async () => {
         const r = readImap(panel, existing.password); if (!r.inbox || r.bad) return;
         const out = $("#i-test-out", panel); out.hidden = false; out.className = "note"; out.textContent = "Signing in…"; tb.disabled = true;
+        out.scrollIntoView({block:"nearest"});
         const res = await window.pvDesktop.testInbox({email:r.inbox.email, password:r.inbox.password, host:r.inbox.host, port:r.inbox.port});
         tb.disabled = false;
         out.className = res.ok ? "note" : "note note-warn";
-        const m = res.ok ? null : mailError(r.inbox.provider, res.error);
+        const m = res.ok ? null : mailError(r.inbox.provider, res.error, r.inbox.email);
         out.textContent = res.ok ? `Signed in. Your inbox has ${res.messages.toLocaleString()} emails.` : m.text + (m.text !== m.raw && m.raw ? ` (Details: ${m.raw})` : "");
+        out.scrollIntoView({block:"nearest"});
       });
       $("#i-save", panel).addEventListener("click", save);
       $("#i-form", panel).addEventListener("submit", (e) => { e.preventDefault(); save(); });
@@ -6608,7 +6630,7 @@ async function syncOneInbox(inbox, quiet){
   if (!res.ok){
     live.syncError = res.error; persist();
     syncViews();
-    if (!quiet) toast(`${inbox.email}: ${mailError(inbox.provider, res.error).text}`, "err");
+    if (!quiet){ const t = mailError(inbox.provider, res.error, inbox.email).text; toast(t.includes(inbox.email) ? t : `${inbox.email}: ${t}`, "err"); }
     return {added:0, error:res.error};
   }
   const rows = emailsToRows(res.emails, inbox);
@@ -6667,8 +6689,8 @@ function inboxRowHTML(i){
   else if (i.syncError) status = `<span class="pill pill-err">Needs attention</span>`;
   else if (i.lastSync) status = `<span class="pill pill-on">Connected</span>`;
   else status = `<span class="pill">Not synced yet</span>`;
-  const me = i.syncError ? mailError(i.provider, i.syncError) : null;
-  const detail = me ? `<span class="expired" title="${esc(me.raw)}">${esc(me.text)}</span>${me.kind === "auth" ? ` <button class="link" data-act="app-pw-help" data-provider="${esc(i.provider || "")}">How to fix</button>` : ""}`
+  const me = i.syncError ? mailError(i.provider, i.syncError, i.email) : null;
+  const detail = me ? `<span class="expired" title="${esc(me.raw)}">${esc(me.text)}</span>${me.kind === "auth" ? ` <button class="link" data-act="edit-inbox" data-id="${i.id}">Fix password</button>` : ""}`
     : i.lastSync ? `Last synced ${esc(new Date(i.lastSync).toLocaleString(undefined, {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"}))}${i.lastResult ? ` · ${plural(i.lastResult.found, "order")} found` : ""}`
     : "Press Sync to find your orders";
   return `<div class="ibx">
@@ -6716,7 +6738,7 @@ function emailSectionHTML(){
     <p class="set-lead">Connect your inbox and Orbit finds your order confirmations and adds them as orders.</p>
     <div class="how-card">
       <ol class="how">
-        <li><strong>Create an app password.</strong> Your normal password won't work here. <button class="link" data-act="app-pw-help" style="font-size:calc(14px*var(--fs))">How to get one</button></li>
+        <li><strong>Create an app password.</strong> Gmail, Yahoo, iCloud and AOL won't accept your normal password here. <button class="link" data-act="app-pw-help" style="font-size:calc(14px*var(--fs))">How to get one</button></li>
         <li><strong>Add your inbox</strong> with that app password. You can add several.</li>
         <li><strong>Press Sync.</strong> It checks the last 90 days the first time, then keeps up on its own every 15 minutes while the app is open.</li>
       </ol>
@@ -6732,13 +6754,13 @@ function openAppPasswordHelp(provider){
   const first = APP_PW[provider] ? provider : "gmail";
   openLayer({
     title:"Getting an app password", small:true,
-    body:`<p style="margin:0 0 12px;color:var(--ink-2)">Email providers block normal passwords for apps like this one. An app password is a separate password just for Orbit, and you can revoke it any time.</p>
+    body:`<p style="margin:0 0 12px;color:var(--ink-2)">Most email providers block normal passwords for apps like this one. An app password is a separate password just for Orbit, and you can revoke it any time.</p>
       ${fieldHTML({type:"select", name:"hp_provider", label:"Your email", options:opt(PROVIDERS.map(p => [p[0], p[1]]), first), showOpt:false})}
-      <div class="how-card" id="hp-guide" style="margin:14px 0 0">${appPwGuideHTML(first)}</div>`,
+      <div class="how-card" id="hp-guide" style="margin:14px 0 0">${appPwGuideHTML(first, {help:true})}</div>`,
     foot:`<button class="btn btn-primary" data-close>Got it</button>`,
     mount:(panel) => {
       const sel = $('[name="hp_provider"]', panel);
-      sel.addEventListener("change", () => { $("#hp-guide", panel).innerHTML = appPwGuideHTML(sel.value); });
+      sel.addEventListener("change", () => { $("#hp-guide", panel).innerHTML = appPwGuideHTML(sel.value, {help:true}); });
     }
   });
 }
