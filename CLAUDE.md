@@ -87,3 +87,4 @@ git.
 `dolamv-coder/profile-vault` (private) is a separate Next.js + Prisma web
 dashboard with Discord OAuth login (`/api/auth/discord/callback`). It is not
 the Orbit desktop app or the relay.
+Claude may merge its own pull requests into main once tests pass, except changes to licenses.json
