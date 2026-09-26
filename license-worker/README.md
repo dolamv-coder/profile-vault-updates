@@ -94,6 +94,29 @@ Run these in a terminal inside this `license-worker` folder.
    browser. It should say `{"ready":true}`. Until it does, Orbit hides the Discord
    button, so nothing breaks while you set up.
 
+## Deploying automatically
+
+After the one-time setup, you don't need to deploy by hand. The GitHub Action in
+`.github/workflows/deploy-license-worker.yml` runs whenever a change to this folder is
+merged into `main`: it runs the tests and, only if they pass, updates the database
+tables and deploys. You can also start it from the repo's **Actions** tab (**Deploy
+license worker**, then **Run workflow**).
+
+It needs three settings in the GitHub repo, under **Settings → Secrets and variables →
+Actions**:
+
+- **Secret `CLOUDFLARE_API_TOKEN`**: in Cloudflare, go to **My Profile → API Tokens →
+  Create Token**, start from the **Edit Cloudflare Workers** template, add
+  **Account → D1 → Edit**, and create it.
+- **Secret `CLOUDFLARE_ACCOUNT_ID`**: shown by `npx wrangler whoami`, or on the right of
+  the **Workers & Pages** page in Cloudflare.
+- **Variable `D1_DATABASE_ID`** (on the **Variables** tab): shown by
+  `npx wrangler d1 list`. The copy of `wrangler.toml` in the repo keeps zeros, and the
+  Action fills in this id when it deploys.
+
+The worker's own secrets (Discord, signing key, webhook) stay in Cloudflare and are kept
+across deploys.
+
 ## Approving each key yourself
 
 With `REQUIRE_APPROVAL = "true"`, each new Discord account that signs in is posted to a
