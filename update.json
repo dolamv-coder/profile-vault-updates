@@ -1,10 +1,10 @@
 {
-  "version": "1.9.37",
-  "url": "index-1.9.37.html",
-  "sha256": "f7ebcf2346421d0ee090413a7aacde100986d8cc0143e881c0cfe70c9a5bcd85",
-  "signature": "0Ki0PP0wWHf5t2jZsZNWFAub5EEDD7G3TY6FF1czmN6qbSbc93IllqNBEXdUWOMJCY19x1T1HGIlq+BZ2MhXCg==",
+  "version": "1.9.38",
+  "url": "index-1.9.38.html",
+  "sha256": "1a5bc945fb9b99b61499cc9509bff02a2440e9706a0976a7923f149901448cd1",
+  "signature": "bZE4XK1UNc+ZL3MCI9N6ilV/W+ygV/tTTT4Sw2ikJW0AI3O3SHQFAyIv3Oj5rDg3qQU45BgYCGU68KyoWQE2BA==",
   "minAppVersion": "0",
-  "notes": "Phone tracker moved to the new Orbit address (orders.orbit-app.workers.dev) with the Orbit look",
+  "notes": "Orders: checkboxes to select and delete in bulk, Ctrl+A, drag to select, Shift+click ranges, and Undo",
   "installerUrl": "",
-  "publishedAt": "2026-09-25T20:55:54.573Z"
+  "publishedAt": "2026-09-26T06:39:05.630Z"
 }
