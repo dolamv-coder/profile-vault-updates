@@ -5361,7 +5361,7 @@ function openSettings(){
       // their private Discord channel, and from then on slots people submit arrive there as a file.
       const drawDiscord = async (id, note) => {
         const dc = $("#st-dc", panel); if (!dc || !S.share) return;
-        const mine = S.share.pub;
+        const mine = S.share.pub, fp = await fingerprintOf(mine);
         let d = null;
         try { const r = await fetch(LICENSE_RELAY + "/submit/key?pub=" + encodeURIComponent(mine), {cache:"no-store"}); if (r.ok) d = await r.json(); } catch(e){}
         if (!$("#st-dc", panel)) return;
@@ -5373,19 +5373,18 @@ function openSettings(){
         }
         const other = d.pub ? ` Right now they're encrypted for a different key, ID <strong>${esc(d.keyId)}</strong>.` : "";
         if (d.mine === "pending"){
-          msg.innerHTML = `${note ? esc(note) + " " : ""}Now open your private Discord channel and confirm key ID <strong>${esc(id)}</strong>. Only confirm it if the ID matches.${other}`;
+          msg.innerHTML = `${note ? esc(note) + " " : ""}Now open your private Discord channel and confirm key ID <strong>${esc(id)}</strong>. Only confirm it if the review page shows this fingerprint: <strong style="font-family:ui-monospace,Consolas,monospace;white-space:nowrap">${esc(fp.slice(0, 19))}</strong> <strong style="font-family:ui-monospace,Consolas,monospace;white-space:nowrap">${esc(fp.slice(20))}</strong>${other}`;
         } else {
           msg.innerHTML = `Have slots people submit from Orbit arrive in your private Discord channel, encrypted so only this vault can open them. You confirm it from the channel.${other}`;
         }
         dc.insertAdjacentHTML("beforeend", `<button class="btn" id="st-dc-go">${d.mine === "pending" ? "Check again" : "Send my key to Discord"}</button>`);
         $("#st-dc-go", dc).addEventListener("click", async (e) => {
           e.target.disabled = true;
-          if (d.mine === "pending"){ drawDiscord(id); return; }
-          let r, j = {};
+          let r, j = {};   // offering it again is safe: it re-posts the message if it never arrived
           try { r = await fetch(LICENSE_RELAY + "/submit/key", {method:"POST", headers:{authorization:"Bearer " + (licRead() || {}).key, "content-type":"application/json"}, body:JSON.stringify({pub:mine, name:S.submitName || ""})}); j = await r.json().catch(() => ({})); }
           catch(ex){ e.target.disabled = false; toast("Couldn't reach the license server.", "err"); return; }
           if (!r.ok){ e.target.disabled = false; toast(r.status === 503 ? "The Discord channel isn't set up on the license server yet." : r.status === 429 ? "Too many tries today. Try again tomorrow." : r.status === 401 ? "Your license wasn't recognized." : "Couldn't send your key.", "err"); return; }
-          drawDiscord(id, j.status === "pending" ? "Sent." : "");
+          drawDiscord(id, j.status === "pending" && d.mine !== "pending" ? "Sent." : "");
         });
       };
       drawCollect();
@@ -8174,17 +8173,27 @@ async function refreshSeller(){
 }
 // A recipient set by hand (a different invite) wins; otherwise slots go to the seller when they can.
 const submitToSeller = () => SELLER && DESK && (licRead() || {}).key && (!S.submitTo || S.submitTo.pub === SELLER.pub) ? SELLER : null;
-async function sendToSeller(from, payload, stores){
+// The key this app last sent with. A different one is shown before anything is sent to it, so a
+// swapped key can't take batches over silently.
+const sellerPin = () => (S.settings.sellerPin || null);
+async function sendToSeller(from, payload, stores, batch, k){
   const L = licRead() || {};
   for (let tries = 0; tries < 2; tries++){
-    const k = submitToSeller(); if (!k) throw new Error("The seller isn't taking submissions here right now. Close this and submit again to get a code to send them.");
+    if (!k || !submitToSeller()) throw new Error("The seller isn't taking submissions here right now. Close this and submit again to get a code to send them.");
     const code = await sealSubmission(k.pub, payload);
     let r;
-    try { r = await fetch(LICENSE_RELAY + "/submissions", {method:"POST", headers:{authorization:"Bearer " + L.key, "content-type":"application/json"}, body:JSON.stringify({code, keyId:k.keyId, name:from, slots:payload.slots.length, stores})}); }
+    try { r = await fetch(LICENSE_RELAY + "/submissions", {method:"POST", headers:{authorization:"Bearer " + L.key, "content-type":"application/json"}, body:JSON.stringify({code, keyId:k.keyId, name:from, slots:payload.slots.length, stores, batch})}); }
     catch(e){ throw new Error("Couldn't reach the seller. Check your connection and try again."); }
-    if (r.ok) return k;
+    if (r.ok){ S.settings.sellerPin = {pub:k.pub, keyId:k.keyId}; persist(); return k; }
     const d = await r.json().catch(() => ({}));
-    if (r.status === 409){ await refreshSeller(); continue; }   // the seller changed keys: seal again for the new one
+    if (r.status === 409){
+      // The seller's key changed. Seal again only for the key this app already sent with; any other
+      // one is shown to the person first.
+      const now = await refreshSeller(), pin = sellerPin();
+      if (now && pin && now.pub === pin.pub && now.pub !== k.pub){ k = now; continue; }
+      throw new Error("The seller's key has changed, so nothing was sent. Close this and submit again to see the new one.");
+    }
+    if (r.status === 425) throw new Error("Still sending. Wait a moment, then try again.");
     if (r.status === 401) throw new Error("Your license wasn't recognized, so nothing was sent.");
     if (r.status === 429) throw new Error("You've sent a lot this hour. Try again later.");
     if (r.status === 503){ SELLER = null; throw new Error("The seller isn't taking submissions here right now. Close this and submit again to get a code to send them."); }
@@ -8407,19 +8416,22 @@ function openSubmitSlots(){
   groups.forEach(g => g.fresh.forEach(r => fresh.push({g, r})));
   if (!fresh.length) return;
   const seller = submitToSeller(), to = seller ? null : S.submitTo;
+  const pin = seller && sellerPin(), changedKey = !!(pin && pin.pub !== seller.pub);
+  const batch = b64u(crypto.getRandomValues(new Uint8Array(16)));
   const stores = groups.filter(g => g.fresh.length).map(g => ({name:g.name, n:g.fresh.length}));
   openLayer({
     title:"Submit slots", dismiss:false,
     body:`<p style="margin:0 0 14px;color:var(--ink-2)">${plural(fresh.length, "new slot")} will be sent. Slots you already submitted are left out, so nothing is sent twice.</p>
       <div class="note" style="margin:0 0 14px"><ul class="summary-list" style="margin:0">${groups.filter(g => g.fresh.length).map(g => `<li><strong style="color:var(--ink)">${esc(g.name)}</strong>: ${esc(g.fresh.map(r => r.p.name).join(", "))}</li>`).join("")}</ul></div>
-      ${seller ? `<p class="note" style="margin:0 0 14px">Sent straight to the seller, encrypted so only they can open it (key ID <strong>${esc(seller.keyId)}</strong>).</p>`
+      ${seller && changedKey ? `<p class="note note-warn" style="margin:0 0 14px">The seller's key has changed since you last sent (it was <strong>${esc(pin.keyId)}</strong>, now <strong>${esc(seller.keyId)}</strong>). Only send if the seller told you they changed it.</p>`
+           : seller ? `<p class="note" style="margin:0 0 14px">Sent straight to the seller, encrypted so only they can open it (key ID <strong>${esc(seller.keyId)}</strong>).</p>`
            : to ? `<p class="note" style="margin:0 0 14px">Encrypted for key ID <strong>${esc(to.keyId)}</strong>. Only they can open it.</p>`
            : `<p class="note note-warn" style="margin:0 0 14px">No recipient set, so this is a plain file with full card numbers and passwords in it. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Set a recipient</button></p>`}
       <div class="field"><label for="ss-from">Your name</label><input id="ss-from" autocomplete="name" maxlength="60" value="${esc(S.submitName || "")}" placeholder="So they know whose slots these are"><span class="err" id="ss-err"></span></div>
       <p class="err-line" id="ss-send-err" role="alert"></p>
       <p class="note" id="ss-sent" hidden style="margin:14px 0 0"></p>
       <div id="ss-out" hidden style="margin-top:14px"><div class="field"><label for="ss-code">Your code</label><textarea id="ss-code" readonly spellcheck="false" style="min-height:120px"></textarea><span class="hint">Send this whole code to them.</span></div></div>`,
-    foot:`<button class="btn" data-close>Close</button><button class="btn" id="ss-dl" hidden>${ic("exp")}Download</button><button class="btn" id="ss-copy" hidden>${ic("copy")}Copy</button><button class="btn btn-primary" id="ss-go">${ic("exp")}${seller ? "Send" : "Submit"} ${plural(fresh.length, "slot")}</button>`,
+    foot:`<button class="btn" data-close>Close</button><button class="btn" id="ss-dl" hidden>${ic("exp")}Download</button><button class="btn" id="ss-copy" hidden>${ic("copy")}Copy</button><button class="btn btn-primary" id="ss-go">${ic("exp")}${seller ? (changedKey ? "Send to the new key" : "Send " + plural(fresh.length, "slot")) : "Submit " + plural(fresh.length, "slot")}</button>`,
     mount:(panel, close) => {
       let out = "", sent = null;
       const mark = (from) => {
@@ -8436,8 +8448,11 @@ function openSubmitSlots(){
         const payload = {v:1, from, sentAt:new Date().toISOString(), slots:fresh.map(({g, r}) => ({store:g.name, storeId:r.e.store, login:r.l ? loginOut(r.l) : null, accountEmail:r.l ? r.l.email : r.e.email, emailVerified:r.l ? true : !!r.e.verified, profile:flatProfile(r.p)})), profiles:fresh.map(({r}) => flatProfile(r.p))};
         $("#ss-send-err", panel).textContent = "";
         if (seller){
-          try { sent = await sendToSeller(from, payload, stores); }
-          catch(e){ b.disabled = false; b.innerHTML = `${ic("exp")}Try again`; $("#ss-send-err", panel).textContent = e.message; return; }
+          // Closing mid-send would hide the outcome, and reopening could send the same slots again.
+          const closers = $$("[data-close]", panel); closers.forEach(x => x.disabled = true);
+          try { sent = await sendToSeller(from, payload, stores, batch, seller); }
+          catch(e){ closers.forEach(x => x.disabled = false); b.disabled = false; b.innerHTML = `${ic("exp")}Try again`; $("#ss-send-err", panel).textContent = e.message; return; }
+          closers.forEach(x => x.disabled = false);
           b.hidden = true; mark(from);
           const done = $("#ss-sent", panel); done.hidden = false;
           done.innerHTML = `<strong style="color:var(--ink)">Sent.</strong> The seller has your ${plural(fresh.length, "slot")}.`;
@@ -8481,6 +8496,11 @@ async function subKey(priv, pub, salt, usage){
   const bits = await crypto.subtle.deriveBits({name:"ECDH", public:pub}, priv, 256);
   const hk = await crypto.subtle.importKey("raw", bits, "HKDF", false, ["deriveKey"]);
   return crypto.subtle.deriveKey({name:"HKDF", hash:"SHA-256", salt, info:SUB_INFO}, hk, {name:"AES-GCM", length:256}, false, [usage]);
+}
+// Matches the fingerprint the license worker shows on its review page: 16 bytes of SHA-256.
+async function fingerprintOf(pubB64u){
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", fromB64u(pubB64u)));
+  return Array.from(h.slice(0,16)).map(x => x.toString(16).padStart(2,"0")).join("").toUpperCase().match(/.{4}/g).join(" ");
 }
 async function importOwnerPub(pubB64u){ return crypto.subtle.importKey("raw", fromB64u(pubB64u), ECDH, false, []); }
 async function sealSubmission(pubB64u, payload){

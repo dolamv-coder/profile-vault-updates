@@ -568,8 +568,10 @@ async function collectKey(pub) {
   if (raw.length !== 65 || raw[0] !== 4 || toB64u(raw) !== pub) return null;
   try { await crypto.subtle.importKey("raw", raw, { name: "ECDH", namedCurve: "P-256" }, true, []); } catch { return null; }
   const h = new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
-  const hex = Array.from(h.slice(0, 4), (x) => x.toString(16).padStart(2, "0")).join("").toUpperCase();
-  return { pub, keyId: hex.slice(0, 4) + "-" + hex.slice(4) };
+  const hex = Array.from(h, (x) => x.toString(16).padStart(2, "0")).join("").toUpperCase();
+  // The key ID is short enough to read aloud; the fingerprint is long enough that no one can make
+  // a different key that matches it.
+  return { pub, keyId: hex.slice(0, 4) + "-" + hex.slice(4, 8), fingerprint: hex.slice(0, 32).match(/.{4}/g).join(" ") };
 }
 
 const activeSubmitKey = (env) => env.DB.prepare("SELECT * FROM submit_keys WHERE status = 'active' ORDER BY decided_at DESC LIMIT 1").first();
@@ -577,6 +579,7 @@ const activeSubmitKey = (env) => env.DB.prepare("SELECT * FROM submit_keys WHERE
 async function submitKeyGet(env, url) {
   const active = env.DISCORD_WEBHOOK_URL ? await activeSubmitKey(env) : null;
   const out = { pub: active ? active.pub : null, keyId: active ? active.key_id : null };
+  if (active) out.fingerprint = (await collectKey(active.pub)).fingerprint;
   // Lets the owner's Orbit say whether its own key is waiting for them in Discord.
   const mine = url.searchParams.get("pub");
   if (mine) {
@@ -630,7 +633,7 @@ function submitKeyMessage(origin, k) {
     denied: `⛔ **Key ${k.key_id} refused**`,
     replaced: `↩️ **Key ${k.key_id} replaced by a newer one**`,
   }[k.status] || `🔑 **Receive submissions here with key ${k.key_id}?**`;
-  const note = k.status === "pending" ? "\nOnly confirm if this is the key ID in your own Orbit (Settings → Password and sharing)." : "";
+  const note = k.status === "pending" ? "\nOnly confirm if the key ID and fingerprint on the review page match your own Orbit (Settings → Password and sharing)." : "";
   return `${head}\nOffered by ${who}${note}\n[${k.status === "pending" ? "Review: confirm or refuse" : "Change decision"}](${link})`;
 }
 
@@ -673,7 +676,8 @@ async function submitKeyReview(request, env, ctx, url, id) {
   const btn = (action, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${action}">${esc(text)}</button></form>`;
   return page(200, "Collecting key", done || label,
     `<p class="small" style="margin-top:8px">Key ID</p><p class="key">${esc(cur.key_id)}</p>
-     <p class="small">Only confirm if this is the key ID in your own Orbit, under Settings → Password and sharing. Submissions are encrypted for it, and only the Orbit that has this key can open them.</p>
+     <p class="small" style="margin-top:8px">Fingerprint</p><p class="key" style="font-size:15px">${esc((await collectKey(cur.pub)).fingerprint)}</p>
+     <p class="small">Only confirm if the key ID and fingerprint match the ones in your own Orbit, under Settings → Password and sharing. Submissions are encrypted for it, and only the Orbit that has this key can open them.</p>
      <p class="small">Offered by ${esc(who)}<br>${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC${done ? `<br>Status: ${esc(label)}` : ""}</p>
      <div class="row">${cur.status !== "active" ? btn("confirm", cur.status === "pending" ? "Confirm" : "Use this key", "ok") : ""}${cur.status !== "denied" ? btn("deny", cur.status === "active" ? "Stop using it" : "Refuse", "no") : ""}</div>`);
 }
@@ -697,12 +701,19 @@ async function submission(request, env, url) {
   const stores = (Array.isArray(b.stores) ? b.stores : []).slice(0, 40)
     .map((x) => ({ name: String(x && x.name || "").replace(/\s+/g, " ").trim().slice(0, 40), n: Math.floor(Number(x && x.n)) || 0 }))
     .filter((x) => x.name && x.n > 0);
+  // The app sends the same batch id when it retries, so a batch whose answer got lost isn't posted twice.
+  const batch = /^[A-Za-z0-9_-]{16,40}$/.test(b.batch || "") ? b.batch : randomId(12);
+  const seen = await env.DB.prepare("SELECT key_hash, webhook_message_id FROM submissions WHERE id = ?").bind(batch).first();
+  if (seen) {
+    if (seen.key_hash !== lic.hash) return json({ error: "batch id taken" }, 409);
+    return seen.webhook_message_id ? json({ ok: true, id: batch, duplicate: true }) : json({ error: "still sending" }, 425);
+  }
   const now = Date.now();
   const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM submissions WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 3600 * 1000).first();
   if (recent && recent.n >= SUBMISSIONS_PER_HOUR) return json({ error: "too many submissions this hour" }, 429);
 
   const s = {
-    id: randomId(12), key_hash: lic.hash, key_last4: lic.last4, username: lic.username,
+    id: batch, key_hash: lic.hash, key_last4: lic.last4, username: lic.username,
     name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60), slots, key_id: active.key_id,
   };
   const stamp = new Date(now).toISOString().slice(0, 16).replace("T", "-").replace(":", "");
@@ -710,12 +721,20 @@ async function submission(request, env, url) {
   const who = [s.name ? `**${md(s.name)}**` : "", s.username ? `@${md(s.username)}` : "", `license …${s.key_last4}`].filter(Boolean).join(" · ");
   const storeLine = stores.map((x) => `${md(x.name)} ${x.n}`).join(" · ").slice(0, 1200);
   const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n-# Encrypted for key ${active.key_id}. To open: download the file, then in Orbit choose **Import** and drop it in.`;
-  const msgId = await webhookPost(env, { content }, { name: `orbit-slots-${stamp}${slug ? "-" + slug : ""}.txt`, text: code });
-  if (!msgId) return json({ error: "couldn't post to the channel" }, 502);
-  await env.DB.prepare(
-    `INSERT INTO submissions (id, key_hash, key_last4, name, username, slots, bytes, key_id, created_at, webhook_message_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(s.id, s.key_hash, s.key_last4, s.name, s.username, slots, code.length, s.key_id, now, msgId).run();
+  // Recorded before posting, so a retry that arrives while this one is still posting isn't posted too.
+  const ins = await env.DB.prepare(
+    `INSERT OR IGNORE INTO submissions (id, key_hash, key_last4, name, username, slots, bytes, key_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(s.id, s.key_hash, s.key_last4, s.name, s.username, slots, code.length, s.key_id, now).run();
+  if (!ins.meta || !ins.meta.changes) return json({ error: "still sending" }, 425);
+  let msgId = null;
+  try { msgId = await webhookPost(env, { content }, { name: `orbit-slots-${stamp}${slug ? "-" + slug : ""}.txt`, text: code }); }
+  catch (e) { console.error("webhook", e); }
+  if (!msgId) {
+    await env.DB.prepare("DELETE FROM submissions WHERE id = ?").bind(s.id).run();
+    return json({ error: "couldn't post to the channel" }, 502);
+  }
+  await env.DB.prepare("UPDATE submissions SET webhook_message_id = ? WHERE id = ?").bind(msgId, s.id).run().catch((e) => console.error("record", e));
   return json({ ok: true, id: s.id });
 }
 
