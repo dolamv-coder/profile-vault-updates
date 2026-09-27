@@ -42,6 +42,7 @@ const discord = createServer(async (req, res) => {
   if (req.url === "/users/@me" && USERS[who]) { const u = USERS[who]; return send(200, { id: u.id, username: u.username, bot: !!u.bot }); }
   if (req.url === "/users/@me/guilds" && USERS[who]) return send(200, USERS[who].guilds.map((id) => ({ id })));
   const u = new URL(req.url, "http://x");
+  if (req.method === "GET" && u.pathname === "/gh.json") return send(200, ghList);
   if (req.method === "POST" && u.pathname === "/webhook") {
     if (webhookFail.length) {
       const code = webhookFail.shift();
@@ -58,6 +59,12 @@ const discord = createServer(async (req, res) => {
 
 const { publicKey, privateKey } = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
 const privJwk = await crypto.subtle.exportKey("jwk", privateKey);
+// A key made by hand, on a signed list like licenses.json on GitHub.
+const GH_KEY = "PVLT-GHKE-YGHK-EYGH-KEY2";
+const ghHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("pvlt:" + GH_KEY.replace(/-/g, "")))), (b) => b.toString(16).padStart(2, "0")).join("");
+const ghBody = JSON.stringify({ v: 1, issued: new Date().toISOString(), keys: [{ h: ghHash }] });
+const ghList = { body: ghBody, sig: Buffer.from(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, privateKey, new TextEncoder().encode(ghBody))).toString("base64") };
+const pubJwk = await crypto.subtle.exportKey("jwk", publicKey);
 const common = [
   `DISCORD_CLIENT_ID=test-client`,
   `DISCORD_CLIENT_SECRET=test-secret`,
@@ -65,6 +72,8 @@ const common = [
   `ADMIN_TOKEN=test-admin-token`,
   `DISCORD_WEBHOOK_URL=http://127.0.0.1:${DISCORD_PORT}/webhook`,
   `DISCORD_API_BASE=http://127.0.0.1:${DISCORD_PORT}`,
+  `GH_LICENSE_URL=http://127.0.0.1:${DISCORD_PORT}/gh.json`,
+  `GH_LICENSE_PUB=${JSON.stringify({ kty: "EC", crv: "P-256", x: pubJwk.x, y: pubJwk.y })}`,
 ];
 
 const env = { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost", CI: "1" };
@@ -399,10 +408,109 @@ try {
     assert.equal(page.status, 403);
     assert.match((await getJson("/discord/status/" + r)).error, /declined/);
   });
+  let frankKey;
   await test("new accounts get a key straight away again", async () => {
     const r = rid(); await signIn(r, "frank");
     const s = await getJson("/discord/status/" + r);
     assert.equal(s.status, "issued"); assert.match(s.key, /^PVLT-/);
+    frankKey = s.key;
+  });
+
+  console.log("\nSlots");
+  const slots = (path, key, body) => fetch(BASE + path, { method: body ? "POST" : "GET", headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" }, body: body && JSON.stringify(body) });
+  const slotLink = (content) => (content.match(/\((http[^)]+\/slots\/review\/[^)]+)\)/) || [])[1];
+  const slotPost = (link, action, amount) => fetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), action, ...(amount != null ? { amount: String(amount) } : {}) }) });
+  let frankLink;
+  await test("the limit needs a valid license key", async () => {
+    assert.equal((await slots("/slots/limit")).status, 401);
+    assert.equal((await slots("/slots/limit", "PVLT-AAAA-BBBB-CCCC-DDDD")).status, 401);
+    assert.equal((await slots("/slots/limit", "not a key")).status, 401);
+  });
+  await test("everyone starts at 20 slots", async () => {
+    assert.deepEqual(await (await slots("/slots/limit", frankKey)).json(), { limit: 20, request: null, canRequest: true });
+  });
+  await test("keys made by hand (the GitHub list) work too", async () => {
+    assert.equal((await (await slots("/slots/limit", GH_KEY.toLowerCase())).json()).limit, 20);
+  });
+  await test("asking for fewer slots than you have, or too many, is refused", async () => {
+    assert.equal((await slots("/slots/request", frankKey, { requested: 20 })).status, 400);
+    assert.equal((await slots("/slots/request", frankKey, { requested: 501 })).status, 400);
+    assert.equal((await slots("/slots/request", frankKey, { requested: "lots" })).status, 400);
+  });
+  await test("a request is posted to the owner's channel with a review link", async () => {
+    const before = webhookPosts.length;
+    const r = await (await slots("/slots/request", frankKey, { requested: 40, name: "Frank_the_*shopper*", note: "Big drop\nthis weekend" })).json();
+    assert.equal(r.status, "pending"); assert.equal(r.request.requested, 40);
+    await new Promise((ok) => setTimeout(ok, 400));
+    assert.equal(webhookPosts.length, before + 1);
+    const m = webhookPosts.at(-1).content;
+    assert.match(m, /More slots requested/); assert.match(m, /20 → 40 slots/);
+    assert.match(m, /Frank\\_the\\_\\\*shopper\\\*/, "name is markdown-escaped");
+    assert.match(m, /@frank/); assert.match(m, new RegExp("license …" + frankKey.slice(-4)));
+    assert.match(m, /Big drop this weekend/, "note kept on one line");
+    frankLink = slotLink(m);
+    assert.ok(frankLink.startsWith(BASE + "/slots/review/"));
+    const lim = await (await slots("/slots/limit", frankKey)).json();
+    assert.equal(lim.limit, 20); assert.equal(lim.request.status, "pending");
+  });
+  await test("asking again while one is waiting doesn't post again", async () => {
+    const before = webhookPosts.length;
+    const r = await (await slots("/slots/request", frankKey, { requested: 60 })).json();
+    assert.equal(r.status, "pending"); assert.equal(r.request.requested, 40);
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal(webhookPosts.length, before);
+  });
+  await test("the review page needs the right token and changes nothing by itself", async () => {
+    assert.equal((await fetch(frankLink.replace(/t=[^&]+/, "t=nope"))).status, 404);
+    assert.equal((await slotPost(frankLink.replace(/t=[^&]+/, "t=nope"), "approve")).status, 404);
+    const html = await (await fetch(frankLink)).text();
+    assert.match(html, /asked for <strong>40<\/strong>/); assert.match(html, /Waiting for your decision/);
+    assert.equal((await (await slots("/slots/limit", frankKey)).json()).limit, 20);
+  });
+  await test("approving can grant a different number, and the channel message is updated", async () => {
+    const res = await slotPost(frankLink, "approve", 35);
+    assert.match(await res.text(), /can now use 35 slots/);
+    const lim = await (await slots("/slots/limit", frankKey)).json();
+    assert.equal(lim.limit, 35); assert.equal(lim.request.status, "approved"); assert.equal(lim.request.granted, 35);
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.match(webhookEdits.at(-1).content, /Approved: 35 slots/);
+  });
+  await test("an out-of-range amount is refused on the review page", async () => {
+    assert.match(await (await slotPost(frankLink, "approve", 0)).text(), /between 1 and 500/);
+    assert.equal((await (await slots("/slots/limit", frankKey)).json()).limit, 35);
+  });
+  await test("denying after approving puts the limit back", async () => {
+    await slotPost(frankLink, "deny");
+    const lim = await (await slots("/slots/limit", frankKey)).json();
+    assert.equal(lim.limit, 20); assert.equal(lim.request.status, "denied");
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.match(webhookEdits.at(-1).content, /Slot request denied/);
+  });
+  await test("a denied request can be approved later", async () => {
+    await slotPost(frankLink, "approve");
+    assert.equal((await (await slots("/slots/limit", frankKey)).json()).limit, 40);
+  });
+  await test("a revoked key can't ask or read its limit", async () => {
+    await admin("/admin/revoke", { key: frankKey });
+    assert.equal((await slots("/slots/limit", frankKey)).status, 401);
+    assert.equal((await slots("/slots/request", frankKey, { requested: 80 })).status, 401);
+    await admin("/admin/restore", { key: frankKey });
+  });
+  await test("at most 3 requests a day per license", async () => {
+    for (const n of [41, 42]){
+      const r = await (await slots("/slots/request", frankKey, { requested: n })).json();
+      assert.equal(r.status, "pending");
+      const link = slotLink(await new Promise((ok) => setTimeout(() => ok(webhookPosts.at(-1).content), 300)));
+      await slotPost(link, "deny");
+    }
+    assert.equal((await slots("/slots/request", frankKey, { requested: 43 })).status, 429);
+  });
+  await test("admin lists limits and requests with review links", async () => {
+    const d = await (await admin("/admin/slots")).json();
+    assert.equal(d.default, 20);
+    assert.equal(d.limits.length, 1); assert.equal(d.limits[0].slot_limit, 40);
+    assert.equal(d.requests.length, 3);
+    assert.ok(d.requests.every((q) => q.review_url.includes("/slots/review/") && q.review_token === undefined && q.key_hash === undefined));
   });
   console.log(`\n${passed} passed`);
 } finally {

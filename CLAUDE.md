@@ -33,6 +33,9 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   posted to `DISCORD_WEBHOOK_URL`, approved or denied at `/review/:discord_id`;
   `/discord/status` then answers `review` until decided. 1.9.42+ keeps waiting on
   `review`; 1.9.41 shows the message and asks the user to try again later.
+  It also keeps each license's slot limit (default 20 switched on at once on the
+  Submit page, app 1.9.46+): `/slots/limit` and `/slots/request` take the license
+  key as `Authorization: Bearer`, and requests are approved at `/slots/review/:id`.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 

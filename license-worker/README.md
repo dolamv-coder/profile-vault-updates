@@ -167,6 +167,31 @@ the `/admin/applications` list below.
 To go back to handing keys out straight away, set `REQUIRE_APPROVAL = ""` in
 `wrangler.toml` and run `npm run deploy`. People you denied stay denied.
 
+## Slot limits
+
+Orbit (1.9.46 and later) lets each license have at most **20 slots** switched on at once on
+the Submit page, across all stores. Change the starting number with `DEFAULT_SLOT_LIMIT` in
+`wrangler.toml`.
+
+When someone needs more, they press **Request more slots** in Orbit, say how many they need in
+total and why. The request is posted to the same Discord channel as key requests:
+
+> 🎟️ **More slots requested** · **Kim** · @kim · license …ABCD
+> 20 → 40 slots
+> [Review: approve or deny](…)
+
+The link opens a page where you can approve the number they asked for, change it first, or
+deny it. Their Orbit picks up the new limit within a minute or so while the Submit page is
+open, or the next time they unlock. You can change your mind later from the same link:
+denying an approved request puts their limit back to what it was.
+
+Each license can have one request waiting at a time and send at most 3 a day. Every limit and
+request, with its review link, is in `/admin/slots`:
+
+```
+curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/slots
+```
+
 ## Limiting who gets a key
 
 By default, any Discord account except bots gets a key. To limit it, edit `[vars]` in

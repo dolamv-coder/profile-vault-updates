@@ -43,3 +43,30 @@ CREATE TABLE IF NOT EXISTS applications (
   decided_at         INTEGER,
   webhook_message_id TEXT
 );
+
+-- How many slots a license can have switched on at once (DEFAULT_SLOT_LIMIT if no row).
+CREATE TABLE IF NOT EXISTS slot_limits (
+  key_hash   TEXT PRIMARY KEY,
+  slot_limit INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- Requests for more slots, and the owner's decision.
+CREATE TABLE IF NOT EXISTS slot_requests (
+  id                 TEXT PRIMARY KEY,
+  key_hash           TEXT NOT NULL,
+  key_last4          TEXT NOT NULL,
+  name               TEXT NOT NULL DEFAULT '',
+  discord_id         TEXT,
+  username           TEXT,
+  current_limit      INTEGER NOT NULL,
+  requested          INTEGER NOT NULL,
+  granted            INTEGER,
+  note               TEXT NOT NULL DEFAULT '',
+  status             TEXT NOT NULL DEFAULT 'pending',   -- pending | approved | denied
+  review_token       TEXT NOT NULL,
+  created_at         INTEGER NOT NULL,
+  decided_at         INTEGER,
+  webhook_message_id TEXT
+);
+CREATE INDEX IF NOT EXISTS slot_requests_key ON slot_requests (key_hash, created_at);
