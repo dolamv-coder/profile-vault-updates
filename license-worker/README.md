@@ -192,6 +192,48 @@ request, with its review link, is in `/admin/slots`:
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/slots
 ```
 
+## Slots sent to your Discord
+
+Orbit (1.9.47 and later) can send the slots people submit straight to the same Discord channel,
+as a file. The file is encrypted in their Orbit before it's sent, for a key only your own Orbit
+has, so card numbers and passwords are never readable by Discord or by this worker, and the
+worker doesn't keep a copy.
+
+Turn it on once, from your own Orbit (the one you'll open submissions with):
+
+1. **Settings → Password and sharing**. Under **Collect profiles from others**, choose **Set up
+   collecting** if you haven't already.
+2. Under **Receive slots in Discord**, choose **Send my key to Discord**.
+3. Orbit shows a **key ID** and a longer **fingerprint**. In your channel, a message asks you to
+   confirm that key. Open its link and choose **Confirm**, but only if the key ID and fingerprint on
+   that page match the ones in your Orbit.
+
+From then on, the Submit page in everyone's Orbit says **Going straight to the seller**, and each
+batch arrives in your channel like this, with a `.txt` file attached:
+
+> 📦 **6 slots** from **Kim** · @kim · license …ABCD
+> Target 3 · Walmart 3
+
+To open one, download the file, then in your Orbit choose **Import** and drop it in.
+
+- **Back up your vault.** Only the Orbit with that key can open the files. If it's lost, files
+  already sent can't be opened; set up collecting again and send the new key.
+- To switch to a new key, send it the same way and confirm it. Orbit seals new batches for the new
+  one; older files still need the old vault. Each person's Orbit remembers the key it last sent
+  with, and the first time they send after a change it tells them the key changed and asks them to
+  press **Send to the new key**, so tell people when you change it. The link in each key's message lets you change your
+  mind later, and **Stop using it** turns sending off (Orbit then falls back to giving people a code
+  to send you).
+- Someone who set a different recipient by hand on their Submit page keeps getting a code for that
+  recipient instead.
+- Each license can send at most 30 batches an hour. A batch sent again because the answer got lost
+  on the way isn't posted twice. Every key and batch (never the contents) is in
+  `/admin/submissions`:
+
+  ```
+  curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/submissions
+  ```
+
 ## Limiting who gets a key
 
 By default, any Discord account except bots gets a key. To limit it, edit `[vars]` in
@@ -242,5 +284,5 @@ npm test
 Runs the worker in Wrangler's local runtime with a local database and a mock Discord,
 once handing out keys straight away and once with approval on. It goes through sign-in,
 key pickup, repeat sign-in, cancelled and refused sign-ins, the account-age and server
-checks, revoke and restore, the rate limit, and requests being posted, approved, denied
-and changed.
+checks, revoke and restore, the rate limit, requests being posted, approved, denied
+and changed, slot limits, and submissions and collecting keys.

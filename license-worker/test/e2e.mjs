@@ -31,7 +31,8 @@ const USERS = {
 
 const webhookPosts = [], webhookEdits = [], webhookFail = [];
 const discord = createServer(async (req, res) => {
-  let body = ""; for await (const c of req) body += c;
+  const chunks = []; for await (const c of req) chunks.push(c);
+  const raw = Buffer.concat(chunks), body = raw.toString();
   const send = (code, data) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(data)); };
   const who = (req.headers.authorization || "").replace("Bearer tok-", "");
   if (req.method === "POST" && req.url === "/oauth2/token") {
@@ -48,7 +49,13 @@ const discord = createServer(async (req, res) => {
       const code = webhookFail.shift();
       return code === 429 ? send(429, { message: "You are being rate limited.", retry_after: 0.3 }) : send(code, { message: "fail" });
     }
-    const m = { id: "msg" + (webhookPosts.length + 1), wait: u.searchParams.get("wait"), ...JSON.parse(body) };
+    let data, files = [];
+    if (/^multipart\//.test(req.headers["content-type"] || "")) {
+      const form = await new Response(raw, { headers: { "content-type": req.headers["content-type"] } }).formData();
+      data = JSON.parse(form.get("payload_json"));
+      for (const [k, v] of form) if (k.startsWith("files[")) files.push({ name: v.name, text: await v.text() });
+    } else data = JSON.parse(body);
+    const m = { id: "msg" + (webhookPosts.length + 1), wait: u.searchParams.get("wait"), files, ...data };
     webhookPosts.push(m); return send(200, { id: m.id });
   }
   if (req.method === "PATCH" && u.pathname.startsWith("/webhook/messages/")) {
@@ -511,6 +518,145 @@ try {
     assert.equal(d.limits.length, 1); assert.equal(d.limits[0].slot_limit, 40);
     assert.equal(d.requests.length, 3);
     assert.ok(d.requests.every((q) => q.review_url.includes("/slots/review/") && q.review_token === undefined && q.key_hash === undefined));
+  });
+  console.log("\nSubmissions");
+  const b64u = (b) => Buffer.from(b).toString("base64url");
+  const newCollectKey = async () => {
+    const kp = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+    const raw = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
+    const h = new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
+    const hex = Buffer.from(h).toString("hex").toUpperCase();
+    return { pub: b64u(raw), keyId: hex.slice(0, 4) + "-" + hex.slice(4, 8), fingerprint: hex.slice(0, 32).match(/.{4}/g).join(" ") };
+  };
+  const fakeCode = (n = 200) => "PVSUB1." + b64u(crypto.getRandomValues(new Uint8Array(65))) + "." + b64u(crypto.getRandomValues(new Uint8Array(12))) + "." + b64u(crypto.getRandomValues(new Uint8Array(n)));
+  const keyLink = (content) => (content.match(/\((http[^)]+\/submit\/review\/[^)]+)\)/) || [])[1];
+  const keyPost = (link, action) => fetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), action }) });
+  const ownerKey = await newCollectKey(), otherKey = await newCollectKey();
+  let ownerLink;
+  await test("there's no collecting key until the owner confirms one", async () => {
+    assert.deepEqual(await getJson("/submit/key"), { pub: null, keyId: null });
+    const r = await slots("/submissions", frankKey, { code: fakeCode(), keyId: ownerKey.keyId, slots: 1 });
+    assert.equal(r.status, 409); assert.equal((await r.json()).error, "no collecting key");
+  });
+  await test("offering a key needs a license and a real P-256 key", async () => {
+    assert.equal((await slots("/submit/key", null, { pub: ownerKey.pub })).status, 401);
+    assert.equal((await slots("/submit/key", frankKey, { pub: "nope" })).status, 400);
+    const bad = Buffer.from(ownerKey.pub, "base64url"); bad[64] ^= 1;   // no longer a point on the curve
+    assert.equal((await slots("/submit/key", frankKey, { pub: b64u(bad) })).status, 400);
+  });
+  await test("an offer whose post failed is posted when the app offers it again", async () => {
+    const k = await newCollectKey();
+    webhookFail.push(500);
+    assert.equal((await (await slots("/submit/key", frankKey, { pub: k.pub })).json()).status, "pending");
+    await new Promise((ok) => setTimeout(ok, 400));
+    const before = webhookPosts.length;
+    assert.equal((await (await slots("/submit/key", frankKey, { pub: k.pub })).json()).status, "pending");
+    await new Promise((ok) => setTimeout(ok, 400));
+    assert.equal(webhookPosts.length, before + 1);
+    await keyPost(keyLink(webhookPosts.at(-1).content), "deny");
+  });
+  await test("an offered key is posted to the channel with its key ID, and isn't used yet", async () => {
+    const before = webhookPosts.length;
+    const r = await (await slots("/submit/key", GH_KEY, { pub: ownerKey.pub, name: "Owner" })).json();
+    assert.deepEqual(r, { status: "pending", keyId: ownerKey.keyId });
+    await new Promise((ok) => setTimeout(ok, 400));
+    assert.equal(webhookPosts.length, before + 1);
+    const m = webhookPosts.at(-1).content;
+    assert.match(m, new RegExp("with key " + ownerKey.keyId)); assert.match(m, /Only confirm if the key ID and fingerprint on the review page match your own Orbit/);
+    ownerLink = keyLink(m); assert.ok(ownerLink);
+    assert.equal((await getJson("/submit/key")).pub, null);
+    assert.equal((await getJson("/submit/key?pub=" + ownerKey.pub)).mine, "pending");
+    const again = await (await slots("/submit/key", GH_KEY, { pub: ownerKey.pub })).json();
+    assert.equal(again.status, "pending");
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal(webhookPosts.length, before + 1, "not posted twice");
+  });
+  await test("the key review page needs its token and changes nothing by itself", async () => {
+    assert.equal((await fetch(ownerLink.replace(/t=[^&]+/, "t=nope"))).status, 404);
+    assert.equal((await keyPost(ownerLink.replace(/t=[^&]+/, "t=nope"), "confirm")).status, 404);
+    const html = await (await fetch(ownerLink)).text();
+    assert.match(html, new RegExp(ownerKey.keyId)); assert.match(html, new RegExp(ownerKey.fingerprint)); assert.match(html, /Waiting for you/);
+    assert.equal((await getJson("/submit/key")).pub, null);
+  });
+  await test("confirming makes it the key everyone's Orbit encrypts to", async () => {
+    assert.match(await (await keyPost(ownerLink, "confirm")).text(), /Confirmed/);
+    assert.deepEqual(await getJson("/submit/key"), { pub: ownerKey.pub, keyId: ownerKey.keyId, fingerprint: ownerKey.fingerprint });
+    assert.equal((await getJson("/submit/key?pub=" + ownerKey.pub)).mine, "active");
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.match(webhookEdits.at(-1).content, /Submissions now arrive here/);
+    assert.equal((await (await slots("/submit/key", GH_KEY, { pub: ownerKey.pub })).json()).status, "active");
+  });
+  let code;
+  await test("a submission is posted as an attachment, with only the sealed code in it", async () => {
+    code = fakeCode(3000);
+    const before = webhookPosts.length;
+    const r = await slots("/submissions", frankKey, { code, keyId: ownerKey.keyId, name: "Frank *F*", slots: 3, stores: [{ name: "Target", n: 2 }, { name: "Best_Buy", n: 1 }] });
+    assert.equal(r.status, 200); assert.equal((await r.json()).ok, true);
+    assert.equal(webhookPosts.length, before + 1);
+    const m = webhookPosts.at(-1);
+    assert.match(m.content, /\*\*3 slots\*\* from \*\*Frank \\\*F\\\*\*\* · @frank · license …/);
+    assert.match(m.content, /Target 2 · Best\\_Buy 1/); assert.match(m.content, new RegExp("key " + ownerKey.keyId));
+    assert.equal(m.files.length, 1); assert.equal(m.files[0].text, code);
+    assert.match(m.files[0].name, /^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-Frank-F\.txt$/);
+    assert.equal(m.allowed_mentions.parse.length, 0);
+  });
+  await test("submissions need a license, a sealed code and the current key", async () => {
+    assert.equal((await slots("/submissions", null, { code, keyId: ownerKey.keyId, slots: 1 })).status, 401);
+    assert.equal((await slots("/submissions", frankKey, { code: '{"cards":[]}', keyId: ownerKey.keyId, slots: 1 })).status, 400);
+    assert.equal((await slots("/submissions", frankKey, { code, keyId: ownerKey.keyId, slots: 0 })).status, 400);
+    const r = await slots("/submissions", frankKey, { code, keyId: otherKey.keyId, slots: 1 });
+    assert.equal(r.status, 409);
+    assert.deepEqual(await r.json(), { error: "key changed", pub: ownerKey.pub, keyId: ownerKey.keyId });
+  });
+  await test("sending the same batch again (its answer got lost) doesn't post it twice", async () => {
+    const batch = "batch" + rid();
+    const before = webhookPosts.length;
+    const first = await (await slots("/submissions", frankKey, { code, keyId: ownerKey.keyId, slots: 2, batch })).json();
+    assert.deepEqual(first, { ok: true, id: batch });
+    const again = await (await slots("/submissions", frankKey, { code, keyId: ownerKey.keyId, slots: 2, batch })).json();
+    assert.equal(again.ok, true); assert.equal(again.duplicate, true);
+    assert.equal(webhookPosts.length, before + 1);
+    assert.equal((await slots("/submissions", GH_KEY, { code, keyId: ownerKey.keyId, slots: 2, batch })).status, 409, "another license can't reuse it");
+  });
+  await test("if the channel refuses the post, the app is told", async () => {
+    webhookFail.push(500);
+    const batch = "failing" + rid();
+    assert.equal((await slots("/submissions", frankKey, { code, keyId: ownerKey.keyId, slots: 1, batch })).status, 502);
+    const before = webhookPosts.length;
+    assert.equal((await slots("/submissions", frankKey, { code, keyId: ownerKey.keyId, slots: 1, batch })).status, 200, "and trying again posts it");
+    assert.equal(webhookPosts.length, before + 1);
+  });
+  await test("a new key replaces the old one once confirmed", async () => {
+    await slots("/submit/key", frankKey, { pub: otherKey.pub });
+    await new Promise((ok) => setTimeout(ok, 400));
+    const link = keyLink(webhookPosts.at(-1).content);
+    assert.equal((await getJson("/submit/key")).keyId, ownerKey.keyId, "old key stays until confirmed");
+    await keyPost(link, "confirm");
+    assert.equal((await getJson("/submit/key")).keyId, otherKey.keyId);
+    assert.equal((await getJson("/submit/key?pub=" + ownerKey.pub)).mine, "replaced");
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.ok(webhookEdits.some((e) => /replaced by a newer one/.test(e.content)));
+    await keyPost(ownerLink, "confirm");
+    assert.equal((await getJson("/submit/key")).keyId, ownerKey.keyId, "the owner can switch back");
+  });
+  await test("stopping the key stops submissions", async () => {
+    await keyPost(ownerLink, "deny");
+    assert.equal((await getJson("/submit/key")).pub, null);
+    assert.equal((await slots("/submissions", frankKey, { code, keyId: ownerKey.keyId, slots: 1 })).status, 409);
+    await keyPost(ownerLink, "confirm");
+  });
+  await test("at most 30 submissions an hour per license", async () => {
+    const small = fakeCode();
+    for (let i = 0; i < 29; i++) assert.equal((await slots("/submissions", GH_KEY, { code: small, keyId: ownerKey.keyId, slots: 1 })).status, 200);
+    assert.equal((await slots("/submissions", GH_KEY, { code: small, keyId: ownerKey.keyId, slots: 1 })).status, 200);
+    assert.equal((await slots("/submissions", GH_KEY, { code: small, keyId: ownerKey.keyId, slots: 1 })).status, 429);
+  });
+  await test("admin lists keys (with review links) and submissions, never the codes", async () => {
+    const d = await (await admin("/admin/submissions")).json();
+    assert.equal(d.keys.length, 3);
+    assert.ok(d.keys.every((k) => k.review_url.includes("/submit/review/") && k.review_token === undefined && k.key_hash === undefined));
+    assert.equal(d.submissions.length, 33);
+    assert.ok(d.submissions.every((x) => x.code === undefined && x.bytes > 0));
   });
   console.log(`\n${passed} passed`);
 } finally {

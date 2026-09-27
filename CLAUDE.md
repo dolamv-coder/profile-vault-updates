@@ -36,6 +36,10 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   It also keeps each license's slot limit (default 20 switched on at once on the
   Submit page, app 1.9.46+): `/slots/limit` and `/slots/request` take the license
   key as `Authorization: Bearer`, and requests are approved at `/slots/review/:id`.
+  From 1.9.47, Submit sends slots straight to the owner's channel: the app seals them for the
+  owner's collecting key (`GET /submit/key`; the owner offers it from Settings → Password and
+  sharing and confirms it at `/submit/review/:id`), and `POST /submissions` posts the sealed
+  `PVSUB1.` code as a `.txt` attachment. Plaintext card data and passwords never go to Discord.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 

@@ -70,3 +70,37 @@ CREATE TABLE IF NOT EXISTS slot_requests (
   webhook_message_id TEXT
 );
 CREATE INDEX IF NOT EXISTS slot_requests_key ON slot_requests (key_hash, created_at);
+
+-- Collecting keys submissions are encrypted to (from the owner's Orbit, Settings → Collecting).
+-- A key offered by the app waits until the owner confirms it from their Discord channel; one is
+-- active at a time.
+CREATE TABLE IF NOT EXISTS submit_keys (
+  id                 TEXT PRIMARY KEY,
+  pub                TEXT NOT NULL,
+  key_id             TEXT NOT NULL,
+  key_hash           TEXT NOT NULL,                     -- license that offered it
+  key_last4          TEXT NOT NULL,
+  name               TEXT NOT NULL DEFAULT '',
+  username           TEXT,
+  status             TEXT NOT NULL DEFAULT 'pending',   -- pending | active | denied | replaced
+  review_token       TEXT NOT NULL,
+  created_at         INTEGER NOT NULL,
+  decided_at         INTEGER,
+  webhook_message_id TEXT
+);
+CREATE INDEX IF NOT EXISTS submit_keys_pub ON submit_keys (pub, created_at);
+
+-- Submissions posted to the channel. The encrypted code itself isn't kept.
+CREATE TABLE IF NOT EXISTS submissions (
+  id                 TEXT PRIMARY KEY,
+  key_hash           TEXT NOT NULL,
+  key_last4          TEXT NOT NULL,
+  name               TEXT NOT NULL DEFAULT '',
+  username           TEXT,
+  slots              INTEGER NOT NULL,
+  bytes              INTEGER NOT NULL,
+  key_id             TEXT NOT NULL,
+  created_at         INTEGER NOT NULL,
+  webhook_message_id TEXT
+);
+CREATE INDEX IF NOT EXISTS submissions_key ON submissions (key_hash, created_at);
