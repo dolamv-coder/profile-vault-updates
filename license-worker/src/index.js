@@ -15,11 +15,18 @@
 // Slots (app sends "Authorization: Bearer <license key>"):
 //   GET  /slots/limit          {limit, request}: how many slots this license can have on at once
 //   POST /slots/request        {requested, name, note}: ask for more; posted to DISCORD_WEBHOOK_URL
+// Submissions (slots sent from the Submit page), encrypted in the app to the owner's collecting key:
+//   GET  /submit/key           {pub, keyId}: the key to encrypt to (null until the owner confirms one)
+//   POST /submit/key           {pub, name}: offer a collecting key; the owner confirms it in Discord
+//   POST /submissions          {code, keyId, name, slots, stores}: posted to DISCORD_WEBHOOK_URL as
+//                              an attachment. Only the encrypted code goes there, and it isn't kept here.
 // Owner:
 //   GET/POST /review/DISCORD_ID?t=TOKEN   approve or deny one request (link posted to the webhook)
 //   GET/POST /slots/review/ID?t=TOKEN     approve (optionally a different number) or deny more slots
+//   GET/POST /submit/review/ID?t=TOKEN    confirm or refuse a collecting key
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/applications   every request and decision
+//   GET  /admin/submissions    collecting keys (with review links) and submissions sent
 //   POST /admin/revoke         {discord_id} or {key}: the app locks on its next check
 //   POST /admin/restore        {discord_id} or {key}
 
@@ -63,6 +70,10 @@ export default {
       if (path === "/slots/limit" && request.method === "GET") return await slotLimit(request, env);
       if (path === "/slots/request" && request.method === "POST") return await slotRequest(request, env, ctx, url);
       if (path.startsWith("/slots/review/")) return await slotReview(request, env, ctx, url, path.slice("/slots/review/".length));
+      if (path === "/submit/key" && request.method === "GET") return await submitKeyGet(env, url);
+      if (path === "/submit/key" && request.method === "POST") return await submitKeyPost(request, env, ctx, url);
+      if (path.startsWith("/submit/review/")) return await submitKeyReview(request, env, ctx, url, path.slice("/submit/review/".length));
+      if (path === "/submissions" && request.method === "POST") return await submission(request, env, url);
       if (path.startsWith("/admin/")) return await admin(request, env, path);
       return json({ error: "not found" }, 404);
     } catch (e) {
@@ -324,15 +335,19 @@ async function decide(env, ctx, app, action, origin) {
 
 // ---- owner's Discord channel ---------------------------------------------------------
 
-async function webhookPost(env, payload) {
+// `file` ({name, text}) is sent as an attachment on the message.
+async function webhookPost(env, payload, file) {
   if (!env.DISCORD_WEBHOOK_URL) return null;
   const u = new URL(env.DISCORD_WEBHOOK_URL);
   u.searchParams.set("wait", "true");
-  const send = () => fetch(u, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...payload, flags: SUPPRESS_EMBEDS, allowed_mentions: { parse: [] } }),
-  });
+  const body = JSON.stringify({ ...payload, flags: SUPPRESS_EMBEDS, allowed_mentions: { parse: [] } });
+  const send = () => {
+    if (!file) return fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body });
+    const form = new FormData();
+    form.append("payload_json", body);
+    form.append("files[0]", new Blob([file.text], { type: "text/plain" }), file.name);
+    return fetch(u, { method: "POST", body: form });
+  };
   let r = await send();
   if (r.status === 429) {
     // Discord limits how often a webhook can post; wait as long as it asks (briefly) and try once more.
@@ -531,6 +546,179 @@ async function slotReview(request, env, ctx, url, id) {
      </form>`);
 }
 
+// ---- submissions -----------------------------------------------------------------------
+//
+// The Submit page seals each batch (card numbers, store and email passwords) in the app with the
+// owner's collecting key from Orbit (Settings → Password and sharing), so the worker and Discord only ever
+// see ciphertext. The owner downloads the attachment and opens it with Import in Orbit.
+
+const SUBMISSIONS_PER_HOUR = 30;
+const SUBMISSION_MAX_CHARS = 4_000_000;     // well under Discord's attachment limit
+const SUBMIT_KEY_OFFERS_PER_DAY = 3;
+
+const fromB64u = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+const toB64u = (b) => btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+// A P-256 public key as the app writes it (raw point, base64url), and its key ID as the app
+// shows it: the first 4 bytes of its SHA-256, as XXXX-XXXX.
+async function collectKey(pub) {
+  if (!/^[A-Za-z0-9_-]{80,100}$/.test(pub || "")) return null;
+  let raw;
+  try { raw = fromB64u(pub); } catch { return null; }
+  if (raw.length !== 65 || raw[0] !== 4 || toB64u(raw) !== pub) return null;
+  try { await crypto.subtle.importKey("raw", raw, { name: "ECDH", namedCurve: "P-256" }, true, []); } catch { return null; }
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", raw));
+  const hex = Array.from(h.slice(0, 4), (x) => x.toString(16).padStart(2, "0")).join("").toUpperCase();
+  return { pub, keyId: hex.slice(0, 4) + "-" + hex.slice(4) };
+}
+
+const activeSubmitKey = (env) => env.DB.prepare("SELECT * FROM submit_keys WHERE status = 'active' ORDER BY decided_at DESC LIMIT 1").first();
+
+async function submitKeyGet(env, url) {
+  const active = env.DISCORD_WEBHOOK_URL ? await activeSubmitKey(env) : null;
+  const out = { pub: active ? active.pub : null, keyId: active ? active.key_id : null };
+  // Lets the owner's Orbit say whether its own key is waiting for them in Discord.
+  const mine = url.searchParams.get("pub");
+  if (mine) {
+    const row = await env.DB.prepare("SELECT status FROM submit_keys WHERE pub = ? ORDER BY created_at DESC LIMIT 1").bind(mine).first();
+    out.mine = row ? row.status : null;
+  }
+  return json(out, 200, { "cache-control": "no-store" });
+}
+
+async function submitKeyPost(request, env, ctx, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  if (!env.DISCORD_WEBHOOK_URL) return json({ error: "the Discord channel isn't set up" }, 503);
+  const b = await request.json().catch(() => ({}));
+  const k = await collectKey(String(b.pub || ""));
+  if (!k) return json({ error: "that isn't a collecting key" }, 400);
+  const latest = await env.DB.prepare("SELECT * FROM submit_keys WHERE pub = ? ORDER BY created_at DESC LIMIT 1").bind(k.pub).first();
+  if (latest && latest.status === "active") return json({ status: "active", keyId: k.keyId });
+  if (latest && latest.status === "pending") {
+    if (!latest.webhook_message_id) ctx.waitUntil(postSubmitKey(env, url.origin, latest));
+    return json({ status: "pending", keyId: k.keyId });
+  }
+  const now = Date.now();
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM submit_keys WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 86400000).first();
+  if (recent && recent.n >= SUBMIT_KEY_OFFERS_PER_DAY) return json({ error: "too many tries today" }, 429);
+  const row = {
+    id: randomId(12), pub: k.pub, key_id: k.keyId, key_hash: lic.hash, key_last4: lic.last4,
+    name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60), username: lic.username,
+    status: "pending", review_token: randomId(24), created_at: now,
+  };
+  await env.DB.prepare(
+    `INSERT INTO submit_keys (id, pub, key_id, key_hash, key_last4, name, username, status, review_token, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+  ).bind(row.id, row.pub, row.key_id, row.key_hash, row.key_last4, row.name, row.username, row.review_token, row.created_at).run();
+  ctx.waitUntil(postSubmitKey(env, url.origin, row));
+  return json({ status: "pending", keyId: k.keyId });
+}
+
+async function postSubmitKey(env, origin, row) {
+  try {
+    const id = await webhookPost(env, { content: submitKeyMessage(origin, row) });
+    if (id) await env.DB.prepare("UPDATE submit_keys SET webhook_message_id = ? WHERE id = ?").bind(id, row.id).run();
+  } catch (e) { console.error("webhook", e); }
+}
+
+function submitKeyMessage(origin, k) {
+  const who = [k.name ? `**${md(k.name)}**` : "", k.username ? `@${md(k.username)}` : "", `license …${k.key_last4}`].filter(Boolean).join(" · ");
+  const link = `${origin}/submit/review/${k.id}?t=${k.review_token}`;
+  const head = {
+    active: `✅ **Submissions now arrive here, encrypted for key ${k.key_id}**`,
+    denied: `⛔ **Key ${k.key_id} refused**`,
+    replaced: `↩️ **Key ${k.key_id} replaced by a newer one**`,
+  }[k.status] || `🔑 **Receive submissions here with key ${k.key_id}?**`;
+  const note = k.status === "pending" ? "\nOnly confirm if this is the key ID in your own Orbit (Settings → Password and sharing)." : "";
+  return `${head}\nOffered by ${who}${note}\n[${k.status === "pending" ? "Review: confirm or refuse" : "Change decision"}](${link})`;
+}
+
+async function submitKeyReview(request, env, ctx, url, id) {
+  const k = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM submit_keys WHERE id = ?").bind(id).first() : null;
+  let t = url.searchParams.get("t") || "", action = "";
+  if (request.method === "POST") {
+    const form = await request.formData().catch(() => null);
+    t = form && String(form.get("t") || "") || t;
+    action = form && String(form.get("action") || "");
+  } else if (request.method !== "GET") {
+    return page(405, "Not allowed", "");
+  }
+  if (!k || !(await sameText(t, k.review_token))) return page(404, "Key not found", "This review link isn't valid.");
+
+  let done = "";
+  const now = Date.now();
+  const touched = [];
+  if (action === "confirm" && k.status !== "active") {
+    const { results: old } = await env.DB.prepare("SELECT * FROM submit_keys WHERE status = 'active'").all();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE submit_keys SET status = 'replaced', decided_at = ? WHERE status = 'active'").bind(now),
+      env.DB.prepare("UPDATE submit_keys SET status = 'active', decided_at = ? WHERE id = ?").bind(now, k.id),
+    ]);
+    touched.push(...old.map((o) => o.id), k.id);
+    done = "Confirmed. Submissions now come to your channel, and only the Orbit with this key can open them.";
+  } else if (action === "deny" && k.status !== "denied") {
+    await env.DB.prepare("UPDATE submit_keys SET status = 'denied', decided_at = ? WHERE id = ?").bind(now, k.id).run();
+    touched.push(k.id);
+    done = k.status === "active" ? "Stopped. Orbit won't send submissions to your channel until you confirm a key again." : "Refused.";
+  }
+  for (const tid of touched) {
+    const row = await env.DB.prepare("SELECT * FROM submit_keys WHERE id = ?").bind(tid).first();
+    if (row.webhook_message_id) ctx.waitUntil(webhookEdit(env, row.webhook_message_id, { content: submitKeyMessage(url.origin, row) }).catch(() => {}));
+  }
+  const cur = await env.DB.prepare("SELECT * FROM submit_keys WHERE id = ?").bind(k.id).first();
+  const label = { pending: "Waiting for you", active: "In use: submissions are encrypted for this key", denied: "Refused", replaced: "Replaced by a newer key" }[cur.status] || cur.status;
+  const who = [cur.name, cur.username ? "@" + cur.username : "", "license …" + cur.key_last4].filter(Boolean).join(" · ");
+  const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  const btn = (action, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${action}">${esc(text)}</button></form>`;
+  return page(200, "Collecting key", done || label,
+    `<p class="small" style="margin-top:8px">Key ID</p><p class="key">${esc(cur.key_id)}</p>
+     <p class="small">Only confirm if this is the key ID in your own Orbit, under Settings → Password and sharing. Submissions are encrypted for it, and only the Orbit that has this key can open them.</p>
+     <p class="small">Offered by ${esc(who)}<br>${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC${done ? `<br>Status: ${esc(label)}` : ""}</p>
+     <div class="row">${cur.status !== "active" ? btn("confirm", cur.status === "pending" ? "Confirm" : "Use this key", "ok") : ""}${cur.status !== "denied" ? btn("deny", cur.status === "active" ? "Stop using it" : "Refuse", "no") : ""}</div>`);
+}
+
+async function submission(request, env, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  if (!env.DISCORD_WEBHOOK_URL) return json({ error: "the Discord channel isn't set up" }, 503);
+  if (Number(request.headers.get("content-length") || 0) > SUBMISSION_MAX_CHARS + 20000) return json({ error: "too large" }, 413);
+  const text = await request.text();
+  if (text.length > SUBMISSION_MAX_CHARS + 20000) return json({ error: "too large" }, 413);
+  let b; try { b = JSON.parse(text); } catch { b = {}; }
+  const code = String(b.code || "");
+  if (!/^PVSUB1\.[A-Za-z0-9_-]{80,100}\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{24,}$/.test(code) || code.length > SUBMISSION_MAX_CHARS) return json({ error: "that isn't a sealed submission" }, 400);
+  const active = await activeSubmitKey(env);
+  if (!active) return json({ error: "no collecting key" }, 409);
+  // Sealed for an older key: the owner couldn't open it with the key they use now.
+  if (b.keyId !== active.key_id) return json({ error: "key changed", pub: active.pub, keyId: active.key_id }, 409);
+  const slots = Math.floor(Number(b.slots));
+  if (!(slots >= 1 && slots <= SLOT_MAX)) return json({ error: "slots" }, 400);
+  const stores = (Array.isArray(b.stores) ? b.stores : []).slice(0, 40)
+    .map((x) => ({ name: String(x && x.name || "").replace(/\s+/g, " ").trim().slice(0, 40), n: Math.floor(Number(x && x.n)) || 0 }))
+    .filter((x) => x.name && x.n > 0);
+  const now = Date.now();
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM submissions WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 3600 * 1000).first();
+  if (recent && recent.n >= SUBMISSIONS_PER_HOUR) return json({ error: "too many submissions this hour" }, 429);
+
+  const s = {
+    id: randomId(12), key_hash: lic.hash, key_last4: lic.last4, username: lic.username,
+    name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60), slots, key_id: active.key_id,
+  };
+  const stamp = new Date(now).toISOString().slice(0, 16).replace("T", "-").replace(":", "");
+  const slug = s.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
+  const who = [s.name ? `**${md(s.name)}**` : "", s.username ? `@${md(s.username)}` : "", `license …${s.key_last4}`].filter(Boolean).join(" · ");
+  const storeLine = stores.map((x) => `${md(x.name)} ${x.n}`).join(" · ").slice(0, 1200);
+  const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n-# Encrypted for key ${active.key_id}. To open: download the file, then in Orbit choose **Import** and drop it in.`;
+  const msgId = await webhookPost(env, { content }, { name: `orbit-slots-${stamp}${slug ? "-" + slug : ""}.txt`, text: code });
+  if (!msgId) return json({ error: "couldn't post to the channel" }, 502);
+  await env.DB.prepare(
+    `INSERT INTO submissions (id, key_hash, key_last4, name, username, slots, bytes, key_id, created_at, webhook_message_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(s.id, s.key_hash, s.key_last4, s.name, s.username, slots, code.length, s.key_id, now, msgId).run();
+  return json({ ok: true, id: s.id });
+}
+
 // ---- owner tools ---------------------------------------------------------------------
 
 async function admin(request, env, path) {
@@ -549,6 +737,14 @@ async function admin(request, env, path) {
       env.DB.prepare("SELECT * FROM slot_requests ORDER BY created_at DESC LIMIT 200"),
     ]);
     return json({ default: slotDefault(env), limits: limits.results, requests: reqs.results.map(({ review_token, key_hash, ...q }) => ({ ...q, review_url: `${origin}/slots/review/${q.id}?t=${review_token}` })) });
+  }
+  if (request.method === "GET" && path === "/admin/submissions") {
+    const origin = new URL(request.url).origin;
+    const [keys, subs] = await env.DB.batch([
+      env.DB.prepare("SELECT * FROM submit_keys ORDER BY created_at DESC LIMIT 50"),
+      env.DB.prepare("SELECT id, key_last4, name, username, slots, bytes, key_id, created_at FROM submissions ORDER BY created_at DESC LIMIT 200"),
+    ]);
+    return json({ keys: keys.results.map(({ review_token, key_hash, ...k }) => ({ ...k, review_url: `${origin}/submit/review/${k.id}?t=${review_token}` })), submissions: subs.results });
   }
   if (request.method === "GET" && path === "/admin/applications") {
     const { results } = await env.DB.prepare(
