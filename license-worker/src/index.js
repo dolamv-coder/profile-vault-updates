@@ -12,8 +12,12 @@
 //   GET  /discord/callback     browser: Discord sends the user back here
 //   GET  /discord/status/ID    app polls: pending | review | issued (with key + signed list) | error
 //   GET  /licenses             {body, sig}: SHA-256 hashes of valid keys, ECDSA P-256 signed
+// Slots (app sends "Authorization: Bearer <license key>"):
+//   GET  /slots/limit          {limit, request}: how many slots this license can have on at once
+//   POST /slots/request        {requested, name, note}: ask for more; posted to DISCORD_WEBHOOK_URL
 // Owner:
 //   GET/POST /review/DISCORD_ID?t=TOKEN   approve or deny one request (link posted to the webhook)
+//   GET/POST /slots/review/ID?t=TOKEN     approve (optionally a different number) or deny more slots
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/applications   every request and decision
 //   POST /admin/revoke         {discord_id} or {key}: the app locks on its next check
@@ -56,6 +60,9 @@ export default {
         }
       }
       if (path.startsWith("/review/")) return await review(request, env, ctx, url, path.slice("/review/".length));
+      if (path === "/slots/limit" && request.method === "GET") return await slotLimit(request, env);
+      if (path === "/slots/request" && request.method === "POST") return await slotRequest(request, env, ctx, url);
+      if (path.startsWith("/slots/review/")) return await slotReview(request, env, ctx, url, path.slice("/slots/review/".length));
       if (path.startsWith("/admin/")) return await admin(request, env, path);
       return json({ error: "not found" }, 404);
     } catch (e) {
@@ -383,6 +390,147 @@ async function sign(env, text) {
   return btoa(String.fromCharCode(...new Uint8Array(sig)));
 }
 
+// ---- slots ---------------------------------------------------------------------------
+
+const SLOT_MAX = 500;
+const SLOT_REQUESTS_PER_DAY = 3;
+const slotDefault = (env) => Math.max(1, Math.floor(Number(env.DEFAULT_SLOT_LIMIT || 20)) || 20);
+// Keys made by hand are on the signed list on GitHub, not in this database.
+const GH_LICENSE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/licenses.json";
+const GH_LICENSE_PUB = { kty: "EC", crv: "P-256", x: "GjzaSqmKaFThaxR29wozcPQcaifNz3hZKgzGK9fWNec", y: "v1TXigdCJwtUiUgGUvt9BR6p_mTC3Bk-gy9u6u_bEmk" };
+let ghList = null;   // {at, keys: Map(hash -> exp)}
+
+async function ghListHas(env, hash) {
+  if (!ghList || Date.now() - ghList.at > 10 * 60 * 1000) {
+    try {
+      const list = await (await fetch(env.GH_LICENSE_URL || GH_LICENSE_URL)).json();
+      const pub = env.GH_LICENSE_PUB ? JSON.parse(env.GH_LICENSE_PUB) : GH_LICENSE_PUB;
+      const k = await crypto.subtle.importKey("jwk", pub, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+      const sig = Uint8Array.from(atob(list.sig), (c) => c.charCodeAt(0));
+      if (await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, k, sig, new TextEncoder().encode(list.body))) {
+        ghList = { at: Date.now(), keys: new Map((JSON.parse(list.body).keys || []).map((e) => [e.h, e.exp || ""])) };
+      }
+    } catch (e) { console.error("github license list", e); }
+  }
+  if (!ghList || !ghList.keys.has(hash)) return false;
+  const exp = ghList.keys.get(hash);
+  return !exp || new Date(exp) > new Date();
+}
+
+// The license key the app sent, if it's a valid one from either list.
+async function slotLicense(request, env) {
+  const m = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") || "");
+  const norm = m ? m[1].toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+  if (!/^PVLT[A-Z0-9]{16}$/.test(norm)) return null;
+  const hash = await keyHash(norm);
+  const row = await env.DB.prepare("SELECT discord_id, username, revoked_at FROM licenses WHERE key_hash = ?").bind(hash).first();
+  if (row) return row.revoked_at ? null : { hash, last4: norm.slice(-4), discordId: row.discord_id, username: row.username };
+  return (await ghListHas(env, hash)) ? { hash, last4: norm.slice(-4), discordId: null, username: null } : null;
+}
+
+async function currentSlotLimit(env, hash) {
+  const row = await env.DB.prepare("SELECT slot_limit FROM slot_limits WHERE key_hash = ?").bind(hash).first();
+  return row ? row.slot_limit : slotDefault(env);
+}
+const slotRequestOut = (q) => q ? { id: q.id, status: q.status, requested: q.requested, granted: q.granted, created_at: q.created_at, decided_at: q.decided_at } : null;
+
+async function slotLimit(request, env) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  const latest = await env.DB.prepare("SELECT * FROM slot_requests WHERE key_hash = ? ORDER BY created_at DESC LIMIT 1").bind(lic.hash).first();
+  return json({ limit: await currentSlotLimit(env, lic.hash), request: slotRequestOut(latest), canRequest: !!env.DISCORD_WEBHOOK_URL }, 200, { "cache-control": "no-store" });
+}
+
+async function slotRequest(request, env, ctx, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  if (!env.DISCORD_WEBHOOK_URL) return json({ error: "requests aren't set up" }, 503);
+  const b = await request.json().catch(() => ({}));
+  const current = await currentSlotLimit(env, lic.hash);
+  const requested = Math.floor(Number(b.requested));
+  if (!(requested > current && requested <= SLOT_MAX)) return json({ error: `ask for more than ${current} and at most ${SLOT_MAX}` }, 400);
+  const pending = await env.DB.prepare("SELECT * FROM slot_requests WHERE key_hash = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(lic.hash).first();
+  if (pending) return json({ status: "pending", request: slotRequestOut(pending) });
+  const now = Date.now();
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM slot_requests WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 86400000).first();
+  if (recent && recent.n >= SLOT_REQUESTS_PER_DAY) return json({ error: "too many requests today" }, 429);
+  const q = {
+    id: randomId(12), key_hash: lic.hash, key_last4: lic.last4,
+    name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60),
+    discord_id: lic.discordId, username: lic.username, current_limit: current, requested,
+    note: String(b.note || "").replace(/\s+/g, " ").trim().slice(0, 300),
+    status: "pending", review_token: randomId(24), created_at: now,
+  };
+  await env.DB.prepare(
+    `INSERT INTO slot_requests (id, key_hash, key_last4, name, discord_id, username, current_limit, requested, note, status, review_token, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+  ).bind(q.id, q.key_hash, q.key_last4, q.name, q.discord_id, q.username, q.current_limit, q.requested, q.note, q.review_token, q.created_at).run();
+  ctx.waitUntil((async () => {
+    const id = await webhookPost(env, { content: slotMessage(url.origin, q) });
+    if (id) await env.DB.prepare("UPDATE slot_requests SET webhook_message_id = ? WHERE id = ?").bind(id, q.id).run();
+  })().catch((e) => console.error("webhook", e)));
+  return json({ status: "pending", request: slotRequestOut(q) });
+}
+
+function slotMessage(origin, q) {
+  const who = [q.name ? `**${md(q.name)}**` : "", q.username ? `@${md(q.username)}` : "", `license …${q.key_last4}`].filter(Boolean).join(" · ");
+  const link = `${origin}/slots/review/${q.id}?t=${q.review_token}`;
+  const head = q.status === "approved" ? `✅ **Approved: ${q.granted} slots**` : q.status === "denied" ? "⛔ **Slot request denied**" : "🎟️ **More slots requested**";
+  return `${head} · ${who}\n${q.current_limit} → ${q.requested} slots${q.note ? `\n> ${md(q.note)}` : ""}\n[${q.status === "pending" ? "Review: approve or deny" : "Change decision"}](${link})`;
+}
+
+async function slotReview(request, env, ctx, url, id) {
+  const q = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM slot_requests WHERE id = ?").bind(id).first() : null;
+  let t = url.searchParams.get("t") || "", action = "", amount = NaN;
+  if (request.method === "POST") {
+    const form = await request.formData().catch(() => null);
+    t = form && String(form.get("t") || "") || t;
+    action = form && String(form.get("action") || "");
+    const raw = form && form.get("amount");
+    amount = raw == null || String(raw).trim() === "" ? NaN : Math.floor(Number(raw));
+  } else if (request.method !== "GET") {
+    return page(405, "Not allowed", "");
+  }
+  if (!q || !(await sameText(t, q.review_token))) return page(404, "Request not found", "This review link isn't valid.");
+
+  let done = "", err = "";
+  if (action === "approve") {
+    const n = Number.isFinite(amount) ? amount : q.requested;
+    if (n < 1 || n > SLOT_MAX) err = `Choose between 1 and ${SLOT_MAX} slots.`;
+    else {
+      const now = Date.now();
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO slot_limits (key_hash, slot_limit, updated_at) VALUES (?, ?, ?)
+          ON CONFLICT (key_hash) DO UPDATE SET slot_limit = excluded.slot_limit, updated_at = excluded.updated_at`).bind(q.key_hash, n, now),
+        env.DB.prepare("UPDATE slot_requests SET status = 'approved', granted = ?, decided_at = ? WHERE id = ?").bind(n, now, q.id),
+      ]);
+      done = `Approved. They can now use ${n} slots.`;
+    }
+  } else if (action === "deny") {
+    const now = Date.now();
+    const stmts = [env.DB.prepare("UPDATE slot_requests SET status = 'denied', granted = NULL, decided_at = ? WHERE id = ?").bind(now, q.id)];
+    // Taking back an approval puts the limit back where it was before this request.
+    if (q.status === "approved") stmts.push(env.DB.prepare(`INSERT INTO slot_limits (key_hash, slot_limit, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT (key_hash) DO UPDATE SET slot_limit = excluded.slot_limit, updated_at = excluded.updated_at`).bind(q.key_hash, q.current_limit, now));
+    await env.DB.batch(stmts);
+    done = "Denied.";
+  }
+  const cur = await env.DB.prepare("SELECT * FROM slot_requests WHERE id = ?").bind(q.id).first();
+  if (done && cur.webhook_message_id) ctx.waitUntil(webhookEdit(env, cur.webhook_message_id, { content: slotMessage(url.origin, cur) }).catch(() => {}));
+  const label = { pending: "Waiting for your decision", approved: `Approved: ${cur.granted} slots`, denied: "Denied" }[cur.status] || cur.status;
+  const who = [cur.name, cur.username ? "@" + cur.username : ""].filter(Boolean).join(" · ") || "No name given";
+  const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  return page(200, "Slot request", err || done || label,
+    `<p class="who">${esc(who)}</p>
+     <p class="small">License …${esc(cur.key_last4)}<br>Current limit ${cur.current_limit} · asked for <strong>${cur.requested}</strong><br>Requested ${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC</p>
+     ${cur.note ? `<p class="small">“${esc(cur.note)}”</p>` : ""}
+     <form method="post" class="stack">${hidden}
+       <label class="small" for="amount">Slots to allow</label>
+       <input id="amount" name="amount" type="number" min="1" max="${SLOT_MAX}" value="${cur.status === "approved" ? cur.granted : cur.requested}">
+       <div class="row"><button class="ok" type="submit" name="action" value="approve">${cur.status === "approved" ? "Change amount" : "Approve"}</button>${cur.status !== "denied" ? `<button class="no" type="submit" name="action" value="deny" formnovalidate>Deny</button>` : ""}</div>
+     </form>`);
+}
+
 // ---- owner tools ---------------------------------------------------------------------
 
 async function admin(request, env, path) {
@@ -393,6 +541,14 @@ async function admin(request, env, path) {
     const { results } = await env.DB.prepare(
       "SELECT discord_id, username, license_key, issued_at, revoked_at FROM licenses ORDER BY issued_at DESC").all();
     return json({ licenses: results });
+  }
+  if (request.method === "GET" && path === "/admin/slots") {
+    const origin = new URL(request.url).origin;
+    const [limits, reqs] = await env.DB.batch([
+      env.DB.prepare("SELECT key_hash, slot_limit, updated_at FROM slot_limits ORDER BY updated_at DESC"),
+      env.DB.prepare("SELECT * FROM slot_requests ORDER BY created_at DESC LIMIT 200"),
+    ]);
+    return json({ default: slotDefault(env), limits: limits.results, requests: reqs.results.map(({ review_token, key_hash, ...q }) => ({ ...q, review_url: `${origin}/slots/review/${q.id}?t=${review_token}` })) });
   }
   if (request.method === "GET" && path === "/admin/applications") {
     const { results } = await env.DB.prepare(
@@ -459,6 +615,8 @@ function page(statusCode, title, msg, extra = "") {
   .who{font-size:20px;font-weight:600;color:#e6ecff;margin:16px 0 0;overflow-wrap:anywhere}
   .key{font:600 18px ui-monospace,Consolas,monospace;color:#e6ecff;background:#07102b;border-radius:8px;padding:10px 12px;user-select:all;overflow-wrap:anywhere}
   .row{display:flex;gap:10px;margin-top:20px}
+  .stack .row{margin-top:12px}
+  input[type=number]{width:100%;box-sizing:border-box;margin-top:6px;padding:10px 12px;border-radius:10px;border:1px solid #2a3f7a;background:#07102b;color:#e6ecff;font:600 18px system-ui,sans-serif}
   .row form{flex:1;margin:0}
   button{width:100%;padding:12px;border:0;border-radius:10px;font:600 16px system-ui,sans-serif;cursor:pointer;color:#fff}
   button.ok{background:#1f9d5c} button.no{background:#c4372f}
