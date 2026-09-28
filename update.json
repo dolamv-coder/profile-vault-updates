@@ -1,10 +1,10 @@
 {
-  "version": "1.9.49",
-  "url": "index-1.9.49.html",
-  "sha256": "09d538ff718250b8d35a09d3f9998b75c18c5d2bdb546090187268c71769e379",
-  "signature": "nAKyp3k3is+kqR+BsGiZHrK8Y48DSqo++sEiBoP7JXUIqVlX3HSbXwzNXEPCHAGo2EiJczwjYET/+9uJSXjSDA==",
+  "version": "1.9.50",
+  "url": "index-1.9.50.html",
+  "sha256": "e1114503971c01a2549e98e79da158a02e336b28814c50749c027b5920a8c02a",
+  "signature": "7ANQ6GeipaNzaGuGxRA1XE/oTowN6f4FSKOY/dZCqlxI3QYKBEn2KQqXwcGxPaTbynPTHVM0xss1zxbG8HNPAg==",
   "minAppVersion": "0",
-  "notes": "Check for updates is now in the top bar, in place of Import and Export (to export, select profiles on the Profiles page). Clean emails now also clears survey emails and sales like \"...has arrived: 48-Hour Flash Sale\"; finding all of them needs the next app download.",
+  "notes": "Cards has Comfortable, Compact and List layouts (List fits the most, and Show puts the full number and CVV in the row). On Submit, switching off a submitted slot pulls it and tells the seller in Discord, and slots that aren't submitted now say Not submitted.",
   "installerUrl": "",
-  "publishedAt": "2026-09-28T04:52:44.496Z"
+  "publishedAt": "2026-09-28T20:00:04.442Z"
 }
