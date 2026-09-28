@@ -59,6 +59,22 @@ latest `index-*.html`, make the change, then regenerate `update.json` with the
 publisher's signing tool. Don't edit `sha256` or `signature` by hand: an
 unsigned or mis-signed update is rejected by every installed app.
 
+**Sign the bytes GitHub serves, not a Windows working copy.** Apps download
+`index-X.Y.Z.html` from raw.githubusercontent.com and hash it as-is, and git
+stores it with LF line endings. A clone on Windows with `core.autocrlf=true`
+checks it out with CRLF, which hashes differently, so an `update.json` signed
+over that copy is rejected by every app. Sign a copy taken from git instead:
+
+    git show HEAD:index-X.Y.Z.html > /path/outside/repo/index-X.Y.Z.html
+    node tools/release.mjs publish --version X.Y.Z --no-push \
+      --html /path/outside/repo/index-X.Y.Z.html --notes "What changed"
+
+(`tools/release.mjs` is the signing tool in the publisher's project folder.)
+Copy its `release/update.json` here and commit it as `Release X.Y.Z`. Before
+pushing, check that the `sha256` matches
+`git show HEAD:index-X.Y.Z.html | sha256sum`. After pushing, raw.githubusercontent.com
+can keep serving the old `update.json` for about 5 minutes.
+
 ## Pieces that live outside this repo
 
 As of 2026-09-26, none of these are in `dolamv-coder/profile-vault-updates` or
