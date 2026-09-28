@@ -234,6 +234,28 @@ To open one, download the file, then in your Orbit choose **Import** and drop it
   curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/submissions
   ```
 
+## Pulled slots
+
+When someone pulls slots on the Submit page after sending them to your channel (Orbit 1.9.50 and
+later), a plain list is posted to the same channel so you can take those slots off their list:
+
+> 🔻 **2 slots pulled** by **Kim** · @kim · license …ABCD
+> Target · Kim Lee · kim@example.com · Visa 4242 · sent 2026-09-26
+> Walmart · Sam Park · sam@example.com · Amex 1005 · sent 2026-09-25
+> Take them off their list. Sent for key 1A2B-3C4D.
+
+Each line has the store, profile name, account email, card brand and last 4, and the day it was
+sent. Card numbers and passwords are never in it. A list too long for one Discord message comes as
+a `.txt` file, with a count per store in the message.
+
+- It's only posted for slots that license sent through this worker: if the license never sent a
+  batch to your channel for that key ID (for example it gave you a code instead), nothing is posted.
+- A pull sent again because the answer got lost isn't posted twice, and each license can post at
+  most 30 pulls an hour. Every pull (who, how many slots, which key, never the list itself) is under
+  `pulls` in `/admin/submissions`.
+- It needs no new secrets: it uses the same `DISCORD_WEBHOOK_URL`. It does need the `pulls` table,
+  which `npm run db:init` adds (running it again is safe) and the deploy Action adds on its own.
+
 ## Limiting who gets a key
 
 By default, any Discord account except bots gets a key. To limit it, edit `[vars]` in
@@ -285,4 +307,4 @@ Runs the worker in Wrangler's local runtime with a local database and a mock Dis
 once handing out keys straight away and once with approval on. It goes through sign-in,
 key pickup, repeat sign-in, cancelled and refused sign-ins, the account-age and server
 checks, revoke and restore, the rate limit, requests being posted, approved, denied
-and changed, slot limits, and submissions and collecting keys.
+and changed, slot limits, submissions and collecting keys, and pulled slots.

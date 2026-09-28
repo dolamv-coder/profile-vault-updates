@@ -30,6 +30,7 @@ const USERS = {
 };
 
 const webhookPosts = [], webhookEdits = [], webhookFail = [];
+let webhookHang = null;   // {ms, code}: the next webhook post waits ms, then fails with code (if given)
 const discord = createServer(async (req, res) => {
   const chunks = []; for await (const c of req) chunks.push(c);
   const raw = Buffer.concat(chunks), body = raw.toString();
@@ -45,6 +46,11 @@ const discord = createServer(async (req, res) => {
   const u = new URL(req.url, "http://x");
   if (req.method === "GET" && u.pathname === "/gh.json") return send(200, ghList);
   if (req.method === "POST" && u.pathname === "/webhook") {
+    if (webhookHang) {
+      const hang = webhookHang; webhookHang = null;
+      await new Promise((r) => setTimeout(r, hang.ms));
+      if (hang.code) return send(hang.code, { message: "fail" });
+    }
     if (webhookFail.length) {
       const code = webhookFail.shift();
       return code === 429 ? send(429, { message: "You are being rate limited.", retry_after: 0.3 }) : send(code, { message: "fail" });
@@ -80,19 +86,21 @@ const common = [
   `DISCORD_WEBHOOK_URL=http://127.0.0.1:${DISCORD_PORT}/webhook`,
   `DISCORD_API_BASE=http://127.0.0.1:${DISCORD_PORT}`,
   `GH_LICENSE_URL=http://127.0.0.1:${DISCORD_PORT}/gh.json`,
+  `PULL_STALE_MS=3000`,
   `GH_LICENSE_PUB=${JSON.stringify({ kty: "EC", crv: "P-256", x: pubJwk.x, y: pubJwk.y })}`,
 ];
 
 const env = { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost", CI: "1" };
-const wrangler = join(root, "node_modules", ".bin", "wrangler");
+// Run wrangler's JS entry with this Node, so it works the same on Windows (where .bin/wrangler is a shell script).
+const wrangler = [join(root, "node_modules", "wrangler", "bin", "wrangler.js")];
 const workers = [];
 // Starts a worker with its own empty database, or on an earlier run's database (`db`).
 // `vars` override wrangler.toml's [vars].
 async function startWorker(name, port, vars, db) {
   const dir = join(tmp, db || name);
-  if (!db) execFileSync(wrangler, ["d1", "execute", "orbit-license", "--local", "--persist-to", dir, "--file", "schema.sql"], { cwd: root, env, stdio: "pipe" });
+  if (!db) execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", dir, "--file", "schema.sql"], { cwd: root, env, stdio: "pipe" });
   writeFileSync(join(tmp, name + ".env"), [...common, ...vars].join("\n"));
-  const dev = spawn(wrangler, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(port), "--persist-to", dir,
+  const dev = spawn(process.execPath, [...wrangler, "dev", "--local", "--ip", "127.0.0.1", "--port", String(port), "--persist-to", dir,
     "--env-file", join(tmp, name + ".env"), "--show-interactive-dev-session=false"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
   let log = ""; dev.stdout.on("data", (d) => log += d); dev.stderr.on("data", (d) => log += d);
   workers.push(dev);
@@ -102,6 +110,12 @@ async function startWorker(name, port, vars, db) {
     if (i > 120) throw new Error("wrangler dev didn't start:\n" + log);
     await new Promise((r) => setTimeout(r, 500));
   }
+}
+// On Windows, killing wrangler leaves its workerd child running (and holding the database files)
+// for a while, so the whole process tree is stopped there.
+function stopWorker(w) {
+  if (process.platform !== "win32") return w.kill("SIGTERM");
+  try { execFileSync("taskkill", ["/pid", String(w.pid), "/t", "/f"], { stdio: "ignore" }); } catch {}
 }
 await new Promise((r) => discord.listen(DISCORD_PORT, "127.0.0.1", r));
 
@@ -407,7 +421,7 @@ try {
   });
 
   console.log("\nApproval switched off again, same database");
-  workers.pop().kill("SIGTERM");
+  stopWorker(workers.pop());
   await new Promise((r) => setTimeout(r, 1500));
   await startWorker("approval-off", APPROVAL_PORT + 1, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0"], "approval");
   await test("denied accounts stay declined", async () => {
@@ -658,9 +672,152 @@ try {
     assert.equal(d.submissions.length, 33);
     assert.ok(d.submissions.every((x) => x.code === undefined && x.bytes > 0));
   });
+
+  console.log("\nPulls");
+  const pull = (key, body) => slots("/pull", key, body);
+  const sentOn = Date.parse("2026-09-26T15:00:00Z");
+  const two = [
+    { store: "Target", profile: "Kim   Lee", email: "kim_lee@example.com", card: "Visa 4242", sentAt: sentOn },
+    { store: "Best Buy", profile: "Sam\nPark", email: "", card: "Amex 1005", sentAt: sentOn - 86400000 },
+  ];
+  let pullBatch;
+  await test("pulls need a license", async () => {
+    assert.equal((await pull(null, { keyId: ownerKey.keyId, slots: two })).status, 401);
+    const r = await pull("PVLT-AAAA-BBBB-CCCC-DDDD", { keyId: ownerKey.keyId, slots: two });
+    assert.equal(r.status, 401); assert.deepEqual(await r.json(), { error: "license not recognized" });
+  });
+  await test("a pull for a key this license never sent slots to isn't posted", async () => {
+    const before = webhookPosts.length;
+    assert.deepEqual(await (await pull(frankKey, { keyId: otherKey.keyId, name: "Frank", slots: two })).json(), { ok: true, forwarded: false });
+    assert.deepEqual(await (await pull(frankKey, { keyId: "ABCD-1234", slots: two })).json(), { ok: true, forwarded: false });
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal(webhookPosts.length, before);
+  });
+  await test("pulling sent slots posts them to the channel as a plain list", async () => {
+    pullBatch = "pull" + rid();
+    const before = webhookPosts.length;
+    const r = await pull(frankKey, { keyId: ownerKey.keyId.toLowerCase(), name: "Frank *F*", batch: pullBatch, slots: two });
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { ok: true, forwarded: true, id: pullBatch });
+    assert.equal(webhookPosts.length, before + 1);
+    const m = webhookPosts.at(-1);
+    assert.ok(m.content.startsWith(`🔻 **2 slots pulled** by **Frank \\*F\\*** · @frank · license …${frankKey.slice(-4)}\n`), m.content);
+    assert.ok(m.content.includes("\nTarget · Kim Lee · kim\\_lee@example.com · Visa 4242 · sent 2026-09-26\n"), "email is markdown-escaped");
+    assert.ok(m.content.includes("\nBest Buy · Sam Park · Amex 1005 · sent 2026-09-25\n"), "empty parts are left out");
+    assert.ok(m.content.endsWith(`\n-# Take them off their list. Sent for key ${ownerKey.keyId}.`));
+    assert.equal(m.files.length, 0); assert.equal(m.flags, 4); assert.equal(m.allowed_mentions.parse.length, 0);
+  });
+  await test("sending the same pull again (its answer got lost) doesn't post it twice", async () => {
+    const before = webhookPosts.length;
+    const again = await pull(frankKey, { keyId: ownerKey.keyId, batch: pullBatch, slots: two });
+    assert.deepEqual(await again.json(), { ok: true, forwarded: true, duplicate: true, id: pullBatch });
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal(webhookPosts.length, before);
+  });
+  await test("another license can't reuse a pull's batch id", async () => {
+    const r = await pull(GH_KEY, { keyId: ownerKey.keyId, batch: pullBatch, slots: two });
+    assert.equal(r.status, 409); assert.deepEqual(await r.json(), { error: "batch id taken" });
+  });
+  await test("one slot pulled", async () => {
+    const r = await (await pull(frankKey, { keyId: ownerKey.keyId, slots: [{ store: "Walmart", profile: "Solo", sentAt: "yesterday" }] })).json();
+    assert.equal(r.forwarded, true);
+    const m = webhookPosts.at(-1).content;
+    assert.ok(m.startsWith(`🔻 **1 slot pulled** by @frank · license …${frankKey.slice(-4)}\n`), m);
+    assert.ok(m.includes("\nWalmart · Solo\n"), "a sentAt that isn't a time is left off");
+    assert.match(m, /Take it off their list\./);
+  });
+  await test("pulls need a key ID and at least one slot with a store or profile", async () => {
+    for (const body of [
+      { keyId: ownerKey.keyId, slots: [] },
+      { keyId: ownerKey.keyId },
+      { keyId: ownerKey.keyId, slots: [{ email: "a@b.c", card: "Visa 1111" }, null, "x"] },
+      { keyId: ownerKey.keyId, slots: Array.from({ length: 501 }, () => ({ store: "Target" })) },
+      { keyId: "nope", slots: two },
+      { keyId: ownerKey.keyId + "0", slots: two },
+      { slots: two },
+    ]) assert.equal((await pull(frankKey, body)).status, 400, JSON.stringify(body).slice(0, 80));
+    assert.equal((await pull(frankKey, { keyId: ownerKey.keyId, slots: two, pad: "x".repeat(210000) })).status, 413);
+  });
+  await test("a long pull is attached as a file, with counts per store in the message", async () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      store: i % 2 ? "Walmart" : "Target", profile: `Profile ${i} ` + "with a very long name ".repeat(5),
+      email: `shopper_${i}@example.com`, card: "Mastercard 5454", sentAt: sentOn,
+    }));
+    const before = webhookPosts.length;
+    const r = await (await pull(frankKey, { keyId: ownerKey.keyId, name: "Frank *F*", slots: many })).json();
+    assert.equal(r.forwarded, true);
+    assert.equal(webhookPosts.length, before + 1);
+    const m = webhookPosts.at(-1);
+    assert.ok(m.content.length <= 2000, "fits in one Discord message: " + m.content.length);
+    assert.match(m.content, /^🔻 \*\*60 slots pulled\*\* by \*\*Frank/);
+    assert.match(m.content, /\nTarget 30 · Walmart 30\n/);
+    assert.ok(m.content.endsWith(`\n-# The full list is attached. Take them off their list. Sent for key ${ownerKey.keyId}.`));
+    assert.doesNotMatch(m.content, /Profile 0/, "the list itself is only in the file");
+    assert.equal(m.files.length, 1);
+    assert.match(m.files[0].name, /^orbit-pulled-\d{4}-\d\d-\d\d-\d{4}-Frank-F\.txt$/);
+    const clip = (s, n) => s.replace(/\s+/g, " ").trim().slice(0, n);
+    assert.deepEqual(m.files[0].text.trim().split("\n"),
+      many.map((x) => `${x.store} | ${clip(x.profile, 80)} | ${x.email} | Mastercard 5454 | sent 2026-09-26`), "every slot, not markdown-escaped");
+  });
+  await test("if the channel refuses a pull, the app is told and sending it again posts it", async () => {
+    webhookFail.push(500);
+    const batch = "pullfail" + rid();
+    const r = await pull(frankKey, { keyId: ownerKey.keyId, batch, slots: two });
+    assert.equal(r.status, 502); assert.deepEqual(await r.json(), { error: "couldn't post to the channel" });
+    const before = webhookPosts.length;
+    assert.deepEqual(await (await pull(frankKey, { keyId: ownerKey.keyId, batch, slots: two })).json(), { ok: true, forwarded: true, id: batch });
+    assert.equal(webhookPosts.length, before + 1);
+  });
+  await test("a pull still posts when the app hangs up mid-post, and its retry isn't posted again", async () => {
+    const batch = "pullhang" + rid(), before = webhookPosts.length;
+    webhookHang = { ms: 1500 };
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 300);
+    await assert.rejects(fetch(BASE + "/pull", { method: "POST", signal: ac.signal, headers: { authorization: "Bearer " + frankKey, "content-type": "application/json" },
+      body: JSON.stringify({ keyId: ownerKey.keyId, batch, slots: two }) }));
+    await new Promise((ok) => setTimeout(ok, 2500));
+    assert.equal(webhookPosts.length, before + 1, "posted after the app hung up");
+    assert.deepEqual(await (await pull(frankKey, { keyId: ownerKey.keyId, batch, slots: two })).json(), { ok: true, forwarded: true, duplicate: true, id: batch });
+    assert.equal(webhookPosts.length, before + 1);
+  });
+  await test("a pull still unposted after PULL_STALE_MS is taken over by a retry, and the first attempt failing late doesn't undo it", async () => {
+    // The first attempt's post hangs for 6 s and then fails; the app gave up on it long before.
+    const batch = "stuck" + rid(), before = webhookPosts.length, t0 = Date.now();
+    webhookHang = { ms: 6000, code: 500 };
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 300);
+    await assert.rejects(fetch(BASE + "/pull", { method: "POST", signal: ac.signal, headers: { authorization: "Bearer " + frankKey, "content-type": "application/json" },
+      body: JSON.stringify({ keyId: ownerKey.keyId, batch, slots: two }) }));
+    const r = await pull(frankKey, { keyId: ownerKey.keyId, batch, slots: two });
+    assert.equal(r.status, 425, "a recent attempt may still be posting"); assert.deepEqual(await r.json(), { error: "still sending" });
+    await new Promise((ok) => setTimeout(ok, Math.max(0, t0 + 3600 - Date.now())));
+    assert.deepEqual(await (await pull(frankKey, { keyId: ownerKey.keyId, batch, slots: two })).json(), { ok: true, forwarded: true, id: batch });
+    assert.equal(webhookPosts.length, before + 1);
+    await new Promise((ok) => setTimeout(ok, Math.max(0, t0 + 7500 - Date.now())));   // the first attempt has failed by now
+    assert.deepEqual(await (await pull(frankKey, { keyId: ownerKey.keyId, batch, slots: two })).json(), { ok: true, forwarded: true, duplicate: true, id: batch });
+    assert.equal(webhookPosts.length, before + 1);
+  });
+  await test("at most 30 pulls an hour per license", async () => {
+    const one = [{ store: "Target", profile: "Kim" }];
+    for (let i = 0; i < 30; i++) assert.equal((await (await pull(GH_KEY, { keyId: ownerKey.keyId, slots: one })).json()).forwarded, true);
+    const r = await pull(GH_KEY, { keyId: ownerKey.keyId, slots: one });
+    assert.equal(r.status, 429); assert.deepEqual(await r.json(), { error: "too many pulls this hour" });
+    assert.equal((await (await pull(frankKey, { keyId: ownerKey.keyId, slots: one })).json()).forwarded, true, "other licenses can still pull");
+  });
+  await test("admin lists pulls, without what was in them", async () => {
+    const d = await (await admin("/admin/submissions")).json();
+    assert.equal(d.pulls.length, 37);
+    assert.deepEqual(Object.keys(d.pulls[0]).sort(), ["created_at", "id", "key_id", "key_last4", "name", "slots", "username"]);
+    const p = d.pulls.find((x) => x.id === pullBatch);
+    assert.deepEqual([p.slots, p.name, p.username, p.key_id], [2, "Frank *F*", "frank", ownerKey.keyId]);
+  });
   console.log(`\n${passed} passed`);
 } finally {
-  for (const w of workers) w.kill("SIGTERM");
+  for (const w of workers) stopWorker(w);
   discord.close();
-  rmSync(tmp, { recursive: true, force: true });
+  // Windows can hold on to the database files for a few seconds after the workers stop.
+  for (let i = 0; i < 20; i++) {
+    try { rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }); break; }
+    catch { await new Promise((r) => setTimeout(r, 500)); }
+  }
 }

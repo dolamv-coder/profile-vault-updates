@@ -39,7 +39,10 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   From 1.9.47, Submit sends slots straight to the owner's channel: the app seals them for the
   owner's collecting key (`GET /submit/key`; the owner offers it from Settings → Password and
   sharing and confirms it at `/submit/review/:id`), and `POST /submissions` posts the sealed
-  `PVSUB1.` code as a `.txt` attachment. Plaintext card data and passwords never go to Discord.
+  `PVSUB1.` code as a `.txt` attachment. From 1.9.50, pulling a submitted slot sends `POST /pull`,
+  which posts a plain list (store, profile name, account email, card brand and last 4) to the same
+  channel, only for keys that license already sent submissions to.
+  Full card numbers, CVVs and passwords never go to Discord.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 

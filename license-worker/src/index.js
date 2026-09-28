@@ -20,13 +20,15 @@
 //   POST /submit/key           {pub, name}: offer a collecting key; the owner confirms it in Discord
 //   POST /submissions          {code, keyId, name, slots, stores}: posted to DISCORD_WEBHOOK_URL as
 //                              an attachment. Only the encrypted code goes there, and it isn't kept here.
+//   POST /pull                 {keyId, name, batch, slots}: slots pulled after being sent; posted to
+//                              DISCORD_WEBHOOK_URL as a plain list, only for keys this license sent submissions to
 // Owner:
 //   GET/POST /review/DISCORD_ID?t=TOKEN   approve or deny one request (link posted to the webhook)
 //   GET/POST /slots/review/ID?t=TOKEN     approve (optionally a different number) or deny more slots
 //   GET/POST /submit/review/ID?t=TOKEN    confirm or refuse a collecting key
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/applications   every request and decision
-//   GET  /admin/submissions    collecting keys (with review links) and submissions sent
+//   GET  /admin/submissions    collecting keys (with review links), submissions sent and slots pulled
 //   POST /admin/revoke         {discord_id} or {key}: the app locks on its next check
 //   POST /admin/restore        {discord_id} or {key}
 
@@ -74,6 +76,7 @@ export default {
       if (path === "/submit/key" && request.method === "POST") return await submitKeyPost(request, env, ctx, url);
       if (path.startsWith("/submit/review/")) return await submitKeyReview(request, env, ctx, url, path.slice("/submit/review/".length));
       if (path === "/submissions" && request.method === "POST") return await submission(request, env, url);
+      if (path === "/pull" && request.method === "POST") return await pull(request, env, ctx);
       if (path.startsWith("/admin/")) return await admin(request, env, path);
       return json({ error: "not found" }, 404);
     } catch (e) {
@@ -738,6 +741,108 @@ async function submission(request, env, url) {
   return json({ ok: true, id: s.id });
 }
 
+// ---- pulls ---------------------------------------------------------------------------
+//
+// Pulling slots on the Submit page after they were sent tells the owner, in the same channel, so they
+// can take them off their list. Only what it takes to find them goes there, in plain text: store,
+// profile name, account email, and card brand and last 4. Never card numbers or passwords.
+
+const PULLS_PER_HOUR = 30;
+const PULL_MAX_CHARS = 200_000;
+// A pull still unposted after this long was cut off, and a retry takes it over (PULL_STALE_MS overrides it for tests).
+const pullStaleMs = (env) => Number(env.PULL_STALE_MS) > 0 ? Number(env.PULL_STALE_MS) : 2 * 60 * 1000;
+
+async function pull(request, env, ctx) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  if (!env.DISCORD_WEBHOOK_URL) return json({ error: "the Discord channel isn't set up" }, 503);
+  if (Number(request.headers.get("content-length") || 0) > PULL_MAX_CHARS) return json({ error: "too large" }, 413);
+  const text = await request.text();
+  if (text.length > PULL_MAX_CHARS) return json({ error: "too large" }, 413);
+  let b; try { b = JSON.parse(text) || {}; } catch { b = {}; }
+  const keyId = String(b.keyId || "").toUpperCase();
+  if (!/^[0-9A-F]{4}-[0-9A-F]{4}$/.test(keyId)) return json({ error: "keyId" }, 400);
+  if (!Array.isArray(b.slots) || !b.slots.length || b.slots.length > SLOT_MAX) return json({ error: "slots" }, 400);
+  const clip = (v, n) => String(v || "").replace(/\s+/g, " ").trim().slice(0, n);
+  const slots = b.slots.map((x) => {
+    const t = Number(x && x.sentAt);
+    return {
+      store: clip(x && x.store, 40), profile: clip(x && x.profile, 80), email: clip(x && x.email, 120), card: clip(x && x.card, 30),
+      // When it was sent, in epoch ms; left off if it isn't a date.
+      sentAt: Number.isFinite(t) && t > 0 && t <= 8.64e15 ? t : 0,
+    };
+  }).filter((x) => x.store || x.profile);
+  if (!slots.length) return json({ error: "slots" }, 400);
+
+  // Only slots this license sent through here reached the owner's list, so a pull of anything else
+  // (sent as a code, or to another seller) isn't posted.
+  const sent = await env.DB.prepare("SELECT 1 FROM submissions WHERE key_hash = ? AND key_id = ? AND webhook_message_id IS NOT NULL LIMIT 1")
+    .bind(lic.hash, keyId).first();
+  if (!sent) return json({ ok: true, forwarded: false });
+  // The app sends the same batch id when it retries, so a pull whose answer got lost isn't posted twice.
+  const batch = /^[A-Za-z0-9_-]{16,40}$/.test(String(b.batch || "")) ? String(b.batch) : randomId(12);
+  const now = Date.now();
+  const seen = await env.DB.prepare("SELECT key_hash, webhook_message_id FROM pulls WHERE id = ?").bind(batch).first();
+  let takeover = false;
+  if (seen) {
+    if (seen.key_hash !== lic.hash) return json({ error: "batch id taken" }, 409);
+    if (seen.webhook_message_id) return json({ ok: true, forwarded: true, duplicate: true, id: batch });
+    // The app keeps its batch id for good, so an attempt that never recorded its message would
+    // otherwise answer "still sending" forever. Once it's stale, one retry takes it over (the UPDATE
+    // only matches once). If that attempt did reach the channel, the owner sees it twice: rare, and harmless.
+    const t = await env.DB.prepare("UPDATE pulls SET created_at = ? WHERE id = ? AND webhook_message_id IS NULL AND created_at < ?")
+      .bind(now, batch, now - pullStaleMs(env)).run();
+    if (!t.meta || !t.meta.changes) return json({ error: "still sending" }, 425);
+    takeover = true;
+  }
+  if (!takeover) {
+    const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM pulls WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 3600 * 1000).first();
+    if (recent && recent.n >= PULLS_PER_HOUR) return json({ error: "too many pulls this hour" }, 429);
+  }
+
+  const p = { id: batch, key_hash: lic.hash, key_last4: lic.last4, username: lic.username, name: clip(b.name, 60), slots: slots.length, key_id: keyId };
+  const who = [p.name ? `**${md(p.name)}**` : "", p.username ? `@${md(p.username)}` : "", `license …${p.key_last4}`].filter(Boolean).join(" · ");
+  const head = `🔻 **${p.slots} slot${p.slots === 1 ? "" : "s"} pulled** by ${who}`;
+  // One line per slot, leaving out what the app didn't send.
+  const line = (x, f, sep) => [f(x.store), f(x.profile), f(x.email), f(x.card), x.sentAt ? `sent ${day(x.sentAt)}` : ""].filter(Boolean).join(sep);
+  let content = `${head}\n${slots.map((x) => line(x, md, " · ")).join("\n")}\n-# Take ${p.slots === 1 ? "it" : "them"} off their list. Sent for key ${keyId}.`;
+  let file;
+  // Discord allows 2000 characters in a message, so a long list is attached as a file instead.
+  if (content.length > 1900) {
+    const counts = new Map();
+    for (const x of slots) if (x.store) counts.set(x.store, (counts.get(x.store) || 0) + 1);
+    const storeLine = [...counts].map(([name, n]) => `${md(name)} ${n}`).join(" · ").slice(0, 1200);
+    content = `${head}${storeLine ? `\n${storeLine}` : ""}\n-# The full list is attached. Take them off their list. Sent for key ${keyId}.`;
+    const stamp = new Date(now).toISOString().slice(0, 16).replace("T", "-").replace(":", "");
+    const slug = p.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
+    file = { name: `orbit-pulled-${stamp}${slug ? "-" + slug : ""}.txt`, text: slots.map((x) => line(x, String, " | ")).join("\n") + "\n" };
+  }
+  // Recorded before posting, so a retry that arrives while this one is still posting isn't posted too.
+  if (!takeover) {
+    const ins = await env.DB.prepare(
+      `INSERT OR IGNORE INTO pulls (id, key_hash, key_last4, name, username, slots, key_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(p.id, p.key_hash, p.key_last4, p.name, p.username, p.slots, p.key_id, now).run();
+    if (!ins.meta || !ins.meta.changes) return json({ error: "still sending" }, 425);
+  }
+  // Finished even if the app hangs up mid-post (it quit, or lost its connection), so the row is
+  // either posted and recorded or removed for a clean retry.
+  const work = (async () => {
+    let msgId = null;
+    try { msgId = await webhookPost(env, { content }, file); }
+    catch (e) { console.error("webhook", e); }
+    if (!msgId) {
+      // Only this attempt's row (by its time): a retry that took it over meanwhile keeps its own.
+      await env.DB.prepare("DELETE FROM pulls WHERE id = ? AND created_at = ? AND webhook_message_id IS NULL").bind(p.id, now).run();
+      return json({ error: "couldn't post to the channel" }, 502);
+    }
+    await env.DB.prepare("UPDATE pulls SET webhook_message_id = ? WHERE id = ?").bind(msgId, p.id).run().catch((e) => console.error("record", e));
+    return json({ ok: true, forwarded: true, id: p.id });
+  })();
+  ctx.waitUntil(work.catch((e) => console.error("pull", e)));
+  return await work;
+}
+
 // ---- owner tools ---------------------------------------------------------------------
 
 async function admin(request, env, path) {
@@ -759,11 +864,12 @@ async function admin(request, env, path) {
   }
   if (request.method === "GET" && path === "/admin/submissions") {
     const origin = new URL(request.url).origin;
-    const [keys, subs] = await env.DB.batch([
+    const [keys, subs, pulls] = await env.DB.batch([
       env.DB.prepare("SELECT * FROM submit_keys ORDER BY created_at DESC LIMIT 50"),
       env.DB.prepare("SELECT id, key_last4, name, username, slots, bytes, key_id, created_at FROM submissions ORDER BY created_at DESC LIMIT 200"),
+      env.DB.prepare("SELECT id, key_last4, name, username, slots, key_id, created_at FROM pulls ORDER BY created_at DESC LIMIT 200"),
     ]);
-    return json({ keys: keys.results.map(({ review_token, key_hash, ...k }) => ({ ...k, review_url: `${origin}/submit/review/${k.id}?t=${review_token}` })), submissions: subs.results });
+    return json({ keys: keys.results.map(({ review_token, key_hash, ...k }) => ({ ...k, review_url: `${origin}/submit/review/${k.id}?t=${review_token}` })), submissions: subs.results, pulls: pulls.results });
   }
   if (request.method === "GET" && path === "/admin/applications") {
     const { results } = await env.DB.prepare(
