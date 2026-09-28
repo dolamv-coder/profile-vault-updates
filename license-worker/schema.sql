@@ -104,3 +104,17 @@ CREATE TABLE IF NOT EXISTS submissions (
   webhook_message_id TEXT
 );
 CREATE INDEX IF NOT EXISTS submissions_key ON submissions (key_hash, created_at);
+
+-- Slots pulled after being submitted, posted to the channel so the owner can take them off their list.
+CREATE TABLE IF NOT EXISTS pulls (
+  id                 TEXT PRIMARY KEY,
+  key_hash           TEXT NOT NULL,
+  key_last4          TEXT NOT NULL,
+  name               TEXT NOT NULL DEFAULT '',
+  username           TEXT,
+  slots              INTEGER NOT NULL,
+  key_id             TEXT NOT NULL,
+  created_at         INTEGER NOT NULL,
+  webhook_message_id TEXT
+);
+CREATE INDEX IF NOT EXISTS pulls_key ON pulls (key_hash, created_at);
