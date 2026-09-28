@@ -1,10 +1,10 @@
 {
-  "version": "1.9.45",
-  "url": "index-1.9.45.html",
-  "sha256": "72f10eaab7083b2ed33747c57dd0b4168e082557c2a3f6db8371ab563ae8900f",
-  "signature": "SWc4LdHVI+uNorMqyaBF0o7RWB8hyNEQoNlls2O6OVj5jJuWI7bjDbC3WEjX/cpVddW+IThkkOIG8ifRC5ZjCw==",
+  "version": "1.9.48",
+  "url": "index-1.9.48.html",
+  "sha256": "5e49debe2994a23e79d3b6877a64a0b81a47ac7f6c5d3f2298e62fd39c118ea0",
+  "signature": "2sRX0Xkv/B5wskE57Ru3i80xlRK+QDJHqvT68Z0A9e1L+/QWu4k5lM3EfiVsBlb5IguAb7luR/Pn4ubdiVZJBg==",
   "minAppVersion": "0",
-  "notes": "Import accounts: paste email:password lines; each account links to the profile with the same email, and a new alert shows profiles still missing a store login.",
+  "notes": "Phone tracker: a Clean emails button next to Select asks Orbit on your computer to clear newsletters and sale emails (orders, bills and sign-in emails are kept). Also since 1.9.45: Submit can send slots straight to the seller's Discord, encrypted, and up to 20 slots can be on at once, with more on request.",
   "installerUrl": "",
-  "publishedAt": "2026-09-26T22:21:54.837Z"
+  "publishedAt": "2026-09-28T04:20:06.251Z"
 }
