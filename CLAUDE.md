@@ -106,7 +106,13 @@ As of 2026-09-26, none of these are in `dolamv-coder/profile-vault-updates` or
   open `orders` and choose Edit code. Or use the Cloudflare Developer Platform
   connector. Once recovered, it should get its own repo.
 - **Desktop wrapper**: provides `window.pvDesktop` (updates, inbox sync, promo
-  scanning, attention and focus). The app HTML runs inside it.
+  scanning, attention and focus). The app HTML runs inside it. Which emails
+  Clean emails finds is decided there (`scanPromos`), so changing detection
+  used to need a new app download. From page 1.9.49 the page sends
+  `CLEAN_RULES` (regex sources for plain sales and survey senders) with each
+  scan. A wrapper with `pvDesktop.version` 10+ uses them in place of its
+  built-in copies, so those two rules can then change with a page update.
+  Older wrappers ignore them.
 - **`tools/license.mjs`**: makes license keys and signs `licenses.json`. It
   holds the license private key.
 - **Update signing tool and key**: produces `update.json`'s `signature`.
