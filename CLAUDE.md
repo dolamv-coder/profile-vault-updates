@@ -72,8 +72,14 @@ As of 2026-09-26, none of these are in `dolamv-coder/profile-vault-updates` or
     key derived from the phone passcode; the relay can't read it).
     Authorization is `Bearer <license key>`, or a write token for a
     self-hosted relay.
-  - `GET /cmd/:id` and `DELETE /cmd/:id`: encrypted requests from the phone,
-    such as deleting orders.
+  - `GET /cmd/:id` and `DELETE /cmd/:id`: encrypted requests from the phone:
+    `{v:1, op:"delete", ids}` deletes orders, and `{v:1, op:"clean"}` (app
+    1.9.48+) runs one Clean emails pass on auto-clean's inboxes and folders,
+    even with auto-clean off. The snapshot's `canClean` shows the phone's
+    Clean emails button, and `clean` carries the last result. A clean request
+    stays on the relay until its pass ends. The relay just stores these, so
+    new request types only need the phone page (`phone.html` in the relay)
+    and the desktop to agree.
   - Web push forwarding: the app encrypts alerts itself (RFC 8291), and the
     relay only forwards them.
   - `GET /discord/ready`, `/discord/start`, `/discord/status/:r`: the manual
