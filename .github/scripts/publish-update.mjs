@@ -44,7 +44,7 @@ const appKey = () => createPublicKey({ key: Buffer.from(APP_PUBLIC_KEY, "base64"
 const appAccepts = (m) => { try { return verify(null, signedMessage(m), appKey(), Buffer.from(String(m.signature || ""), "base64")); } catch { return false; } };
 const summary = (line) => { console.log(line); if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, line + "\n"); };
 const fail = (msg) => { console.log(`::error::${msg}`); process.exit(1); };
-const SETUP = "In Settings → Environments → release, under Deployment branches choose Selected branches and add main, then Add environment secret UPDATE_SIGNING_KEY with the whole private key file tools/release.mjs signs with. Then re-run this workflow from the Actions tab.";
+const SETUP = "In Settings → Environments → release, under Deployment branches choose Selected branches and add main, then Add environment secret UPDATE_SIGNING_KEY with the whole private key file tools/release.mjs signs with. Then use Run workflow on the Publish Orbit update page of the Actions tab.";
 
 // The private key in whichever form it was pasted: PEM, JWK, a JSON file holding one of those, or
 // base64/hex of PKCS#8 DER or the bare 32-byte seed. UPDATE_SIGNING_KEY_PASSPHRASE opens an

@@ -72,9 +72,9 @@ One commit per release, titled `Release X.Y.Z`, updates `update.json`. The
    page with the `UPDATE_SIGNING_KEY` secret, checks the signature against the
    key built into the app, commits it as `Release X.Y.Z`, and waits until
    raw.githubusercontent.com serves it. Apps check at startup and every 6
-   hours, and install it on their next restart. If the same merge changes
-   `license-worker/`, it first waits for "Deploy license worker" and doesn't
-   publish if that fails.
+   hours, and install it on their next restart. It first waits for the newest
+   "Deploy license worker" run on `main` and doesn't publish unless that
+   succeeded, since a page may need a worker change merged with it or before it.
 
 **So merging a new page with its notes ships it to every installed app.** Pull
 requests that touch pages, notes or `update.json` run the same checks without
@@ -89,9 +89,10 @@ it on the desktop with `--min-app` and `--installer-url` so older apps get a
 download link instead (later versions keep those values).
 
 The key must be an environment secret of the `release` environment, with
-Deployment branches set to `main` only (Settings → Environments); the Action
-refuses to run if the key is also a repository secret or other branches can use
-the environment. A required reviewer there would hold each release for one
+Deployment branches set to Selected branches with only `main` (Settings →
+Environments; "Protected branches only" lets every branch in while none is
+protected). The Action refuses to run if the key is also a repository secret or
+other branches can use the environment. A required reviewer there would hold each release for one
 click. Anyone who can change `main` or its workflows can ship an update, so keep
 write access tight.
 

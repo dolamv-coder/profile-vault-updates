@@ -27,7 +27,7 @@ on:
         default: ""
 
 concurrency:
-  group: publish-update-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  group: publish-update-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -47,8 +47,8 @@ jobs:
       - name: Test the publisher
         run: node .github/scripts/publish-update.test.mjs
 
-  # Before the key is handed out: it must be readable only by this job on main, and a worker
-  # change in the same push must be live first.
+  # Before the key is handed out: it must be readable only by this job on main, and the newest
+  # worker deploy on main must have worked.
   guard:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -60,7 +60,7 @@ jobs:
           KEY_OUTSIDE_RELEASE: ${{ secrets.UPDATE_SIGNING_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          setup="In Settings > Environments > release, under Deployment branches choose Selected branches and add main, then Add environment secret UPDATE_SIGNING_KEY."
+          setup="In Settings > Environments > release, under Deployment branches choose Selected branches and add main, then Add environment secret UPDATE_SIGNING_KEY. Then use Run workflow on the Publish Orbit update page of the Actions tab."
           if [ -n "$KEY_OUTSIDE_RELEASE" ]; then
             echo "::error::UPDATE_SIGNING_KEY is saved as a repository or organization secret, so a workflow on any branch could read it. Delete it under Settings > Secrets and variables > Actions, and keep it only in the release environment. $setup"
             exit 1
@@ -77,26 +77,30 @@ jobs:
           if [ "$rule" = custom ]; then
             rule="$(gh api "repos/$GITHUB_REPOSITORY/environments/release/deployment-branch-policies" --jq '[.branch_policies[] | (.type // "branch") + ":" + .name] | unique | join(",")')"
           fi
-          if [ "$rule" != protected ] && [ "$rule" != "branch:main" ]; then
+          # "Protected branches only" isn't enough: with no protected branches, GitHub lets every branch in.
+          if [ "$rule" != "branch:main" ]; then
             echo "::error::The release environment lets branches other than main use the key. $setup Remove any other branch rules."
             exit 1
           fi
 
-      - name: Wait for the license worker deploy from this push
-        if: github.event_name == 'push'
+      # A page may need the worker change merged with it or just before it, so the newest worker
+      # deploy on main has to have worked.
+      - name: Wait for the license worker deploy
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          id=""
-          for i in 1 2 3 4 5; do
-            id="$(gh run list -R "$GITHUB_REPOSITORY" -w deploy-license-worker.yml -c "$GITHUB_SHA" -L 1 --json databaseId -q '.[0].databaseId // empty')"
-            [ -n "$id" ] && break
-            sleep 4
-          done
-          if [ -z "$id" ]; then echo "This push didn't change the license worker."; exit 0; fi
-          echo "Waiting for Deploy license worker (run $id), which this page may need."
+          list() { gh run list -R "$GITHUB_REPOSITORY" -w deploy-license-worker.yml -L 1 --json databaseId -q '.[0].databaseId // empty' "$@"; }
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            for i in 1 2 3 4 5; do   # a deploy started by this same push can take a moment to appear
+              [ -n "$(list -c "$GITHUB_SHA")" ] && break
+              sleep 4
+            done
+          fi
+          id="$(list -b main)"
+          if [ -z "$id" ]; then echo "The license worker has never been deployed from main."; exit 0; fi
+          echo "Checking Deploy license worker run $id."
           if ! gh run watch "$id" -R "$GITHUB_REPOSITORY" --exit-status > /dev/null; then
-            echo "::error::Deploy license worker failed for this push, so the page wasn't published: it may need the new worker. Fix the deploy, then run Publish Orbit update from the Actions tab."
+            echo "::error::The latest Deploy license worker run didn't succeed, so the live worker may not match main and the page wasn't published. Fix or re-run that deploy, then use Run workflow on the Publish Orbit update page of the Actions tab."
             exit 1
           fi
 
@@ -141,7 +145,7 @@ jobs:
             git fetch -q --depth=1 origin main
             git reset -q --hard FETCH_HEAD
             if [ "$(git rev-parse -q --verify "HEAD:index-$version.html" || true)" != "$page" ]; then
-              echo "::error::index-$version.html on main isn't the one in the commit this run is for, so it wasn't published. The run for the newer commit handles it."
+              echo "::error::index-$version.html on main isn't the one in the commit this run is for, so it wasn't published. The run for the newer commit handles it; if that one failed too, use Run workflow on the Publish Orbit update page of the Actions tab."
               exit 1
             fi
             VERSION="$version" node .github/scripts/publish-update.mjs
