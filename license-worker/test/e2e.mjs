@@ -59,7 +59,7 @@ const discord = createServer(async (req, res) => {
     if (/^multipart\//.test(req.headers["content-type"] || "")) {
       const form = await new Response(raw, { headers: { "content-type": req.headers["content-type"] } }).formData();
       data = JSON.parse(form.get("payload_json"));
-      for (const [k, v] of form) if (k.startsWith("files[")) files.push({ name: v.name, text: await v.text() });
+      for (const [k, v] of form) if (k.startsWith("files[")) files.push({ name: v.name, text: await v.text(), type: v.type });
     } else data = JSON.parse(body);
     const m = { id: "msg" + (webhookPosts.length + 1), wait: u.searchParams.get("wait"), files, ...data };
     webhookPosts.push(m); return send(200, { id: m.id });
@@ -810,6 +810,76 @@ try {
     assert.deepEqual(Object.keys(d.pulls[0]).sort(), ["created_at", "id", "key_id", "key_last4", "name", "slots", "username"]);
     const p = d.pulls.find((x) => x.id === pullBatch);
     assert.deepEqual([p.slots, p.name, p.username, p.key_id], [2, "Frank *F*", "frank", ownerKey.keyId]);
+  });
+
+  console.log("\nCSV submissions (app 1.9.52+)");
+  const csv = "profile_name,group,email,card_number,card_cvv,target_account_email,target_account_password\r\n" +
+    'Kim Lee,Beta,kim@example.com,4242424242424242,123,kim.target@example.com,"pa,ss""word"\r\n' +
+    "Sam Park,Main,sam@example.com,5454545454545454,456,,\r\n";
+  let csvBatch;
+  await test("a CSV batch is posted as a .csv file, and needs no collecting key", async () => {
+    await keyPost(ownerLink, "deny");
+    assert.equal((await getJson("/submit/key")).pub, null);
+    csvBatch = "csv" + rid();
+    const before = webhookPosts.length;
+    const r = await slots("/submissions", frankKey, { csv, name: "Beta", slots: 2, stores: [{ name: "Target", n: 2 }], batch: csvBatch });
+    assert.equal(r.status, 200); assert.deepEqual(await r.json(), { ok: true, id: csvBatch });
+    assert.equal(webhookPosts.length, before + 1);
+    const m = webhookPosts.at(-1);
+    assert.ok(m.content.startsWith(`📦 **2 slots** from **Beta** · @frank · license …${frankKey.slice(-4)}\nTarget 2\n`), m.content);
+    assert.ok(m.content.endsWith("\n-# CSV attached."), m.content);
+    assert.equal(m.files.length, 1); assert.equal(m.files[0].text, csv, "the CSV exactly as sent");
+    assert.match(m.files[0].name, /^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-Beta\.csv$/);
+    assert.match(m.files[0].type, /^text\/csv/);
+    assert.equal(m.allowed_mentions.parse.length, 0);
+  });
+  await test("sending the same CSV batch again doesn't post it twice", async () => {
+    const before = webhookPosts.length;
+    const again = await (await slots("/submissions", frankKey, { csv, name: "Beta", slots: 2, batch: csvBatch })).json();
+    assert.equal(again.ok, true); assert.equal(again.duplicate, true);
+    assert.equal(webhookPosts.length, before);
+  });
+  await test("a CSV batch needs a license, Orbit's CSV header and a slot count, and has a size limit", async () => {
+    assert.equal((await slots("/submissions", null, { csv, slots: 2 })).status, 401);
+    for (const body of [
+      { csv: "", slots: 1 },
+      { csv: "name,email\r\nKim,kim@example.com\r\n", slots: 1 },
+      { csv: "\r\n" + csv, slots: 1 },
+      { csv, slots: 0 },
+      { csv: 42, slots: 1 },
+    ]) assert.equal((await slots("/submissions", frankKey, body)).status, 400, JSON.stringify(body).slice(0, 60));
+    assert.equal((await slots("/submissions", frankKey, { csv: "\uFEFF" + csv, slots: 2 })).status, 200, "a byte-order mark is fine");
+    assert.equal((await slots("/submissions", frankKey, { csv: csv + "x".repeat(4_050_000), slots: 2 })).status, 413);
+  });
+  await test("pulling slots that were sent as CSV posts them, and says so", async () => {
+    const before = webhookPosts.length;
+    const r = await (await pull(frankKey, { keyId: "csv", name: "Beta", slots: two })).json();
+    assert.equal(r.forwarded, true);
+    assert.equal(webhookPosts.length, before + 1);
+    assert.ok(webhookPosts.at(-1).content.endsWith("\n-# Take them off their list. Sent as CSV."), webhookPosts.at(-1).content);
+    assert.doesNotMatch(webhookPosts.at(-1).content, /4242424242424242/, "never the card number");
+  });
+  await test("a CSV pull from a license that never sent a CSV batch isn't posted", async () => {
+    const before = webhookPosts.length;
+    assert.deepEqual(await (await pull(GH_KEY, { keyId: "CSV", slots: two })).json(), { ok: true, forwarded: false });
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal(webhookPosts.length, before);
+  });
+  await test("admin lists CSV batches as key CSV, never the CSV itself", async () => {
+    const d = await (await admin("/admin/submissions")).json();
+    const s = d.submissions.find((x) => x.id === csvBatch);
+    assert.equal(s.key_id, "CSV"); assert.equal(s.slots, 2); assert.equal(s.bytes, csv.length);
+    assert.ok(d.submissions.every((x) => x.csv === undefined && x.code === undefined));
+  });
+  await test("CSV batches count toward 30 an hour per license", async () => {
+    let sent = 0, limited = false;
+    for (let i = 0; i < 40 && !limited; i++){
+      const st = (await slots("/submissions", frankKey, { csv, slots: 1 })).status;
+      if (st === 429) limited = true; else { assert.equal(st, 200); sent++; }
+    }
+    assert.ok(limited, "hit the limit");
+    const d = await (await admin("/admin/submissions")).json();
+    assert.equal(d.submissions.filter((x) => x.key_last4 === frankKey.slice(-4) && Date.now() - x.created_at < 3600e3).length, 30);
   });
   console.log(`\n${passed} passed`);
 } finally {

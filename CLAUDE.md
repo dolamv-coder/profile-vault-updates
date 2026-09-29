@@ -36,13 +36,17 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   It also keeps each license's slot limit (default 20 switched on at once on the
   Submit page, app 1.9.46+): `/slots/limit` and `/slots/request` take the license
   key as `Authorization: Bearer`, and requests are approved at `/slots/review/:id`.
-  From 1.9.47, Submit sends slots straight to the owner's channel: the app seals them for the
+  From 1.9.47, Submit sends slots straight to the owner's channel. 1.9.47–1.9.51 seal them for the
   owner's collecting key (`GET /submit/key`; the owner offers it from Settings → Password and
   sharing and confirms it at `/submit/review/:id`), and `POST /submissions` posts the sealed
-  `PVSUB1.` code as a `.txt` attachment. From 1.9.50, pulling a submitted slot sends `POST /pull`,
-  which posts a plain list (store, profile name, account email, card brand and last 4) to the same
-  channel, only for keys that license already sent submissions to.
-  Full card numbers, CVVs and passwords never go to Discord.
+  `PVSUB1.` code as a `.txt` attachment. From 1.9.52, at the owner's request, a licensed desktop
+  app sends `POST /submissions {csv, …}` instead: no key needed, posted as a `.csv` attachment in
+  plain text (Export → CSV's columns, so full card numbers, CVVs, and store and email passwords go
+  to the channel). The worker keeps no copy, and a recipient set by hand still gets a sealed code.
+  From 1.9.50, pulling a submitted slot sends `POST /pull` (`keyId` is the key, or `CSV`), which
+  posts a plain list (store, profile name, account email, card brand and last 4) to the same
+  channel, only for keys that license already sent submissions to. Pull alerts never carry card
+  numbers or passwords.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 

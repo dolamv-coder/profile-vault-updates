@@ -194,10 +194,35 @@ curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit
 
 ## Slots sent to your Discord
 
-Orbit (1.9.47 and later) can send the slots people submit straight to the same Discord channel,
-as a file. The file is encrypted in their Orbit before it's sent, for a key only your own Orbit
-has, so card numbers and passwords are never readable by Discord or by this worker, and the
-worker doesn't keep a copy.
+From Orbit 1.9.52, every batch people submit from a licensed Orbit is posted to the same Discord
+channel as a `.csv` file you can open directly, in a spreadsheet or your bot. It has the same
+columns as **Export → CSV** in Orbit: one row per profile, with the address, the full card number,
+expiry and CVV, and the account email and password (and email app password) for each store the
+profile was submitted for. Profiles with no group of their own get the sender's name as their group.
+There's nothing to set up; it uses the same `DISCORD_WEBHOOK_URL`.
+
+> 📦 **6 slots** from **Kim** · @kim · license …ABCD
+> Target 3 · Walmart 3
+> CSV attached.
+
+**The file is plain text.** Anyone who can read the channel, any bot in the server, and Discord
+itself can read every card number and password in it, and this worker passes it through (it keeps
+no copy, only who sent how many slots). Keep the channel private, keep the server's members and bots
+to ones you trust, turn on two-factor sign-in for your Discord account, and delete the files once
+you've loaded them.
+
+- Someone who set a recipient by hand on their Submit page (**Send somewhere else**) keeps getting a
+  sealed code for that recipient instead.
+- Each license can send at most 30 batches an hour. A batch sent again because the answer got lost
+  on the way isn't posted twice. Every batch (who, how many slots, never the contents) is in
+  `/admin/submissions`, CSV batches with key `CSV`.
+
+### Encrypted files from Orbit 1.9.47–1.9.51
+
+People still on an older Orbit send an encrypted `.txt` instead, once you've set up a collecting
+key. The file is encrypted in their Orbit before it's sent, for a key only your own Orbit has, so
+card numbers and passwords are never readable by Discord or by this worker. Without a key, those
+versions give people a code to send you themselves.
 
 Turn it on once, from your own Orbit (the one you'll open submissions with):
 
@@ -208,12 +233,7 @@ Turn it on once, from your own Orbit (the one you'll open submissions with):
    confirm that key. Open its link and choose **Confirm**, but only if the key ID and fingerprint on
    that page match the ones in your Orbit.
 
-From then on, the Submit page in everyone's Orbit says **Going straight to the seller**, and each
-batch arrives in your channel like this, with a `.txt` file attached:
-
-> 📦 **6 slots** from **Kim** · @kim · license …ABCD
-> Target 3 · Walmart 3
-
+From then on, their batches arrive in your channel with the same message and a `.txt` file attached.
 To open one, download the file, then in your Orbit choose **Import** and drop it in.
 
 - **Back up your vault.** Only the Orbit with that key can open the files. If it's lost, files
@@ -222,13 +242,9 @@ To open one, download the file, then in your Orbit choose **Import** and drop it
   one; older files still need the old vault. Each person's Orbit remembers the key it last sent
   with, and the first time they send after a change it tells them the key changed and asks them to
   press **Send to the new key**, so tell people when you change it. The link in each key's message lets you change your
-  mind later, and **Stop using it** turns sending off (Orbit then falls back to giving people a code
-  to send you).
-- Someone who set a different recipient by hand on their Submit page keeps getting a code for that
-  recipient instead.
-- Each license can send at most 30 batches an hour. A batch sent again because the answer got lost
-  on the way isn't posted twice. Every key and batch (never the contents) is in
-  `/admin/submissions`:
+  mind later, and **Stop using it** turns encrypted sending off for those versions (they then give
+  people a code to send you). It doesn't affect CSV batches from 1.9.52.
+- Every key and batch (never the contents) is in `/admin/submissions`:
 
   ```
   curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/submissions
@@ -250,6 +266,7 @@ a `.txt` file, with a count per store in the message.
 
 - It's only posted for slots that license sent through this worker: if the license never sent a
   batch to your channel for that key ID (for example it gave you a code instead), nothing is posted.
+  Slots sent as CSV (1.9.52 and later) count too; their message ends with **Sent as CSV.**
 - A pull sent again because the answer got lost isn't posted twice, and each license can post at
   most 30 pulls an hour. Every pull (who, how many slots, which key, never the list itself) is under
   `pulls` in `/admin/submissions`.
