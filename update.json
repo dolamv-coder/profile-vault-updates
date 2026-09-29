@@ -1,10 +1,10 @@
 {
-  "version": "1.9.50",
-  "url": "index-1.9.50.html",
-  "sha256": "e1114503971c01a2549e98e79da158a02e336b28814c50749c027b5920a8c02a",
-  "signature": "7ANQ6GeipaNzaGuGxRA1XE/oTowN6f4FSKOY/dZCqlxI3QYKBEn2KQqXwcGxPaTbynPTHVM0xss1zxbG8HNPAg==",
+  "version": "1.9.51",
+  "url": "index-1.9.51.html",
+  "sha256": "d3f7b6d122303016c58cc43cae12c8a3e0d86d9f75abb68a4559311514bc1076",
+  "signature": "YCxSKsHo/c4eV3bBlfDrns90diCpGkTPZuJb7VOS7JAS23vqQkoLqiRyDJNhfDHbhTbAUEbQfwe0jcVXjAVsDQ==",
   "minAppVersion": "0",
-  "notes": "Cards has Comfortable, Compact and List layouts (List fits the most, and Show puts the full number and CVV in the row). On Submit, switching off a submitted slot pulls it and tells the seller in Discord, and slots that aren't submitted now say Not submitted.",
+  "notes": "Right-click or touch and hold a group to rename, duplicate or delete it, with Undo. Store logins has Comfortable, Compact and List layouts, and profiles linked to a login show in green.",
   "installerUrl": "",
-  "publishedAt": "2026-09-28T20:00:04.442Z"
+  "publishedAt": "2026-09-29T05:19:49.024Z"
 }
