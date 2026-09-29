@@ -72,18 +72,28 @@ One commit per release, titled `Release X.Y.Z`, updates `update.json`. The
    page with the `UPDATE_SIGNING_KEY` secret, checks the signature against the
    key built into the app, commits it as `Release X.Y.Z`, and waits until
    raw.githubusercontent.com serves it. Apps check at startup and every 6
-   hours, and install it on their next restart.
+   hours, and install it on their next restart. If the same merge changes
+   `license-worker/`, it first waits for "Deploy license worker" and doesn't
+   publish if that fails.
 
-**So merging a new page with its notes ships it to every installed app.** A
-page newer than `update.json` without notes fails the Action instead. It can
-also be run by hand from the Actions tab (optionally for one version), for
-example after adding the key. Don't edit `sha256` or `signature` by hand: an
-unsigned or mis-signed update is rejected by every installed app. Don't change
-a page once it's released.
+**So merging a new page with its notes ships it to every installed app.** Pull
+requests that touch pages, notes or `update.json` run the same checks without
+the key (and the publisher's tests, `.github/scripts/publish-update.test.mjs`).
+The Action fails instead of publishing when a page newer than `update.json` has
+no notes, and when the released page was changed or removed after release (apps
+would refuse it): put changes in a new version instead. It can also be run by
+hand from the Actions tab, optionally for one version. Don't edit `sha256` or
+`signature` by hand: an unsigned or mis-signed update is rejected by every
+installed app. A page that needs a newer desktop app can't go out this way: sign
+it on the desktop with `--min-app` and `--installer-url` so older apps get a
+download link instead (later versions keep those values).
 
-The key is in the `release` environment (Settings → Environments), limited to
-`main`. Anyone who can change `main` or its workflows can ship an update, so
-keep write access tight.
+The key must be an environment secret of the `release` environment, with
+Deployment branches set to `main` only (Settings → Environments); the Action
+refuses to run if the key is also a repository secret or other branches can use
+the environment. A required reviewer there would hold each release for one
+click. Anyone who can change `main` or its workflows can ship an update, so keep
+write access tight.
 
 Publishing from the desktop still works, for example if the Action can't.
 **Sign the bytes GitHub serves, not a Windows working copy.** Apps download
