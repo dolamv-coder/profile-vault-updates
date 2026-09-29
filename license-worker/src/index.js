@@ -15,13 +15,18 @@
 // Slots (app sends "Authorization: Bearer <license key>"):
 //   GET  /slots/limit          {limit, request}: how many slots this license can have on at once
 //   POST /slots/request        {requested, name, note}: ask for more; posted to DISCORD_WEBHOOK_URL
-// Submissions (slots sent from the Submit page), encrypted in the app to the owner's collecting key:
-//   GET  /submit/key           {pub, keyId}: the key to encrypt to (null until the owner confirms one)
+// Submissions (slots sent from the Submit page):
+//   GET  /submit/key           {pub, keyId}: the collecting key apps before 1.9.52 encrypt to (null until
+//                              the owner confirms one)
 //   POST /submit/key           {pub, name}: offer a collecting key; the owner confirms it in Discord
-//   POST /submissions          {code, keyId, name, slots, stores}: posted to DISCORD_WEBHOOK_URL as
-//                              an attachment. Only the encrypted code goes there, and it isn't kept here.
+//   POST /submissions          {csv, name, slots, stores, batch} (app 1.9.52+): posted to DISCORD_WEBHOOK_URL
+//                              as a .csv attachment in plain text, with full card numbers, CVVs and
+//                              passwords (the owner chose this over encryption). Older apps send
+//                              {code, keyId, ...}, a code encrypted to the collecting key, posted as a .txt.
+//                              Neither is kept here.
 //   POST /pull                 {keyId, name, batch, slots}: slots pulled after being sent; posted to
-//                              DISCORD_WEBHOOK_URL as a plain list, only for keys this license sent submissions to
+//                              DISCORD_WEBHOOK_URL as a plain list, only for keys (or "CSV") this license
+//                              sent submissions to
 // Owner:
 //   GET/POST /review/DISCORD_ID?t=TOKEN   approve or deny one request (link posted to the webhook)
 //   GET/POST /slots/review/ID?t=TOKEN     approve (optionally a different number) or deny more slots
@@ -338,7 +343,7 @@ async function decide(env, ctx, app, action, origin) {
 
 // ---- owner's Discord channel ---------------------------------------------------------
 
-// `file` ({name, text}) is sent as an attachment on the message.
+// `file` ({name, text, type}) is sent as an attachment on the message (type defaults to text/plain).
 async function webhookPost(env, payload, file) {
   if (!env.DISCORD_WEBHOOK_URL) return null;
   const u = new URL(env.DISCORD_WEBHOOK_URL);
@@ -348,7 +353,7 @@ async function webhookPost(env, payload, file) {
     if (!file) return fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body });
     const form = new FormData();
     form.append("payload_json", body);
-    form.append("files[0]", new Blob([file.text], { type: "text/plain" }), file.name);
+    form.append("files[0]", new Blob([file.text], { type: file.type || "text/plain" }), file.name);
     return fetch(u, { method: "POST", body: form });
   };
   let r = await send();
@@ -551,9 +556,14 @@ async function slotReview(request, env, ctx, url, id) {
 
 // ---- submissions -----------------------------------------------------------------------
 //
-// The Submit page seals each batch (card numbers, store and email passwords) in the app with the
-// owner's collecting key from Orbit (Settings → Password and sharing), so the worker and Discord only ever
-// see ciphertext. The owner downloads the attachment and opens it with Import in Orbit.
+// From app 1.9.52 the Submit page sends each batch as CSV (Orbit's Export → CSV columns), and it's
+// posted to the owner's channel as a .csv they open directly. That's plain text: full card numbers,
+// CVVs, and store and email passwords pass through here and sit in the channel. The owner chose
+// this. Nothing is kept here but who sent how many slots.
+//
+// Older apps seal each batch with the owner's collecting key from Orbit (Settings → Password and
+// sharing), so for them the worker and Discord only see ciphertext. The owner downloads that .txt
+// and opens it with Import in Orbit.
 
 const SUBMISSIONS_PER_HOUR = 30;
 const SUBMISSION_MAX_CHARS = 4_000_000;     // well under Discord's attachment limit
@@ -692,13 +702,22 @@ async function submission(request, env, url) {
   if (Number(request.headers.get("content-length") || 0) > SUBMISSION_MAX_CHARS + 20000) return json({ error: "too large" }, 413);
   const text = await request.text();
   if (text.length > SUBMISSION_MAX_CHARS + 20000) return json({ error: "too large" }, 413);
-  let b; try { b = JSON.parse(text); } catch { b = {}; }
-  const code = String(b.code || "");
-  if (!/^PVSUB1\.[A-Za-z0-9_-]{80,100}\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{24,}$/.test(code) || code.length > SUBMISSION_MAX_CHARS) return json({ error: "that isn't a sealed submission" }, 400);
-  const active = await activeSubmitKey(env);
-  if (!active) return json({ error: "no collecting key" }, 409);
-  // Sealed for an older key: the owner couldn't open it with the key they use now.
-  if (b.keyId !== active.key_id) return json({ error: "key changed", pub: active.pub, keyId: active.key_id }, 409);
+  let b; try { b = JSON.parse(text) || {}; } catch { b = {}; }
+  // App 1.9.52 and later send the batch as CSV (no key needed); older apps send a sealed code.
+  const csv = typeof b.csv === "string" ? b.csv : null;
+  let code = "", keyId;
+  if (csv !== null) {
+    if (!/^\uFEFF?profile_name,/.test(csv) || csv.length > SUBMISSION_MAX_CHARS) return json({ error: "that isn't a slots CSV" }, 400);
+    keyId = "CSV";
+  } else {
+    code = String(b.code || "");
+    if (!/^PVSUB1\.[A-Za-z0-9_-]{80,100}\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{24,}$/.test(code) || code.length > SUBMISSION_MAX_CHARS) return json({ error: "that isn't a sealed submission" }, 400);
+    const active = await activeSubmitKey(env);
+    if (!active) return json({ error: "no collecting key" }, 409);
+    // Sealed for an older key: the owner couldn't open it with the key they use now.
+    if (b.keyId !== active.key_id) return json({ error: "key changed", pub: active.pub, keyId: active.key_id }, 409);
+    keyId = active.key_id;
+  }
   const slots = Math.floor(Number(b.slots));
   if (!(slots >= 1 && slots <= SLOT_MAX)) return json({ error: "slots" }, 400);
   const stores = (Array.isArray(b.stores) ? b.stores : []).slice(0, 40)
@@ -717,21 +736,24 @@ async function submission(request, env, url) {
 
   const s = {
     id: batch, key_hash: lic.hash, key_last4: lic.last4, username: lic.username,
-    name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60), slots, key_id: active.key_id,
+    name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60), slots, key_id: keyId,
   };
   const stamp = new Date(now).toISOString().slice(0, 16).replace("T", "-").replace(":", "");
   const slug = s.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
   const who = [s.name ? `**${md(s.name)}**` : "", s.username ? `@${md(s.username)}` : "", `license …${s.key_last4}`].filter(Boolean).join(" · ");
   const storeLine = stores.map((x) => `${md(x.name)} ${x.n}`).join(" · ").slice(0, 1200);
-  const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n-# Encrypted for key ${active.key_id}. To open: download the file, then in Orbit choose **Import** and drop it in.`;
+  const tail = csv !== null ? "-# CSV attached." : `-# Encrypted for key ${keyId}. To open: download the file, then in Orbit choose **Import** and drop it in.`;
+  const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n${tail}`;
+  const base = `orbit-slots-${stamp}${slug ? "-" + slug : ""}`;
+  const file = csv !== null ? { name: base + ".csv", text: csv, type: "text/csv" } : { name: base + ".txt", text: code };
   // Recorded before posting, so a retry that arrives while this one is still posting isn't posted too.
   const ins = await env.DB.prepare(
     `INSERT OR IGNORE INTO submissions (id, key_hash, key_last4, name, username, slots, bytes, key_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(s.id, s.key_hash, s.key_last4, s.name, s.username, slots, code.length, s.key_id, now).run();
+  ).bind(s.id, s.key_hash, s.key_last4, s.name, s.username, slots, file.text.length, s.key_id, now).run();
   if (!ins.meta || !ins.meta.changes) return json({ error: "still sending" }, 425);
   let msgId = null;
-  try { msgId = await webhookPost(env, { content }, { name: `orbit-slots-${stamp}${slug ? "-" + slug : ""}.txt`, text: code }); }
+  try { msgId = await webhookPost(env, { content }, file); }
   catch (e) { console.error("webhook", e); }
   if (!msgId) {
     await env.DB.prepare("DELETE FROM submissions WHERE id = ?").bind(s.id).run();
@@ -761,7 +783,8 @@ async function pull(request, env, ctx) {
   if (text.length > PULL_MAX_CHARS) return json({ error: "too large" }, 413);
   let b; try { b = JSON.parse(text) || {}; } catch { b = {}; }
   const keyId = String(b.keyId || "").toUpperCase();
-  if (!/^[0-9A-F]{4}-[0-9A-F]{4}$/.test(keyId)) return json({ error: "keyId" }, 400);
+  // A collecting key's ID, or "CSV" for slots that were sent as CSV (app 1.9.52+).
+  if (!/^([0-9A-F]{4}-[0-9A-F]{4}|CSV)$/.test(keyId)) return json({ error: "keyId" }, 400);
   if (!Array.isArray(b.slots) || !b.slots.length || b.slots.length > SLOT_MAX) return json({ error: "slots" }, 400);
   const clip = (v, n) => String(v || "").replace(/\s+/g, " ").trim().slice(0, n);
   const slots = b.slots.map((x) => {
@@ -805,14 +828,15 @@ async function pull(request, env, ctx) {
   const head = `🔻 **${p.slots} slot${p.slots === 1 ? "" : "s"} pulled** by ${who}`;
   // One line per slot, leaving out what the app didn't send.
   const line = (x, f, sep) => [f(x.store), f(x.profile), f(x.email), f(x.card), x.sentAt ? `sent ${day(x.sentAt)}` : ""].filter(Boolean).join(sep);
-  let content = `${head}\n${slots.map((x) => line(x, md, " · ")).join("\n")}\n-# Take ${p.slots === 1 ? "it" : "them"} off their list. Sent for key ${keyId}.`;
+  const sentAs = keyId === "CSV" ? "Sent as CSV." : `Sent for key ${keyId}.`;
+  let content = `${head}\n${slots.map((x) => line(x, md, " · ")).join("\n")}\n-# Take ${p.slots === 1 ? "it" : "them"} off their list. ${sentAs}`;
   let file;
   // Discord allows 2000 characters in a message, so a long list is attached as a file instead.
   if (content.length > 1900) {
     const counts = new Map();
     for (const x of slots) if (x.store) counts.set(x.store, (counts.get(x.store) || 0) + 1);
     const storeLine = [...counts].map(([name, n]) => `${md(name)} ${n}`).join(" · ").slice(0, 1200);
-    content = `${head}${storeLine ? `\n${storeLine}` : ""}\n-# The full list is attached. Take them off their list. Sent for key ${keyId}.`;
+    content = `${head}${storeLine ? `\n${storeLine}` : ""}\n-# The full list is attached. Take them off their list. ${sentAs}`;
     const stamp = new Date(now).toISOString().slice(0, 16).replace("T", "-").replace(":", "");
     const slug = p.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
     file = { name: `orbit-pulled-${stamp}${slug ? "-" + slug : ""}.txt`, text: slots.map((x) => line(x, String, " | ")).join("\n") + "\n" };
