@@ -1,0 +1,77 @@
+name: Publish Orbit update
+
+# Ships a new app version to installed copies: signs update.json for the newest index-X.Y.Z.html
+# and commits it to main as "Release X.Y.Z". Runs when a page or its notes land on main, or by
+# hand from the Actions tab. A page is published once release-notes/X.Y.Z.txt (the update notice
+# shown in the app) is on main with it and it's newer than update.json; a newer page without
+# notes fails the run so it isn't left unpublished by mistake.
+#
+# Needs the secret UPDATE_SIGNING_KEY: the private key tools/release.mjs signs with. Keep it in
+# the "release" environment (Settings > Environments > release), limited to the main branch, so
+# only this workflow on main can read it. For a password-protected key, also add
+# UPDATE_SIGNING_KEY_PASSPHRASE there.
+on:
+  push:
+    branches: [main]
+    paths: ["index-*.html", "release-notes/**"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, like 1.9.52 (leave empty for the newest page)"
+        required: false
+        default: ""
+
+concurrency:
+  group: publish-update
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # Signs on top of the latest main each try, so a push that lands meanwhile doesn't lose it.
+      - name: Sign and push update.json
+        id: publish
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          UPDATE_SIGNING_KEY_PASSPHRASE: ${{ secrets.UPDATE_SIGNING_KEY_PASSPHRASE }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3 4; do
+            git fetch -q --depth=1 origin main
+            git reset -q --hard FETCH_HEAD
+            node .github/scripts/publish-update.mjs
+            if git diff --quiet -- update.json; then
+              echo "published=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            version="$(node -p 'require("./update.json").version')"
+            git commit -q -m "Release $version" -- update.json
+            if git push -q origin HEAD:main; then
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "::error::Couldn't push update.json to main. If main only takes changes through pull requests, let GitHub Actions bypass that rule, or publish from the desktop."
+          exit 1
+
+      - name: Check apps are served it
+        if: steps.publish.outputs.published == 'true'
+        env:
+          VERSION: ${{ steps.publish.outputs.version }}
+        run: node .github/scripts/publish-update.mjs --check "$VERSION"

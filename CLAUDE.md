@@ -53,19 +53,39 @@ The release feed for installed copies of Orbit. It is not the full source tree.
 - GitHub Releases: the app links new users to
   `releases/latest/download/Orbit-Windows.zip` on this repo.
 
-`licenses.json` goes live as soon as it's on `main`. The address installed apps
-check for `update.json` is built into the desktop wrapper (users can override
-it under Settings → Updates), so confirm where it points before assuming a
-push to `main` ships an update.
+`licenses.json` goes live as soon as it's on `main`. So does a new app version:
+the desktop wrapper checks
+`raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/update.json`
+(its `update-config.json`; users can point it elsewhere under Settings → Updates),
+and the publish Action below updates that file as soon as a new page and its
+notes reach `main`.
 
 ## Releases
 
-One commit per release, titled `Release X.Y.Z`, which adds
-`index-X.Y.Z.html` and updates `update.json`. To make a new release, copy the
-latest `index-*.html`, make the change, then regenerate `update.json` with the
-publisher's signing tool. Don't edit `sha256` or `signature` by hand: an
-unsigned or mis-signed update is rejected by every installed app.
+One commit per release, titled `Release X.Y.Z`, updates `update.json`. The
+"Publish Orbit update" Action (`.github/workflows/publish-update.yml`) makes it:
 
+1. Copy the latest `index-*.html` to `index-X.Y.Z.html` and make the change.
+2. Add `release-notes/X.Y.Z.txt`: a sentence or two for the app's update notice.
+   Customers read it, so write it for them.
+3. Merge both into `main`. The Action signs `update.json` over the committed
+   page with the `UPDATE_SIGNING_KEY` secret, checks the signature against the
+   key built into the app, commits it as `Release X.Y.Z`, and waits until
+   raw.githubusercontent.com serves it. Apps check at startup and every 6
+   hours, and install it on their next restart.
+
+**So merging a new page with its notes ships it to every installed app.** A
+page newer than `update.json` without notes fails the Action instead. It can
+also be run by hand from the Actions tab (optionally for one version), for
+example after adding the key. Don't edit `sha256` or `signature` by hand: an
+unsigned or mis-signed update is rejected by every installed app. Don't change
+a page once it's released.
+
+The key is in the `release` environment (Settings → Environments), limited to
+`main`. Anyone who can change `main` or its workflows can ship an update, so
+keep write access tight.
+
+Publishing from the desktop still works, for example if the Action can't.
 **Sign the bytes GitHub serves, not a Windows working copy.** Apps download
 `index-X.Y.Z.html` from raw.githubusercontent.com and hash it as-is, and git
 stores it with LF line endings. A clone on Windows with `core.autocrlf=true`
@@ -122,7 +142,9 @@ As of 2026-09-26, none of these are in `dolamv-coder/profile-vault-updates` or
   Older wrappers ignore them.
 - **`tools/license.mjs`**: makes license keys and signs `licenses.json`. It
   holds the license private key.
-- **Update signing tool and key**: produces `update.json`'s `signature`.
+- **Update signing tool and key**: produces `update.json`'s `signature`. A copy
+  of the key is the `UPDATE_SIGNING_KEY` secret the publish Action uses; GitHub
+  never shows a secret again, so that copy isn't a backup.
 
 Without the two private keys, no one can issue new license keys or ship updates
 that installed apps will accept. Keep them backed up somewhere safe, outside
