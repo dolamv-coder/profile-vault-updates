@@ -1,0 +1,170 @@
+name: Publish Orbit update
+
+# Ships a new app version to installed copies: signs update.json for the newest index-X.Y.Z.html
+# and commits it to main as "Release X.Y.Z". Runs when a page, its notes or update.json land on
+# main, or by hand from the Actions tab. A page is published once release-notes/X.Y.Z.txt (the
+# update notice shown in the app) is on main with it and it's newer than update.json. A newer page
+# without notes, or a released page changed after release, fails the run. Pull requests get the
+# same checks without signing.
+#
+# Setup, once: Settings > Environments > New environment "release". Under Deployment branches
+# choose Selected branches and add main. Then Add environment secret UPDATE_SIGNING_KEY: the whole
+# private key file tools/release.mjs signs with (and UPDATE_SIGNING_KEY_PASSPHRASE if it has one).
+# Never add it under Secrets and variables > Actions: a workflow on any branch can read those, and
+# the first job refuses to run while it's there. Optional: add yourself under Required reviewers to
+# approve each release with one click instead of it going out on merge.
+on:
+  push:
+    branches: [main]
+    paths: ["index-*.html", "release-notes/**", "update.json"]
+  pull_request:
+    paths: ["index-*.html", "release-notes/**", "update.json", ".github/scripts/publish-update*.mjs", ".github/workflows/publish-update.yml"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, like 1.9.52 (leave empty for the newest page)"
+        required: false
+        default: ""
+
+concurrency:
+  group: publish-update-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Pull requests: what merging would publish, and the publisher's own tests. No key here.
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check what merging would publish
+        run: node .github/scripts/publish-update.mjs --verify
+
+      - name: Test the publisher
+        run: node .github/scripts/publish-update.test.mjs
+
+  # Before the key is handed out: it must be readable only by this job on main, and the newest
+  # worker deploy on main must have worked.
+  guard:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Check the key is only readable on main
+        env:
+          KEY_OUTSIDE_RELEASE: ${{ secrets.UPDATE_SIGNING_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          setup="In Settings > Environments > release, under Deployment branches choose Selected branches and add main, then Add environment secret UPDATE_SIGNING_KEY. Then use Run workflow on the Publish Orbit update page of the Actions tab."
+          if [ -n "$KEY_OUTSIDE_RELEASE" ]; then
+            echo "::error::UPDATE_SIGNING_KEY is saved as a repository or organization secret, so a workflow on any branch could read it. Delete it under Settings > Secrets and variables > Actions, and keep it only in the release environment. $setup"
+            exit 1
+          fi
+          if ! env_json="$(gh api "repos/$GITHUB_REPOSITORY/environments/release" 2>&1)"; then
+            if grep -q "HTTP 404" <<<"$env_json"; then
+              echo "::error::The release environment doesn't exist yet. Create it under Settings > Environments > New environment, named release. $setup"
+              exit 1
+            fi
+            echo "::warning::Couldn't read the release environment's settings. Check under Settings > Environments > release that Deployment branches allows main only."
+            exit 0
+          fi
+          rule="$(jq -r 'if .deployment_branch_policy == null then "none" elif .deployment_branch_policy.protected_branches then "protected" else "custom" end' <<<"$env_json")"
+          if [ "$rule" = custom ]; then
+            rule="$(gh api "repos/$GITHUB_REPOSITORY/environments/release/deployment-branch-policies" --jq '[.branch_policies[] | (.type // "branch") + ":" + .name] | unique | join(",")')"
+          fi
+          # "Protected branches only" isn't enough: with no protected branches, GitHub lets every branch in.
+          if [ "$rule" != "branch:main" ]; then
+            echo "::error::The release environment lets branches other than main use the key. $setup Remove any other branch rules."
+            exit 1
+          fi
+
+      # A page may need the worker change merged with it or just before it, so the newest worker
+      # deploy on main has to have worked.
+      - name: Wait for the license worker deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          list() { gh run list -R "$GITHUB_REPOSITORY" -w deploy-license-worker.yml -L 1 --json databaseId -q '.[0].databaseId // empty' "$@"; }
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            for i in 1 2 3 4 5; do   # a deploy started by this same push can take a moment to appear
+              [ -n "$(list -c "$GITHUB_SHA")" ] && break
+              sleep 4
+            done
+          fi
+          id="$(list -b main)"
+          if [ -z "$id" ]; then echo "The license worker has never been deployed from main."; exit 0; fi
+          echo "Checking Deploy license worker run $id."
+          if ! gh run watch "$id" -R "$GITHUB_REPOSITORY" --exit-status > /dev/null; then
+            echo "::error::The latest Deploy license worker run didn't succeed, so the live worker may not match main and the page wasn't published. Fix or re-run that deploy, then use Run workflow on the Publish Orbit update page of the Actions tab."
+            exit 1
+          fi
+
+  # Holds the key, so it runs no actions from other repositories: plain git and the runner's Node.
+  publish:
+    needs: guard
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      # Picks the version from the commit this run is for, then signs on top of the latest main
+      # each try, so a push that lands meanwhile doesn't lose it.
+      - name: Sign and push update.json
+        id: publish
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          UPDATE_SIGNING_KEY_PASSPHRASE: ${{ secrets.UPDATE_SIGNING_KEY_PASSPHRASE }}
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          REPO_URL: https://github.com/${{ github.repository }}.git
+        run: |
+          git init -q .
+          git remote add origin "$REPO_URL"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git config http.https://github.com/.extraheader "AUTHORIZATION: basic $auth"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch -q --depth=1 origin "$GITHUB_SHA"
+          git reset -q --hard FETCH_HEAD
+          PICK_OUT="$RUNNER_TEMP/version" node .github/scripts/publish-update.mjs --verify
+          version="$(cat "$RUNNER_TEMP/version")"
+          if [ -z "$version" ]; then
+            echo "published=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          page="$(git rev-parse "HEAD:index-$version.html")"
+
+          for attempt in 1 2 3 4; do
+            git fetch -q --depth=1 origin main
+            git reset -q --hard FETCH_HEAD
+            if [ "$(git rev-parse -q --verify "HEAD:index-$version.html" || true)" != "$page" ]; then
+              echo "::error::index-$version.html on main isn't the one in the commit this run is for, so it wasn't published. The run for the newer commit handles it; if that one failed too, use Run workflow on the Publish Orbit update page of the Actions tab."
+              exit 1
+            fi
+            VERSION="$version" node .github/scripts/publish-update.mjs
+            if git diff --quiet -- update.json; then
+              echo "published=false" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            git commit -q -m "Release $version" -- update.json
+            if git push -q origin HEAD:main; then
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "::error::main didn't accept the push of update.json (a branch rule may require pull requests). Nothing was published; sign $version on the desktop instead."
+          exit 1
+
+      - name: Check apps are served it
+        if: steps.publish.outputs.published == 'true'
+        env:
+          VERSION: ${{ steps.publish.outputs.version }}
+        run: node .github/scripts/publish-update.mjs --check "$VERSION"

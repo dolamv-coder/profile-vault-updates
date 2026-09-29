@@ -1,0 +1,1 @@
+Submit now sends your slots straight to the seller's private Discord channel as a CSV file.
