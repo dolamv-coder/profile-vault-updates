@@ -48,11 +48,10 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   last_name, email, phone_num, cc_*, shipping_*, billing_*), one row per slot, and that store's
   logins as `email:password` lines in a separate `.txt`, in the same order as the first rows. The
   worker names them `orbit-slots-<time>-<sender>-<store>.csv` and `…-<store>-logins.txt`, 10
-  attachments per message. Also from 1.9.53 a store on a profile can be set to "Assign me an
-  account" (`mode: "seller"`): the buyer adds no login and the owner assigns one after submission.
-  Those slots come last in their store's CSV with no login line, `stores[].seller` counts them on
-  the Discord line, and importing a sealed submission brings them in as a store login with none
-  linked, so the "no login linked" alert lists them for linking.
+  attachments per message. Slots without a store login come after those rows. 1.9.53 alone also
+  had an "Assign me an account" store mode (`mode: "seller"`, counted in `stores[].seller`, which
+  the worker still accepts); the owner didn't want it, and 1.9.54 removed it and turns such stores
+  back into store logins with none linked, so Import accounts links them by email again.
   From 1.9.50, pulling a submitted slot sends `POST /pull` (`keyId` is the key, or `CSV`), which
   posts a plain list (store, profile name, account email, card brand and last 4) to the same
   channel, only for keys that license already sent submissions to. Pull alerts never carry card

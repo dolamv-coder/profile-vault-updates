@@ -1,0 +1,1 @@
+The Assign me an account choice is gone: each store on a profile uses a store login or a verified email, as before. A store you set that way now waits for a login, and importing accounts links them to profiles with the same email again.
