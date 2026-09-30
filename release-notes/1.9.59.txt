@@ -1,0 +1,1 @@
+Clean emails now clears sale-event emails like Target Circle Deal Days and Circle Week from your Inbox and Spam, including ones forwarded from your other inboxes. If auto-clean is on, its next run looks back 30 days to catch the ones already there.
