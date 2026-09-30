@@ -1,0 +1,1 @@
+When a store on a profile has no login chosen, Orbit now picks your saved login for that store with the same email as the profile. It changes with the profile's email, and never replaces a login you chose yourself.
