@@ -5108,7 +5108,7 @@ function planImport(flat){
     (Array.isArray(f.logins) ? f.logins : []).forEach(lg => {
       if (!lg || typeof lg !== "object") return;
       const e = addStore(lg, "login"); if (!e) return;
-      if (lg.sellerAccount) asks.add(e); else e.loginId = mkLogin(lg);
+      e.loginId = mkLogin(lg);
     });
     stores.forEach(e => { if (e.mode === "login" && !e.loginId && !asks.has(e)) e.mode = defaultMode(storeKeyOf(e)); if (e.mode === "email" && !e.email) e.email = String(f.email || "").trim(); });
     let groupId = null;
@@ -5370,9 +5370,9 @@ function toAycd(list){
 }
 
 const nh = (h) => String(h || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-const A_AL = {nickname:["nickname","label"], first:["firstname","fname","first","givenname"], last:["lastname","lname","last","surname","familyname"], full:["name","fullname"], line1:["address1","addressline1","address","line1","street","streetaddress","addr1","addr"], line2:["address2","addressline2","line2","apt","suite","unit","addr2","aptsuite"], line3:["address3","addressline3","line3"], city:["city","town"], state:["state","province","region","stateprovince","statecode"], zip:["zip","zipcode","postcode","postalcode","postal"], country:["country","countrycode"], email:["email","emailaddress"], phone:["phone","phonenumber","mobile","tel","telephone"]};
+const A_AL = {nickname:["nickname","label"], first:["firstname","fname","first","givenname"], last:["lastname","lname","last","surname","familyname"], full:["name","fullname"], line1:["address1","addressline1","address","line1","street","streetaddress","addr1","addr"], line2:["address2","addressline2","line2","apt","suite","unit","addr2","aptsuite","street2","streetaddress2"], line3:["address3","addressline3","line3"], city:["city","town"], state:["state","province","region","stateprovince","statecode"], zip:["zip","zipcode","postcode","postalcode","postal"], country:["country","countrycode"], email:["email","emailaddress"], phone:["phone","phonenumber","phonenum","mobile","tel","telephone"]};
 const C_AL = {nickname:["nickname","label"], number:["number","cardnumber","ccnumber","num","no","creditcard","creditcardnumber"], holder:["holder","name","nameoncard","cardholder","holdername","cardholdername","cardname"], expM:["expmonth","expirationmonth","month","expm","mm","expirymonth"], expY:["expyear","expirationyear","year","expy","yy","yyyy","expiryyear"], exp:["exp","expiration","expiry","expdate","expirationdate","expires","expirydate"], cvv:["cvv","cvc","cvv2","ccv","securitycode","code","csc"], type:["type","brand"], redcard:["isredcard","redcard"]};
-const G_AL = {name:["profilename","profile","profiletitle","title"], group:["group","profilegroup","tag","category","folder"], email:["email","emailaddress"], phone:["phone","phonenumber","mobile","tel","telephone"], same:["billingsameasshipping","sameasshipping","samebilling","billingsame","samebillingandshippingaddress","sameaddress"]};
+const G_AL = {name:["profilename","profile","profiletitle","title"], group:["group","profilegroup","tag","category","folder"], email:["email","emailaddress"], phone:["phone","phonenumber","phonenum","mobile","tel","telephone"], same:["billingsameasshipping","sameasshipping","samebilling","billingsame","samebillingandshippingaddress","sameaddress"]};
 const C_LOOSE = new Set(["name","holder","nickname","label","type","no","num","number","code","month","year","mm","yy","yyyy"]);
 const findAl = (T, h, skip) => { for (const k in T) for (const a of T[k]) if (a === h && !(skip && skip.has(a))) return k; return null; };
 function mapHeader(raw){
@@ -5400,11 +5400,8 @@ function csvToFlat(text){
   const ix = (k) => head.indexOf(k);
   const get = (r, k) => { const i = ix(k); return i === -1 ? "" : (r[i] || "").trim(); };
   const pfx = head.filter(h => h.endsWith("_account_email")).map(h => h.slice(0, -"_account_email".length));
-  // A store with no account email is left out, unless its label says the buyer asked the seller to
-  // assign one ("Assign me an account", from Submit): that one comes in waiting for a login.
   const logins = (r) => pfx.map(x => get(r, x + "_account_email") ? {store:get(r, x + "_store") || x, storeId:x, label:get(r, x + "_account_label"), email:get(r, x + "_account_email"), password:get(r, x + "_account_password"),
-    imap: get(r, x + "_imap_email") ? {email:get(r, x + "_imap_email"), password:get(r, x + "_imap_password"), provider:get(r, x + "_imap_provider"), host:get(r, x + "_imap_host"), port:get(r, x + "_imap_port")} : null}
-    : norm(get(r, x + "_account_label")) === norm(ASSIGN_ME) ? {store:get(r, x + "_store") || x, storeId:x, label:"", email:"", password:"", imap:null, sellerAccount:true} : null).filter(Boolean);
+    imap: get(r, x + "_imap_email") ? {email:get(r, x + "_imap_email"), password:get(r, x + "_imap_password"), provider:get(r, x + "_imap_provider"), host:get(r, x + "_imap_host"), port:get(r, x + "_imap_port")} : null} : null).filter(Boolean);
   const has = (sec, f) => maps.some(m => m && m.sec === sec && (!f || m.f === f));
   if (!has("s","line1") && !has("b","line1") && !has("c","number")) throw new Error("Couldn't find address or card columns. The first row should have column names like Address 1, City, Zip and Card Number.");
   const hasPName = has("g","name"), hasFirst = has("s","first") || has("s","full");
@@ -5627,14 +5624,14 @@ function openSettings(){
         const msg = $("#st-dc-msg", dc), old = $("#st-dc-go", dc); if (old) old.remove();
         if (!d){ msg.textContent = "Couldn't reach the license server. Check your connection, then open Settings again."; return; }
         if (d.pub === mine){
-          msg.innerHTML = `Orbit 1.9.52 and later send submitted slots to your Discord channel as a CSV file you open directly. People still on an older version send a file encrypted for key ID <strong>${esc(id)}</strong>, which only this vault can open: download it, then drop it into <strong>Import</strong>.`;
+          msg.innerHTML = `Orbit 1.9.52 and later send submitted slots to your Discord channel as files you open directly: from 1.9.53, a CSV of profiles for each store and its logins in a separate file. People still on an older version send a file encrypted for key ID <strong>${esc(id)}</strong>, which only this vault can open: download it, then drop it into <strong>Import</strong>.`;
           SELLER = {pub:mine, keyId:id}; return;
         }
         const other = d.pub ? ` Right now they're encrypted for a different key, ID <strong>${esc(d.keyId)}</strong>.` : "";
         if (d.mine === "pending"){
           msg.innerHTML = `${note ? esc(note) + " " : ""}Now open your private Discord channel and confirm key ID <strong>${esc(id)}</strong>. Only confirm it if the review page shows this fingerprint: <strong style="font-family:ui-monospace,Consolas,monospace;white-space:nowrap">${esc(fp.slice(0, 19))}</strong> <strong style="font-family:ui-monospace,Consolas,monospace;white-space:nowrap">${esc(fp.slice(20))}</strong>${other}`;
         } else {
-          msg.innerHTML = `Orbit 1.9.52 and later send submitted slots to your private Discord channel as a CSV file. A key here is only for people still on an older version: their slots then arrive there too, encrypted so only this vault can open them. You confirm it from the channel.${other}`;
+          msg.innerHTML = `Orbit 1.9.52 and later send submitted slots to your private Discord channel as files you open directly. A key here is only for people still on an older version: their slots then arrive there too, encrypted so only this vault can open them. You confirm it from the channel.${other}`;
         }
         dc.insertAdjacentHTML("beforeend", `<button class="btn" id="st-dc-go">${d.mine === "pending" ? "Check again" : "Send my key to Discord"}</button>`);
         $("#st-dc-go", dc).addEventListener("click", async (e) => {
@@ -5797,8 +5794,8 @@ const loginTitle = (l) => storeLabel(l) + (l.label ? " — " + l.label : "");
 const STORE_MODE = {pokemoncenter:"email"};
 const defaultMode = (k) => STORE_MODE[String(k).split(":")[0]] || "login";
 // "Assign me an account" (mode "seller", 1.9.53+): the buyer uses one of the seller's store accounts
-// and adds no login; the seller assigns one after the slot is submitted. The CSV the seller gets says
-// so in <store>_account_label, and importing that CSV leaves the store waiting for a login.
+// and adds no login; the seller assigns one after the slot is submitted. Those slots come last in their
+// store's file with no login line, and importing a sealed submission leaves the store waiting for one.
 const ASSIGN_ME = "Assign me an account";
 const modeOf = (e) => e.mode || defaultMode(storeKeyOf(e));
 const asksSeller = (e) => !!e && modeOf(e) === "seller";
@@ -8512,8 +8509,9 @@ const slotReq = () => (S.settings.slotAllow || {}).request || null;
 const canRequestSlots = () => DESK && !!(licRead() || {}).key && (S.settings.slotAllow || {}).canRequest !== false;
 let slotCheckedAt = 0;
 /* Submitting straight to the seller: from 1.9.52 a licensed desktop app sends each batch to the
-   seller's private Discord channel as a CSV file (Export → CSV's columns), through the license
-   worker. That's plain text, card numbers and passwords included: the seller chose it over
+   seller's private Discord channel through the license worker: from 1.9.53 a CSV of profiles for
+   each store in the seller's columns plus its logins (email:password) in a separate file (1.9.52
+   sent one CSV in Export → CSV's columns). That's plain text, card numbers and passwords included: the seller chose it over
    encryption, and the Submit dialog says where the slots go. Before 1.9.52 the batch was sealed for
    the seller's collecting key (the one they confirmed from their channel); SELLER is that key, still
    used when someone sets that key as their recipient by hand, and to recognize slots sent that way. */
@@ -8564,22 +8562,37 @@ async function sendToSeller(from, payload, stores, batch, k){
 // A licensed desktop app sends to the seller's channel as CSV, unless a recipient was set by hand
 // (someone else's invite), who still gets a sealed code.
 const csvToSeller = () => DESK && !!(licRead() || {}).key && !S.submitTo;
-// The CSV the seller gets: Export → CSV's columns, one row per profile, with the logins of the stores
-// it's submitted for (an email-only store shows its account email, and one set to "Assign me an
-// account" says so as its account label, with no email or password). A profile with no group gets the
-// sender's name, as Import does with sealed batches.
-function slotsCSV(fresh, from){
-  const rows = new Map();
-  fresh.forEach(({g, r}) => {
-    if (!rows.has(r.p.id)){ const f = flatProfile(r.p); rows.set(r.p.id, Object.assign(f, {group:f.group || from, logins:[]})); }
-    rows.get(r.p.id).logins.push(asksSeller(r.e) ? {store:g.name, storeId:r.e.store, label:ASSIGN_ME, email:"", password:"", imap:null}
-      : r.l ? loginOut(r.l) : {store:g.name, storeId:r.e.store, label:"", email:r.e.email || "", password:"", imap:null});
-  });
-  return toCSV([...rows.values()]);
+// What the seller gets (1.9.53+), in the columns their tools take: for each store, a CSV of its slots,
+// one row each, and a separate list of its logins, one email:password per line, in the same order as
+// the first rows. Slots on a verified email only (whose account email goes in the email column), then
+// ones asking the seller to assign an account, come after those.
+const SLOT_COLS = ["profile_name","first_name","last_name","email","phone_num","cc_number","cc_exp_month","cc_exp_year","cc_cvv",
+  "shipping_street","shipping_street_2","shipping_city","shipping_state","shipping_zip_code","shipping_country",
+  "billing_first_name","billing_last_name","billing_street","billing_street_2","billing_city","billing_state","billing_zip_code","billing_country"];
+function slotRow(r){
+  const p = r.p, a = addrById(p.shipId) || {}, b = billAddr(p) || {}, c = cardById(p.cardId) || {};
+  const y = String(c.expY || "");
+  return [p.name, a.first, a.last, modeOf(r.e) === "email" && r.e.email ? r.e.email : p.email, p.phone,
+    digits(c.number), c.expM ? String(c.expM).padStart(2, "0") : "", /^\d{2}$/.test(y) ? "20" + y : y, c.cvv,
+    a.line1, a.line2, a.city, a.state, a.zip, a.country, b.first, b.last, b.line1, b.line2, b.city, b.state, b.zip, b.country];
 }
-async function sendCSVToSeller(from, csv, n, stores, batch){
+function slotsFiles(fresh){
+  const cell = (v) => { const s = String(v == null ? "" : v); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; };
+  const byStore = new Map();
+  fresh.forEach(({g, r}) => { if (!byStore.has(g.key)) byStore.set(g.key, {store:g.name, rows:[]}); byStore.get(g.key).rows.push(r); });
+  const files = [];
+  byStore.forEach(({store, rows}) => {
+    const rank = (r) => asksSeller(r.e) ? 2 : r.l ? 0 : 1;
+    const sorted = rows.slice().sort((a, b) => rank(a) - rank(b));   // stable, so the Submit page's order holds
+    files.push({store, kind:"profiles", text:[SLOT_COLS.join(",")].concat(sorted.map(r => slotRow(r).map(cell).join(","))).join("\r\n")});
+    const logins = sorted.filter(r => rank(r) === 0).map(r => `${r.l.email}:${r.l.password || ""}`);
+    if (logins.length) files.push({store, kind:"logins", text:logins.join("\r\n")});
+  });
+  return files;
+}
+async function sendFilesToSeller(from, files, n, stores, batch){
   let r;
-  try { r = await fetch(LICENSE_RELAY + "/submissions", {method:"POST", headers:{authorization:"Bearer " + (licRead() || {}).key, "content-type":"application/json"}, body:JSON.stringify({csv, name:from, slots:n, stores, batch})}); }
+  try { r = await fetch(LICENSE_RELAY + "/submissions", {method:"POST", headers:{authorization:"Bearer " + (licRead() || {}).key, "content-type":"application/json"}, body:JSON.stringify({files, name:from, slots:n, stores, batch})}); }
   catch(e){ throw new Error("Couldn't reach the seller. Check your connection and try again."); }
   if (r.ok) return {keyId:"CSV"};
   if (r.status === 425) throw new Error("Still sending. Wait a moment, then try again.");
@@ -8718,7 +8731,7 @@ function renderSubmit(){
     <div class="panelbox">
       <div class="stats">${stat("Profiles", S.profiles.length, "saved in your library")}${stat("Selected", selN, "staged for this run")}${stat("Submitted", subN, "already sent")}${stat("Running", running(), "in the latest batch")}</div>
       <div class="submit-bar">
-        <p class="item-sub" style="margin:0;flex:1;min-width:220px">Toggle profiles on, then submit. Only new picks are sent, so nothing is ever sent twice.${viaCSV ? ` Going straight to the seller's Discord channel as a CSV file. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Send somewhere else</button>` : seller ? ` Going straight to the seller, encrypted so only they can open it. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Send somewhere else</button>` : to ? ` Going to <strong>${esc(to.keyId)}</strong>. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Change</button>` : ` <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Set who receives them</button>`}</p>
+        <p class="item-sub" style="margin:0;flex:1;min-width:220px">Toggle profiles on, then submit. Only new picks are sent, so nothing is ever sent twice.${viaCSV ? ` Going straight to the seller's Discord channel as CSV files. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Send somewhere else</button>` : seller ? ` Going straight to the seller, encrypted so only they can open it. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Send somewhere else</button>` : to ? ` Going to <strong>${esc(to.keyId)}</strong>. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Change</button>` : ` <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Set who receives them</button>`}</p>
         <button class="btn btn-primary" data-act="submit-slots" ${freshN ? "" : "disabled"}>${ic("exp")}Submit ${freshN ? plural(freshN, "slot") : "slots"}</button>
       </div>
     </div>
@@ -8731,7 +8744,7 @@ function renderSubmit(){
 function openSubmitTo(){
   openLayer({
     title:"Who receives your slots", small:true,
-    body:`<p style="margin:0 0 14px;color:var(--ink-2)">Paste the invite code they sent you. Your slots are encrypted so only they can open them. ${DESK && (licRead() || {}).key ? "Leave it empty to send them straight to the seller's Discord channel as a CSV file." : "Leave it empty to download a plain file instead."}</p>
+    body:`<p style="margin:0 0 14px;color:var(--ink-2)">Paste the invite code they sent you. Your slots are encrypted so only they can open them. ${DESK && (licRead() || {}).key ? "Leave it empty to send them straight to the seller's Discord channel as CSV files." : "Leave it empty to download a plain file instead."}</p>
       <div class="field"><label for="st-code">Invite code</label><textarea id="st-code" spellcheck="false" style="min-height:80px" placeholder="PVKEY1.…">${esc(S.submitTo ? "PVKEY1." + S.submitTo.pub : "")}</textarea><span class="err" id="st-err" role="alert"></span></div>
       <p class="note" id="st-id" hidden style="margin:12px 0 0"></p>`,
     foot:`${S.submitTo ? `<button class="btn btn-quiet btn-danger" id="st-clear">Remove</button><span class="spacer"></span>` : ""}<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="st-save">Save</button>`,
@@ -8913,7 +8926,7 @@ function openSubmitSlots(){
     title:"Submit slots", dismiss:false,
     body:`<p style="margin:0 0 14px;color:var(--ink-2)">${plural(fresh.length, "new slot")} will be sent. Slots you already submitted are left out, so nothing is sent twice.</p>
       <div class="note" style="margin:0 0 14px"><ul class="summary-list" style="margin:0">${groups.filter(g => g.fresh.length).map(g => `<li><strong style="color:var(--ink)">${esc(g.name)}</strong>: ${esc(g.fresh.map(r => r.p.name).join(", "))}</li>`).join("")}</ul>${askN ? `<p style="margin:8px 0 0">${askN === fresh.length ? (askN === 1 ? "It asks" : "They all ask") : `${plural(askN, "slot")} ${askN === 1 ? "asks" : "ask"}`} the seller to assign an account.</p>` : ""}</div>
-      ${viaCSV ? `<p class="note" style="margin:0 0 14px">Goes to the seller's private Discord channel as a CSV file.</p>`
+      ${viaCSV ? `<p class="note" style="margin:0 0 14px">Goes to the seller's private Discord channel: a CSV of profiles for each store, and its logins in a separate file.</p>`
            : seller && changedKey ? `<p class="note note-warn" style="margin:0 0 14px">The seller's key has changed since you last sent (it was <strong>${esc(pin.keyId)}</strong>, now <strong>${esc(seller.keyId)}</strong>). Only send if the seller told you they changed it.</p>`
            : seller ? `<p class="note" style="margin:0 0 14px">Sent straight to the seller, encrypted so only they can open it (key ID <strong>${esc(seller.keyId)}</strong>).</p>`
            : to ? `<p class="note" style="margin:0 0 14px">Encrypted for key ID <strong>${esc(to.keyId)}</strong>. Only they can open it.</p>`
@@ -8949,7 +8962,7 @@ function openSubmitSlots(){
             $("#ss-send-err", panel).textContent = "Orbit is still telling the seller you pulled some of these slots. Try again in a moment.";
             return;
           }
-          try { sent = viaCSV ? await sendCSVToSeller(from, slotsCSV(fresh, from), fresh.length, stores, batch) : await sendToSeller(from, payload, stores, batch, seller); }
+          try { sent = viaCSV ? await sendFilesToSeller(from, slotsFiles(fresh), fresh.length, stores, batch) : await sendToSeller(from, payload, stores, batch, seller); }
           catch(e){ closers.forEach(x => x.disabled = false); b.disabled = false; b.innerHTML = `${ic("exp")}Try again`; $("#ss-send-err", panel).textContent = e.message; return; }
           closers.forEach(x => x.disabled = false);
           b.hidden = true; mark(from);

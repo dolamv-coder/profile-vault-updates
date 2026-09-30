@@ -194,22 +194,32 @@ curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit
 
 ## Slots sent to your Discord
 
-From Orbit 1.9.52, every batch people submit from a licensed Orbit is posted to the same Discord
-channel as a `.csv` file you can open directly, in a spreadsheet or your bot. It has the same
-columns as **Export → CSV** in Orbit: one row per profile, with the address, the full card number,
-expiry and CVV, and the account email and password (and email app password) for each store the
-profile was submitted for. Profiles with no group of their own get the sender's name as their group.
-There's nothing to set up; it uses the same `DISCORD_WEBHOOK_URL`.
+Every batch people submit from a licensed Orbit is posted to the same Discord channel as files you
+can open directly, in a spreadsheet or your bot. There's nothing to set up; it uses the same
+`DISCORD_WEBHOOK_URL`. From Orbit 1.9.53 each store gets its own two files:
+
+- `orbit-slots-…-target.csv`: that store's slots, one row each, in these columns: `profile_name,
+  first_name, last_name, email, phone_num, cc_number, cc_exp_month, cc_exp_year, cc_cvv,
+  shipping_street, shipping_street_2, shipping_city, shipping_state, shipping_zip_code,
+  shipping_country, billing_first_name, billing_last_name, billing_street, billing_street_2,
+  billing_city, billing_state, billing_zip_code, billing_country`.
+- `orbit-slots-…-target-logins.txt`: that store's logins, one `email:password` per line, in the same
+  order as the first rows of the CSV.
 
 > 📦 **6 slots** from **Kim** · @kim · license …ABCD
 > Target 3 (2 need an account) · Walmart 3
-> CSV attached.
+> One profiles file (.csv) per store, with its logins (email:password, .txt) in the same order.
+> Profiles that need an account come last.
 
-From Orbit 1.9.53 a buyer can set a store on a profile to **Assign me an account** instead of adding
-their own login. Those slots are counted on the store line ("2 need an account"), and in the file
-their `<store>_account_label` column says `Assign me an account`, with no email or password. Import
-the file into your Orbit and those stores come in waiting for a login: the "no login linked" alert
-on Profiles lists them, so you can link one of your store logins to each.
+A buyer can also set a store on a profile to **Assign me an account** instead of adding their own
+login. Those slots are counted on the store line ("2 need an account") and come last in the CSV,
+with no line in the logins file, so you know which to assign an account to. Slots on a verified email
+only (Pokémon Center) come just before them, with that account's email in the `email` column.
+Discord takes 10 files a message, so a batch with more stores continues in a follow-up message.
+
+To load a store's CSV into your own Orbit, use **Import** and pick that store under Retailers: the
+profiles come in waiting for a login, and the "no login linked" alert lets you link your logins.
+Orbit 1.9.52 sent one `.csv` in **Export → CSV**'s columns instead, with each store's login in it.
 
 **The file is plain text.** Anyone who can read the channel, any bot in the server, and Discord
 itself can read every card number and password in it, and this worker passes it through (it keeps

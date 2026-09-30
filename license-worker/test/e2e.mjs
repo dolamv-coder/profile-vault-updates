@@ -52,8 +52,8 @@ const discord = createServer(async (req, res) => {
       if (hang.code) return send(hang.code, { message: "fail" });
     }
     if (webhookFail.length) {
-      const code = webhookFail.shift();
-      return code === 429 ? send(429, { message: "You are being rate limited.", retry_after: 0.3 }) : send(code, { message: "fail" });
+      const code = webhookFail.shift();   // 0 lets that post through
+      if (code) return code === 429 ? send(429, { message: "You are being rate limited.", retry_after: 0.3 }) : send(code, { message: "fail" });
     }
     let data, files = [];
     if (/^multipart\//.test(req.headers["content-type"] || "")) {
@@ -881,6 +881,56 @@ try {
     assert.match(webhookPosts.at(-1).content,
       /\nTarget 3 \(2 need an account\) · Walmart 1 \(1 needs an account\) · Best Buy 1 · Costco 2 \(2 need an account\) · Nike 1 · Topps 1\n/,
       "counted, capped at the store's slots, and left off when there are none or it isn't a number");
+  });
+  console.log("\nPer-store files (app 1.9.53+)");
+  const tgtCsv = "profile_name,first_name,last_name,email,phone_num,cc_number,cc_exp_month,cc_exp_year,cc_cvv,shipping_street,shipping_street_2,shipping_city,shipping_state,shipping_zip_code,shipping_country,billing_first_name,billing_last_name,billing_street,billing_street_2,billing_city,billing_state,billing_zip_code,billing_country\r\n" +
+    "Kim Lee,Kim,Lee,kim@example.com,5550100,4242424242424242,07,2029,123,1 Main St,,Austin,TX,78701,US,Kim,Lee,1 Main St,,Austin,TX,78701,US";
+  const wmCsv = tgtCsv.replace("Kim Lee,Kim,Lee", "Sam Park,Sam,Park");
+  await test("a batch comes as one profiles .csv per store, with its logins in a .txt, named by store", async () => {
+    const before = webhookPosts.length;
+    const files = [
+      { store: "Target", kind: "profiles", text: tgtCsv }, { store: "Target", kind: "logins", text: "kim.target@example.com:pa:ss" },
+      { store: "Walmart", kind: "profiles", text: wmCsv }, { store: "Pokémon Center", kind: "profiles", text: tgtCsv }];
+    const r = await slots("/submissions", frankKey, { files, name: "Beta", slots: 3, batch: "files" + rid(),
+      stores: [{ name: "Target", n: 1 }, { name: "Walmart", n: 1, seller: 1 }, { name: "Pokémon Center", n: 1 }] });
+    assert.equal(r.status, 200);
+    assert.equal(webhookPosts.length, before + 1, "one message");
+    const m = webhookPosts.at(-1);
+    assert.ok(m.content.startsWith(`📦 **3 slots** from **Beta** · @frank · license …${frankKey.slice(-4)}\nTarget 1 · Walmart 1 (1 needs an account) · Pokémon Center 1\n`), m.content);
+    assert.ok(m.content.endsWith("\n-# One profiles file (.csv) per store, with its logins (email:password, .txt) in the same order. Profiles that need an account come last."), m.content);
+    assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")), ["Beta-target.csv", "Beta-target-logins.txt", "Beta-walmart.csv", "Beta-pokemon-center.csv"]);
+    assert.deepEqual(m.files.map((f) => f.text), files.map((f) => f.text), "each file exactly as sent");
+    assert.match(m.files[0].type, /^text\/csv/); assert.match(m.files[1].type, /^text\/plain/);
+  });
+  await test("per-store files need a store, a kind, some text, and at least one profiles CSV", async () => {
+    for (const files of [
+      [], [{ store: "Target", kind: "logins", text: "a@b.co:p" }],
+      [{ store: "", kind: "profiles", text: tgtCsv }], [{ store: "Target", kind: "other", text: tgtCsv }],
+      [{ store: "Target", kind: "profiles", text: "name,email\r\nKim,kim@example.com" }], [{ store: "Target", kind: "profiles", text: tgtCsv }, { store: "Target", kind: "logins", text: " " }],
+      Array.from({ length: 41 }, () => ({ store: "Target", kind: "profiles", text: tgtCsv })),
+    ]) assert.equal((await slots("/submissions", frankKey, { files, slots: 1 })).status, 400, JSON.stringify(files).slice(0, 80));
+  });
+  await test("more than 10 files go out in follow-up messages", async () => {
+    const before = webhookPosts.length;
+    const files = [];
+    for (let i = 0; i < 12; i++) files.push({ store: "Store " + i, kind: "profiles", text: tgtCsv }, { store: "Store " + i, kind: "logins", text: `a${i}@example.com:pw` });
+    const r = await slots("/submissions", frankKey, { files, name: "Beta", slots: 12, batch: "many" + rid() });
+    assert.equal(r.status, 200);
+    const posts = webhookPosts.slice(before);
+    assert.deepEqual(posts.map((m) => m.files.length), [10, 10, 4]);
+    assert.ok(posts[0].content.startsWith("📦 **12 slots** from **Beta**"), posts[0].content);
+    assert.equal(posts[1].content, `-# More files for the batch from **Beta** · @frank · license …${frankKey.slice(-4)} (11–20 of 24).`);
+    assert.deepEqual(posts.flatMap((m) => m.files.map((f) => f.text)), files.map((f) => f.text), "every file, in order");
+  });
+  await test("if a follow-up message fails, the app is told, and sending again posts every file", async () => {
+    const files = [];
+    for (let i = 0; i < 6; i++) files.push({ store: "Shop " + i, kind: "profiles", text: tgtCsv }, { store: "Shop " + i, kind: "logins", text: `b${i}@example.com:pw` });
+    const batch = "part" + rid(), before = webhookPosts.length;
+    webhookFail.push(0, 500);
+    assert.equal((await slots("/submissions", frankKey, { files, name: "Beta", slots: 6, batch })).status, 502);
+    assert.equal(webhookPosts.length, before + 1, "the first part went out");
+    assert.equal((await slots("/submissions", frankKey, { files, name: "Beta", slots: 6, batch })).status, 200);
+    assert.deepEqual(webhookPosts.slice(before + 1).map((m) => m.files.length), [10, 2], "sent again in full");
   });
   await test("CSV batches count toward 30 an hour per license", async () => {
     let sent = 0, limited = false;
