@@ -1,10 +1,10 @@
 {
-  "version": "1.9.59",
-  "url": "index-1.9.59.html",
-  "sha256": "3787f076175aa2a14e614e70ec9c86ff2cf7dc769c93eb40a7758777b73bdd4f",
-  "signature": "+xUsC25GnnvaIOjgp6w9oz8vEEC2HhWESLk+bd8Q/wK1gNbWRjnjKUHplr1clE8mzN/jZZyIpitl4A874WfxBw==",
+  "version": "1.9.60",
+  "url": "index-1.9.60.html",
+  "sha256": "942b405f98d36bb37ba72251b7a453041495b555ef293b210fc157d107d790cc",
+  "signature": "bkidNZDfZ1FNPzUYQuWAxMyGV2s/c8VWHvQflRh6EFEss2f/6GcEb7jhCO7haRWWds/zjxbMm6pBCF98NiO2DQ==",
   "minAppVersion": "0",
-  "notes": "Clean emails now clears sale-event emails like Target Circle Deal Days and Circle Week from your Inbox and Spam, including ones forwarded from your other inboxes. If auto-clean is on, its next run looks back 30 days to catch the ones already there.",
+  "notes": "Clean emails now also clears store newsletters that reach you through iCloud Hide My Email, like Pokémon Center's preorder emails and Best Buy's deals. Order, shipping, account and sign-in emails from those stores are still kept, and Clear all of Spam now keeps order emails like \"Thank you for shopping\" and \"Your order is on its way\" too.",
   "installerUrl": "",
-  "publishedAt": "2026-09-30T12:36:30.112Z"
+  "publishedAt": "2026-09-30T19:30:44.303Z"
 }
