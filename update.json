@@ -1,10 +1,10 @@
 {
-  "version": "1.9.60",
-  "url": "index-1.9.60.html",
-  "sha256": "942b405f98d36bb37ba72251b7a453041495b555ef293b210fc157d107d790cc",
-  "signature": "bkidNZDfZ1FNPzUYQuWAxMyGV2s/c8VWHvQflRh6EFEss2f/6GcEb7jhCO7haRWWds/zjxbMm6pBCF98NiO2DQ==",
+  "version": "1.9.61",
+  "url": "index-1.9.61.html",
+  "sha256": "e8535398b3c88fa09ad010703cff6f38ba06a28314395ee5fa4c93b45b2b2fb8",
+  "signature": "oc5zVRZpUmlaVvqNLw3AfYZg6OiWfUywtFDyKAEA31lKz6gKCdBF6XFrghEPBoFzaVVDBnb0s8HfrktAwGNmDQ==",
   "minAppVersion": "0",
-  "notes": "Clean emails now also clears store newsletters that reach you through iCloud Hide My Email, like Pokémon Center's preorder emails and Best Buy's deals. Order, shipping, account and sign-in emails from those stores are still kept, and Clear all of Spam now keeps order emails like \"Thank you for shopping\" and \"Your order is on its way\" too.",
+  "notes": "When Orbit can't connect to an inbox securely, it now says plainly that it isn't your password and explains the usual causes: antivirus email scanning, a VPN or the computer's clock. The newest Orbit download also trusts the same certificates Windows does, which fixes this for most antivirus programs.",
   "installerUrl": "",
-  "publishedAt": "2026-09-30T19:30:44.303Z"
+  "publishedAt": "2026-09-30T21:00:54.900Z"
 }
