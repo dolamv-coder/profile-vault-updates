@@ -1,0 +1,22 @@
+{
+  "name": "profile-vault",
+  "productName": "Orbit",
+  "version": "1.9.61",
+  "description": "Orbit: encrypted checkout profiles and order tracking",
+  "main": "main.js",
+  "author": "Orbit",
+  "private": true,
+  "dependencies": {
+    "imapflow": "1.7.8",
+    "mailparser": "3.9.28"
+  },
+  "devDependencies": {
+    "@electron/asar": "3.4.1",
+    "electron": "33.4.11"
+  },
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/run.mjs",
+    "build": "node build.mjs"
+  }
+}
