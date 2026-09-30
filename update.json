@@ -1,10 +1,10 @@
 {
-  "version": "1.9.54",
-  "url": "index-1.9.54.html",
-  "sha256": "4c5ee592b7f0aea691961253024c29690974769ed52dd70997f9abdcc871edd4",
-  "signature": "25HHrspLuj188LyrQhQMDYCIXi0/2v7YhzaITDd2nL0I+Mz2WPPyvsZRpXQ+ZHwzydzBj8wtYrl9iAYycp3lDA==",
+  "version": "1.9.55",
+  "url": "index-1.9.55.html",
+  "sha256": "87a73ae1292b88730ff5b7a1c8ed668298337fe839ff5d6ec13b1adf689c5324",
+  "signature": "zfLTT/qLlBla5gxJM7mEFD735ehMBPJofx2BBoaRyGBIQeAF3BSrrDQyXF7EKAEbJQNuD+aehb+6K0QQZ+LICQ==",
   "minAppVersion": "0",
-  "notes": "The Assign me an account choice is gone: each store on a profile uses a store login or a verified email, as before. A store you set that way now waits for a login, and importing accounts links them to profiles with the same email again.",
+  "notes": "When a store on a profile has no login chosen, Orbit now picks your saved login for that store with the same email as the profile. It changes with the profile's email, and never replaces a login you chose yourself.",
   "installerUrl": "",
-  "publishedAt": "2026-09-30T04:36:00.835Z"
+  "publishedAt": "2026-09-30T04:50:03.910Z"
 }
