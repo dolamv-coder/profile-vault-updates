@@ -1,10 +1,10 @@
 {
-  "version": "1.9.56",
-  "url": "index-1.9.56.html",
-  "sha256": "80b7f2ee5c92cd470433e7dc1bfd89387c52d0c1e2dc3f2c883047cb8176d614",
-  "signature": "7CZ+28CyKj7F/NAUu/GKffp4q0CGBGsPCZotsp7mG4ix4XTf6fNRLZ5XG1tbvjp0bMLIa5zgKNSEQ2kOWwLjCg==",
+  "version": "1.9.57",
+  "url": "index-1.9.57.html",
+  "sha256": "ab739048db6271356f3f52e77e45e8a9c0f1d43ff9a300a9d90619c5fdb55a64",
+  "signature": "FBpYnrdDdMnbXrMolwpT03pQU5kB0Y84Q6WvZVbJXiE0T0+VQSC5s7r752P9+lqGFl81ohOrSZy5vDEAF5FOBQ==",
   "minAppVersion": "0",
-  "notes": "Import profiles now needs a retailer for every profile. If the file doesn't name one, pick at least one store before importing. Profiles that already name their retailers keep them.",
+  "notes": "Stores on a profile now check out with your store login or Use Assigned Account, where the seller provides the login. Pokémon Center uses a verified email only. Profiles waiting for a store login are now linked to your saved login with the same email automatically.",
   "installerUrl": "",
-  "publishedAt": "2026-09-30T05:04:40.405Z"
+  "publishedAt": "2026-09-30T05:37:34.529Z"
 }
