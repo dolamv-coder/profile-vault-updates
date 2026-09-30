@@ -1,0 +1,1 @@
+Pokémon Center profiles no longer ask for a verified email: Pokémon Center checks out as a guest with just an email, so the "Not verified" tag is gone from Submit and the Verified box from profiles.
