@@ -1,0 +1,1 @@
+Import profiles now needs a retailer for every profile. If the file doesn't name one, pick at least one store before importing. Profiles that already name their retailers keep them.
