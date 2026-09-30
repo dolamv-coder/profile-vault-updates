@@ -48,10 +48,17 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   last_name, email, phone_num, cc_*, shipping_*, billing_*), one row per slot, and that store's
   logins as `email:password` lines in a separate `.txt`, in the same order as the first rows. The
   worker names them `orbit-slots-<time>-<sender>-<store>.csv` and `…-<store>-logins.txt`, 10
-  attachments per message. Slots without a store login come after those rows. 1.9.53 alone also
-  had an "Assign me an account" store mode (`mode: "seller"`, counted in `stores[].seller`, which
-  the worker still accepts); the owner didn't want it, and 1.9.54 removed it and turns such stores
-  back into store logins with none linked, so Import accounts links them by email again.
+  attachments per message. Slots without a store login come after those rows.
+  How each store on a profile checks out (`stores[].mode`, from 1.9.57): Pokémon Center only on a
+  verified email (`"email"`); every other store on a store login (`"login"`) or **Use Assigned
+  Account** (`"seller"`): the buyer adds no login and the owner provides one of their own accounts.
+  (1.9.53 had that mode as "Assign me an account" beside the other two; 1.9.54 removed it; 1.9.57
+  put it in place of "Verified email only". Pages move older data onto these in `fixMode`.) Those
+  slots come last in their store's CSV with no login line, `stores[].seller` counts them on the
+  Discord line, and importing a submission brings them in as a store login with none linked.
+  From 1.9.57 a store waiting for a login is linked to the saved login with the profile's email on
+  its own: once per vault at unlock (`settings._linkedByEmail`), on Import profiles and inbox
+  submissions, and by ticking the profile in the store login editor (`linkByEmail`).
   From 1.9.50, pulling a submitted slot sends `POST /pull` (`keyId` is the key, or `CSV`), which
   posts a plain list (store, profile name, account email, card brand and last 4) to the same
   channel, only for keys that license already sent submissions to. Pull alerts never carry card

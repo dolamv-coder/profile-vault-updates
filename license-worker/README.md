@@ -211,15 +211,18 @@ can open directly, in a spreadsheet or your bot. There's nothing to set up; it u
 > One profiles file (.csv) per store, with its logins (email:password, .txt) in the same order.
 
 Slots without a store login come after the ones with logins and have no line in the logins file; one
-on a verified email only (Pokémon Center) has that account's email in the `email` column. Discord
-takes 10 files a message, so a batch with more stores continues in a follow-up message.
+on a verified email only (Pokémon Center) has that account's email in the `email` column. Slots set to
+**Use Assigned Account** (Orbit 1.9.57+; 1.9.53 called it "Assign me an account") come last: the
+buyer added no login because you provide one, and the store line says so, e.g. "Target 3 (2 need an
+account)". Discord takes 10 files a message, so a batch with more stores continues in a follow-up
+message.
 
 To load a store into your own Orbit, **Import** its CSV and pick that store under Retailers, then on
 Store logins use **Import accounts** with the logins file and **Link to profiles** on: each account
 goes to the profile with the same email, and the "no login linked" alert lists any left over.
+From Orbit 1.9.57, a profile waiting for a login is also linked to a login you already saved with the
+same email, when you import the profiles.
 Orbit 1.9.52 sent one `.csv` in **Export → CSV**'s columns instead, with each store's login in it.
-(Orbit 1.9.53 alone could also mark a store "Assign me an account"; the store line then showed
-"(2 need an account)". 1.9.54 removed that.)
 
 **The file is plain text.** Anyone who can read the channel, any bot in the server, and Discord
 itself can read every card number and password in it, and this worker passes it through (it keeps
