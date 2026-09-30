@@ -1,10 +1,10 @@
 {
-  "version": "1.9.61",
-  "url": "index-1.9.61.html",
-  "sha256": "e8535398b3c88fa09ad010703cff6f38ba06a28314395ee5fa4c93b45b2b2fb8",
-  "signature": "oc5zVRZpUmlaVvqNLw3AfYZg6OiWfUywtFDyKAEA31lKz6gKCdBF6XFrghEPBoFzaVVDBnb0s8HfrktAwGNmDQ==",
+  "version": "1.9.62",
+  "url": "index-1.9.62.html",
+  "sha256": "3553f0ce95aa7178be6346863028ab36e32790a710172a1e2ae24106f2df53a7",
+  "signature": "Go7zV2QQB6GmavZSyjDzBUPKWiYcL91av9XmGTBNRgZGv3JJgltQYF5Z7Unlr+OYbDSmBWnV1srzfkatVNs9Cw==",
   "minAppVersion": "0",
-  "notes": "When Orbit can't connect to an inbox securely, it now says plainly that it isn't your password and explains the usual causes: antivirus email scanning, a VPN or the computer's clock. The newest Orbit download also trusts the same certificates Windows does, which fixes this for most antivirus programs.",
+  "notes": "Pokémon Center profiles no longer ask for a verified email: Pokémon Center checks out as a guest with just an email, so the \"Not verified\" tag is gone from Submit and the Verified box from profiles.",
   "installerUrl": "",
-  "publishedAt": "2026-09-30T21:00:54.900Z"
+  "publishedAt": "2026-09-30T22:07:09.067Z"
 }
