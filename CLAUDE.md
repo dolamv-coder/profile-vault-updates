@@ -180,7 +180,15 @@ As of 2026-09-26, none of these are in `dolamv-coder/profile-vault-updates` or
   ("on the way", "arrived", "pick up") in a subject don't protect it, so a sale
   event it doesn't name is kept like an order (Target Circle Deal Days was,
   until 1.9.59). When `CLEAN_RULES` change, auto-clean looks back 30 days once
-  (`settings.autoClean.sweptRules`). The wrapper's own code isn't in a repo, but
+  (`settings.autoClean.sweptRules`). Mail relayed by iCloud Hide My Email comes
+  from `<sender>_at_<domain, dots as underscores>_<code>_<code>@icloud.com` with
+  its unsubscribe headers stripped, so the wrapper takes it for personal mail.
+  From 1.9.60 the page adds `CLEAN_RELAYED` (relayed newsletter senders, by the
+  wrapper's own sender tests) to `surveyFrom`, since the wrapper hands survey
+  senders back without its subject check. The page then groups them by the real
+  sender (`relayedFrom`) and checks their subjects itself: `CLEAN_PROTECT` plus
+  `CLEAN_APP_PROTECT`, a copy of the wrapper's `PROTECT`. The page's `SPAM_KEEP`
+  is the wrapper's plus the order wording it lacks. The wrapper's own code isn't in a repo, but
   the Windows download on this repo's Releases carries it unminified in
   `Orbit-win32-x64/resources/app.asar` (`npx @electron/asar extract`):
   `main.js`, `preload.js`, `imap-sync.js` (inbox sync, scan and trash) and
