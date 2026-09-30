@@ -1,0 +1,1 @@
+When you add a store to a profile, you can now choose Assign me an account: you don't need your own login, and the seller assigns one after you submit.
