@@ -838,6 +838,7 @@ async function submission(request, env, url) {
   }
   await env.DB.prepare("UPDATE submissions SET webhook_message_id = ? WHERE id = ?").bind(msgId, s.id).run().catch((e) => console.error("record", e));
   if (picks.size) await settleAccounts(env, lic, batch, true, Date.now()).catch((e) => console.error("accounts", e));
+  for (const f of files || []) if (f.assigned > 0) await stockCheck(env, f.storeKey, f.store, true).catch((e) => console.error("stock", e));
   // How many slots got an account per store; buyers never see which.
   return json(picks.size ? { ok: true, id: s.id, accounts: Object.fromEntries(picks) } : { ok: true, id: s.id });
 }
@@ -918,6 +919,28 @@ async function assignAccounts(env, lic, batch, files, now) {
     picks.set(f.store, { asked: f.assigned, got: got.length });
   }
   return picks;
+}
+
+// The owner's channel is told once when a store's list is down to ACCOUNTS_LOW_AT free accounts (15),
+// and once more when it runs out. post=false only clears those again, after accounts are added or freed.
+const lowAt = (env) => { const n = Math.floor(Number(env.ACCOUNTS_LOW_AT)); return String(env.ACCOUNTS_LOW_AT ?? "").trim() !== "" && n >= 0 ? n : 15; };
+async function stockCheck(env, store, name, post) {
+  const c = await env.DB.prepare("SELECT COUNT(*) AS n, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free FROM accounts WHERE store = ?").bind(store).first();
+  const total = c ? c.n : 0, free = c && c.free || 0, low = lowAt(env);
+  if (free > low) await env.DB.prepare("UPDATE account_stock SET low_at = NULL, empty_at = NULL WHERE store = ?").bind(store).run();
+  else if (free > 0) await env.DB.prepare("UPDATE account_stock SET empty_at = NULL WHERE store = ?").bind(store).run();
+  if (!post || !total || free > low) return;
+  // Claimed before posting, so two batches finishing together tell the owner once.
+  const empty = free === 0, now = Date.now();
+  const r = await env.DB.prepare(empty
+    ? `INSERT INTO account_stock (store, low_at, empty_at) VALUES (?, ?, ?) ON CONFLICT (store) DO UPDATE
+       SET low_at = COALESCE(account_stock.low_at, excluded.low_at), empty_at = excluded.empty_at WHERE account_stock.empty_at IS NULL`
+    : `INSERT INTO account_stock (store, low_at) VALUES (?, ?) ON CONFLICT (store) DO UPDATE
+       SET low_at = excluded.low_at WHERE account_stock.low_at IS NULL`).bind(...(empty ? [store, now, now] : [store, now])).run();
+  if (!r.meta || !r.meta.changes) return;
+  await webhookPost(env, { content: empty
+    ? `🚫 **No ${md(name)} accounts left** on your list for Use Assigned Account. Slots on it wait for you to assign one by hand until you send more from Orbit (Settings → Accounts to assign).`
+    : `⚠️ **Only ${free} ${md(name)} account${free === 1 ? "" : "s"} left** on your list for Use Assigned Account. Send more from Orbit (Settings → Accounts to assign).` });
 }
 
 // sent: the batch (or part of it) reached the channel, so its accounts are given out for good.
@@ -1002,6 +1025,7 @@ async function accountReview(request, env, ctx, url, id) {
       added += res.reduce((n, r) => n + (r.meta && r.meta.changes || 0), 0);
     }
     await env.DB.prepare("UPDATE account_offers SET status = 'added', added = ?, accounts = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(added, now, o.id).run();
+    await stockCheck(env, o.store, o.store_name, false);
     done = `Added ${added} to your list.${added < list.length ? ` ${list.length - added} ${list.length - added === 1 ? "was" : "were"} already on it.` : ""}`;
   } else if (o.status === "pending" && action === "refuse") {
     await env.DB.prepare("UPDATE account_offers SET status = 'refused', accounts = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(now, o.id).run();
@@ -1191,6 +1215,8 @@ async function admin(request, env, path) {
     if (!where) return json({ error: free ? "send {email} or {key}" : "send {email}" }, 400);
     const r = await env.DB.prepare(free ? `UPDATE accounts SET ${FREE_ACCOUNT} WHERE ${where[0]}` : `DELETE FROM accounts WHERE ${where[0]}`)
       .bind(...where.slice(1)).run();
+    const { results: stores } = await env.DB.prepare("SELECT DISTINCT store FROM accounts").all();
+    for (const x of stores) await stockCheck(env, x.store, x.store, false);
     return json({ ok: true, changed: r.meta ? r.meta.changes : 0 });
   }
   if (request.method === "POST" && (path === "/admin/revoke" || path === "/admin/restore")) {

@@ -88,6 +88,7 @@ const common = [
   `GH_LICENSE_URL=http://127.0.0.1:${DISCORD_PORT}/gh.json`,
   `PULL_STALE_MS=3000`,
   `ACCOUNT_OFFER_TTL_MS=8000`,
+  `ACCOUNTS_LOW_AT=3`,
   `GH_LICENSE_PUB=${JSON.stringify({ kty: "EC", crv: "P-256", x: pubJwk.x, y: pubJwk.y })}`,
 ];
 
@@ -1042,7 +1043,8 @@ try {
     const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv(rows), assigned: 6 }];
     const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 6, batch: "asg5" + rid(), stores: [{ name: "Target", n: 6, seller: 6 }] })).json();
     assert.deepEqual(r.accounts, { Target: { asked: 6, got: 5 } });
-    const m = webhookPosts.at(-1), em = emailsIn(m.files[0].text);
+    const m = webhookPosts.at(-2), em = emailsIn(m.files[0].text);
+    assert.match(webhookPosts.at(-1).content, /^⚠️ \*\*Only 3 Target accounts left\*\* on your list for Use Assigned Account\. Send more from Orbit/, "down to ACCOUNTS_LOW_AT (3 here): the owner is told");
     assert.match(m.content, /\nTarget 6 \(5 assigned accounts, 1 needs an account\)\n/);
     assert.equal(em[5], "hal5@example.com", "the last one keeps its own email");
     assert.equal(m.files[1].text.split("\r\n").length, 5, "five login lines, for the first five rows");
@@ -1054,6 +1056,8 @@ try {
     const r = await (await slots("/submissions", bobKey, { files, name: "Bob", slots: 4, batch: "asg6" + rid(), stores: [{ name: "Target", n: 4, seller: 4 }] })).json();
     assert.deepEqual(r.accounts, { Target: { asked: 4, got: 3 } });
     assert.equal((await accounts()).stores[0].free, 0);
+    assert.match(webhookPosts.at(-1).content, /^🚫 \*\*No Target accounts left\*\*/, "and told again when it runs out");
+    assert.match(webhookPosts.at(-2).content, /^📦 /, "not told it's low a second time");
     const all = (await accounts()).given.map((a) => a.email);
     assert.equal(new Set(all).size, all.length, "no account given twice"); assert.equal(all.length, 13);
   });
@@ -1091,6 +1095,15 @@ try {
     assert.match(html, /Expired before it was added/); assert.doesNotMatch(html, /n1@outlook\.com/);
     assert.ok(!(await accounts()).stores.some((x) => x.store === "nike"), "nothing added");
     assert.equal((await accounts()).offers.find((o) => o.store === "nike").status, "expired");
+  });
+  await test("once accounts are freed, running out is told again", async () => {
+    assert.equal((await accounts()).stores[0].free, 3);
+    const rows = Array.from({ length: 3 }, (_, i) => slotRow(`Kay K${i}`, `kay${i}@example.com`));
+    const before = webhookPosts.length;
+    const r = await (await slots("/submissions", bobKey, { files: [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv(rows), assigned: 3 }], name: "Bob", slots: 3, batch: "asg8" + rid(), stores: [{ name: "Target", n: 3, seller: 3 }] })).json();
+    assert.deepEqual(r.accounts, { Target: { asked: 3, got: 3 } });
+    const after = webhookPosts.slice(before).map((m) => m.content.slice(0, 2));
+    assert.deepEqual(after, ["📦", "🚫"], "the batch, then one message that it ran out (not a second one that it's low)");
   });
   await test("refusing sent accounts adds nothing", async () => {
     await slots("/accounts/offer", ginaKey, { store: "walmart", storeName: "Walmart", accounts: [{ email: "w1@outlook.com", password: "x1" }] });

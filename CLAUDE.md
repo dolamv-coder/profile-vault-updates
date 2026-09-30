@@ -63,6 +63,8 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   row's `email` column and `email:password` on the matching line of the logins file. Buyers never
   see them; each account goes to one slot; a license gets `ASSIGNED_LIMIT` (10) in all; an account
   picked for a batch that never reached the channel goes back. Rows left without one come last.
+  The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
+  once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.
   Never put the accounts or their password in this repo or a page: it's public.
   From 1.9.57 a store waiting for a login is linked to the saved login with the profile's email on
   its own: once per vault at unlock (`settings._linkedByEmail`), on Import profiles and inbox
