@@ -176,7 +176,15 @@ As of 2026-09-26, none of these are in `dolamv-coder/profile-vault-updates` or
   `CLEAN_RULES` (regex sources for plain sales and survey senders) with each
   scan. A wrapper with `pvDesktop.version` 10+ uses them in place of its
   built-in copies, so those two rules can then change with a page update.
-  Older wrappers ignore them.
+  Older wrappers ignore them. The sale rule also decides when shipping words
+  ("on the way", "arrived", "pick up") in a subject don't protect it, so a sale
+  event it doesn't name is kept like an order (Target Circle Deal Days was,
+  until 1.9.59). When `CLEAN_RULES` change, auto-clean looks back 30 days once
+  (`settings.autoClean.sweptRules`). The wrapper's own code isn't in a repo, but
+  the Windows download on this repo's Releases carries it unminified in
+  `Orbit-win32-x64/resources/app.asar` (`npx @electron/asar extract`):
+  `main.js`, `preload.js`, `imap-sync.js` (inbox sync, scan and trash) and
+  `updater.js`.
 - **`tools/license.mjs`**: makes license keys and signs `licenses.json`. It
   holds the license private key.
 - **Update signing tool and key**: produces `update.json`'s `signature`. A copy
