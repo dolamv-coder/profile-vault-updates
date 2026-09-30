@@ -292,6 +292,54 @@ a `.txt` file, with a count per store in the message.
 - It needs no new secrets: it uses the same `DISCORD_WEBHOOK_URL`. It does need the `pulls` table,
   which `npm run db:init` adds (running it again is safe) and the deploy Action adds on its own.
 
+## Your accounts for Use Assigned Account
+
+A store on a buyer's profile can be set to **Use Assigned Account** (Orbit 1.9.57+): they add no
+login, and you provide one of your own accounts. From Orbit 1.9.58 this worker hands them out from a
+list you keep here:
+
+1. In your own Orbit, open **Settings → Accounts to assign → Send accounts**. Pick the store, then
+   paste `email:password` lines, or just emails with the password in the box below (for a list that
+   all uses one password), or click **Add my Target logins that no profile uses**.
+2. Your channel gets a message with the count and a review link. Open it, check the emails, and
+   choose **Add to my list**. Only add accounts you sent yourself: anyone with a license can send
+   some, but only you can add them. The channel never shows the accounts; the review page shows the
+   emails, never the passwords.
+3. When a batch with slots on Use Assigned Account reaches your channel, each of those slots gets a
+   random free account from the list for its store: its email goes in the slot's row (the `email`
+   column) and `email:password` goes in that store's logins file, on the line that matches the row.
+   The store line says how many: "Target 3 (2 assigned accounts)".
+
+- **Buyers never see the accounts.** They go only to your channel. The app is told how many slots
+  got one, never which.
+- **Each account goes to one slot only.** One picked for a batch that never reached your channel
+  (the post failed) goes back to the list. If part of a batch went out, its accounts stay with it,
+  and sending the batch again posts the same ones.
+- **Each license can be given `ASSIGNED_LIMIT` accounts in all** (10; change it in `[vars]` in
+  `wrangler.toml`). Slots past that, or past the end of the list, come last with no login line, and
+  the store line says "(1 needs an account)" so you can assign those by hand.
+- **Pulling** such a slot names the account it had: "Target · Kim Lee · acct7@example.com (assigned
+  account)".
+- The list and the waiting offers are in the `accounts` and `account_offers` tables, which
+  `npm run db:init` (and the deploy Action) adds. With `ADMIN_TOKEN` set:
+
+```
+# The list: how many are free per store, who got which, and each offer with its review link
+curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/accounts
+
+# Give an account back to the list (add "store":"target" if it's on more than one store's list)
+curl.exe -X POST -H "Authorization: Bearer YOUR_ADMIN_TOKEN" -d "{\"email\":\"someone@outlook.com\"}" https://orbit-license.orbit-app.workers.dev/admin/accounts/free
+
+# Give back every account one license has (lets them get more)
+curl.exe -X POST -H "Authorization: Bearer YOUR_ADMIN_TOKEN" -d "{\"key\":\"PVLT-XXXX-XXXX-XXXX-XXXX\"}" https://orbit-license.orbit-app.workers.dev/admin/accounts/free
+
+# Take an account off the list
+curl.exe -X POST -H "Authorization: Bearer YOUR_ADMIN_TOKEN" -d "{\"email\":\"someone@outlook.com\"}" https://orbit-license.orbit-app.workers.dev/admin/accounts/remove
+```
+
+The passwords are kept in your D1 database so they can go in the logins files, and they're in your
+channel with each batch, like every other login there. Keep the channel private.
+
 ## Limiting who gets a key
 
 By default, any Discord account except bots gets a key. To limit it, edit `[vars]` in

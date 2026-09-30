@@ -87,6 +87,7 @@ const common = [
   `DISCORD_API_BASE=http://127.0.0.1:${DISCORD_PORT}`,
   `GH_LICENSE_URL=http://127.0.0.1:${DISCORD_PORT}/gh.json`,
   `PULL_STALE_MS=3000`,
+  `ACCOUNT_OFFER_TTL_MS=8000`,
   `GH_LICENSE_PUB=${JSON.stringify({ kty: "EC", crv: "P-256", x: pubJwk.x, y: pubJwk.y })}`,
 ];
 
@@ -931,6 +932,172 @@ try {
     assert.equal(webhookPosts.length, before + 1, "the first part went out");
     assert.equal((await slots("/submissions", frankKey, { files, name: "Beta", slots: 6, batch })).status, 200);
     assert.deepEqual(webhookPosts.slice(before + 1).map((m) => m.files.length), [10, 2], "sent again in full");
+  });
+  console.log("\nAssigned accounts (app 1.9.58+)");
+  let ginaKey, bobKey, reviewLink;
+  const newKey = async (who) => { const r = rid(); await signIn(r, who); const st = await getJson("/discord/status/" + r); assert.equal(st.status, "issued"); return st.key; };
+  const offerLink = (content) => (content.match(/\((http[^)]+\/accounts\/review\/[^)]+)\)/) || [])[1];
+  const offerPost = (link, action) => fetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), action }) });
+  const pool = Array.from({ length: 13 }, (_, i) => ({ email: `pool${i + 1}@outlook.com`, password: "Test-Pw-1!" }));
+  const head = tgtCsv.split("\r\n")[0];
+  const slotRow = (name, email) => `${name},${name.split(" ")[0]},${name.split(" ")[1]},${email},5550100,4242424242424242,07,2029,123,"1 Main St, Apt 2",,Austin,TX,78701,US,${name.split(" ")[0]},${name.split(" ")[1]},1 Main St,,Austin,TX,78701,US`;
+  const slotCsv = (rows) => [head, ...rows].join("\r\n");
+  const emailsIn = (text) => text.split("\r\n").slice(1).map((l) => l.split(",")[3]);
+  const accounts = async () => (await (await admin("/admin/accounts")).json());
+  await test("two licenses for these tests", async () => { ginaKey = await newKey("gina"); bobKey = await newKey("bob"); });
+  await test("sending accounts needs a license, a store and email:password pairs", async () => {
+    assert.equal((await slots("/accounts/offer", null, { store: "target", accounts: pool })).status, 401);
+    for (const body of [{ store: "", accounts: pool }, { store: "Target!", accounts: pool }, { store: "target", accounts: [] }, { store: "target" },
+      { store: "target", accounts: [{ email: "nope", password: "x" }] }, { store: "target", accounts: [{ email: "a@b.co", password: "" }] },
+      { store: "target", accounts: [{ email: "a@b.co", password: "line\nbreak" }] }])
+      assert.equal((await slots("/accounts/offer", ginaKey, body)).status, 400, JSON.stringify(body).slice(0, 70));
+  });
+  await test("sent accounts wait for the owner: the channel gets the count and a review link, never the accounts", async () => {
+    const before = webhookPosts.length;
+    const r = await (await slots("/accounts/offer", ginaKey, { store: "target", storeName: "Target", name: "Owner", accounts: [...pool, { ...pool[0], email: "POOL1@outlook.com" }] })).json();
+    assert.deepEqual(r, { status: "pending", count: 13 }, "a repeated email counts once");
+    await new Promise((ok) => setTimeout(ok, 400));
+    assert.equal(webhookPosts.length, before + 1);
+    const m = webhookPosts.at(-1).content;
+    assert.match(m, /Add 13 Target accounts to your list for Use Assigned Account\?/); assert.match(m, /Sent by \*\*Owner\*\* · @gina/);
+    assert.doesNotMatch(m, /pool1@|Test-Pw-1/, "no emails or passwords in the channel");
+    reviewLink = offerLink(m); assert.ok(reviewLink, m);
+    const html = await (await fetch(reviewLink)).text();
+    assert.match(html, /pool1@outlook\.com/); assert.doesNotMatch(html, /Test-Pw-1/, "the review page shows emails, never passwords");
+    assert.equal((await fetch(reviewLink.replace(/t=[^&]+/, "t=wrong"))).status, 404);
+  });
+  await test("until the owner adds them, those slots wait for an account, and the CSV goes as sent", async () => {
+    const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Ann One", "ann@example.com")]), assigned: 1 }];
+    const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 1, batch: "asg0" + rid(), stores: [{ name: "Target", n: 1, seller: 1 }] })).json();
+    assert.deepEqual(r.accounts, { Target: { asked: 1, got: 0 } });
+    const m = webhookPosts.at(-1);
+    assert.match(m.content, /\nTarget 1 \(1 needs an account\)\n/); assert.match(m.content, /Profiles that need an account come last\.$/);
+    assert.deepEqual(m.files.map((f) => f.text), [files[0].text], "no logins file, the CSV untouched");
+  });
+  await test("adding them from the review link puts them on the list", async () => {
+    assert.match(await (await offerPost(reviewLink, "add")).text(), /Added 13 to your list\./);
+    await new Promise((ok) => setTimeout(ok, 300));
+    const d = await accounts();
+    assert.deepEqual(d.stores, [{ store: "target", total: 13, free: 13, sent: 0 }]); assert.equal(d.limit, 10);
+    assert.match(webhookEdits.at(-1).content, /Added 13 Target accounts to your list/);
+    assert.match(await (await offerPost(reviewLink, "refuse")).text(), /Added 13 to your list/, "decided: stays added");
+    assert.equal(d.offers[0].status, "added"); assert.equal(d.offers[0].accounts, undefined, "the offer no longer holds them");
+  });
+  let first = [];
+  await test("each slot on Use Assigned Account gets its own account: email in its row, email:password in the logins, same order", async () => {
+    const files = [
+      { store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Kim Lee", "kim@example.com"), slotRow("Ann One", "ann@example.com"), slotRow("Bo Two", "bo@example.com"), slotRow("Cy Three", "cy@example.com")]), assigned: 2 },
+      { store: "Target", kind: "logins", text: "kim.target@example.com:pa:ss" },
+      { store: "Walmart", storeKey: "walmart", kind: "profiles", text: slotCsv([slotRow("Dee Four", "dee@example.com")]), assigned: 1 }];
+    const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 5, batch: "asg1" + rid(),
+      stores: [{ name: "Target", n: 4, seller: 2 }, { name: "Walmart", n: 1, seller: 1 }] })).json();
+    assert.deepEqual(r.accounts, { Target: { asked: 2, got: 2 }, Walmart: { asked: 1, got: 0 } });
+    const m = webhookPosts.at(-1);
+    assert.match(m.content, /\nTarget 4 \(2 assigned accounts\) · Walmart 1 \(1 needs an account\)\n/);
+    const [csvF, logF, wmF] = m.files;
+    const em = emailsIn(csvF.text);
+    assert.equal(em[0], "kim@example.com"); assert.equal(em[3], "cy@example.com", "other rows as sent");
+    assert.ok(/^pool\d+@outlook\.com$/.test(em[1]) && /^pool\d+@outlook\.com$/.test(em[2]) && em[1] !== em[2], em);
+    assert.equal(csvF.text.split("\r\n")[2].replace(em[1], "ann@example.com"), slotRow("Ann One", "ann@example.com"), "quoted cells come through");
+    assert.equal(logF.text, `kim.target@example.com:pa:ss\r\n${em[1]}:Test-Pw-1!\r\n${em[2]}:Test-Pw-1!`);
+    assert.equal(wmF.text, files[2].text, "no Walmart list: as sent");
+    first = [em[1], em[2]];
+    const d = await accounts();
+    assert.deepEqual(d.stores, [{ store: "target", total: 13, free: 11, sent: 2 }]);
+    assert.deepEqual(d.given.map((a) => [a.email, a.key_last4, a.profile, a.store_name]).sort(), [[em[1], ginaKey.slice(-4), "Ann One", "Target"], [em[2], ginaKey.slice(-4), "Bo Two", "Target"]].sort());
+  });
+  await test("a store with no logins file gets one for its accounts", async () => {
+    const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Eve Five", "eve@example.com")]), assigned: 1 }];
+    const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 1, batch: "asg2" + rid(), stores: [{ name: "Target", n: 1, seller: 1 }] })).json();
+    assert.deepEqual(r.accounts, { Target: { asked: 1, got: 1 } });
+    const m = webhookPosts.at(-1), e = emailsIn(m.files[0].text)[0];
+    assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")), ["Gina-target.csv", "Gina-target-logins.txt"]);
+    assert.equal(m.files[1].text, `${e}:Test-Pw-1!`); assert.ok(!first.includes(e), "never one given out before");
+    assert.doesNotMatch(m.content, /need an account/);
+  });
+  await test("a post that fails puts its accounts back; sending again picks again", async () => {
+    const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Fay Six", "fay@example.com")]), assigned: 1 }];
+    const batch = "asg3" + rid(), before = (await accounts()).stores[0].free;
+    webhookFail.push(500);
+    assert.equal((await slots("/submissions", ginaKey, { files, name: "Gina", slots: 1, batch, stores: [{ name: "Target", n: 1, seller: 1 }] })).status, 502);
+    assert.equal((await accounts()).stores[0].free, before, "back on the list");
+    assert.equal((await slots("/submissions", ginaKey, { files, name: "Gina", slots: 1, batch, stores: [{ name: "Target", n: 1, seller: 1 }] })).status, 200);
+    assert.equal((await accounts()).stores[0].free, before - 1);
+  });
+  await test("if part of a batch went out, its accounts stay with it and sending again posts the same ones", async () => {
+    const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Gus Seven", "gus@example.com")]), assigned: 1 }];
+    for (let i = 0; i < 5; i++) files.push({ store: "Shop " + i, kind: "profiles", text: tgtCsv }, { store: "Shop " + i, kind: "logins", text: `c${i}@example.com:pw` });
+    const batch = "asg4" + rid(), before = webhookPosts.length;
+    webhookFail.push(0, 500);
+    assert.equal((await slots("/submissions", ginaKey, { files, name: "Gina", slots: 6, batch })).status, 502);
+    const sentFirst = emailsIn(webhookPosts[before].files[0].text)[0];
+    assert.match(sentFirst, /^pool\d+@outlook\.com$/);
+    assert.equal((await slots("/submissions", ginaKey, { files, name: "Gina", slots: 6, batch })).status, 200);
+    assert.equal(emailsIn(webhookPosts.at(-2).files[0].text)[0], sentFirst, "the same account");
+  });
+  await test("a license gets 10 accounts in all; the rest of its slots wait for the owner", async () => {
+    const held = (await accounts()).given.filter((a) => a.key_last4 === ginaKey.slice(-4)).length;
+    assert.equal(held, 5);
+    const rows = Array.from({ length: 6 }, (_, i) => slotRow(`Hal H${i}`, `hal${i}@example.com`));
+    const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv(rows), assigned: 6 }];
+    const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 6, batch: "asg5" + rid(), stores: [{ name: "Target", n: 6, seller: 6 }] })).json();
+    assert.deepEqual(r.accounts, { Target: { asked: 6, got: 5 } });
+    const m = webhookPosts.at(-1), em = emailsIn(m.files[0].text);
+    assert.match(m.content, /\nTarget 6 \(5 assigned accounts, 1 needs an account\)\n/);
+    assert.equal(em[5], "hal5@example.com", "the last one keeps its own email");
+    assert.equal(m.files[1].text.split("\r\n").length, 5, "five login lines, for the first five rows");
+  });
+  await test("the list running out: the rest wait for an account", async () => {
+    assert.equal((await accounts()).stores[0].free, 3);
+    const rows = Array.from({ length: 4 }, (_, i) => slotRow(`Ida I${i}`, `ida${i}@example.com`));
+    const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv(rows), assigned: 4 }];
+    const r = await (await slots("/submissions", bobKey, { files, name: "Bob", slots: 4, batch: "asg6" + rid(), stores: [{ name: "Target", n: 4, seller: 4 }] })).json();
+    assert.deepEqual(r.accounts, { Target: { asked: 4, got: 3 } });
+    assert.equal((await accounts()).stores[0].free, 0);
+    const all = (await accounts()).given.map((a) => a.email);
+    assert.equal(new Set(all).size, all.length, "no account given twice"); assert.equal(all.length, 13);
+  });
+  await test("pulling a slot tells the owner which account it had", async () => {
+    const before = webhookPosts.length;
+    const r = await (await pull(ginaKey, { keyId: "CSV", name: "Gina", slots: [{ store: "Target", profile: "Ann One", email: "Assigned account", card: "Visa 4242" }, { store: "Target", profile: "Nobody", email: "Assigned account" }] })).json();
+    assert.equal(r.forwarded, true);
+    const m = webhookPosts[before].content;
+    assert.ok(m.includes(`Target · Ann One · ${first[0]} \\(assigned account\\) · Visa 4242`), m);
+    assert.match(m, /Target · Nobody · Assigned account/);
+    assert.doesNotMatch(m, /Test-Pw-1/);
+  });
+  await test("the owner can free an account, or all of a license's, and take one off the list", async () => {
+    assert.equal((await admin("/admin/accounts/free", {})).status, 400);
+    assert.deepEqual(await (await admin("/admin/accounts/free", { email: first[0].toUpperCase() })).json(), { ok: true, changed: 1 });
+    assert.equal((await accounts()).stores[0].free, 1);
+    assert.deepEqual(await (await admin("/admin/accounts/free", { key: bobKey })).json(), { ok: true, changed: 3 });
+    assert.deepEqual(await (await admin("/admin/accounts/remove", { email: first[0] })).json(), { ok: true, changed: 1 });
+    assert.deepEqual((await accounts()).stores, [{ store: "target", total: 12, free: 3, sent: 9 }]);
+    assert.equal((await fetch(BASE + "/admin/accounts")).status, 401);
+  });
+  await test("apps before 1.9.58 (no assigned count) are posted as before", async () => {
+    const files = [{ store: "Target", kind: "profiles", text: slotCsv([slotRow("Jo Old", "jo@example.com")]) }];
+    const r = await (await slots("/submissions", bobKey, { files, name: "Bob", slots: 1, batch: "asg7" + rid(), stores: [{ name: "Target", n: 1, seller: 1 }] })).json();
+    assert.equal(r.accounts, undefined);
+    const m = webhookPosts.at(-1);
+    assert.match(m.content, /\nTarget 1 \(1 needs an account\)\n/); assert.deepEqual(m.files.map((f) => f.text), [files[0].text]);
+  });
+  await test("an offer nobody decided on expires, and its accounts are dropped", async () => {
+    await slots("/accounts/offer", ginaKey, { store: "nike", storeName: "Nike", accounts: [{ email: "n1@outlook.com", password: "x1" }] });
+    await new Promise((ok) => setTimeout(ok, 400));
+    const link = offerLink(webhookPosts.at(-1).content);
+    await new Promise((ok) => setTimeout(ok, 8200));   // ACCOUNT_OFFER_TTL_MS is 8000 here
+    const html = await (await offerPost(link, "add")).text();
+    assert.match(html, /Expired before it was added/); assert.doesNotMatch(html, /n1@outlook\.com/);
+    assert.ok(!(await accounts()).stores.some((x) => x.store === "nike"), "nothing added");
+    assert.equal((await accounts()).offers.find((o) => o.store === "nike").status, "expired");
+  });
+  await test("refusing sent accounts adds nothing", async () => {
+    await slots("/accounts/offer", ginaKey, { store: "walmart", storeName: "Walmart", accounts: [{ email: "w1@outlook.com", password: "x1" }] });
+    await new Promise((ok) => setTimeout(ok, 400));
+    const link = offerLink(webhookPosts.at(-1).content);
+    assert.match(await (await offerPost(link, "refuse")).text(), /Refused\. Nothing was added\./);
+    assert.ok(!(await accounts()).stores.some((x) => x.store === "walmart"));
   });
   await test("CSV batches count toward 30 an hour per license", async () => {
     let sent = 0, limited = false;

@@ -53,9 +53,17 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   verified email (`"email"`); every other store on a store login (`"login"`) or **Use Assigned
   Account** (`"seller"`): the buyer adds no login and the owner provides one of their own accounts.
   (1.9.53 had that mode as "Assign me an account" beside the other two; 1.9.54 removed it; 1.9.57
-  put it in place of "Verified email only". Pages move older data onto these in `fixMode`.) Those
-  slots come last in their store's CSV with no login line, `stores[].seller` counts them on the
-  Discord line, and importing a submission brings them in as a store login with none linked.
+  put it in place of "Verified email only". Pages move older data onto these in `fixMode`.)
+  `stores[].seller` counts those slots on the Discord line, and importing a submission brings them
+  in as a store login with none linked. From 1.9.58 the owner's own accounts go to them on the
+  worker: the owner sends accounts from Settings → Accounts to assign (`POST /accounts/offer`) and
+  adds them from the review link (`/accounts/review/:id`, D1 `accounts`). Each profiles file carries
+  `storeKey` and `assigned` (how many of its rows, right after the ones with a login, are on Use
+  Assigned Account), and `/submissions` gives each such row a random free account: its email in the
+  row's `email` column and `email:password` on the matching line of the logins file. Buyers never
+  see them; each account goes to one slot; a license gets `ASSIGNED_LIMIT` (10) in all; an account
+  picked for a batch that never reached the channel goes back. Rows left without one come last.
+  Never put the accounts or their password in this repo or a page: it's public.
   From 1.9.57 a store waiting for a login is linked to the saved login with the profile's email on
   its own: once per vault at unlock (`settings._linkedByEmail`), on Import profiles and inbox
   submissions, and by ticking the profile in the store login editor (`linkByEmail`).

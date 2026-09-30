@@ -29,15 +29,23 @@
 //   POST /pull                 {keyId, name, batch, slots}: slots pulled after being sent; posted to
 //                              DISCORD_WEBHOOK_URL as a plain list, only for keys (or "CSV") this license
 //                              sent submissions to
+// Assigned accounts (app 1.9.58+; the owner's own store accounts for slots set to Use Assigned Account):
+//   POST /accounts/offer       {store, storeName, name, accounts:[{email, password}]}: accounts sent from
+//                              the owner's Orbit, added to the list once the owner approves them in Discord.
+//                              A batch in /submissions then gets one per such slot (see assignAccounts).
 // Owner:
 //   GET/POST /review/DISCORD_ID?t=TOKEN   approve or deny one request (link posted to the webhook)
 //   GET/POST /slots/review/ID?t=TOKEN     approve (optionally a different number) or deny more slots
 //   GET/POST /submit/review/ID?t=TOKEN    confirm or refuse a collecting key
+//   GET/POST /accounts/review/ID?t=TOKEN  add or refuse accounts sent for Use Assigned Account
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/applications   every request and decision
 //   GET  /admin/submissions    collecting keys (with review links), submissions sent and slots pulled
 //   POST /admin/revoke         {discord_id} or {key}: the app locks on its next check
 //   POST /admin/restore        {discord_id} or {key}
+//   GET  /admin/accounts       the account list: free and given out per store, who got which, offers
+//   POST /admin/accounts/free  {email, store?}: give an account back to the list
+//   POST /admin/accounts/remove {email, store?}: take it off the list
 
 const DISCORD_AUTHORIZE = "https://discord.com/oauth2/authorize";
 const REQUEST_TTL_MS = 15 * 60 * 1000;          // matches how long the app waits for a sign-in
@@ -84,6 +92,8 @@ export default {
       if (path.startsWith("/submit/review/")) return await submitKeyReview(request, env, ctx, url, path.slice("/submit/review/".length));
       if (path === "/submissions" && request.method === "POST") return await submission(request, env, url);
       if (path === "/pull" && request.method === "POST") return await pull(request, env, ctx);
+      if (path === "/accounts/offer" && request.method === "POST") return await accountOffer(request, env, ctx, url);
+      if (path.startsWith("/accounts/review/")) return await accountReview(request, env, ctx, url, path.slice("/accounts/review/".length));
       if (path.startsWith("/admin/")) return await admin(request, env, path);
       return json({ error: "not found" }, 404);
     } catch (e) {
@@ -723,7 +733,11 @@ async function submission(request, env, url) {
       const kind = f && f.kind, t = f && typeof f.text === "string" ? f.text : "";
       if (!store || !t.trim() || (kind !== "profiles" && kind !== "logins")) return json({ error: "files" }, 400);
       if (kind === "profiles" && !/^\uFEFF?profile_name,/.test(t)) return json({ error: "that isn't a slots CSV" }, 400);
-      files.push({ store, kind, text: t });
+      // App 1.9.58+: the store's key, and how many of its slots (the rows right after the ones with a
+      // login) are on Use Assigned Account, to get accounts from the owner's list.
+      const storeKey = typeof f.storeKey === "string" && /^([a-z0-9]{2,24}|other:[^\r\n]{1,40})$/.test(f.storeKey) ? f.storeKey : "";
+      const assigned = kind === "profiles" && storeKey ? Math.min(SLOT_MAX, Math.max(0, Math.floor(Number(f.assigned)) || 0)) : 0;
+      files.push({ store, kind, text: t, storeKey, assigned });
     }
     if (!files.some((f) => f.kind === "profiles")) return json({ error: "files" }, 400);
     if (files.reduce((n, f) => n + f.text.length, 0) > SUBMISSION_MAX_CHARS) return json({ error: "too large" }, 413);
@@ -764,12 +778,29 @@ async function submission(request, env, url) {
     id: batch, key_hash: lic.hash, key_last4: lic.last4, username: lic.username,
     name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60), slots, key_id: keyId,
   };
+  // Recorded before any account is picked or anything is posted, so a retry that arrives meanwhile
+  // isn't handled twice.
+  const bytes = files !== null ? files.reduce((n, f) => n + f.text.length, 0) : (csv !== null ? csv : code).length;
+  const ins = await env.DB.prepare(
+    `INSERT OR IGNORE INTO submissions (id, key_hash, key_last4, name, username, slots, bytes, key_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(s.id, s.key_hash, s.key_last4, s.name, s.username, slots, bytes, s.key_id, now).run();
+  if (!ins.meta || !ins.meta.changes) return json({ error: "still sending" }, 425);
+  // Slots on Use Assigned Account get accounts from the owner's list: {store name: {asked, got}}.
+  const picks = files !== null ? await assignAccounts(env, lic, batch, files, now) : new Map();
   const stamp = new Date(now).toISOString().slice(0, 16).replace("T", "-").replace(":", "");
   const slug = s.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
   const who = [s.name ? `**${md(s.name)}**` : "", s.username ? `@${md(s.username)}` : "", `license …${s.key_last4}`].filter(Boolean).join(" · ");
-  const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${x.seller ? ` (${x.seller} need${x.seller === 1 ? "s" : ""} an account)` : ""}`).join(" · ").slice(0, 1200);
+  // `seller` slots that got an account from the list, and ones still waiting for the owner to assign one.
+  const short = (x) => Math.max(0, x.seller - ((picks.get(x.name) || {}).got || 0));
+  const accts = (x) => {
+    const got = (picks.get(x.name) || {}).got || 0, need = short(x);
+    const parts = [got ? `${got} assigned account${got === 1 ? "" : "s"}` : "", need ? `${need} need${need === 1 ? "s" : ""} an account` : ""].filter(Boolean);
+    return parts.length ? ` (${parts.join(", ")})` : "";
+  };
+  const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
   const tail = files !== null
-    ? `-# One profiles file (.csv) per store${files.some((f) => f.kind === "logins") ? ", with its logins (email:password, .txt) in the same order" : ""}.${stores.some((x) => x.seller) ? " Profiles that need an account come last." : ""}`
+    ? `-# One profiles file (.csv) per store${files.some((f) => f.kind === "logins") ? ", with its logins (email:password, .txt) in the same order" : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
     : csv !== null ? "-# CSV attached." : `-# Encrypted for key ${keyId}. To open: download the file, then in Orbit choose **Import** and drop it in.`;
   const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n${tail}`;
   const base = `orbit-slots-${stamp}${slug ? "-" + slug : ""}`;
@@ -786,29 +817,211 @@ async function submission(request, env, url) {
       ? { name: `${base}-${label(f.store)}.csv`, text: f.text, type: "text/csv" }
       : { name: `${base}-${label(f.store)}-logins.txt`, text: f.text });
   } else attach = [csv !== null ? { name: base + ".csv", text: csv, type: "text/csv" } : { name: base + ".txt", text: code }];
-  // Recorded before posting, so a retry that arrives while this one is still posting isn't posted too.
-  const ins = await env.DB.prepare(
-    `INSERT OR IGNORE INTO submissions (id, key_hash, key_last4, name, username, slots, bytes, key_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(s.id, s.key_hash, s.key_last4, s.name, s.username, slots, attach.reduce((n, f) => n + f.text.length, 0), s.key_id, now).run();
-  if (!ins.meta || !ins.meta.changes) return json({ error: "still sending" }, 425);
   // Discord takes 10 attachments a message, so more go in follow-up messages. If one of those fails,
   // the batch counts as not sent and the app sends it again (the owner may then see the first part twice).
-  let msgId = null;
+  let msgId = null, postedAny = false;
   try {
     for (let i = 0; i < attach.length; i += 10) {
       const part = attach.slice(i, i + 10);
       const id = await webhookPost(env, { content: i ? `-# More files for the batch from ${who} (${i + 1}–${i + part.length} of ${attach.length}).` : content }, part);
       if (!id) { msgId = null; break; }
+      postedAny = true;
       if (!i) msgId = id;
     }
   } catch (e) { msgId = null; console.error("webhook", e); }
   if (!msgId) {
     await env.DB.prepare("DELETE FROM submissions WHERE id = ?").bind(s.id).run();
+    // Accounts that can't have reached the channel go back to the list; if part of the batch went out,
+    // they're kept for this batch, and sending it again posts the same ones.
+    if (picks.size) await settleAccounts(env, lic, batch, postedAny, Date.now());
     return json({ error: "couldn't post to the channel" }, 502);
   }
   await env.DB.prepare("UPDATE submissions SET webhook_message_id = ? WHERE id = ?").bind(msgId, s.id).run().catch((e) => console.error("record", e));
-  return json({ ok: true, id: s.id });
+  if (picks.size) await settleAccounts(env, lic, batch, true, Date.now()).catch((e) => console.error("accounts", e));
+  // How many slots got an account per store; buyers never see which.
+  return json(picks.size ? { ok: true, id: s.id, accounts: Object.fromEntries(picks) } : { ok: true, id: s.id });
+}
+
+// ---- assigned accounts -------------------------------------------------------------------
+//
+// The owner's own store accounts, for slots set to Use Assigned Account (app 1.9.58+). The owner sends
+// them from Orbit and adds them from the review link posted to their channel. When a batch comes in,
+// each such slot gets a random free account for its store: its email goes in the slot's row (the
+// `email` column) and email:password is added to that store's logins file, so line N still goes with
+// row N. An account goes to one slot only; the buyer never sees it. A license gets ASSIGNED_LIMIT at
+// most in all, and an account picked for a batch that never reached the channel goes back to the list.
+
+const ACCOUNT_OFFERS_PER_DAY = 5;
+const ACCOUNT_OFFER_MAX = 1000;
+// An offer nobody decided on expires, and the accounts it holds (with their passwords) are dropped
+// (ACCOUNT_OFFER_TTL_MS overrides it for tests).
+const offerTtlMs = (env) => Number(env.ACCOUNT_OFFER_TTL_MS) > 0 ? Number(env.ACCOUNT_OFFER_TTL_MS) : 7 * 86400000;
+const expireOffers = (env, now) => env.DB.prepare("UPDATE account_offers SET status = 'expired', accounts = '[]', decided_at = ? WHERE status = 'pending' AND created_at < ?")
+  .bind(now, now - offerTtlMs(env)).run();
+const assignLimit = (env) => { const n = Math.floor(Number(env.ASSIGNED_LIMIT)); return String(env.ASSIGNED_LIMIT ?? "").trim() !== "" && n >= 0 ? n : 10; };
+// A pick whose batch never reached the channel is freed after this (ASSIGN_STALE_MS overrides it for tests).
+const assignStaleMs = (env) => Number(env.ASSIGN_STALE_MS) > 0 ? Number(env.ASSIGN_STALE_MS) : 60 * 60 * 1000;
+const FREE_ACCOUNT = "key_hash = NULL, key_last4 = NULL, batch = NULL, store_name = NULL, profile = NULL, assigned_at = NULL, sent_at = NULL";
+
+// The slots CSV as the app writes it: comma-separated, quoted when a cell has a comma, quote or line break.
+function parseCsv(text) {
+  const rows = []; let row = [], cur = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ",") { row.push(cur); cur = ""; }
+    else if (ch === "\r" && text[i + 1] === "\n") { row.push(cur); rows.push(row); row = []; cur = ""; i++; }
+    else if (ch === "\n") { row.push(cur); rows.push(row); row = []; cur = ""; }
+    else cur += ch;
+  }
+  if (cur || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+const csvCell = (v) => { const t = String(v == null ? "" : v); return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+
+async function assignAccounts(env, lic, batch, files, now) {
+  const picks = new Map();
+  const want = files.filter((f) => f.kind === "profiles" && f.assigned > 0);
+  if (!want.length) return picks;
+  await env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE sent_at IS NULL AND key_hash IS NOT NULL AND assigned_at < ?`)
+    .bind(now - assignStaleMs(env)).run();
+  const limit = assignLimit(env);
+  for (const f of want) {
+    const logins = files.find((x) => x.kind === "logins" && x.store === f.store);
+    const eol = /\r\n/.test(f.text) ? "\r\n" : "\n";
+    const lines = logins ? logins.text.split(/\r?\n/).filter((x) => x.trim()) : [];
+    const rows = parseCsv(f.text), col = (rows[0] || []).findIndex((h) => h.replace(/^\uFEFF/, "").trim() === "email");
+    // The app puts these slots right after the ones with a login, so they start at row N + 1.
+    const start = 1 + lines.length, asked = Math.min(f.assigned, Math.max(0, rows.length - start));
+    // Sending the same batch again gets the same accounts.
+    const { results: had } = await env.DB.prepare("SELECT email, password FROM accounts WHERE key_hash = ? AND batch = ? AND store = ? ORDER BY assigned_at, rowid")
+      .bind(lic.hash, batch, f.storeKey).all();
+    const got = had.slice(0, asked);
+    while (got.length < asked) {
+      const held = await env.DB.prepare("SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ?").bind(lic.hash).first();
+      if ((held ? held.n : 0) >= limit) break;
+      const a = await env.DB.prepare(
+        `UPDATE accounts SET key_hash = ?, key_last4 = ?, batch = ?, store_name = ?, profile = ?, assigned_at = ?, sent_at = NULL
+         WHERE rowid = (SELECT rowid FROM accounts WHERE store = ? AND key_hash IS NULL ORDER BY random() LIMIT 1) RETURNING email, password`
+      ).bind(lic.hash, lic.last4, batch, f.store, String(rows[start + got.length][0] || "").slice(0, 80), now + got.length, f.storeKey).first();
+      if (!a) break;   // none left for this store
+      got.push(a);
+    }
+    if (got.length) {
+      if (col >= 0) got.forEach((a, i) => { rows[start + i][col] = a.email; });
+      f.text = rows.map((r) => r.map(csvCell).join(",")).join(eol);
+      const add = got.map((a) => `${a.email}:${a.password}`);
+      if (logins) logins.text = logins.text.replace(/[\r\n]+$/, "") + (lines.length ? eol : "") + add.join(eol);
+      else files.splice(files.indexOf(f) + 1, 0, { store: f.store, kind: "logins", text: add.join(eol), storeKey: f.storeKey, assigned: 0 });
+    }
+    picks.set(f.store, { asked: f.assigned, got: got.length });
+  }
+  return picks;
+}
+
+// sent: the batch (or part of it) reached the channel, so its accounts are given out for good.
+// Otherwise they go back to the list.
+async function settleAccounts(env, lic, batch, sent, now) {
+  if (sent) await env.DB.prepare("UPDATE accounts SET sent_at = ? WHERE key_hash = ? AND batch = ? AND sent_at IS NULL").bind(now, lic.hash, batch).run();
+  else await env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE key_hash = ? AND batch = ? AND sent_at IS NULL`).bind(lic.hash, batch).run();
+}
+
+const offerStoreName = (x) => String(x || "").replace(/\s+/g, " ").trim().slice(0, 40);
+
+async function accountOffer(request, env, ctx, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  if (!env.DISCORD_WEBHOOK_URL) return json({ error: "the Discord channel isn't set up" }, 503);
+  const text = await request.text();
+  if (text.length > 400_000) return json({ error: "too large" }, 413);
+  let b; try { b = JSON.parse(text) || {}; } catch { b = {}; }
+  const store = String(b.store || "");
+  if (!/^([a-z0-9]{2,24}|other:[^\r\n]{1,40})$/.test(store)) return json({ error: "store" }, 400);
+  const storeName = offerStoreName(b.storeName) || store;
+  const seen = new Set(), accounts = [];
+  for (const a of Array.isArray(b.accounts) ? b.accounts : []) {
+    const email = String(a && a.email || "").trim(), password = String(a && a.password || "");
+    if (!/^[^\s@:]+@[^\s@:]+\.[^\s@:]+$/.test(email) || email.length > 120 || !password || password.length > 200 || /[\r\n]/.test(password)) return json({ error: "accounts", email }, 400);
+    if (seen.has(email.toLowerCase())) continue;
+    seen.add(email.toLowerCase()); accounts.push({ email, password });
+  }
+  if (!accounts.length || accounts.length > ACCOUNT_OFFER_MAX) return json({ error: "accounts" }, 400);
+  const now = Date.now();
+  ctx.waitUntil(expireOffers(env, now).catch((e) => console.error("offers", e)));
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM account_offers WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 86400000).first();
+  if (recent && recent.n >= ACCOUNT_OFFERS_PER_DAY) return json({ error: "too many tries today" }, 429);
+  const o = {
+    id: randomId(12), store, store_name: storeName, count: accounts.length, key_hash: lic.hash, key_last4: lic.last4,
+    name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60), username: lic.username,
+    status: "pending", review_token: randomId(24), created_at: now,
+  };
+  await env.DB.prepare(
+    `INSERT INTO account_offers (id, store, store_name, accounts, count, key_hash, key_last4, name, username, status, review_token, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+  ).bind(o.id, o.store, o.store_name, JSON.stringify(accounts), o.count, o.key_hash, o.key_last4, o.name, o.username, o.review_token, o.created_at).run();
+  ctx.waitUntil((async () => {
+    const id = await webhookPost(env, { content: offerMessage(url.origin, o) });
+    if (id) await env.DB.prepare("UPDATE account_offers SET webhook_message_id = ? WHERE id = ?").bind(id, o.id).run();
+  })().catch((e) => console.error("webhook", e)));
+  return json({ status: "pending", count: o.count });
+}
+
+// Only the count goes to the channel; the emails are on the review page, the passwords nowhere.
+function offerMessage(origin, o) {
+  const who = [o.name ? `**${md(o.name)}**` : "", o.username ? `@${md(o.username)}` : "", `license …${o.key_last4}`].filter(Boolean).join(" · ");
+  const link = `${origin}/accounts/review/${o.id}?t=${o.review_token}`;
+  const n = (k) => `${k} ${md(o.store_name)} account${k === 1 ? "" : "s"}`;
+  const head = o.status === "added" ? `✅ **Added ${n(o.added || 0)} to your list** for Use Assigned Account`
+    : o.status === "refused" ? `⛔ **${n(o.count)} refused**` : o.status === "expired" ? `⌛ **${n(o.count)} expired** before they were added`
+    : `🗂️ **Add ${n(o.count)} to your list for Use Assigned Account?**`;
+  return `${head}\nSent by ${who}${o.status === "pending" ? `\n[Review: add or refuse](${link})` : ""}`;
+}
+
+async function accountReview(request, env, ctx, url, id) {
+  const o = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM account_offers WHERE id = ?").bind(id).first() : null;
+  let t = url.searchParams.get("t") || "", action = "";
+  if (request.method === "POST") {
+    const form = await request.formData().catch(() => null);
+    t = form && String(form.get("t") || "") || t;
+    action = form && String(form.get("action") || "");
+  } else if (request.method !== "GET") {
+    return page(405, "Not allowed", "");
+  }
+  if (!o || !(await sameText(t, o.review_token))) return page(404, "Accounts not found", "This review link isn't valid.");
+  let done = "";
+  const now = Date.now();
+  if (o.status === "pending" && o.created_at < now - offerTtlMs(env)) { await expireOffers(env, now); o.status = "expired"; }
+  if (o.status === "pending" && action === "add") {
+    const list = JSON.parse(o.accounts || "[]");
+    let added = 0;
+    for (let i = 0; i < list.length; i += 100) {
+      const res = await env.DB.batch(list.slice(i, i + 100).map((a) => env.DB.prepare(
+        "INSERT OR IGNORE INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES (?, ?, ?, ?, ?, ?)"
+      ).bind(o.store, a.email, a.email.toLowerCase(), a.password, now, o.id)));
+      added += res.reduce((n, r) => n + (r.meta && r.meta.changes || 0), 0);
+    }
+    await env.DB.prepare("UPDATE account_offers SET status = 'added', added = ?, accounts = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(added, now, o.id).run();
+    done = `Added ${added} to your list.${added < list.length ? ` ${list.length - added} ${list.length - added === 1 ? "was" : "were"} already on it.` : ""}`;
+  } else if (o.status === "pending" && action === "refuse") {
+    await env.DB.prepare("UPDATE account_offers SET status = 'refused', accounts = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(now, o.id).run();
+    done = "Refused. Nothing was added.";
+  }
+  const cur = await env.DB.prepare("SELECT * FROM account_offers WHERE id = ?").bind(o.id).first();
+  if (done && cur.webhook_message_id) ctx.waitUntil(webhookEdit(env, cur.webhook_message_id, { content: offerMessage(url.origin, cur) }).catch(() => {}));
+  const stats = await env.DB.prepare("SELECT COUNT(*) AS n, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free FROM accounts WHERE store = ?").bind(cur.store).first();
+  const label = { pending: "Waiting for you", added: `Added ${cur.added} to your list`, refused: "Refused", expired: "Expired before it was added. Send the accounts again from Orbit." }[cur.status] || cur.status;
+  const who = [cur.name, cur.username ? "@" + cur.username : "", "license …" + cur.key_last4].filter(Boolean).join(" · ");
+  const emails = cur.status === "pending" ? JSON.parse(cur.accounts || "[]").map((a) => a.email) : [];
+  const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  const btn = (a, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${a}">${esc(text)}</button></form>`;
+  return page(200, `${cur.store_name} accounts`, done || label,
+    `<p class="who">${cur.count} account${cur.count === 1 ? "" : "s"} for Use Assigned Account</p>
+     <p class="small">Each slot on Use Assigned Account gets one of your free accounts when its batch reaches your channel, with the email in its row and email:password in the logins file. Buyers never see them, and each one goes to one slot only.</p>
+     ${cur.status === "pending" ? `<p class="small"><strong>Only add these if you sent them</strong> from your own Orbit (Settings → Accounts to assign).</p>` : ""}
+     ${emails.length ? `<p class="small">${emails.slice(0, 12).map(esc).join("<br>")}${emails.length > 12 ? `<br>and ${emails.length - 12} more` : ""}</p>` : ""}
+     <p class="small">Your ${esc(cur.store_name)} list: ${stats.n || 0} account${stats.n === 1 ? "" : "s"}, ${stats.free || 0} free.<br>Sent by ${esc(who)}, ${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC</p>
+     ${cur.status === "pending" ? `<div class="row">${btn("add", "Add to my list", "ok")}${btn("refuse", "Refuse", "no")}</div>` : ""}`);
 }
 
 // ---- pulls ---------------------------------------------------------------------------
@@ -844,6 +1057,15 @@ async function pull(request, env, ctx) {
     };
   }).filter((x) => x.store || x.profile);
   if (!slots.length) return json({ error: "slots" }, 400);
+  // A slot on Use Assigned Account (the app sends "Assigned account", it never knows which): the
+  // account it went out with, so the owner knows which one to take back.
+  const asks = slots.filter((x) => x.email === "Assigned account" && x.profile);
+  if (asks.length) {
+    const found = await env.DB.batch(asks.map((x) => env.DB.prepare(
+      "SELECT email FROM accounts WHERE key_hash = ? AND store_name = ? AND profile = ? AND sent_at IS NOT NULL ORDER BY sent_at DESC, assigned_at DESC LIMIT 1"
+    ).bind(lic.hash, x.store, x.profile)));
+    asks.forEach((x, i) => { const a = found[i].results[0]; if (a) x.email = `${a.email} (assigned account)`; });
+  }
 
   // Only slots this license sent through here reached the owner's list, so a pull of anything else
   // (sent as a code, or to another seller) isn't posted.
@@ -948,6 +1170,28 @@ async function admin(request, env, path) {
       "SELECT discord_id, username, status, created_at, decided_at, review_token FROM applications ORDER BY created_at DESC").all();
     const origin = new URL(request.url).origin;
     return json({ applications: results.map(({ review_token, ...a }) => ({ ...a, review_url: `${origin}/review/${a.discord_id}?t=${review_token}` })) });
+  }
+  if (request.method === "GET" && path === "/admin/accounts") {
+    const origin = new URL(request.url).origin;
+    const [stores, given, offers] = await env.DB.batch([
+      env.DB.prepare(`SELECT store, COUNT(*) AS total, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free,
+        SUM(CASE WHEN sent_at IS NOT NULL THEN 1 ELSE 0 END) AS sent FROM accounts GROUP BY store ORDER BY store`),
+      env.DB.prepare("SELECT store, email, key_last4, store_name, profile, assigned_at, sent_at FROM accounts WHERE key_hash IS NOT NULL ORDER BY assigned_at DESC LIMIT 500"),
+      env.DB.prepare("SELECT id, store, store_name, count, key_last4, name, username, status, added, created_at, decided_at, review_token FROM account_offers ORDER BY created_at DESC LIMIT 50"),
+    ]);
+    return json({ limit: assignLimit(env), stores: stores.results, given: given.results,
+      offers: offers.results.map(({ review_token, ...o }) => ({ ...o, review_url: `${origin}/accounts/review/${o.id}?t=${review_token}` })) });
+  }
+  // {email} (with {store} if it's on more than one store's list), or free: {key} for every account a license has.
+  if (request.method === "POST" && (path === "/admin/accounts/free" || path === "/admin/accounts/remove")) {
+    const b = await request.json().catch(() => ({}));
+    const free = path === "/admin/accounts/free", email = String(b.email || "").trim().toLowerCase();
+    const where = free && b.key && !email ? ["key_hash = ?", await keyHash(b.key)]
+      : email ? (b.store ? ["email_norm = ? AND store = ?", email, String(b.store)] : ["email_norm = ?", email]) : null;
+    if (!where) return json({ error: free ? "send {email} or {key}" : "send {email}" }, 400);
+    const r = await env.DB.prepare(free ? `UPDATE accounts SET ${FREE_ACCOUNT} WHERE ${where[0]}` : `DELETE FROM accounts WHERE ${where[0]}`)
+      .bind(...where.slice(1)).run();
+    return json({ ok: true, changed: r.meta ? r.meta.changes : 0 });
   }
   if (request.method === "POST" && (path === "/admin/revoke" || path === "/admin/restore")) {
     const b = await request.json().catch(() => ({}));
