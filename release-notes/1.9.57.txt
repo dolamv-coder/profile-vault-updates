@@ -1,0 +1,1 @@
+Stores on a profile now check out with your store login or Use Assigned Account, where the seller provides the login. Pokémon Center uses a verified email only. Profiles waiting for a store login are now linked to your saved login with the same email automatically.
