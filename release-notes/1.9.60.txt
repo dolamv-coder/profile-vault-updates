@@ -1,0 +1,1 @@
+Clean emails now also clears store newsletters that reach you through iCloud Hide My Email, like Pokémon Center's preorder emails and Best Buy's deals. Order, shipping, account and sign-in emails from those stores are still kept, and Clear all of Spam now keeps order emails like "Thank you for shopping" and "Your order is on its way" too.
