@@ -1,10 +1,10 @@
 {
-  "version": "1.9.52",
-  "url": "index-1.9.52.html",
-  "sha256": "fda6071f8b5cf37fb8efbb9b50ecfd882b2fb5d71e93bc5059ad00f77f3553dd",
-  "signature": "ZG0TMJmCnE9bvMUOxqnu3FC8QbbPAccDY1bYSnsW9R+DW9lyXmK+bZRcRiVi9YRW6ilRDjp0vqzdrKH8Bv60Cw==",
+  "version": "1.9.53",
+  "url": "index-1.9.53.html",
+  "sha256": "59bc59466e90d9d9fa00e3465ba228e7199e44875b21377a195787ce070cfb51",
+  "signature": "DAALlRJhRUhSU2fjSGqBnG53EJm1gL6NdoQ4q/SnimrV151C421dmkbAxHq92btk/Hv4DXGoAJM4u9j3Dx9NCQ==",
   "minAppVersion": "0",
-  "notes": "Submit now sends your slots straight to the seller's private Discord channel as a CSV file.",
+  "notes": "When you add a store to a profile, you can now choose Assign me an account: you don't need your own login, and the seller assigns one after you submit.",
   "installerUrl": "",
-  "publishedAt": "2026-09-30T02:43:59.529Z"
+  "publishedAt": "2026-09-30T04:06:45.914Z"
 }
