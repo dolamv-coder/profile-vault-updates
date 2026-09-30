@@ -49,8 +49,9 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   logins as `email:password` lines in a separate `.txt`, in the same order as the first rows. The
   worker names them `orbit-slots-<time>-<sender>-<store>.csv` and `…-<store>-logins.txt`, 10
   attachments per message. Slots without a store login come after those rows.
-  How each store on a profile checks out (`stores[].mode`, from 1.9.57): Pokémon Center only on a
-  verified email (`"email"`); every other store on a store login (`"login"`) or **Use Assigned
+  How each store on a profile checks out (`stores[].mode`, from 1.9.57): Pokémon Center only on an
+  email, as a guest with no login (`"email"`; from 1.9.62 nothing asks for or shows whether it's
+  verified, and `verified` is only kept for older data); every other store on a store login (`"login"`) or **Use Assigned
   Account** (`"seller"`): the buyer adds no login and the owner provides one of their own accounts.
   (1.9.53 had that mode as "Assign me an account" beside the other two; 1.9.54 removed it; 1.9.57
   put it in place of "Verified email only". Pages move older data onto these in `fixMode`.)
