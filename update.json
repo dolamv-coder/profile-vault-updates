@@ -1,10 +1,10 @@
 {
-  "version": "1.9.55",
-  "url": "index-1.9.55.html",
-  "sha256": "87a73ae1292b88730ff5b7a1c8ed668298337fe839ff5d6ec13b1adf689c5324",
-  "signature": "zfLTT/qLlBla5gxJM7mEFD735ehMBPJofx2BBoaRyGBIQeAF3BSrrDQyXF7EKAEbJQNuD+aehb+6K0QQZ+LICQ==",
+  "version": "1.9.56",
+  "url": "index-1.9.56.html",
+  "sha256": "80b7f2ee5c92cd470433e7dc1bfd89387c52d0c1e2dc3f2c883047cb8176d614",
+  "signature": "7CZ+28CyKj7F/NAUu/GKffp4q0CGBGsPCZotsp7mG4ix4XTf6fNRLZ5XG1tbvjp0bMLIa5zgKNSEQ2kOWwLjCg==",
   "minAppVersion": "0",
-  "notes": "When a store on a profile has no login chosen, Orbit now picks your saved login for that store with the same email as the profile. It changes with the profile's email, and never replaces a login you chose yourself.",
+  "notes": "Import profiles now needs a retailer for every profile. If the file doesn't name one, pick at least one store before importing. Profiles that already name their retailers keep them.",
   "installerUrl": "",
-  "publishedAt": "2026-09-30T04:50:03.910Z"
+  "publishedAt": "2026-09-30T05:04:40.405Z"
 }
