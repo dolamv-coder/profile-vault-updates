@@ -318,9 +318,14 @@ list you keep here:
 - **Each license can be given `ASSIGNED_LIMIT` accounts in all** (10; change it in `[vars]` in
   `wrangler.toml`). Slots past that, or past the end of the list, come last with no login line, and
   the store line says "(1 needs an account)" so you can assign those by hand.
+- **When the list runs low**, your channel is told: once when a store is down to `ACCOUNTS_LOW_AT` free
+  accounts (15), "⚠️ Only 15 Target accounts left…", and once more when it runs out, "🚫 No Target
+  accounts left…". Sending more and adding them, or freeing some, sets these up again. Change the
+  number in `[vars]` in `wrangler.toml`.
 - **Pulling** such a slot names the account it had: "Target · Kim Lee · acct7@example.com (assigned
   account)".
-- The list and the waiting offers are in the `accounts` and `account_offers` tables, which
+- The list, the waiting offers and those alerts are in the `accounts`, `account_offers` and
+  `account_stock` tables, which
   `npm run db:init` (and the deploy Action) adds. With `ADMIN_TOKEN` set:
 
 ```

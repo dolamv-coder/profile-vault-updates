@@ -164,3 +164,11 @@ CREATE TABLE IF NOT EXISTS account_offers (
   webhook_message_id TEXT
 );
 CREATE INDEX IF NOT EXISTS account_offers_key ON account_offers (key_hash, created_at);
+
+-- Whether the owner's channel was told a store's list is low (ACCOUNTS_LOW_AT free accounts or fewer)
+-- or has run out. Adding or freeing accounts clears these again.
+CREATE TABLE IF NOT EXISTS account_stock (
+  store    TEXT PRIMARY KEY,
+  low_at   INTEGER,
+  empty_at INTEGER
+);

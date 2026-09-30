@@ -22,6 +22,9 @@ DEFAULT_SLOT_LIMIT = "20"
 # How many of your accounts (Use Assigned Account) one license can be given in all. Freeing one
 # (see README) gives it back.
 ASSIGNED_LIMIT = "10"
+# Your channel is told when a store's list of accounts is down to this many free ones, and again when
+# it runs out.
+ACCOUNTS_LOW_AT = "15"
 
 # Secrets (set with `npx wrangler secret put NAME`, never put them in this file):
 #   DISCORD_CLIENT_ID      Discord application's Client ID
