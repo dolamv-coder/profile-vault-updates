@@ -1,10 +1,10 @@
 {
-  "version": "1.9.58",
-  "url": "index-1.9.58.html",
-  "sha256": "24d55b9c98503147c0c3add2a0670c425b44f1082c51f533fa923188234e77a4",
-  "signature": "dsab1W9iMOZHwCN5qPaafevoUSu8/VFCcAgKWDxNteJp/jGgoIxMrRH+qUgnsbhLHuE8+NyyQ/7mvTjN3JHCDw==",
+  "version": "1.9.59",
+  "url": "index-1.9.59.html",
+  "sha256": "3787f076175aa2a14e614e70ec9c86ff2cf7dc769c93eb40a7758777b73bdd4f",
+  "signature": "+xUsC25GnnvaIOjgp6w9oz8vEEC2HhWESLk+bd8Q/wK1gNbWRjnjKUHplr1clE8mzN/jZZyIpitl4A874WfxBw==",
   "minAppVersion": "0",
-  "notes": "Slots set to Use Assigned Account now get one of the seller's accounts automatically when you submit them. Sellers can send their accounts from Settings → Accounts to assign.",
+  "notes": "Clean emails now clears sale-event emails like Target Circle Deal Days and Circle Week from your Inbox and Spam, including ones forwarded from your other inboxes. If auto-clean is on, its next run looks back 30 days to catch the ones already there.",
   "installerUrl": "",
-  "publishedAt": "2026-09-30T06:10:30.743Z"
+  "publishedAt": "2026-09-30T12:36:30.112Z"
 }
