@@ -23,7 +23,8 @@
 //                              as a .csv attachment in plain text, with full card numbers, CVVs and
 //                              passwords (the owner chose this over encryption). Older apps send
 //                              {code, keyId, ...}, a code encrypted to the collecting key, posted as a .txt.
-//                              Neither is kept here.
+//                              Neither is kept here. From 1.9.53 each store in `stores` may carry
+//                              `seller`: how many of its slots ask the owner to assign an account.
 //   POST /pull                 {keyId, name, batch, slots}: slots pulled after being sent; posted to
 //                              DISCORD_WEBHOOK_URL as a plain list, only for keys (or "CSV") this license
 //                              sent submissions to
@@ -720,8 +721,12 @@ async function submission(request, env, url) {
   }
   const slots = Math.floor(Number(b.slots));
   if (!(slots >= 1 && slots <= SLOT_MAX)) return json({ error: "slots" }, 400);
+  // `seller` (app 1.9.53+): how many of the store's slots ask the owner to assign an account.
   const stores = (Array.isArray(b.stores) ? b.stores : []).slice(0, 40)
-    .map((x) => ({ name: String(x && x.name || "").replace(/\s+/g, " ").trim().slice(0, 40), n: Math.floor(Number(x && x.n)) || 0 }))
+    .map((x) => {
+      const n = Math.floor(Number(x && x.n)) || 0;
+      return { name: String(x && x.name || "").replace(/\s+/g, " ").trim().slice(0, 40), n, seller: Math.min(n, Math.max(0, Math.floor(Number(x && x.seller)) || 0)) };
+    })
     .filter((x) => x.name && x.n > 0);
   // The app sends the same batch id when it retries, so a batch whose answer got lost isn't posted twice.
   const batch = /^[A-Za-z0-9_-]{16,40}$/.test(b.batch || "") ? b.batch : randomId(12);
@@ -741,7 +746,7 @@ async function submission(request, env, url) {
   const stamp = new Date(now).toISOString().slice(0, 16).replace("T", "-").replace(":", "");
   const slug = s.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
   const who = [s.name ? `**${md(s.name)}**` : "", s.username ? `@${md(s.username)}` : "", `license …${s.key_last4}`].filter(Boolean).join(" · ");
-  const storeLine = stores.map((x) => `${md(x.name)} ${x.n}`).join(" · ").slice(0, 1200);
+  const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${x.seller ? ` (${x.seller} need${x.seller === 1 ? "s" : ""} an account)` : ""}`).join(" · ").slice(0, 1200);
   const tail = csv !== null ? "-# CSV attached." : `-# Encrypted for key ${keyId}. To open: download the file, then in Orbit choose **Import** and drop it in.`;
   const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n${tail}`;
   const base = `orbit-slots-${stamp}${slug ? "-" + slug : ""}`;

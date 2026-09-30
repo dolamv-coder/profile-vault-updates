@@ -202,8 +202,14 @@ profile was submitted for. Profiles with no group of their own get the sender's 
 There's nothing to set up; it uses the same `DISCORD_WEBHOOK_URL`.
 
 > 📦 **6 slots** from **Kim** · @kim · license …ABCD
-> Target 3 · Walmart 3
+> Target 3 (2 need an account) · Walmart 3
 > CSV attached.
+
+From Orbit 1.9.53 a buyer can set a store on a profile to **Assign me an account** instead of adding
+their own login. Those slots are counted on the store line ("2 need an account"), and in the file
+their `<store>_account_label` column says `Assign me an account`, with no email or password. Import
+the file into your Orbit and those stores come in waiting for a login: the "no login linked" alert
+on Profiles lists them, so you can link one of your store logins to each.
 
 **The file is plain text.** Anyone who can read the channel, any bot in the server, and Discord
 itself can read every card number and password in it, and this worker passes it through (it keeps

@@ -43,6 +43,11 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   app sends `POST /submissions {csv, …}` instead: no key needed, posted as a `.csv` attachment in
   plain text (Export → CSV's columns, so full card numbers, CVVs, and store and email passwords go
   to the channel). The worker keeps no copy, and a recipient set by hand still gets a sealed code.
+  From 1.9.53 a store on a profile can be set to "Assign me an account" (`mode: "seller"`): the
+  buyer adds no login and the owner assigns one after submission. The CSV says `Assign me an
+  account` in that store's `_account_label`, with no email or password; `stores[].seller` counts
+  them on the Discord line; and importing such a CSV (or a sealed submission) brings the store in as
+  a store login with none linked, so the "no login linked" alert lists it for linking.
   From 1.9.50, pulling a submitted slot sends `POST /pull` (`keyId` is the key, or `CSV`), which
   posts a plain list (store, profile name, account email, card brand and last 4) to the same
   channel, only for keys that license already sent submissions to. Pull alerts never carry card

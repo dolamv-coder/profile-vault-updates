@@ -871,6 +871,17 @@ try {
     assert.equal(s.key_id, "CSV"); assert.equal(s.slots, 2); assert.equal(s.bytes, csv.length);
     assert.ok(d.submissions.every((x) => x.csv === undefined && x.code === undefined));
   });
+  await test("slots asking the owner to assign an account are counted on their store's line (app 1.9.53+)", async () => {
+    const before = webhookPosts.length;
+    const r = await slots("/submissions", frankKey, { csv, name: "Beta", slots: 9, stores: [
+      { name: "Target", n: 3, seller: 2 }, { name: "Walmart", n: 1, seller: 1 }, { name: "Best Buy", n: 1, seller: 0 },
+      { name: "Costco", n: 2, seller: 9 }, { name: "Nike", n: 1, seller: -3 }, { name: "Topps", n: 1, seller: "x" }] });
+    assert.equal(r.status, 200);
+    assert.equal(webhookPosts.length, before + 1);
+    assert.match(webhookPosts.at(-1).content,
+      /\nTarget 3 \(2 need an account\) · Walmart 1 \(1 needs an account\) · Best Buy 1 · Costco 2 \(2 need an account\) · Nike 1 · Topps 1\n/,
+      "counted, capped at the store's slots, and left off when there are none or it isn't a number");
+  });
   await test("CSV batches count toward 30 an hour per license", async () => {
     let sent = 0, limited = false;
     for (let i = 0; i < 40 && !limited; i++){
