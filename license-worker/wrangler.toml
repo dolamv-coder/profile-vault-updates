@@ -19,6 +19,9 @@ REQUIRED_GUILD_ID = ""
 MIN_ACCOUNT_AGE_DAYS = "0"
 # How many slots a license can have switched on at once until you approve more.
 DEFAULT_SLOT_LIMIT = "20"
+# How many of your accounts (Use Assigned Account) one license can be given in all. Freeing one
+# (see README) gives it back.
+ASSIGNED_LIMIT = "10"
 
 # Secrets (set with `npx wrangler secret put NAME`, never put them in this file):
 #   DISCORD_CLIENT_ID      Discord application's Client ID

@@ -118,3 +118,49 @@ CREATE TABLE IF NOT EXISTS pulls (
   webhook_message_id TEXT
 );
 CREATE INDEX IF NOT EXISTS pulls_key ON pulls (key_hash, created_at);
+
+-- Store accounts the owner provides for slots set to "Use Assigned Account" (app 1.9.58+). The owner
+-- sends them from Orbit (Settings → Accounts to assign) and adds them from the review link posted to
+-- their channel. When a buyer's batch reaches the channel, each of those slots gets a random free one:
+-- its email goes in the slot's row and email:password in that store's logins file. Buyers never see
+-- them. An account goes to one slot only; one picked for a batch that never reached the channel is
+-- freed again. `store` is the app's store key ("target", "other:topps").
+CREATE TABLE IF NOT EXISTS accounts (
+  store       TEXT NOT NULL,
+  email       TEXT NOT NULL,
+  email_norm  TEXT NOT NULL,
+  password    TEXT NOT NULL,
+  added_at    INTEGER NOT NULL,
+  offer_id    TEXT,
+  key_hash    TEXT,                          -- license it went to; NULL while free
+  key_last4   TEXT,
+  batch       TEXT,                          -- submission it went out in
+  store_name  TEXT,
+  profile     TEXT,                          -- profile_name of that slot
+  assigned_at INTEGER,
+  sent_at     INTEGER,                       -- when that batch reached the channel; NULL until then
+  PRIMARY KEY (store, email_norm)
+);
+CREATE INDEX IF NOT EXISTS accounts_free ON accounts (store, key_hash);
+CREATE INDEX IF NOT EXISTS accounts_key ON accounts (key_hash, batch);
+
+-- Accounts sent from Orbit, waiting for the owner to add or refuse them. The list (with passwords)
+-- is cleared once decided.
+CREATE TABLE IF NOT EXISTS account_offers (
+  id                 TEXT PRIMARY KEY,
+  store              TEXT NOT NULL,
+  store_name         TEXT NOT NULL,
+  accounts           TEXT NOT NULL,                     -- JSON [{email, password}]
+  count              INTEGER NOT NULL,
+  key_hash           TEXT NOT NULL,
+  key_last4          TEXT NOT NULL,
+  name               TEXT NOT NULL DEFAULT '',
+  username           TEXT,
+  status             TEXT NOT NULL DEFAULT 'pending',   -- pending | added | refused | expired
+  added              INTEGER,
+  review_token       TEXT NOT NULL,
+  created_at         INTEGER NOT NULL,
+  decided_at         INTEGER,
+  webhook_message_id TEXT
+);
+CREATE INDEX IF NOT EXISTS account_offers_key ON account_offers (key_hash, created_at);

@@ -1,0 +1,1 @@
+Slots set to Use Assigned Account now get one of the seller's accounts automatically when you submit them. Sellers can send their accounts from Settings → Accounts to assign.
