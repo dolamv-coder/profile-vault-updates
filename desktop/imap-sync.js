@@ -2,8 +2,11 @@
 // Runs in Electron's main process (Node), so it can open the TLS socket a web
 // page can't. Returns raw email text; the app parses and de-duplicates orders.
 "use strict";
+const tls = require("tls");
+const net = require("net");
 const { ImapFlow } = require("imapflow");
 const { simpleParser } = require("mailparser");
+const trust = require("./trust");
 
 // Subjects that look like order confirmations, and ones that never are.
 // Order-related mail: confirmations AND status updates (canceled, shipped, delivered).
@@ -18,8 +21,58 @@ function friendlyError(e) {
     return "Sign-in failed. Use an app password, not your normal password, and check the email address.";
   if (/ENOTFOUND|EAI_AGAIN/i.test(m)) return "Couldn't find that mail server. Check the provider or server name.";
   if (/ECONNREFUSED|ETIMEDOUT|timed? ?out/i.test(m)) return "Couldn't connect to the mail server. Check your internet connection and the port.";
-  if (/certificate|self.signed|TLS/i.test(m)) return "The mail server's security certificate couldn't be verified.";
+  if (/certificate|self.signed|TLS/i.test(m)) return CERT_ERROR;
   return m.slice(0, 160) || "Something went wrong talking to the mail server.";
+}
+const CERT_ERROR = "The mail server's security certificate couldn't be verified.";
+
+// After a certificate error, look at the certificate this computer was given, without signing in
+// (nothing is sent), and say what's wrong in plain words. Pages from 1.9.61 build their advice on it.
+function certProblem(cfg) {
+  return new Promise((resolve) => {
+    let s = null;
+    const done = (v) => { try { s && s.destroy(); } catch {} resolve(v); };
+    try {
+      s = tls.connect(Object.assign({ host: cfg.host, port: Number(cfg.port) || 993, servername: net.isIP(cfg.host) ? undefined : cfg.host, rejectUnauthorized: false }, trust.tlsOptions()), () => {
+        try {
+          const leaf = s.getPeerCertificate(true);
+          let top = leaf;
+          const seen = new Set();
+          while (top && top.issuerCertificate && top.issuerCertificate !== top && !seen.has(top.fingerprint256)) { seen.add(top.fingerprint256); top = top.issuerCertificate; }
+          done({ code: String(s.authorizationError || ""), leaf, top });
+        } catch { done(null); }
+      });
+      s.setTimeout(8000, () => done(null));
+      s.on("error", () => done(null));
+    } catch { done(null); }
+  });
+}
+function certDetail(p, cfg) {
+  if (!p || !p.code || !p.leaf || !p.leaf.valid_to) return "";
+  const day = (d) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const from = new Date(p.leaf.valid_from), to = new Date(p.leaf.valid_to), now = new Date();
+  if (/EXPIRED|NOT_YET_VALID/i.test(p.code) && (now < from || now > to))
+    return ` It's valid from ${day(from)} to ${day(to)}, but this computer's clock says ${day(now)}. Check the date and time.`;
+  if (/ALTNAME|HOSTNAME|IP_ADDRESS/i.test(p.code)) {
+    const names = String(p.leaf.subjectaltname || "").split(/,\s*/).map(n => n.replace(/^(DNS|IP Address):/i, "")).filter(Boolean).slice(0, 3).join(", ")
+      || (p.leaf.subject && p.leaf.subject.CN) || "another server";
+    return ` It's for ${names}, not ${cfg.host}. Check the server name.`;
+  }
+  const top = p.top || p.leaf, self = top === p.leaf && top.issuer && top.subject && top.issuer.CN === top.subject.CN;
+  if (self) return " It's self-signed. That's usually antivirus email scanning, a VPN or a work network checking secure connections.";
+  const who = top.issuer && (top.issuer.CN || top.issuer.O);
+  return who ? ` It was issued by “${String(who).slice(0, 80)}”. That's usually antivirus email scanning, a VPN or a work network checking secure connections.` : "";
+}
+const DROPPED = "The connection to the mail server dropped before it was secure. Check your network connection and try again.";
+async function explain(e, cfg) {
+  const msg = friendlyError(e);
+  if (msg !== CERT_ERROR) return msg;
+  try {
+    const p = await certProblem(cfg);
+    // Any error mentioning TLS lands here, a dropped connection too. A certificate that checks out isn't it.
+    if (p && !p.code) return DROPPED;
+    return msg + certDetail(p, cfg);
+  } catch { return msg; }
 }
 
 function client(cfg) {
@@ -29,12 +82,14 @@ function client(cfg) {
     auth: { user: cfg.email, pass: cfg.password },
     logger: false, emitLogs: false,
     socketTimeout: 60000, greetingTimeout: 20000, connectionTimeout: 20000,
-    tls: cfg.insecureTls ? { rejectUnauthorized: false } : undefined
+    tls: cfg.insecureTls ? { rejectUnauthorized: false } : trust.tlsOptions()
   });
 }
+// Every connection waits until Windows' trusted certificates have been read (once, at startup).
+async function open(cfg) { await trust.ready; return client(cfg); }
 
 async function test(cfg) {
-  const c = client(cfg);
+  const c = await open(cfg);
   try {
     await c.connect();
     const lock = await c.getMailboxLock("INBOX");
@@ -44,7 +99,7 @@ async function test(cfg) {
     return { ok: true, messages: count };
   } catch (e) {
     try { c.close(); } catch {}
-    return { ok: false, error: friendlyError(e) };
+    return { ok: false, error: await explain(e, cfg) };
   }
 }
 
@@ -81,7 +136,7 @@ async function pickMailboxes(c, isGmail) {
 
 async function sync(cfg, onProgress) {
   const progress = (p) => { try { onProgress && onProgress(p); } catch {} };
-  const c = client(cfg);
+  const c = await open(cfg);
   const out = [];
   try {
     progress({ phase: "connecting" });
@@ -145,13 +200,14 @@ async function sync(cfg, onProgress) {
     progress({ phase: "done", read, total: matched, scanned: scannedTotal });
     return { ok: true, scanned: scannedTotal, matched, emails: out, mailbox: boxes.join(", ") };
   } catch (e) {
-    return { ok: false, error: friendlyError(e), emails: out };
+    return { ok: false, error: await explain(e, cfg), emails: out };
   } finally {
     try { await c.logout(); } catch { try { c.close(); } catch {} }
   }
 }
 
-module.exports = { test, sync, friendlyError, CONFIRM, SKIP };
+module.exports = { test, sync, friendlyError, CONFIRM, SKIP, CERT_ERROR };
+module.exports._cert = { certProblem, certDetail, explain };
 
 // ================= Clean emails =================
 // Finds promotional mail (newsletters, sales) so the user can move it to Trash.
@@ -225,7 +281,7 @@ async function resolveFolder(c, which) {
 
 async function scanPromos(cfg, onProgress) {
   const progress = (p) => { try { onProgress && onProgress(p); } catch {} };
-  const c = client(cfg);
+  const c = await open(cfg);
   try {
     progress({ phase: "connecting" });
     await c.connect();
@@ -294,7 +350,7 @@ async function scanPromos(cfg, onProgress) {
     } finally { lock.release(); }
   } catch (e) {
     if (e && e.noSpam) return { ok: false, error: "Couldn't find a Spam folder in this inbox." };
-    return { ok: false, error: friendlyError(e) };
+    return { ok: false, error: await explain(e, cfg) };
   } finally {
     try { await c.logout(); } catch { try { c.close(); } catch {} }
   }
@@ -303,7 +359,7 @@ async function scanPromos(cfg, onProgress) {
 async function trashPromos(cfg, uids, uidValidity) {
   uids = (Array.isArray(uids) ? uids : []).map(Number).filter(n => Number.isInteger(n) && n > 0).slice(0, 5000);
   if (!uids.length) return { ok: false, error: "Nothing selected." };
-  const c = client(cfg);
+  const c = await open(cfg);
   try {
     await c.connect();
     const list = await c.list();
@@ -321,7 +377,7 @@ async function trashPromos(cfg, uids, uidValidity) {
     } finally { lock.release(); }
   } catch (e) {
     if (e && e.noSpam) return { ok: false, error: "Couldn't find a Spam folder in this inbox." };
-    return { ok: false, error: friendlyError(e) };
+    return { ok: false, error: await explain(e, cfg) };
   } finally {
     try { await c.logout(); } catch { try { c.close(); } catch {} }
   }
@@ -351,7 +407,7 @@ function verifiedFrom(authHeaders, fromDomain) {
 }
 
 async function rescueSpam(cfg) {
-  const c = client(cfg);
+  const c = await open(cfg);
   try {
     await c.connect();
     let folder;
@@ -377,7 +433,7 @@ async function rescueSpam(cfg) {
       return { ok: true, moved: res && res.uidMap ? res.uidMap.size : pick.length, items };
     } finally { lock.release(); }
   } catch (e) {
-    return { ok: false, error: friendlyError(e) };
+    return { ok: false, error: await explain(e, cfg) };
   } finally {
     try { await c.logout(); } catch { try { c.close(); } catch {} }
   }

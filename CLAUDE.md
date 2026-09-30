@@ -76,8 +76,11 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 
+- `desktop/`: the Windows app itself (Electron), recovered from the v1.9.49
+  download. See "Desktop app" below and `desktop/README.md`.
 - GitHub Releases: the app links new users to
-  `releases/latest/download/Orbit-Windows.zip` on this repo.
+  `releases/latest/download/Orbit-Windows.zip` on this repo. From v1.9.61 the
+  "Release desktop app" Action makes these from `desktop/`.
 
 `licenses.json` goes live as soon as it's on `main`. So does a new app version:
 the desktop wrapper checks
@@ -139,6 +142,46 @@ pushing, check that the `sha256` matches
 `git show HEAD:index-X.Y.Z.html | sha256sum`. After pushing, raw.githubusercontent.com
 can keep serving the old `update.json` for about 5 minutes.
 
+## Desktop app (`desktop/`)
+
+The Windows app the page runs in. It provides `window.pvDesktop` (updates,
+inbox sync, promo scanning, attention and focus). The original project folder
+was lost; `desktop/` holds the code from the v1.9.49 download's
+`resources/app.asar` and what came after. Changes there need a new download:
+"Release desktop app" (`.github/workflows/desktop-release.yml`) tests and
+builds `Orbit-Windows.zip` on pull requests, and publishes release
+`v<desktop/package.json version>` when run by hand on main, once the page of
+that version is out. `pvDesktop.version` is 10 in the v1.9.49 download and 11
+from the v1.9.61 download.
+
+Email connections check the mail server's certificate before signing in. From
+desktop 11 they also trust Windows' trusted root certificates (`trust.js`,
+read with PowerShell at startup), like Chrome and Outlook, so antivirus email
+scanning, VPNs and work networks that re-sign connections no longer stop sync.
+A certificate error then adds what was seen: who issued the certificate, its
+dates against the computer's clock, or another server's name. From page 1.9.61
+`mailError` turns that into advice (`certAdvice`), says it isn't the
+password, and offers older apps the new download.
+
+Which emails Clean emails finds is decided there (`scanPromos`), so changing
+detection used to need a new app download. From page 1.9.49 the page sends
+`CLEAN_RULES` (regex sources for plain sales and survey senders) with each
+scan. A wrapper with `pvDesktop.version` 10+ uses them in place of its
+built-in copies, so those two rules can then change with a page update.
+Older wrappers ignore them. The sale rule also decides when shipping words
+("on the way", "arrived", "pick up") in a subject don't protect it, so a sale
+event it doesn't name is kept like an order (Target Circle Deal Days was,
+until 1.9.59). When `CLEAN_RULES` change, auto-clean looks back 30 days once
+(`settings.autoClean.sweptRules`). Mail relayed by iCloud Hide My Email comes
+from `<sender>_at_<domain, dots as underscores>_<code>_<code>@icloud.com` with
+its unsubscribe headers stripped, so the wrapper takes it for personal mail.
+From 1.9.60 the page adds `CLEAN_RELAYED` (relayed newsletter senders, by the
+wrapper's own sender tests) to `surveyFrom`, since the wrapper hands survey
+senders back without its subject check. The page then groups them by the real
+sender (`relayedFrom`) and checks their subjects itself: `CLEAN_PROTECT` plus
+`CLEAN_APP_PROTECT`, a copy of the wrapper's `PROTECT`. The page's `SPAM_KEEP`
+is the wrapper's plus the order wording it lacks.
+
 ## Pieces that live outside this repo
 
 As of 2026-09-26, none of these are in `dolamv-coder/profile-vault-updates` or
@@ -169,30 +212,6 @@ As of 2026-09-26, none of these are in `dolamv-coder/profile-vault-updates` or
   To recover the source, open the Cloudflare dashboard, go to Workers & Pages,
   open `orders` and choose Edit code. Or use the Cloudflare Developer Platform
   connector. Once recovered, it should get its own repo.
-- **Desktop wrapper**: provides `window.pvDesktop` (updates, inbox sync, promo
-  scanning, attention and focus). The app HTML runs inside it. Which emails
-  Clean emails finds is decided there (`scanPromos`), so changing detection
-  used to need a new app download. From page 1.9.49 the page sends
-  `CLEAN_RULES` (regex sources for plain sales and survey senders) with each
-  scan. A wrapper with `pvDesktop.version` 10+ uses them in place of its
-  built-in copies, so those two rules can then change with a page update.
-  Older wrappers ignore them. The sale rule also decides when shipping words
-  ("on the way", "arrived", "pick up") in a subject don't protect it, so a sale
-  event it doesn't name is kept like an order (Target Circle Deal Days was,
-  until 1.9.59). When `CLEAN_RULES` change, auto-clean looks back 30 days once
-  (`settings.autoClean.sweptRules`). Mail relayed by iCloud Hide My Email comes
-  from `<sender>_at_<domain, dots as underscores>_<code>_<code>@icloud.com` with
-  its unsubscribe headers stripped, so the wrapper takes it for personal mail.
-  From 1.9.60 the page adds `CLEAN_RELAYED` (relayed newsletter senders, by the
-  wrapper's own sender tests) to `surveyFrom`, since the wrapper hands survey
-  senders back without its subject check. The page then groups them by the real
-  sender (`relayedFrom`) and checks their subjects itself: `CLEAN_PROTECT` plus
-  `CLEAN_APP_PROTECT`, a copy of the wrapper's `PROTECT`. The page's `SPAM_KEEP`
-  is the wrapper's plus the order wording it lacks. The wrapper's own code isn't in a repo, but
-  the Windows download on this repo's Releases carries it unminified in
-  `Orbit-win32-x64/resources/app.asar` (`npx @electron/asar extract`):
-  `main.js`, `preload.js`, `imap-sync.js` (inbox sync, scan and trash) and
-  `updater.js`.
 - **`tools/license.mjs`**: makes license keys and signs `licenses.json`. It
   holds the license private key.
 - **Update signing tool and key**: produces `update.json`'s `signature`. A copy

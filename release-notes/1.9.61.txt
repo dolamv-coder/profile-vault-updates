@@ -1,0 +1,1 @@
+When Orbit can't connect to an inbox securely, it now says plainly that it isn't your password and explains the usual causes: antivirus email scanning, a VPN or the computer's clock. The newest Orbit download also trusts the same certificates Windows does, which fixes this for most antivirus programs.

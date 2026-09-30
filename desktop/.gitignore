@@ -4,3 +4,4 @@ release/
 keys/
 *.pem
 updates-repo/
+.cache/

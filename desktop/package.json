@@ -1,22 +1,22 @@
 {
   "name": "profile-vault",
   "productName": "Orbit",
-  "version": "1.9.49",
+  "version": "1.9.61",
   "description": "Orbit: encrypted checkout profiles and order tracking",
   "main": "main.js",
   "author": "Orbit",
-  "devDependencies": {
-    "@electron/packager": "^18.4.4",
-    "electron": "^33.4.11"
-  },
+  "private": true,
   "dependencies": {
-    "imapflow": "^1.7.8",
-    "mailparser": "^3.9.28"
+    "imapflow": "1.7.8",
+    "mailparser": "3.9.28"
+  },
+  "devDependencies": {
+    "@electron/asar": "3.4.1",
+    "electron": "33.4.11"
   },
   "scripts": {
     "start": "electron .",
-    "build:win": "electron-packager . \"Orbit\" --platform=win32 --arch=x64 --out=dist --overwrite --asar --prune=true --ignore=\"^/(dist|release|keys|tools|updates-repo|share-build|\\.claude)\"",
-    "keygen": "node tools/release.mjs keygen",
-    "release": "node tools/release.mjs publish"
+    "test": "node test/run.mjs",
+    "build": "node build.mjs"
   }
 }

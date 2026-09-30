@@ -1,7 +1,7 @@
 // Exposes a small, fixed API to the page. The page never gets Node access.
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("pvDesktop", {
-  version: 10,
+  version: 11,
   focusApp: () => ipcRenderer.invoke("app:focus"),
   attention: () => ipcRenderer.invoke("app:attention"),
   rescueSpam: (cfg) => ipcRenderer.invoke("imap:rescue-spam", cfg),
