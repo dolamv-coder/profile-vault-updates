@@ -1,10 +1,10 @@
 {
-  "version": "1.9.62",
-  "url": "index-1.9.62.html",
-  "sha256": "3553f0ce95aa7178be6346863028ab36e32790a710172a1e2ae24106f2df53a7",
-  "signature": "Go7zV2QQB6GmavZSyjDzBUPKWiYcL91av9XmGTBNRgZGv3JJgltQYF5Z7Unlr+OYbDSmBWnV1srzfkatVNs9Cw==",
+  "version": "1.9.63",
+  "url": "index-1.9.63.html",
+  "sha256": "67a5a4147934f54c93a7cf8ef583b0c6a90ae175faf843ecfbfa7e626d8cb3fd",
+  "signature": "TXhWsO4kxd/RWLi0d0VP3ymSA9rsk0ox8ls590VsIVtPdktjR66trs3U6HcQgiQZkDJCXzuLDrEUpbX/yUm0CA==",
   "minAppVersion": "0",
-  "notes": "Pokémon Center profiles no longer ask for a verified email: Pokémon Center checks out as a guest with just an email, so the \"Not verified\" tag is gone from Submit and the Verified box from profiles.",
+  "notes": "Clean emails now keeps sign-in code emails that end up in Spam, like Target's \"Enter code … to sign in\", when \"Clear all of Spam\" is on. And if your copy of Orbit is too old for Clean emails' newest rules, the Clean emails page now says so and links to the new download.",
   "installerUrl": "",
-  "publishedAt": "2026-09-30T22:07:09.067Z"
+  "publishedAt": "2026-10-01T03:40:18.051Z"
 }
