@@ -1,0 +1,1 @@
+Pokémon Center profiles can now use an assigned account: choose Use Assigned Account and the seller provides the email, so Orbit doesn't ask you for one. Your own email still works as before.

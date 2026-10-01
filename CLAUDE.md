@@ -49,10 +49,12 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   logins as `email:password` lines in a separate `.txt`, in the same order as the first rows. The
   worker names them `orbit-slots-<time>-<sender>-<store>.csv` and `…-<store>-logins.txt`, 10
   attachments per message. Slots without a store login come after those rows.
-  How each store on a profile checks out (`stores[].mode`, from 1.9.57): Pokémon Center only on an
-  email, as a guest with no login (`"email"`; from 1.9.62 nothing asks for or shows whether it's
-  verified, and `verified` is only kept for older data); every other store on a store login (`"login"`) or **Use Assigned
-  Account** (`"seller"`): the buyer adds no login and the owner provides one of their own accounts.
+  How each store on a profile checks out (`stores[].mode`, from 1.9.57): Pokémon Center on the
+  buyer's own email, as a guest with no login (`"email"`; from 1.9.62 nothing asks for or shows whether it's
+  verified, and `verified` is only kept for older data); every other store on a store login (`"login"`);
+  and any store on **Use Assigned Account** (`"seller"`, Pokémon Center too from 1.9.67, where the
+  editor then shows no checkout email): the buyer adds no login or email and the owner provides one
+  of their own accounts.
   (1.9.53 had that mode as "Assign me an account" beside the other two; 1.9.54 removed it; 1.9.57
   put it in place of "Verified email only". Pages move older data onto these in `fixMode`.)
   From 1.9.66 the profile's email follows its stores: a profile whose stores are all on Use Assigned
@@ -62,8 +64,10 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   out with: its store login's, blank on Use Assigned Account until `/submissions` puts the assigned
   account's there (blank for one still waiting), or Pokémon Center's checkout email.
   `stores[].seller` counts those slots on the Discord line, and importing a submission brings them
-  in as a store login with none linked. From 1.9.58 the owner's own accounts go to them on the
-  worker: the owner sends accounts from Settings → Accounts to assign (`POST /accounts/offer`) and
+  in as a store login with none linked (at Pokémon Center, on an empty checkout email for the owner
+  to fill in). From 1.9.58 the owner's own accounts go to them on the
+  worker: the owner sends accounts from Settings → Accounts to assign (`POST /accounts/offer`; from
+  1.9.67 Pokémon Center too, an email and its inbox's password) and
   adds them from the review link (`/accounts/review/:id`, D1 `accounts`). Each profiles file carries
   `storeKey` and `assigned` (how many of its rows, right after the ones with a login, are on Use
   Assigned Account), and `/submissions` gives each such row a random free account: its email in the
