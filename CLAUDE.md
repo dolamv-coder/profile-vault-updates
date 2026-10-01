@@ -213,6 +213,16 @@ worker itself only changes for its own fixes ("Deploy web app",
 Opening it needs no license key (`licenseGate` only runs in the desktop app),
 and email sync and Clean emails stay in the desktop app.
 
+**The web version is paused at 1.9.67** (since 2026-10-01, at the owner's request, until one big
+update): `web-worker/wrangler.toml`'s `UPDATE_URL` points at `update.json` in the "Release 1.9.67"
+commit, so releases reach installed apps but not the web. Resume by setting it back to main's
+`update.json`. Meanwhile the web page (1.9.67) still syncs with newer desktops, and it only syncs the
+top-level vault keys it knows (`SYNC_LISTS`, `SYNC_MAPS`, `SYNC_SETS`, `SYNC_VALUES`) and rewrites
+store modes it doesn't know (`fixMode`). A release in the meantime that adds either would have it
+undone by a web device that syncs a change, so keep those for the big update. New fields on existing
+items and new shared settings keys are safe (a new per-device setting would still sync through a web
+device, which doesn't know to keep it local).
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
