@@ -1,0 +1,1 @@
+Orders has a new Showing menu: pick Today, Yesterday, This billing week, Last week, the last 7, 30 or 90 days, or your own dates, and the Checkouts count (your successful orders), spending and order list cover just that period. The billing week starts on Monday unless you pick another day next to it.
