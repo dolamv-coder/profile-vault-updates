@@ -1,10 +1,10 @@
 {
-  "version": "1.9.66",
-  "url": "index-1.9.66.html",
-  "sha256": "55a2efc562d02fbf7963f2771962213e0daf647febc1b96d9e1dbf12699ceba0",
-  "signature": "tuqoBUJWlbONV6OdYhUOm6SIzklRmuX+TqQN6IbWyZS89lQ50KeszLllqPxqjbjvdEV5YshW7frxmvPzBcETBg==",
+  "version": "1.9.67",
+  "url": "index-1.9.67.html",
+  "sha256": "ab8e3e262781725c14008ed4fd45799b64aacd03e2be56a1027e48f5b745c2ad",
+  "signature": "4FUFmWoZHvPXU5lTkSwoFDzVLesJLbk0p4O+rDywB8Uo6p+4mRgDoX5/VsN6SvgEu86698ewXk5U04ZXZJy1Dg==",
   "minAppVersion": "0",
-  "notes": "Profiles that use an assigned account no longer ask for an email. On a store login, the profile's email is now that login's email: Orbit fills it in when you pick the login, and if a saved profile has a different one, it shows the right email to use when you save.",
+  "notes": "Pokémon Center profiles can now use an assigned account: choose Use Assigned Account and the seller provides the email, so Orbit doesn't ask you for one. Your own email still works as before.",
   "installerUrl": "",
-  "publishedAt": "2026-10-01T21:16:15.733Z"
+  "publishedAt": "2026-10-01T21:53:09.088Z"
 }
