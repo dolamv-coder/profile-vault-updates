@@ -1,10 +1,10 @@
 {
-  "version": "1.9.64",
-  "url": "index-1.9.64.html",
-  "sha256": "cf5238155dfb370b1616f26a1180b4ec12baa788113a46e2fbdcbdbc0b9acb4c",
-  "signature": "T8/ss444ls1o+9BSnraB5FktbrTACHvc5oCVYv42TNdhRxmGENyOxWdFsJap6SR6nS/secTu/i1Iz0TkFjuFCw==",
+  "version": "1.9.65",
+  "url": "index-1.9.65.html",
+  "sha256": "9358c707b57a9d0672372b73cc08d301b2939651454dae833dac48fd43480434",
+  "signature": "v0F40IKFKYDleyn5yc59swr58oPxM4OhPnv9j5GtM0BwXrefGT4JAKMLX+q0FziDEoma7pO/Uf9j+qCo3KSjDg==",
   "minAppVersion": "0",
-  "notes": "Orders has a new Showing menu: pick Today, Yesterday, This billing week, Last week, the last 7, 30 or 90 days, or your own dates, and the Checkouts count (your successful orders), spending and order list cover just that period. The billing week starts on Monday unless you pick another day next to it.",
+  "notes": "Orbit now opens in any browser at app.orbit-app.workers.dev. Turn on Settings → Web version & sync to keep this computer, the web version and your other computers on the same profiles, cards, logins and orders; your vault is encrypted with your master password before it's sent. Orders you delete also now stay deleted after Orbit restarts.",
   "installerUrl": "",
-  "publishedAt": "2026-10-01T12:30:49.120Z"
+  "publishedAt": "2026-10-01T18:17:11.857Z"
 }
