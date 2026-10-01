@@ -1,9 +1,13 @@
-# Orbit on the web: https://app.orbit-app.workers.dev serves the newest released Orbit page.
+# Orbit on the web: https://app.orbit-app.workers.dev serves the Orbit page UPDATE_URL names.
 name = "app"
 main = "src/index.js"
 compatibility_date = "2025-09-01"
 workers_dev = true
 
 [vars]
-# Where installed apps look for updates; the page it names is what this serves.
-UPDATE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/update.json"
+# Where the page comes from. Normally installed apps' update address, main's update.json, so the web
+# version follows each release. Paused at Orbit 1.9.67 since 2026-10-01, at the owner's request, for
+# one big update later: this is update.json in the "Release 1.9.67" commit, which never changes, so
+# new releases reach installed apps but not the web. To follow releases again, set it back to
+# https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/update.json
+UPDATE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/50129f60ac8682091cc9d2e77871c6b66515a58e/update.json"
