@@ -55,6 +55,12 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   Account** (`"seller"`): the buyer adds no login and the owner provides one of their own accounts.
   (1.9.53 had that mode as "Assign me an account" beside the other two; 1.9.54 removed it; 1.9.57
   put it in place of "Verified email only". Pages move older data onto these in `fixMode`.)
+  From 1.9.66 the profile's email follows its stores: a profile whose stores are all on Use Assigned
+  Account has none (the editor hides the field and saves it blank), and one on a store login has to
+  use that login's email (one of them, if its logins use different emails; picking a login fills it
+  in, and the error offers each as a button). Each slot's `email` column is the account it checks
+  out with: its store login's, blank on Use Assigned Account until `/submissions` puts the assigned
+  account's there (blank for one still waiting), or Pokémon Center's checkout email.
   `stores[].seller` counts those slots on the Discord line, and importing a submission brings them
   in as a store login with none linked. From 1.9.58 the owner's own accounts go to them on the
   worker: the owner sends accounts from Settings → Accounts to assign (`POST /accounts/offer`) and
