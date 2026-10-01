@@ -75,7 +75,10 @@ const privJwk = await crypto.subtle.exportKey("jwk", privateKey);
 // A key made by hand, on a signed list like licenses.json on GitHub.
 const GH_KEY = "PVLT-GHKE-YGHK-EYGH-KEY2";
 const ghHash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("pvlt:" + GH_KEY.replace(/-/g, "")))), (b) => b.toString(16).padStart(2, "0")).join("");
-const ghBody = JSON.stringify({ v: 1, issued: new Date().toISOString(), keys: [{ h: ghHash }] });
+// Two more for the vault tests, which need licenses of their own.
+const VAULT_KEYS = ["PVLT-VAUL-TKEY-AAAA-0001", "PVLT-VAUL-TKEY-AAAA-0002"];
+const hashOfKey = async (k) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("pvlt:" + k.replace(/-/g, "")))), (b) => b.toString(16).padStart(2, "0")).join("");
+const ghBody = JSON.stringify({ v: 1, issued: new Date().toISOString(), keys: [{ h: ghHash }, ...await Promise.all(VAULT_KEYS.map(async (k) => ({ h: await hashOfKey(k) })))] });
 const ghList = { body: ghBody, sig: Buffer.from(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, privateKey, new TextEncoder().encode(ghBody))).toString("base64") };
 const pubJwk = await crypto.subtle.exportKey("jwk", publicKey);
 const common = [
@@ -1121,6 +1124,135 @@ try {
     assert.ok(limited, "hit the limit");
     const d = await (await admin("/admin/submissions")).json();
     assert.equal(d.submissions.filter((x) => x.key_last4 === frankKey.slice(-4) && Date.now() - x.created_at < 3600e3).length, 30);
+  });
+
+  console.log("\nWeb version and sync: vault storage");
+  await startWorker("vault", APPROVAL_PORT + 2, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", "VAULT_LOCK_MS=3000", "VAULT_MIN_GAP_MS=300"]);
+  const [V1, V2] = VAULT_KEYS;
+  const b64 = (n) => Buffer.from(crypto.getRandomValues(new Uint8Array(n))).toString("base64");
+  const tok = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+  // A record shaped like the app's: a big random "ciphertext" stands in for the sealed vault.
+  const sealed = (salt, ctBytes = 2000, iter = 600000) => ({ format: "orbit-sync", v: 1, z: "gzip", kdf: "PBKDF2-SHA256", iter, salt, iv: b64(12), ct: Buffer.from(crypto.getRandomValues(new Uint8Array(Math.min(ctBytes, 65536)))).toString("base64").repeat(Math.ceil(ctBytes / 65536)), savedAt: new Date().toISOString() });
+  const vault = (path, key, { method = "GET", auth, newAuth, record, salt, iter = 600000, raw } = {}) => fetch(BASE + path, { method,
+    headers: { ...(key ? { authorization: "Bearer " + key } : {}), ...(auth ? { "x-vault-auth": auth } : {}), ...(newAuth ? { "x-vault-new-auth": newAuth } : {}),
+      ...(record || raw ? { "content-type": "application/json", "x-vault-salt": salt || (record && record.salt) || "", "x-vault-iter": String(iter) } : {}) },
+    body: raw != null ? raw : record ? JSON.stringify(record) : undefined });
+  const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  const salt1 = b64(16), token1 = tok();
+  let rec1, created1;
+  await test("no vault yet: info says so, and a bad or missing license is refused", async () => {
+    assert.deepEqual(await (await vault("/vault/info", V1)).json(), { exists: false });
+    assert.equal((await vault("/vault/info", "PVLT-NOPE-NOPE-NOPE-NOPE")).status, 401);
+    assert.equal((await vault("/vault/info")).status, 401);
+    assert.equal((await vault("/vault", V1, { auth: token1 })).status, 404);
+  });
+  await test("the first save creates it (revision 1), and info gives what a new device needs", async () => {
+    rec1 = sealed(salt1);
+    const made = await (await vault("/vault?base=0&device=Desktop%20app", V1, { method: "PUT", auth: token1, record: rec1 })).json();
+    assert.equal(made.rev, 1); assert.ok(Math.abs(Date.now() - made.created) < 60000, "created says when (the vault's id)");
+    created1 = made.created;
+    const info = await (await vault("/vault/info", V1.toLowerCase())).json();
+    assert.equal(info.exists, true); assert.equal(info.rev, 1); assert.equal(info.created, created1); assert.equal(info.salt, salt1); assert.equal(info.iter, 600000);
+    assert.equal(info.device, "Desktop app"); assert.equal(info.size, JSON.stringify(rec1).length); assert.ok(Date.now() - info.updatedAt < 60000);
+  });
+  await test("reading it back takes the token, and returns exactly what was sent", async () => {
+    const r = await (await vault("/vault", V1, { auth: token1 })).json();
+    assert.equal(r.rev, 1); assert.equal(r.created, created1); assert.equal(r.device, "Desktop app"); assert.deepEqual(r.record, rec1);
+    assert.deepEqual(await (await vault("/vault?have=1", V1, { auth: token1 })).json(), { rev: 1, created: created1, same: true });
+    assert.equal((await vault("/vault", V1)).status, 403, "no token");
+    assert.equal((await vault("/vault", V1, { auth: tok() })).status, 403, "wrong token");
+    assert.equal((await vault("/vault", V2, { auth: token1 })).status, 404, "another license has its own (none yet)");
+  });
+  await test("a save names the revision it started from; a stale one gets 409 with the current revision", async () => {
+    await wait(350);
+    const rec2 = sealed(salt1);
+    assert.deepEqual(await (await vault(`/vault?base=1&vid=${created1}&device=Web`, V1, { method: "PUT", auth: token1, record: rec2 })).json(), { rev: 2, created: created1 });
+    const stale = await vault("/vault?base=1&device=Desktop%20app", V1, { method: "PUT", auth: token1, record: sealed(salt1) });
+    assert.equal(stale.status, 409); assert.deepEqual(await stale.json(), { error: "changed on another device", rev: 2, created: created1 });
+    const again = await vault("/vault?base=0", V1, { method: "PUT", auth: token1, record: sealed(salt1) });
+    assert.equal(again.status, 409, "creating again isn't allowed once it exists");
+    const r = await (await vault("/vault?have=1", V1, { auth: token1 })).json();
+    assert.equal(r.rev, 2); assert.deepEqual(r.record, rec2); assert.equal(r.device, "Web");
+  });
+  await test("saves closer than the minimum gap are turned away", async () => {
+    await wait(350);
+    assert.equal((await vault("/vault?base=2", V1, { method: "PUT", auth: token1, record: sealed(salt1) })).status, 200);
+    assert.equal((await vault("/vault?base=3", V1, { method: "PUT", auth: token1, record: sealed(salt1) })).status, 429);
+  });
+  await test("a save that names another vault (one deleted and made again) gets 409, even on the same revision", async () => {
+    await wait(350);
+    const r = await vault(`/vault?base=3&vid=${created1 - 1}`, V1, { method: "PUT", auth: token1, record: sealed(salt1) });
+    assert.equal(r.status, 409); assert.deepEqual(await r.json(), { error: "changed on another device", rev: 3, created: created1 });
+  });
+  await test("two devices saving at once from the same revision: one wins, the other gets 409", async () => {
+    await wait(350);
+    const [a, b] = await Promise.all([1, 2].map(() => vault("/vault?base=3", V1, { method: "PUT", auth: token1, record: sealed(salt1, 300000) })));
+    assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+    const info = await (await vault("/vault/info", V1)).json();
+    assert.equal(info.rev, 4);
+    const r = await (await vault("/vault", V1, { auth: token1 })).json();
+    assert.equal(r.rev, 4); assert.ok(r.record.ct.length > 300000, "the winner's record is whole");
+  });
+  await test("a vault of several megabytes goes in chunks and comes back whole; over 8 million characters is refused", async () => {
+    await wait(350);
+    const big = sealed(salt1, 3_000_000);
+    assert.deepEqual(await (await vault("/vault?base=4", V1, { method: "PUT", auth: token1, record: big })).json(), { rev: 5, created: created1 });
+    const r = await (await vault("/vault", V1, { auth: token1 })).json();
+    assert.equal(r.rev, 5); assert.equal(r.record.ct, big.ct);
+    await wait(350);
+    const huge = sealed(salt1, 6_200_000);
+    assert.equal((await vault("/vault?base=5", V1, { method: "PUT", auth: token1, record: huge })).status, 413);
+  });
+  await test("only a sealed record sealed with the salt it names is taken", async () => {
+    await wait(350);
+    assert.equal((await vault("/vault?base=5", V1, { method: "PUT", auth: token1, raw: '{"hello":"world"}', salt: salt1 })).status, 400);
+    assert.equal((await vault("/vault?base=5", V1, { method: "PUT", auth: token1, record: sealed(b64(16)), salt: salt1 })).status, 400, "salt header doesn't match the record");
+    assert.equal((await vault("/vault?base=5", V1, { method: "PUT", auth: "short", record: sealed(salt1) })).status, 400);
+    assert.equal((await vault("/vault?base=x", V1, { method: "PUT", auth: token1, record: sealed(salt1) })).status, 400);
+  });
+  const salt2 = b64(16), token2 = tok();
+  await test("a new password: the record on a new salt needs the new token, then only the new token works", async () => {
+    await wait(350);
+    assert.equal((await vault("/vault?base=5", V1, { method: "PUT", auth: token1, record: sealed(salt2) })).status, 400, "no new token");
+    assert.deepEqual(await (await vault("/vault?base=5", V1, { method: "PUT", auth: token1, newAuth: token2, record: sealed(salt2) })).json(), { rev: 6, created: created1 });
+    assert.equal((await vault("/vault", V1, { auth: token1 })).status, 403);
+    assert.equal((await (await vault("/vault", V1, { auth: token2 })).json()).rev, 6);
+    assert.equal((await (await vault("/vault/info", V1)).json()).salt, salt2);
+  });
+  await test("10 wrong passwords lock the vault for a while, even for the right one; it opens again after", async () => {
+    for (let i = 0; i < 10; i++) assert.equal((await vault("/vault", V1, { auth: tok() })).status, 403);
+    const locked = await vault("/vault", V1, { auth: token2 });
+    assert.equal(locked.status, 429); assert.ok((await locked.json()).retryAfter >= 1);
+    assert.equal((await vault("/vault?base=6", V1, { method: "PUT", auth: token2, record: sealed(salt2) })).status, 429, "saving too");
+    await wait(3200);   // VAULT_LOCK_MS is 3000 here
+    assert.equal((await vault("/vault", V1, { auth: token2 })).status, 200);
+    assert.equal((await vault("/vault", V1, { auth: tok() })).status, 403, "the count started over");
+    assert.equal((await vault("/vault", V1, { auth: token2 })).status, 200);
+  });
+  await test("browsers can call it: the preflight allows PUT, DELETE and the vault headers", async () => {
+    const r = await fetch(BASE + "/vault", { method: "OPTIONS" });
+    assert.equal(r.status, 204);
+    assert.match(r.headers.get("access-control-allow-methods"), /PUT/); assert.match(r.headers.get("access-control-allow-methods"), /DELETE/);
+    for (const h of ["x-vault-auth", "x-vault-new-auth", "x-vault-salt", "x-vault-iter", "authorization"]) assert.match(r.headers.get("access-control-allow-headers"), new RegExp(h));
+    assert.equal((await vault("/vault/info", V1)).headers.get("access-control-allow-origin"), "*");
+  });
+  await test("the owner sees whose vaults there are and how big, never what's in them", async () => {
+    await vault("/vault?base=0&device=Web", V2, { method: "PUT", auth: tok(), record: sealed(b64(16)) });
+    const d = await (await admin("/admin/vaults")).json();
+    assert.equal(d.vaults.length, 2);
+    const v = d.vaults.find((x) => x.rev === 6);
+    assert.ok(v && v.size > 0 && typeof v.device === "string" && v.license.length === 12 && !("record" in v) && !JSON.stringify(d).includes(salt2));
+    assert.equal(d.vaults.find((x) => x.rev === 1).device, "Web");
+    assert.equal((await fetch(BASE + "/admin/vaults")).status, 401);
+  });
+  await test("deleting takes the license key alone (a forgotten password), and the devices can start over", async () => {
+    assert.deepEqual(await (await vault("/vault", V2, { method: "DELETE" })).json(), { ok: true, deleted: true });
+    assert.deepEqual(await (await vault("/vault/info", V2)).json(), { exists: false });
+    assert.equal((await vault("/vault", "PVLT-NOPE-NOPE-NOPE-NOPE", { method: "DELETE" })).status, 401);
+    const before = (await (await vault("/vault/info", V1)).json()).created;
+    const again = await (await vault("/vault?base=0", V2, { method: "PUT", auth: tok(), record: sealed(b64(16)) })).json();
+    assert.equal(again.rev, 1); assert.ok(again.created > 0);
+    assert.equal(before, created1, "the other license's vault keeps its id");
   });
   console.log(`\n${passed} passed`);
 } finally {

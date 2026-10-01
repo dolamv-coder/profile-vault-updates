@@ -18,7 +18,7 @@ on:
     branches: [main]
     paths: ["index-*.html", "release-notes/**", "update.json"]
   pull_request:
-    paths: ["index-*.html", "release-notes/**", "update.json", ".github/scripts/publish-update*.mjs", ".github/workflows/publish-update.yml"]
+    paths: ["index-*.html", "release-notes/**", "update.json", ".github/scripts/publish-update*.mjs", ".github/scripts/sync-merge.test.mjs", ".github/workflows/publish-update.yml"]
   workflow_dispatch:
     inputs:
       version:
@@ -46,6 +46,9 @@ jobs:
 
       - name: Test the publisher
         run: node .github/scripts/publish-update.test.mjs
+
+      - name: Test the newest page's sync merge
+        run: node .github/scripts/sync-merge.test.mjs
 
   # Before the key is handed out: it must be readable only by this job on main, and the newest
   # worker deploy on main must have worked.

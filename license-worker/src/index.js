@@ -33,6 +33,21 @@
 //   POST /accounts/offer       {store, storeName, name, accounts:[{email, password}]}: accounts sent from
 //                              the owner's Orbit, added to the list once the owner approves them in Discord.
 //                              A batch in /submissions then gets one per such slot (see assignAccounts).
+// Web version and sync (app 1.9.65+). The app seals its vault (AES-GCM, with a key from the vault's
+// password) before it leaves the device, so what's kept here can't be read here. Every call takes the
+// license key (Bearer); reading or saving also takes the vault's access token (x-vault-auth), which
+// the app derives from the same password, and of which only a hash is kept:
+//   GET  /vault/info           {exists, rev, created, salt, iter, size, device, updatedAt}: a new device
+//                              needs the salt and iterations to derive the token and key from the password
+//   GET  /vault?have=REV       {rev, created, record, device, updatedAt}, or {rev, created, same:true} when
+//                              REV is current. `created` tells a vault apart from one deleted and made again.
+//   PUT  /vault?base=REV&vid=CREATED&device=NAME   the sealed record as the body; x-vault-salt and
+//                              x-vault-iter say what it's sealed with, and x-vault-new-auth carries the
+//                              token of a new password. {rev, created}, or 409 {rev, created} if another
+//                              device saved after REV, or the vault isn't the one `vid` names (merge, then
+//                              try again). base=0 creates it.
+//   DELETE /vault              removes it (the license key alone does, for a forgotten password; the
+//                              devices keep their own copies)
 // Owner:
 //   GET/POST /review/DISCORD_ID?t=TOKEN   approve or deny one request (link posted to the webhook)
 //   GET/POST /slots/review/ID?t=TOKEN     approve (optionally a different number) or deny more slots
@@ -44,6 +59,7 @@
 //   POST /admin/revoke         {discord_id} or {key}: the app locks on its next check
 //   POST /admin/restore        {discord_id} or {key}
 //   GET  /admin/accounts       the account list: free and given out per store, who got which, offers
+//   GET  /admin/vaults         synced vaults: whose, how big, from which device, when (never their contents)
 //   POST /admin/accounts/free  {email, store?}: give an account back to the list
 //   POST /admin/accounts/remove {email, store?}: take it off the list
 
@@ -63,8 +79,8 @@ const REVOKED_MSG = "The license for this Discord account was turned off. Contac
 
 const CORS = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, POST, OPTIONS",
-  "access-control-allow-headers": "authorization, content-type",
+  "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
+  "access-control-allow-headers": "authorization, content-type, x-vault-auth, x-vault-new-auth, x-vault-salt, x-vault-iter",
 };
 
 export default {
@@ -94,6 +110,10 @@ export default {
       if (path === "/pull" && request.method === "POST") return await pull(request, env, ctx);
       if (path === "/accounts/offer" && request.method === "POST") return await accountOffer(request, env, ctx, url);
       if (path.startsWith("/accounts/review/")) return await accountReview(request, env, ctx, url, path.slice("/accounts/review/".length));
+      if (path === "/vault/info" && request.method === "GET") return await vaultInfo(request, env);
+      if (path === "/vault" && request.method === "GET") return await vaultGet(request, env, url);
+      if (path === "/vault" && request.method === "PUT") return await vaultPut(request, env, url);
+      if (path === "/vault" && request.method === "DELETE") return await vaultDelete(request, env);
       if (path.startsWith("/admin/")) return await admin(request, env, path);
       return json({ error: "not found" }, 404);
     } catch (e) {
@@ -1161,6 +1181,129 @@ async function pull(request, env, ctx) {
   return await work;
 }
 
+// ---- web version and sync ----------------------------------------------------------------
+
+const VAULT_MAX_CHARS = 8_000_000;          // the app's own copy lives in the browser, which holds about 5 MB
+const VAULT_CHUNK = 900_000;                // characters per row (D1 rows top out at 2 MB)
+const VAULT_FAILS = 10;                     // wrong tokens in a row before the vault stops taking tokens...
+const vaultLockMs = (env) => Number(env.VAULT_LOCK_MS) > 0 ? Number(env.VAULT_LOCK_MS) : 15 * 60 * 1000;   // ...for this long
+// Saves closer together than this are turned away (the app waits a few seconds after a change anyway).
+const vaultGapMs = (env) => String(env.VAULT_MIN_GAP_MS ?? "").trim() !== "" && Number(env.VAULT_MIN_GAP_MS) >= 0 ? Number(env.VAULT_MIN_GAP_MS) : 1000;
+const validVaultToken = (t) => /^[A-Za-z0-9_-]{32,128}$/.test(t || "");
+const NO_STORE = { "cache-control": "no-store" };
+
+async function sha256Hex(text) {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// null when the token opens the vault, otherwise the response to send. Wrong tokens count toward
+// VAULT_FAILS; a right one clears the count.
+async function vaultAuthCheck(env, row, token, now) {
+  const lockMs = vaultLockMs(env);
+  const locked = row.fails >= VAULT_FAILS && now - row.fail_at < lockMs;
+  if (locked) return json({ error: "too many wrong passwords", retryAfter: Math.ceil((lockMs - (now - row.fail_at)) / 1000) }, 429, NO_STORE);
+  if (validVaultToken(token) && await sameText(await sha256Hex(token), row.auth_hash)) {
+    if (row.fails) await env.DB.prepare("UPDATE vaults SET fails = 0, fail_at = 0 WHERE key_hash = ?").bind(row.key_hash).run();
+    return null;
+  }
+  const fails = (now - row.fail_at < lockMs ? row.fails : 0) + 1;
+  await env.DB.prepare("UPDATE vaults SET fails = ?, fail_at = ? WHERE key_hash = ?").bind(fails, now, row.key_hash).run();
+  return json({ error: "wrong password" }, 403, NO_STORE);
+}
+
+async function vaultInfo(request, env) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  const row = await env.DB.prepare("SELECT rev, salt, iter, size, device, created_at, updated_at FROM vaults WHERE key_hash = ?").bind(lic.hash).first();
+  return json(row ? { exists: true, rev: row.rev, created: row.created_at, salt: row.salt, iter: row.iter, size: row.size, device: row.device, updatedAt: row.updated_at } : { exists: false }, 200, NO_STORE);
+}
+
+async function vaultGet(request, env, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  const row = await env.DB.prepare("SELECT * FROM vaults WHERE key_hash = ?").bind(lic.hash).first();
+  if (!row) return json({ error: "no vault" }, 404, NO_STORE);
+  const bad = await vaultAuthCheck(env, row, request.headers.get("x-vault-auth"), Date.now());
+  if (bad) return bad;
+  if (Number(url.searchParams.get("have")) === row.rev) return json({ rev: row.rev, created: row.created_at, same: true }, 200, NO_STORE);
+  const { results } = await env.DB.prepare("SELECT data FROM vault_chunks WHERE key_hash = ? AND rev = ? ORDER BY idx").bind(lic.hash, row.rev).all();
+  if (results.length !== row.chunks) return json({ error: "being saved, try again" }, 503, NO_STORE);
+  // The record goes out as the app sent it, without parsing it here.
+  const head = JSON.stringify({ rev: row.rev, created: row.created_at, device: row.device, updatedAt: row.updated_at });
+  return new Response(head.slice(0, -1) + ',"record":' + results.map((r) => r.data).join("") + "}",
+    { status: 200, headers: { "content-type": "application/json", ...CORS, ...NO_STORE } });
+}
+
+async function vaultPut(request, env, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  const now = Date.now();
+  const base = Number(url.searchParams.get("base")), vid = Number(url.searchParams.get("vid") || 0);
+  const device = String(url.searchParams.get("device") || "").replace(/[^\w .,()-]/g, "").slice(0, 40);
+  const token = request.headers.get("x-vault-auth") || "", newToken = request.headers.get("x-vault-new-auth") || "";
+  const salt = request.headers.get("x-vault-salt") || "", iter = Number(request.headers.get("x-vault-iter"));
+  if (!Number.isInteger(base) || base < 0 || !validVaultToken(token) || (newToken && !validVaultToken(newToken))
+    || !/^[A-Za-z0-9+/]{16,88}={0,2}$/.test(salt) || !Number.isInteger(iter) || iter < 1000 || iter > 10_000_000) return json({ error: "bad request" }, 400);
+  if (Number(request.headers.get("content-length") || 0) > VAULT_MAX_CHARS * 4) return json({ error: "vault too large" }, 413);
+  const text = await request.text();
+  if (text.length > VAULT_MAX_CHARS) return json({ error: "vault too large" }, 413);
+  // Only a sealed record is taken, and only one sealed with the salt it says.
+  if (!/^\{[\s\S]*\}$/.test(text) || !text.includes(`"salt":"${salt}"`) || !/"ct":"[A-Za-z0-9+/=]+"/.test(text)) return json({ error: "not a sealed vault" }, 400);
+  const chunks = [];
+  for (let i = 0; i < text.length; i += VAULT_CHUNK) chunks.push(text.slice(i, i + VAULT_CHUNK));
+  const row = await env.DB.prepare("SELECT * FROM vaults WHERE key_hash = ?").bind(lic.hash).first();
+  const current = async () => {
+    const r = await env.DB.prepare("SELECT rev, created_at FROM vaults WHERE key_hash = ?").bind(lic.hash).first();
+    return r ? { rev: r.rev, created: r.created_at } : { rev: 0, created: 0 };
+  };
+  if (!row) {
+    if (base !== 0) return json({ error: "not saved yet", rev: 0, created: 0 }, 409, NO_STORE);
+    try {
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO vaults (key_hash, rev, auth_hash, salt, iter, size, chunks, device, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(lic.hash, await sha256Hex(newToken || token), salt, iter, text.length, chunks.length, device, now, now),
+        ...chunks.map((c, i) => env.DB.prepare("INSERT INTO vault_chunks (key_hash, rev, idx, data) VALUES (?, 1, ?, ?)").bind(lic.hash, i, c)),
+      ]);
+    } catch (e) { return json({ error: "saved from another device first", ...await current() }, 409, NO_STORE); }
+    return json({ rev: 1, created: now }, 200, NO_STORE);
+  }
+  const bad = await vaultAuthCheck(env, row, token, now);
+  if (bad) return bad;
+  if (base !== row.rev || (vid && vid !== row.created_at)) return json({ error: "changed on another device", rev: row.rev, created: row.created_at }, 409, NO_STORE);
+  // A new password comes with its own token; otherwise the record has to stay on the vault's password.
+  if ((salt !== row.salt || iter !== row.iter) && !newToken) return json({ error: "a new password needs its token" }, 400);
+  if (now - row.updated_at < vaultGapMs(env)) return json({ error: "too fast", retryAfter: 1 }, 429, NO_STORE);
+  const next = row.rev + 1;
+  let changed = 0;
+  try {
+    // Two devices saving at once both write revision `next`: the second one's rows clash, and its
+    // whole batch is undone.
+    const res = await env.DB.batch([
+      ...chunks.map((c, i) => env.DB.prepare("INSERT INTO vault_chunks (key_hash, rev, idx, data) VALUES (?, ?, ?, ?)").bind(lic.hash, next, i, c)),
+      env.DB.prepare("UPDATE vaults SET rev = ?, auth_hash = ?, salt = ?, iter = ?, size = ?, chunks = ?, device = ?, updated_at = ? WHERE key_hash = ? AND rev = ? AND created_at = ?")
+        .bind(next, newToken ? await sha256Hex(newToken) : row.auth_hash, salt, iter, text.length, chunks.length, device, now, lic.hash, row.rev, row.created_at),
+      env.DB.prepare("DELETE FROM vault_chunks WHERE key_hash = ? AND rev < ?").bind(lic.hash, next - 1),
+    ]);
+    changed = res[chunks.length].meta ? res[chunks.length].meta.changes : 0;
+  } catch (e) { return json({ error: "changed on another device", ...await current() }, 409, NO_STORE); }
+  if (!changed) {
+    await env.DB.prepare("DELETE FROM vault_chunks WHERE key_hash = ? AND rev = ? AND rev <> (SELECT rev FROM vaults WHERE key_hash = ?)").bind(lic.hash, next, lic.hash).run();
+    return json({ error: "changed on another device", ...await current() }, 409, NO_STORE);
+  }
+  return json({ rev: next, created: row.created_at }, 200, NO_STORE);
+}
+
+async function vaultDelete(request, env) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  const res = await env.DB.batch([
+    env.DB.prepare("DELETE FROM vaults WHERE key_hash = ?").bind(lic.hash),
+    env.DB.prepare("DELETE FROM vault_chunks WHERE key_hash = ?").bind(lic.hash),
+  ]);
+  return json({ ok: true, deleted: !!(res[0].meta && res[0].meta.changes) }, 200, NO_STORE);
+}
+
 // ---- owner tools ---------------------------------------------------------------------
 
 async function admin(request, env, path) {
@@ -1230,6 +1373,11 @@ async function admin(request, env, path) {
       env.DB.prepare("UPDATE list_state SET version = version + 1 WHERE id = 1"),
     ]);
     return json({ ok: true, changed: upd.meta ? upd.meta.changes : 0 });
+  }
+  if (path === "/admin/vaults" && request.method === "GET") {
+    const { results } = await env.DB.prepare(`SELECT v.key_hash, v.rev, v.size, v.device, v.created_at, v.updated_at, v.fails, l.username, l.discord_id
+      FROM vaults v LEFT JOIN licenses l ON l.key_hash = v.key_hash ORDER BY v.updated_at DESC`).all();
+    return json({ vaults: results.map((r) => ({ license: r.key_hash.slice(0, 12), username: r.username || null, discordId: r.discord_id || null, rev: r.rev, size: r.size, device: r.device, createdAt: r.created_at, updatedAt: r.updated_at, wrongPasswords: r.fails })) });
   }
   return json({ error: "not found" }, 404);
 }

@@ -172,3 +172,34 @@ CREATE TABLE IF NOT EXISTS account_stock (
   low_at   INTEGER,
   empty_at INTEGER
 );
+
+-- Web version and sync (app 1.9.65+): one vault per license, exactly as the app sealed it (AES-GCM,
+-- with a key from the vault's password, which never leaves the devices), so nothing here can read it.
+-- auth_hash is the SHA-256 of the access token the app derives from that same password: reading or
+-- replacing the vault takes the license key and that token. rev goes up by one on every save; a save
+-- names the revision it started from, so two devices can't overwrite each other (the app merges and
+-- tries again). After 10 wrong tokens in a row the vault refuses tokens for 15 minutes.
+CREATE TABLE IF NOT EXISTS vaults (
+  key_hash   TEXT PRIMARY KEY,
+  rev        INTEGER NOT NULL,
+  auth_hash  TEXT NOT NULL,
+  salt       TEXT NOT NULL,
+  iter       INTEGER NOT NULL,
+  size       INTEGER NOT NULL,
+  chunks     INTEGER NOT NULL,
+  device     TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  fails      INTEGER NOT NULL DEFAULT 0,
+  fail_at    INTEGER NOT NULL DEFAULT 0
+);
+
+-- A vault's text, split up because D1 rows top out at 2 MB. The current revision and the one before
+-- it are kept.
+CREATE TABLE IF NOT EXISTS vault_chunks (
+  key_hash TEXT NOT NULL,
+  rev      INTEGER NOT NULL,
+  idx      INTEGER NOT NULL,
+  data     TEXT NOT NULL,
+  PRIMARY KEY (key_hash, rev, idx)
+);

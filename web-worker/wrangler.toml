@@ -1,0 +1,9 @@
+# Orbit on the web: https://app.orbit-app.workers.dev serves the newest released Orbit page.
+name = "app"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[vars]
+# Where installed apps look for updates; the page it names is what this serves.
+UPDATE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/update.json"

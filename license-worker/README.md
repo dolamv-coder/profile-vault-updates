@@ -345,6 +345,34 @@ curl.exe -X POST -H "Authorization: Bearer YOUR_ADMIN_TOKEN" -d "{\"email\":\"so
 The passwords are kept in your D1 database so they can go in the logins files, and they're in your
 channel with each batch, like every other login there. Keep the channel private.
 
+## The web version's synced vaults
+
+From Orbit 1.9.65, a desktop app can keep an encrypted copy of its vault here (Settings → Web
+version & sync), so the web version at https://app.orbit-app.workers.dev (`web-worker/`) and other
+computers can open the same profiles, cards, logins and orders. Nothing to set up: the deploy
+creates the `vaults` and `vault_chunks` tables.
+
+- The app seals the vault with a key from the vault's password before it sends it, so the copy
+  here can't be read here, by you or anyone with access to the database.
+- Reading or saving takes the license key and an access token the app derives from that same
+  password. Only a hash of the token is kept. After 10 wrong passwords in a row, the vault
+  refuses tokens for 15 minutes.
+- Each save names the revision it started from, and which vault (when it was made), so a save
+  never lands on a copy that was deleted and made again. If another device saved in between, the
+  save is refused and the app merges the two before trying again. The current revision and the
+  one before it are kept.
+- Vaults up to 8 million characters (the app's own copy has to fit in a browser, which holds
+  about 5 MB).
+
+```
+# Synced vaults: whose, how big, from which device, when. Never what's in them.
+curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/vaults
+```
+
+Someone who forgot the online copy's password can delete it from the app with their license key
+alone (Settings → Web version & sync → Delete the online copy, or Replace it when turning sync on),
+and turn sync on again. Their devices keep their own copies.
+
 ## Limiting who gets a key
 
 By default, any Discord account except bots gets a key. To limit it, edit `[vars]` in
@@ -396,4 +424,6 @@ Runs the worker in Wrangler's local runtime with a local database and a mock Dis
 once handing out keys straight away and once with approval on. It goes through sign-in,
 key pickup, repeat sign-in, cancelled and refused sign-ins, the account-age and server
 checks, revoke and restore, the rate limit, requests being posted, approved, denied
-and changed, slot limits, submissions and collecting keys, and pulled slots.
+and changed, slot limits, submissions and collecting keys, pulled slots, and synced
+vaults (revisions, two devices saving at once, large vaults, a new password, and the lock
+after wrong passwords).
