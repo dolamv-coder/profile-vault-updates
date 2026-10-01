@@ -1,10 +1,10 @@
 {
-  "version": "1.9.63",
-  "url": "index-1.9.63.html",
-  "sha256": "67a5a4147934f54c93a7cf8ef583b0c6a90ae175faf843ecfbfa7e626d8cb3fd",
-  "signature": "TXhWsO4kxd/RWLi0d0VP3ymSA9rsk0ox8ls590VsIVtPdktjR66trs3U6HcQgiQZkDJCXzuLDrEUpbX/yUm0CA==",
+  "version": "1.9.64",
+  "url": "index-1.9.64.html",
+  "sha256": "cf5238155dfb370b1616f26a1180b4ec12baa788113a46e2fbdcbdbc0b9acb4c",
+  "signature": "T8/ss444ls1o+9BSnraB5FktbrTACHvc5oCVYv42TNdhRxmGENyOxWdFsJap6SR6nS/secTu/i1Iz0TkFjuFCw==",
   "minAppVersion": "0",
-  "notes": "Clean emails now keeps sign-in code emails that end up in Spam, like Target's \"Enter code … to sign in\", when \"Clear all of Spam\" is on. And if your copy of Orbit is too old for Clean emails' newest rules, the Clean emails page now says so and links to the new download.",
+  "notes": "Orders has a new Showing menu: pick Today, Yesterday, This billing week, Last week, the last 7, 30 or 90 days, or your own dates, and the Checkouts count (your successful orders), spending and order list cover just that period. The billing week starts on Monday unless you pick another day next to it.",
   "installerUrl": "",
-  "publishedAt": "2026-10-01T03:40:18.051Z"
+  "publishedAt": "2026-10-01T12:30:49.120Z"
 }
