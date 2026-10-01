@@ -1,0 +1,1 @@
+Profiles that use an assigned account no longer ask for an email. On a store login, the profile's email is now that login's email: Orbit fills it in when you pick the login, and if a saved profile has a different one, it shows the right email to use when you save.
