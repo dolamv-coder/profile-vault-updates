@@ -1,0 +1,1 @@
+Orbit now opens in any browser at app.orbit-app.workers.dev. Turn on Settings → Web version & sync to keep this computer, the web version and your other computers on the same profiles, cards, logins and orders; your vault is encrypted with your master password before it's sent. Orders you delete also now stay deleted after Orbit restarts.

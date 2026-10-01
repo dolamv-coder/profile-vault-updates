@@ -1,0 +1,72 @@
+name: Deploy web app
+
+# Orbit on the web (https://app.orbit-app.workers.dev): the worker in web-worker/, which serves the
+# newest signed release. Runs when it changes on main, or by hand from the Actions tab. New releases
+# don't need a deploy: the worker follows update.json on its own.
+# Uses the same secrets as "Deploy license worker":
+#   secret   CLOUDFLARE_API_TOKEN   token that can edit Workers
+#   secret   CLOUDFLARE_ACCOUNT_ID  (a variable of that name works too)
+on:
+  push:
+    branches: [main]
+    paths: ["web-worker/**", "!web-worker/**/*.md", ".github/workflows/deploy-web-app.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-web-app
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-worker
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web-worker/package-lock.json
+
+      - run: npm ci
+
+      - name: Test
+        run: npm test
+
+      # Pasted values often carry a stray space or line break, which Cloudflare rejects.
+      - name: Check the Cloudflare settings
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          token="$(printf '%s' "$TOKEN" | tr -d '[:space:]')"
+          account="$(printf '%s' "$ACCOUNT" | tr -d '[:space:]' | tr 'A-F' 'a-f')"
+          if [ -z "$token" ]; then
+            echo "::error::Add the CLOUDFLARE_API_TOKEN repository secret."; exit 1
+          fi
+          echo "::add-mask::$token"
+          if ! [[ "$account" =~ ^[0-9a-f]{32}$ ]]; then
+            echo "::error::CLOUDFLARE_ACCOUNT_ID is missing or not an Account ID (32 letters and digits, shown on the Workers & Pages page)."; exit 1
+          fi
+          echo "CLOUDFLARE_API_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "CLOUDFLARE_ACCOUNT_ID=$account" >> "$GITHUB_ENV"
+
+      - name: Deploy
+        run: npm run deploy
+
+      - name: Check it serves the current release
+        run: |
+          want="$(curl -fsS "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/update.json?t=$(date +%s)" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).version))')"
+          for i in $(seq 1 12); do
+            got="$(curl -fsS -o /dev/null -w '%{http_code} %header{x-orbit-version}' https://app.orbit-app.workers.dev/ || true)"
+            echo "attempt $i: $got (want 200 $want)"
+            [ "$got" = "200 $want" ] && exit 0
+            sleep 10
+          done
+          echo "::error::https://app.orbit-app.workers.dev didn't serve Orbit $want."; exit 1

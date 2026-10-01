@@ -79,6 +79,8 @@ The release feed for installed copies of Orbit. It is not the full source tree.
 
 - `desktop/`: the Windows app itself (Electron), recovered from the v1.9.49
   download. See "Desktop app" below and `desktop/README.md`.
+- `web-worker/`: the web version, a Cloudflare Worker (`app`) at
+  `https://app.orbit-app.workers.dev`. See "Web version and sync" below.
 - GitHub Releases: the app links new users to
   `releases/latest/download/Orbit-Windows.zip` on this repo. From v1.9.61 the
   "Release desktop app" Action makes these from `desktop/`.
@@ -188,6 +190,56 @@ older than 10, which ignores `CLEAN_RULES`, to get the new download
 (`CLEAN_OLD_APP`). A page update reaches Clean emails only after Orbit
 restarts: until then auto-clean keeps running the old page's rules, so a user
 who never restarts still sees mail a newer page would clear.
+
+## Web version and sync
+
+`web-worker/` serves the newest released page to any browser: it reads
+`update.json` (at most once a minute), downloads the page it names, and serves
+it only if the SHA-256 matches and the signature checks out against the
+publisher key built into the apps; otherwise it keeps the last good page. So a
+release reaches the web the same way it reaches installed apps, and the
+worker itself only changes for its own fixes ("Deploy web app",
+`.github/workflows/deploy-web-app.yml`, on `web-worker/` changes to `main`).
+Opening it needs no license key (`licenseGate` only runs in the desktop app),
+and email sync and Clean emails stay in the desktop app.
+
+From 1.9.65, Settings → Web version & sync keeps a vault in step across the
+desktop app, the web version and other computers. The license worker stores
+one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
+page with the vault's own key before it's sent (`syncSeal`: gzip, then
+AES-GCM). `deriveKeys` runs PBKDF2 once: its 256 bits are the vault key (the
+same key `deriveKey` always made) and an HMAC of them is the access token, of
+which the worker keeps only a hash; 10 wrong tokens lock the copy for 15
+minutes. The license key is the copy's identity, so the web version asks for
+it (or fills it in with Discord) in **Open my synced vault**
+on the lock screen. Each device merges per unit, three ways, against what the
+two last agreed on (`syncMerge`, between `SYNC-CORE-START` and
+`SYNC-CORE-END`; `.github/scripts/sync-merge.test.mjs` tests it against the
+newest page on every pull request that changes a page): list items by id, map
+entries (settings, caps, subs, deletedOrders) by key, slots by value. A change
+on one side wins. The same unit changed on both is merged field by field
+against its starting version (`L.orig`, kept for what this device changed), and
+a field both changed takes the later change (`mt`, noted within a second of the
+change, also with sync off); an edit beats a deletion, except that an order
+deleted on purpose (its key in `deletedOrders`) stays deleted. Never synced:
+`S._local` (that device's bookkeeping: `base` hashes, `rev`, `vid`, `mt`,
+`orig`), `pulls`, `LOCAL_SETTINGS`, and the email-sync progress fields on each
+inbox (`SYNC_DEVICE_FIELDS`). **A new setting key, or a new field email sync
+writes on an inbox, syncs unless it's added there**, so add per-device ones. A
+collecting key that loses a merge goes to `shareOld`, and codes for it still
+open (`openSubmissionAny`). Merges wait while a window is open or email is
+syncing (`syncBlocked`). The record isn't compressed (its size would leak what's
+in it), carries its revision and vault id (`seq`, `vid`, so a stale, replayed or
+other copy is refused), and a vault id that changes turns sync off rather than
+merging into a new copy. The page only derives the token with a 16-byte salt and
+at least `ITER` rounds, whatever `/vault/info` says. A password change moves the
+online copy first (`syncChangePassword`); other devices then get 403 (the old
+password's token answers "password changed" and doesn't count toward the
+lockout), stop retrying, and ask for the new password, or take it on the lock
+screen and ask for the previous one to bring their own copy along
+(`syncUnlockOnline`). Restoring a backup turns sync off; erasing a device keeps
+the online copy. 1.9.65 also stops `sanitizeState` dropping `deletedOrders`,
+which until then lasted only until Orbit closed.
 
 ## Pieces that live outside this repo
 
