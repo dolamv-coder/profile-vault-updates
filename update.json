@@ -1,10 +1,10 @@
 {
-  "version": "1.9.65",
-  "url": "index-1.9.65.html",
-  "sha256": "9358c707b57a9d0672372b73cc08d301b2939651454dae833dac48fd43480434",
-  "signature": "v0F40IKFKYDleyn5yc59swr58oPxM4OhPnv9j5GtM0BwXrefGT4JAKMLX+q0FziDEoma7pO/Uf9j+qCo3KSjDg==",
+  "version": "1.9.66",
+  "url": "index-1.9.66.html",
+  "sha256": "55a2efc562d02fbf7963f2771962213e0daf647febc1b96d9e1dbf12699ceba0",
+  "signature": "tuqoBUJWlbONV6OdYhUOm6SIzklRmuX+TqQN6IbWyZS89lQ50KeszLllqPxqjbjvdEV5YshW7frxmvPzBcETBg==",
   "minAppVersion": "0",
-  "notes": "Orbit now opens in any browser at app.orbit-app.workers.dev. Turn on Settings → Web version & sync to keep this computer, the web version and your other computers on the same profiles, cards, logins and orders; your vault is encrypted with your master password before it's sent. Orders you delete also now stay deleted after Orbit restarts.",
+  "notes": "Profiles that use an assigned account no longer ask for an email. On a store login, the profile's email is now that login's email: Orbit fills it in when you pick the login, and if a saved profile has a different one, it shows the right email to use when you save.",
   "installerUrl": "",
-  "publishedAt": "2026-10-01T18:17:11.857Z"
+  "publishedAt": "2026-10-01T21:16:15.733Z"
 }
