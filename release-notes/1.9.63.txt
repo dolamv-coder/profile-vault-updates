@@ -1,0 +1,1 @@
+Clean emails now keeps sign-in code emails that end up in Spam, like Target's "Enter code … to sign in", when "Clear all of Spam" is on. And if your copy of Orbit is too old for Clean emails' newest rules, the Clean emails page now says so and links to the new download.
