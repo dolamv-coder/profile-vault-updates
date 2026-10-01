@@ -191,7 +191,10 @@ CREATE TABLE IF NOT EXISTS vaults (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   fails      INTEGER NOT NULL DEFAULT 0,
-  fail_at    INTEGER NOT NULL DEFAULT 0
+  fail_at    INTEGER NOT NULL DEFAULT 0,
+  -- the token hash of the password before the last change: a device still on it is told the password
+  -- changed, without it counting as a wrong guess
+  prev_auth_hash TEXT NOT NULL DEFAULT ''
 );
 
 -- A vault's text, split up because D1 rows top out at 2 MB. The current revision and the one before

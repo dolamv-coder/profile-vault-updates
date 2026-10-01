@@ -3355,6 +3355,8 @@ function sanitizeState(s){
     submitName: typeof s.submitName === "string" ? s.submitName : "",
     inboxes: Array.isArray(s.inboxes) ? s.inboxes : [],
     share: s.share && s.share.pub && s.share.priv ? s.share : null,
+    // Collecting keys that lost to another device's when two vaults were merged (codes made for them still open).
+    shareOld: Array.isArray(s.shareOld) ? s.shareOld.filter(x => x && x.pub && x.priv) : [],
     // This device's sync bookkeeping (see WEB VERSION & SYNC). It never leaves the device.
     ...(s._local && typeof s._local === "object" && !Array.isArray(s._local) ? {_local:s._local} : {})
   };
@@ -3402,6 +3404,7 @@ function persist(){
   saveChain = saveChain.then(async () => {
     if (!S || KEY !== key) return;
     const rec = await sealState(key, meta, S);
+    if (KEY !== key) return;   // the password changed meanwhile: a later save writes it with the new key
     VAULT = rec;
     if (!writeStore(rec)) showStorageBanner();
   }).catch(() => toast("Couldn't save changes. Download an encrypted backup from Settings.", "err"));
@@ -5562,7 +5565,7 @@ function openImport(){
             if (!S.share) throw new Error("Set up collecting in Settings, then send people your invite. Codes made for a different vault can't be opened here.");
             flat = [];
             for (const code of codes){
-              const pl = await openSubmission(code, S.share.priv);
+              const pl = await openSubmissionAny(code);
               if (pl.from && !senders.includes(pl.from)) senders.push(pl.from);
               (pl.profiles || []).forEach(f => { if (f && typeof f === "object"){ if (pl.from && !f.group) f.group = pl.from; f.fromSubmission = true; } flat.push(f); });
             }
@@ -8130,14 +8133,16 @@ const SYNC_HERE = DESK ? "on this computer" : "in this browser";
 /* SYNC-CORE-START: plain functions with no page state, also run by the merge tests */
 // What syncs, split into units that merge on their own: list items by id, map entries by key, set
 // members by value, and whole values. Device-only data (its sync bookkeeping, pull alerts it still
-// has to send, LOCAL_SETTINGS) never leaves the device.
-const SYNC_LISTS = ["groups","cardGroups","addresses","cards","profiles","logins","inboxes","checkouts","orders"];
+// has to send, LOCAL_SETTINGS, and each inbox's own email-sync progress) never leaves the device.
+const SYNC_LISTS = ["groups","cardGroups","addresses","cards","profiles","logins","inboxes","checkouts","orders","shareOld"];
 const SYNC_MAPS = ["settings","caps","subs","deletedOrders"];
 const SYNC_SETS = ["slots"];
 const SYNC_VALUES = ["lastBatch","submitTo","submitName","share"];
 const LOCAL_SETTINGS = ["autoLockMin","slotAllow","server","phone","autoClean","rescueSpam","orderPeriod","keepEmails","autoAdd","cleanSpamAll","alertsSince","alerts","_sampleRemoved","_linkedByEmail","_seeded"];
+// What a device's email sync writes on an inbox about its own progress (syncOneInbox).
+const SYNC_DEVICE_FIELDS = {inboxes:["syncError","lastSync","lastResult","confirmFixed","addrBackfilled","datesV4","inboxTagged","imagesBackfilled","statusBackfilled","trackingBackfilled"]};
 // Short unit-key prefixes, since every unit's key is kept with its hash.
-const SYNC_CODE = {groups:"g", cardGroups:"G", addresses:"a", cards:"c", profiles:"p", logins:"l", inboxes:"i", checkouts:"k", orders:"o",
+const SYNC_CODE = {groups:"g", cardGroups:"G", addresses:"a", cards:"c", profiles:"p", logins:"l", inboxes:"i", checkouts:"k", orders:"o", shareOld:"H",
   settings:"s", caps:"x", subs:"u", deletedOrders:"d", slots:"t", lastBatch:"b", submitTo:"T", submitName:"N", share:"h"};
 
 // JSON with object keys sorted, so the same data hashes the same whichever device wrote it.
@@ -8155,21 +8160,30 @@ function syncHash(str){
   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
-// A vault's units: map (key -> {v, h}) and, for lists and sets, their keys in order.
+const syncPlain = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+// An item without the fields that stay on the device (the item itself when there are none).
+function syncStrip(n, x){
+  const drop = SYNC_DEVICE_FIELDS[n];
+  if (!drop || !syncPlain(x) || !drop.some(f => f in x)) return x;
+  const o = {}; for (const k of Object.keys(x)) if (!drop.includes(k)) o[k] = x[k];
+  return o;
+}
+// A vault's units: map (key -> {v, h, c}, c being v's canonical JSON) and, for lists and sets, their
+// keys in order.
 function syncUnits(st){
   const map = new Map(), order = {};
-  const put = (k, v) => { map.set(k, {v, h:syncHash(syncCanon(v))}); return k; };
+  const put = (k, v) => { const c = syncCanon(v); map.set(k, {v, h:syncHash(c), c}); return k; };
   for (const n of SYNC_LISTS){
     const keys = order[n] = [];
     for (const x of Array.isArray(st[n]) ? st[n] : []){
       if (x == null) continue;
       let k = SYNC_CODE[n] + ":" + (typeof x === "object" && typeof x.id === "string" && x.id ? x.id : "#" + syncHash(syncCanon(x)));
       if (map.has(k)){ let i = 2; while (map.has(k + "~" + i)) i++; k += "~" + i; }
-      keys.push(put(k, x));
+      keys.push(put(k, syncStrip(n, x)));
     }
   }
   for (const n of SYNC_MAPS){
-    const m = st[n] && typeof st[n] === "object" && !Array.isArray(st[n]) ? st[n] : {};
+    const m = syncPlain(st[n]) ? st[n] : {};
     for (const k of Object.keys(m)) if (m[k] !== undefined && !(n === "settings" && LOCAL_SETTINGS.includes(k))) put(SYNC_CODE[n] + ":" + k, m[k]);
   }
   for (const n of SYNC_SETS){
@@ -8180,52 +8194,87 @@ function syncUnits(st){
   return {map, order};
 }
 function syncHashes(u){ const o = {}; for (const [k, x] of u.map) o[k] = x.h; return o; }
+// Both sides changed one object: field by field against the version they started from (b), so each
+// side's change to different fields survives; a field both changed takes the later side's value.
+function syncFields(b, l, r, preferL){
+  const out = {}, keys = new Set([...Object.keys(r), ...Object.keys(l), ...Object.keys(b)]);
+  const c = (o, f) => o[f] === undefined ? undefined : syncCanon(o[f]);
+  for (const f of keys){
+    const lc = c(l, f), rc = c(r, f), bc = c(b, f);
+    const v = lc === rc ? l[f] : lc === bc ? r[f] : rc === bc ? l[f] : preferL ? l[f] : r[f];
+    if (v !== undefined) out[f] = v;
+  }
+  return out;
+}
 // Three-way merge of this device's units (L) and the online copy's (R) against `base`, the hashes both
 // had when they last agreed ({} if they never have). A unit changed on one side only takes that side's
-// version, deletion included. Changed on both: an edit beats a deletion, and otherwise the later change
-// wins (lmt and rmt say when each side changed it; the online copy wins a tie). keyOf gives an order's
-// identity (orderKey): the same order added on both sides (each imported its email) is kept once, as
-// the online copy has it, and an order imported on one side that the other deleted doesn't come back.
+// version, deletion included. Changed on both: an edit beats a deletion, an object is merged field by
+// field when `orig` holds the version both started from (its canonical JSON, kept for units this side
+// changed), and otherwise the later change wins (lmt and rmt say when each side changed it; the online
+// copy wins a tie). keyOf gives an order's identity (orderKey): an order deleted on one side stays
+// deleted (deletedOrders records it), even if the other side's email sync updated it, or imported it
+// again; the same order imported from email on both sides is kept once, as the online copy has it. A
+// collecting key that loses goes to shareOld, so codes made for it still open.
 // Returns the merged state's synced parts, the change times, and the hashes of the result and of R.
-function syncMerge(L, R, base, lmt, rmt, keyOf){
-  base = base || {}; lmt = lmt || {}; rmt = rmt || {};
+function syncMerge(L, R, base, lmt, rmt, keyOf, orig){
+  base = base || {}; lmt = lmt || {}; rmt = rmt || {}; orig = orig || {};
   const pick = new Map(), mt = {};
-  let clashes = 0;
+  let clashes = 0, lostShare = null;
   const keys = new Set([...L.map.keys(), ...R.map.keys(), ...Object.keys(base)]);
   for (const k of keys){
     const l = L.map.get(k), r = R.map.get(k), b = base[k];
     const lh = l ? l.h : undefined, rh = r ? r.h : undefined;
-    let side;
+    let side, u;
     if (lh === rh) side = l ? "l" : "";
     else if (lh === b) side = r ? "r" : "";
     else if (rh === b) side = l ? "l" : "";
-    else { clashes++; side = !l ? "r" : !r ? "l" : (lmt[k] || 0) > (rmt[k] || 0) ? "l" : "r"; }
+    else {
+      clashes++;
+      const preferL = (lmt[k] || 0) > (rmt[k] || 0);
+      side = !l ? "r" : !r ? "l" : preferL ? "l" : "r";
+      let bv = null;
+      if (l && r && typeof orig[k] === "string" && b !== undefined && syncHash(orig[k]) === b){ try { bv = JSON.parse(orig[k]); } catch(e){} }
+      if (bv && syncPlain(bv) && syncPlain(l.v) && syncPlain(r.v)){
+        const v = syncFields(bv, l.v, r.v, preferL), c = syncCanon(v);
+        u = {v, h:syncHash(c), c};
+      }
+      if (k === SYNC_CODE.share + ":" && l && r && syncPlain(l.v) && syncPlain(r.v) && l.v.pub !== r.v.pub) lostShare = preferL ? r.v : l.v;
+    }
     if (!side) continue;
-    pick.set(k, side === "l" ? l : r);
-    const t = lh === rh ? Math.max(lmt[k] || 0, rmt[k] || 0) : side === "l" ? lmt[k] : rmt[k];
+    pick.set(k, u || (side === "l" ? l : r));
+    const t = lh === rh || u ? Math.max(lmt[k] || 0, rmt[k] || 0) : side === "l" ? lmt[k] : rmt[k];
     if (t) mt[k] = t;
+  }
+  if (lostShare && lostShare.pub && lostShare.priv){
+    const k = SYNC_CODE.shareOld + ":" + lostShare.pub;
+    if (!pick.has(k)){ const v = Object.assign({id:lostShare.pub}, lostShare), c = syncCanon(v); pick.set(k, {v, h:syncHash(c), c}); }
   }
   if (keyOf){
     const P = SYNC_CODE.orders + ":", D = {}, DP = SYNC_CODE.deletedOrders + ":";
     for (const [k, u] of pick) if (k.startsWith(DP)) D[k.slice(DP.length)] = u.v;
-    const fresh = (k) => base[k] === undefined && (L.map.has(k) !== R.map.has(k));   // new since they agreed, on one side
+    const one = (k) => L.map.has(k) !== R.map.has(k);   // on one side only
+    const fresh = (k) => base[k] === undefined && one(k);  // and new since they agreed
     const same = new Map();
-    for (const [k, u] of pick){
-      if (!k.startsWith(P) || !u.v || typeof u.v !== "object") continue;
+    for (const [k, u] of [...pick]){
+      if (!k.startsWith(P) || !syncPlain(u.v)) continue;
       let ok; try { ok = keyOf(u.v); } catch(e){ continue; }
-      if (fresh(k) && u.v.inbox && D[ok]){ pick.delete(k); delete mt[k]; continue; }
-      if (!u.v.orderNo) continue;
+      // Deleted on one side (it was there when they agreed): the deletion stands.
+      if (D[ok] && one(k) && base[k] !== undefined){ pick.delete(k); delete mt[k]; continue; }
+      // Imported from email on one side after the other deleted it.
+      if (D[ok] && fresh(k) && u.v.inbox){ pick.delete(k); delete mt[k]; continue; }
+      if (!u.v.orderNo || !fresh(k)) continue;
       if (!same.has(ok)) same.set(ok, []);
       same.get(ok).push(k);
     }
+    // One email, imported on both sides since they agreed: keep the online copy's.
     for (const list of same.values()){
       if (list.length < 2 || !list.some(k => R.map.has(k))) continue;
-      list.forEach(k => { if (fresh(k) && !R.map.has(k)){ pick.delete(k); delete mt[k]; } });
+      list.forEach(k => { if (!R.map.has(k) && pick.get(k).v.inbox){ pick.delete(k); delete mt[k]; } });
     }
   }
   // Lists in the online copy's order, then what's new on this side, so every device ends up with one order.
   const state = {};
-  const inOrder = (n) => { const out = [], seen = new Set(); for (const k of R.order[n].concat(L.order[n])) if (!seen.has(k)){ seen.add(k); const u = pick.get(k); if (u) out.push(u.v); } return out; };
+  const inOrder = (n) => { const out = [], seen = new Set(); for (const k of R.order[n].concat(L.order[n])) if (!seen.has(k)){ seen.add(k); const u = pick.get(k); if (u) out.push(u.v); } for (const [k, u] of pick) if (!seen.has(k) && k.startsWith(SYNC_CODE[n] + ":")){ seen.add(k); out.push(u.v); } return out; };
   for (const n of SYNC_LISTS) state[n] = inOrder(n);
   for (const n of SYNC_SETS) state[n] = inOrder(n);
   for (const n of SYNC_MAPS) state[n] = {};
@@ -8236,7 +8285,7 @@ function syncMerge(L, R, base, lmt, rmt, keyOf){
   for (const [k, u] of pick) hashes[k] = u.h;
   for (const [k, u] of R.map) remote[k] = u.h;
   let toLocal = false, toRemote = false;
-  for (const k of keys){
+  for (const k of new Set([...keys, ...pick.keys()])){
     const h = hashes[k], l = L.map.get(k), r = R.map.get(k);
     if ((l ? l.h : undefined) !== h) toLocal = true;
     if ((r ? r.h : undefined) !== h) toRemote = true;
@@ -8257,17 +8306,13 @@ async function syncCall(method, path, lic, auth, opts){
   let data = null; try { data = await r.json(); } catch(e){}
   return {status:r.status, data:data || {}};
 }
-// What goes online: the synced parts of the vault and when this device changed each, gzipped, then
-// sealed with the vault key. `seq` is the revision it becomes, so an older copy can't be passed off as newer.
+// What goes online: the synced parts of the vault and when this device changed each, sealed with the
+// vault key. Not compressed, so its size says nothing about what's in it. `seq` is the revision it
+// becomes and `vid` the copy it belongs to, so an older or another copy can't be passed off as this one.
 async function syncSeal(key, salt, iter, payload){
-  let bytes = enc.encode(JSON.stringify(payload)), z = "none";
-  if (typeof CompressionStream === "function"){
-    try { bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer()); z = "gzip"; }
-    catch(e){ bytes = enc.encode(JSON.stringify(payload)); z = "none"; }
-  }
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, bytes);
-  return {format:"orbit-sync", v:1, z, kdf:"PBKDF2-SHA256", iter, salt, iv:toB64(iv), ct:toB64(ct), savedAt:new Date().toISOString()};
+  const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, enc.encode(JSON.stringify(payload)));
+  return {format:"orbit-sync", v:1, z:"none", kdf:"PBKDF2-SHA256", iter, salt, iv:toB64(iv), ct:toB64(ct), savedAt:new Date().toISOString()};
 }
 async function syncOpen(key, rec){
   if (!rec || typeof rec.iv !== "string" || typeof rec.ct !== "string") throw new Error("bad");
@@ -8282,7 +8327,7 @@ async function syncOpen(key, rec){
 }
 function syncPayloadState(st){
   const o = {v:1};
-  for (const n of SYNC_LISTS) o[n] = Array.isArray(st[n]) ? st[n] : [];
+  for (const n of SYNC_LISTS) o[n] = Array.isArray(st[n]) ? st[n].map(x => syncStrip(n, x)) : [];
   for (const n of SYNC_MAPS) o[n] = n === "settings" ? Object.fromEntries(Object.entries(st.settings || {}).filter(([k]) => !LOCAL_SETTINGS.includes(k))) : (st[n] && typeof st[n] === "object" ? st[n] : {});
   for (const n of SYNC_SETS) o[n] = Array.isArray(st[n]) ? st[n] : [];
   for (const n of SYNC_VALUES) o[n] = st[n] === undefined ? null : st[n];
@@ -8292,7 +8337,11 @@ function syncPayloadState(st){
 function syncPruneMt(mt){ const o = {}, old = Date.now() - 90 * 86400000; for (const k in mt || {}) if (mt[k] > old) o[k] = mt[k]; return o; }
 
 // ---- this device's side ----
-const SYNC = { busy:false, again:false, timer:null, state:"", msg:"", ranAt:0, fails:0, retryAt:0, waiting:false, quiet:false, renderWait:false, gen:0, units:null, unitsGen:-1 };
+// baseC: the canonical JSON of each unit as the online copy last had it, in memory, so a unit this
+// device changes keeps its starting version (L.orig) for a field-by-field merge if another device
+// changes it too.
+const SYNC = { busy:false, again:false, timer:null, noteTimer:null, state:"", msg:"", ranAt:0, fails:0, retryAt:0, waiting:false, quiet:false, renderWait:false, gen:0, units:null, unitsGen:-1, baseC:new Map() };
+const syncBaseFrom = (u, only) => { const m = new Map(); for (const [k, x] of u.map) if (!only || only[k] === x.h) m.set(k, x.c); return m; };
 function syncHint(){ try { const h = JSON.parse(localStorage.getItem(SYNC_HINT) || "null"); return h && typeof h.lic === "string" && h.lic ? h : null; } catch(e){ return null; } }
 function syncHintWrite(h){ try { if (h) localStorage.setItem(SYNC_HINT, JSON.stringify(h)); else localStorage.removeItem(SYNC_HINT); } catch(e){} }
 const syncOn = () => !!(S && MODE === "vault" && S._local && S._local.on && S._local.lic);
@@ -8306,15 +8355,24 @@ function syncPersist(){ SYNC.quiet = true; try { return persist(); } finally { S
 function syncSoon(ms){
   if (!syncOn()) return;
   clearTimeout(SYNC.timer);
-  SYNC.timer = setTimeout(() => { if (Date.now() >= SYNC.retryAt) syncRun(); }, ms == null ? 1500 : ms);
+  SYNC.timer = setTimeout(() => { if (Date.now() >= SYNC.retryAt && SYNC.state !== "password") syncRun(); }, ms == null ? 1500 : ms);
 }
-// persist() calls this after every change.
-function syncTouched(){ SYNC.gen++; if (!SYNC.quiet && syncOn() && SYNC.state !== "password" && SYNC.state !== "license") syncSoon(1500); }
+// persist() calls this after every change. Changes are noted within a second (so their time is when
+// they were made, also with sync off), and sent a moment later.
+function syncTouched(){
+  SYNC.gen++;
+  if (SYNC.quiet || !S || MODE !== "vault" || !S._local) return;
+  clearTimeout(SYNC.noteTimer);
+  SYNC.noteTimer = setTimeout(() => { if (S && S._local && !SYNC.busy) syncNote(); }, 800);
+  if (!syncOn()) return;
+  const h = syncHint(); if (h && !h.dirty) syncHintWrite(Object.assign(h, {dirty:true}));
+  if (SYNC.state !== "password") syncSoon(1500);
+}
 // Notes when this device changed each unit (the time settles clashes) and whether it has changes the
 // online copy doesn't. `seen` holds the hashes of units this device has changed since the last sync.
 function syncNote(){
   const L = S._local;
-  const base = L.base || (L.base = {}), seen = L.seen || (L.seen = {}), mt = L.mt || (L.mt = {});
+  const base = L.base || (L.base = {}), seen = L.seen || (L.seen = {}), mt = L.mt || (L.mt = {}), orig = L.orig || (L.orig = {});
   // Every change is saved with persist(), so the units only need working out again after one.
   if (SYNC.unitsGen !== SYNC.gen || !SYNC.units || SYNC.unitsOf !== S){ SYNC.units = syncUnits(S); SYNC.unitsGen = SYNC.gen; SYNC.unitsOf = S; }
   const u = SYNC.units, now = Date.now();
@@ -8322,9 +8380,14 @@ function syncNote(){
   for (const [k, x] of u.map){
     const prev = k in seen ? seen[k] : base[k];
     if (x.h !== prev) mt[k] = now;
-    if (x.h === base[k]) delete seen[k]; else { seen[k] = x.h; pending = true; }
+    if (x.h === base[k]){ delete seen[k]; delete orig[k]; }
+    else {
+      seen[k] = x.h; pending = true;
+      if (!(k in orig) && base[k] !== undefined){ const c = SYNC.baseC.get(k); if (c && syncHash(c) === base[k]) orig[k] = c; }
+    }
   }
   for (const k of Object.keys(seen)) if (!u.map.has(k)) delete seen[k];
+  for (const k of Object.keys(orig)) if (!seen[k]) delete orig[k];
   if (!pending) for (const k in base) if (!u.map.has(k)){ pending = true; break; }
   L.pending = pending;
   const h = syncHint();
@@ -8340,7 +8403,8 @@ function syncAdopt(m){
     S[n] = m.state[n].map(x => {
       const old = x && typeof x === "object" && typeof x.id === "string" && !twice.has(x.id) ? mine.get(x.id) : null;
       if (!old || old === x) return x;
-      for (const k of Object.keys(old)) if (!(k in x)) delete old[k];
+      const keep = SYNC_DEVICE_FIELDS[n] || [];
+      for (const k of Object.keys(old)) if (!(k in x) && !keep.includes(k)) delete old[k];
       return Object.assign(old, x);
     });
   }
@@ -8356,8 +8420,18 @@ function syncAdopt(m){
   S.lastBatch = (S.lastBatch || []).filter(k => S.slots.includes(k));
   SYNC.gen++;
 }
-function syncRun(){
+// After a merge: what this device still has to send (seen), the starting version of each such unit
+// (the online copy's), and the online copy's units as the new starting point.
+function syncAfterMerge(L, m, R){
+  L.seen = {}; L.orig = {};
+  for (const k in m.hashes) if (m.hashes[k] !== m.remote[k]){ L.seen[k] = m.hashes[k]; const r = R.map.get(k); if (r) L.orig[k] = r.c; }
+  SYNC.baseC = syncBaseFrom(R);
+}
+// `asked`: the user pressed Sync now. Rounds that start by themselves don't send a password the
+// online copy no longer takes (each wrong one counts toward its lockout).
+function syncRun(asked){
   if (!syncOn() || !KEY || !SYNC_AUTH || !VAULT) return Promise.resolve();
+  if (!asked && SYNC.state === "password") return Promise.resolve();
   if (SYNC.busy){ SYNC.again = true; return Promise.resolve(); }
   return syncExclusive(() => syncCycle());
 }
@@ -8385,10 +8459,11 @@ async function syncCycle(opts){
       syncNote();
       let got = await syncCall("GET", "/vault?have=" + (L.rev || 0), lic, auth);
       if (!alive()) return "stopped";
-      if (got.status === 200 && got.data.same && L.vid && got.data.created !== L.vid){
-        got = await syncCall("GET", "/vault?have=0", lic, auth);   // deleted and made again since: fetch it whole
-        if (!alive()) return "stopped";
-      }
+      // The copy this device synced with was deleted, and another made since (on another device, maybe
+      // with things deleted on purpose): stop rather than merge everything back in.
+      if (got.status === 200 && L.vid && got.data.created !== L.vid){ syncGone(true); return "gone"; }
+      // Revisions only go up: an older one is a stale or replayed copy.
+      if (got.status === 200 && L.vid && got.data.rev < (L.rev || 0)) return syncShow("error", "The sync service sent an older copy of your vault, so it was ignored. Orbit tries again on its own.");
       let mustSend = !!opts.rekey;
       if (got.status === 404 && got.data.error === "no vault" && !L.vid) mustSend = true;   // not made yet: this device makes it
       else if (got.status !== 200) return syncTrouble(got);
@@ -8399,13 +8474,14 @@ async function syncCycle(opts){
         try { p = await syncOpen(key, got.data.record); } catch(e){ why = e && e.message; }
         if (!alive()) return "stopped";
         if (why === "nogzip") return syncShow("error", "This browser can't unpack the online copy. Update it, or use a current Chrome, Edge, Safari or Firefox.");
-        if (!p || (p.seq && p.seq !== got.data.rev)) return syncShow("error", "The online copy couldn't be opened. Orbit tries again on its own.");
+        if (!p || p.seq !== got.data.rev || (p.vid && p.vid !== got.data.created)) return syncShow("error", "The online copy couldn't be opened. Orbit tries again on its own.");
         if (syncBlocked() && !opts.now){ SYNC.waiting = true; syncShow("waiting"); return "waiting"; }
         const fresh = !L.vid || got.data.created !== L.vid;   // never synced with this copy: nothing in common to go by
-        const m = syncMerge(syncNote(), syncUnits(sanitizeState(p.state)), fresh ? {} : L.base, L.mt, p.mt, orderKey);
+        const R = syncUnits(sanitizeState(p.state));
+        const m = syncMerge(syncNote(), R, fresh ? {} : L.base, L.mt, p.mt, orderKey, fresh ? {} : L.orig);
         syncAdopt(m);
         L.rev = got.data.rev; L.vid = got.data.created; L.base = m.remote; L.mt = syncPruneMt(m.mt);
-        L.seen = {}; for (const k in m.hashes) if (m.hashes[k] !== m.remote[k]) L.seen[k] = m.hashes[k];
+        syncAfterMerge(L, m, R);
         L.from = got.data.device || ""; L.fromAt = got.data.updatedAt || 0;
         if (m.toLocal) changed = true;
         syncNote();
@@ -8429,7 +8505,7 @@ async function syncCycle(opts){
 async function syncPush(key, auth, lic, rekey){
   const L = S._local, base = L.rev || 0;
   const u = syncNote();
-  const payload = {format:"orbit-sync-state", v:1, seq:base + 1, at:Date.now(), device:SYNC_DEVICE_NAME, mt:syncPruneMt(L.mt), state:syncPayloadState(S)};
+  const payload = {format:"orbit-sync-state", v:1, seq:base + 1, vid:L.vid || 0, at:Date.now(), device:SYNC_DEVICE_NAME, mt:syncPruneMt(L.mt), state:syncPayloadState(S)};
   const salt = rekey ? rekey.salt : VAULT.salt, iter = rekey ? rekey.iter : (VAULT.iter || ITER);
   let body;
   try { body = JSON.stringify(await syncSeal(rekey ? rekey.key : key, salt, iter, payload)); }
@@ -8441,7 +8517,8 @@ async function syncPush(key, auth, lic, rekey){
   if (!S || !S._local) return "stopped";
   if (r.status === 200 && r.data.rev){
     const N = S._local;
-    N.rev = r.data.rev; N.vid = r.data.created || N.vid; N.base = syncHashes(u); N.seen = {};
+    N.rev = r.data.rev; N.vid = r.data.created || N.vid; N.base = syncHashes(u); N.seen = {}; N.orig = {};
+    SYNC.baseC = syncBaseFrom(u);
     N.from = SYNC_DEVICE_NAME; N.fromAt = Date.now();
     if (KEY === key) syncNote();
     return "ok";
@@ -8462,12 +8539,16 @@ function syncTrouble(r){
   SYNC.fails++;
   return syncShow("error", "The sync service had a problem. Orbit tries again on its own.");
 }
-// The online copy was deleted (Delete the online copy, on this or another device): sync stops here.
-function syncGone(){
+// The online copy was deleted (Delete the online copy, on this or another device), or replaced by a new
+// one: sync stops here. When this device changed each unit is kept, so turning sync on again (which then
+// merges with whatever copy is there) still knows which of its changes are newer.
+function syncGone(replaced){
   if (!S) return;
-  delete S._local; syncHintWrite(null); syncPersist();
+  S._local = {on:false, lic:(S._local || {}).lic || "", mt:(S._local || {}).mt || {}};
+  syncHintWrite(null); syncPersist();
   syncShow("");
-  toast("The online copy of your vault was deleted, so sync is off on this device. Turn it on again in Settings to make a new one.", "err");
+  toast(replaced ? "The online copy of your vault was replaced on another device, so sync is off here. Turn it on again in Settings to merge with the new one."
+    : "The online copy of your vault was deleted, so sync is off on this device. Turn it on again in Settings to make a new one.", "err");
 }
 // Re-renders after a merge, except while someone's typing in the page (it waits for them to leave the box).
 function syncRender(){
@@ -8481,7 +8562,9 @@ function syncRender(){
   render();
 }
 setInterval(() => {
-  if (!syncOn() || SYNC.busy || Date.now() < SYNC.retryAt || SYNC.state === "password" || SYNC.state === "license") return;
+  if (!syncOn() || SYNC.busy || Date.now() < SYNC.retryAt || SYNC.state === "password") return;
+  // A license that wasn't accepted may have been a passing problem: check again every 10 minutes.
+  if (SYNC.state === "license"){ if (Date.now() - SYNC.ranAt >= 600000) syncRun(); return; }
   if (SYNC.waiting){ if (!syncBlocked()) syncRun(); return; }
   const every = SYNC.state === "offline" || SYNC.state === "error" ? Math.min(300000, 15000 * 2 ** Math.min(SYNC.fails, 5)) : document.hidden ? 300000 : 30000;
   if (Date.now() - SYNC.ranAt >= every) syncRun();
@@ -8491,7 +8574,8 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && Da
 window.addEventListener("online", () => syncSoon(500));
 // Unlocked: catch up with the other devices first thing.
 function syncStart(){
-  SYNC.state = ""; SYNC.msg = ""; SYNC.fails = 0; SYNC.retryAt = 0; SYNC.ranAt = 0;
+  SYNC.state = ""; SYNC.msg = ""; SYNC.fails = 0; SYNC.retryAt = 0; SYNC.ranAt = 0; SYNC.baseC = new Map();
+  if (S && S._local && S._local.base){ SYNC.unitsGen = -1; syncNote(); SYNC.baseC = syncBaseFrom(SYNC.units, S._local.base); }
   if (syncOn()){ const h = syncHint(); if (!h || h.lic !== S._local.lic) syncHintWrite({lic:S._local.lic, dirty:!!S._local.pending}); syncSoon(300); }
 }
 
@@ -8578,6 +8662,12 @@ async function syncInfo(lic){
   if (r.status === 0) throw SYNC_ERR.offline;
   if (r.status === 401) throw SYNC_ERR.license;
   if (r.status !== 200) throw SYNC_ERR.server;
+  // The password is only ever run through settings Orbit itself uses (a 16-byte salt, ITER rounds or
+  // more), so a service that sent weaker ones couldn't make the token easy to guess the password from.
+  if (r.data.exists){
+    let salt = null; try { salt = fromB64(r.data.salt); } catch(e){}
+    if (!salt || salt.length !== 16 || !(r.data.iter >= ITER && r.data.iter <= 10000000)) throw "The sync service sent settings Orbit doesn't accept, so your password wasn't used.";
+  }
   return r.data;
 }
 // The online copy, opened with `pw`: {key, auth, got, p}. Throws a message to show.
@@ -8594,7 +8684,7 @@ async function syncFetchKey(lic, key, auth){
   let p;
   try { p = await syncOpen(key, got.data.record); }
   catch(e){ throw e && e.message === "nogzip" ? "This browser can't unpack your synced vault. Update it, or use a current Chrome, Edge, Safari or Firefox." : "Your synced vault couldn't be opened."; }
-  if (p.seq && p.seq !== got.data.rev) throw "Your synced vault couldn't be opened.";
+  if (p.seq !== got.data.rev || (p.vid && p.vid !== got.data.created)) throw "Your synced vault couldn't be opened.";
   return {key, auth, got, p};
 }
 // Merges an online copy (from syncFetch*) into this vault, which moves onto that copy's key: from now on
@@ -8602,13 +8692,14 @@ async function syncFetchKey(lic, key, auth){
 function syncMergeIn(lic, info, o){
   const was = S._local || {};
   const same = !!was.vid && was.vid === o.got.data.created;   // synced with this copy before
-  if (same) syncNote();   // changes made since (with sync off, or before a password change) count as changes
-  const m = syncMerge(syncUnits(S), syncUnits(sanitizeState(o.p.state)), same ? was.base || {} : {}, was.mt || {}, o.p.mt, orderKey);
+  if (was.base) syncNote();   // changes made since (with sync off, or before a password change) count as changes
+  const R = syncUnits(sanitizeState(o.p.state));
+  const m = syncMerge(syncUnits(S), R, same ? was.base || {} : {}, was.mt || {}, o.p.mt, orderKey, same ? was.orig || {} : {});
   syncAdopt(m);
   KEY = o.key; SYNC_AUTH = o.auth;
   VAULT = Object.assign({}, VAULT, {salt:info.salt, iter:info.iter || ITER});
-  const seen = {}; for (const k in m.hashes) if (m.hashes[k] !== m.remote[k]) seen[k] = m.hashes[k];
-  S._local = {on:true, lic, rev:o.got.data.rev, vid:o.got.data.created, base:m.remote, seen, mt:syncPruneMt(m.mt), okAt:Date.now(), from:o.got.data.device || "", fromAt:o.got.data.updatedAt || 0};
+  S._local = {on:true, lic, rev:o.got.data.rev, vid:o.got.data.created, base:m.remote, mt:syncPruneMt(m.mt), okAt:Date.now(), from:o.got.data.device || "", fromAt:o.got.data.updatedAt || 0};
+  syncAfterMerge(S._local, m, R);
   syncHintWrite({lic, dirty:true});
   syncNote(); syncPersist();
   return m;
@@ -8617,8 +8708,10 @@ function syncMergeIn(lic, info, o){
 async function syncStartFrom(lic, info, o){
   const st = sanitizeState(o.p.state);
   delete st._local; st.pulls = [];
-  st._local = {on:true, lic, rev:o.got.data.rev, vid:o.got.data.created, base:syncHashes(syncUnits(st)), seen:{}, mt:syncPruneMt(o.p.mt), okAt:Date.now(),
+  const u = syncUnits(st);
+  st._local = {on:true, lic, rev:o.got.data.rev, vid:o.got.data.created, base:syncHashes(u), seen:{}, orig:{}, mt:syncPruneMt(o.p.mt), okAt:Date.now(),
     from:o.got.data.device || "", fromAt:o.got.data.updatedAt || 0};
+  SYNC.baseC = syncBaseFrom(u);
   const rec = await sealState(o.key, {iter:info.iter || ITER, salt:info.salt}, st);
   KEY = o.key; SYNC_AUTH = o.auth; S = st; VAULT = rec;
   writeStore(rec);
@@ -8662,7 +8755,9 @@ function openSyncOn(){
             return syncCycle({now:true});
           });
           if (!S) return;
-          return done(SYNC.state === "ok" ? "Sync is on. Your vault is online, encrypted." : "Sync is on. Orbit finishes the first upload once it can reach the sync service.");
+          if (SYNC.state === "ok") return done("Sync is on. Your vault is online, encrypted.");
+          if (SYNC.state === "offline") return done("Sync is on. Orbit finishes the first upload once it can reach the sync service.");
+          close(); toast("Sync is on, but the first upload didn't go through: " + syncStatus().text, "err"); return;
         }
         // The online copy has this vault's password: merge them now.
         if (i.salt === VAULT.salt && (i.iter || ITER) === (VAULT.iter || ITER)){
@@ -8681,7 +8776,7 @@ function openSyncOn(){
         const rekeyed = o.key !== KEY;
         const r = await syncExclusive(async () => { if (!S) return "stopped"; syncMergeIn(lic, i, o); render(); return syncCycle({now:true}); });
         if (!S) return;
-        const later = r === "ok" ? "" : " Orbit sends this vault's own changes once it can reach the sync service.";
+        const later = r === "ok" ? "" : SYNC.state === "offline" ? " Orbit sends this vault's own changes once it can reach the sync service." : " " + syncStatus().text;
         done((rekeyed ? `Sync is on. This ${dev}'s vault now opens with the online copy's password.` : "Sync is on. This vault and the online copy were merged.") + later);
       };
       const join2 = async () => {
@@ -8754,7 +8849,7 @@ async function syncDeleteOnline(){
   const lic = S._local.lic;
   const r = await syncCall("DELETE", "/vault", lic);
   if (r.status !== 200){ toast(r.status ? SYNC_ERR.server : SYNC_ERR.offline, "err"); return; }
-  await syncExclusive(async () => { if (S){ delete S._local; syncHintWrite(null); syncPersist(); } });
+  await syncExclusive(async () => { if (S){ S._local = {on:false, lic, mt:(S._local || {}).mt || {}}; syncHintWrite(null); syncPersist(); } });
   syncShow(""); render(); toast("The online copy was deleted. Sync is off.");
 }
 
@@ -9542,7 +9637,7 @@ async function loadInbox(){
     for (const it of items){
       const row = {docId:d.id, id:it.id, at:it.at, ok:false, from:"", profiles:[], slots:[]};
       try {
-        const pl = await openSubmission(it.payload, S.share.priv);
+        const pl = await openSubmissionAny(it.payload);
         row.ok = true; row.from = pl.from || ""; row.profiles = pl.profiles || []; row.slots = pl.slots || [];
       } catch(e){ row.err = "Encrypted for a different vault key."; }
       INBOX.push(row);
@@ -10140,6 +10235,13 @@ async function sealSubmission(pubB64u, payload){
   const ct = await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, enc.encode(JSON.stringify(payload)));
   return "PVSUB1." + [b64u(epk), b64u(iv), b64u(ct)].join(".");
 }
+// With this vault's collecting key, or one it had before two vaults were merged (S.shareOld).
+async function openSubmissionAny(code){
+  const keys = [S.share].concat(S.shareOld || []).filter(k => k && k.priv);
+  let err = null;
+  for (const k of keys){ try { return await openSubmission(code, k.priv); } catch(e){ err = err || e; } }
+  throw err || new Error("Set up collecting in Settings first.");
+}
 async function openSubmission(code, jwk){
   const parts = code.replace(/\.+$/, "").split(".");
   if (parts.length !== 4 || parts[0] !== "PVSUB1") throw new Error("One of the codes is incomplete. Ask the sender to copy it again.");
@@ -10442,7 +10544,7 @@ document.addEventListener("click", async (e) => {
     case "settings-restore": openRestore(true); break;
     case "settings-erase": { if (await confirmDialog({title:"Erase vault?", body:"This deletes everything on this device. It can't be undone." + (syncOn() ? " The online copy (sync) stays, for your other devices." : ""), confirm:"Erase vault", danger:true, typeWord:"ERASE"})){ clearStore(); syncHintWrite(null); VAULT=null; S=null; KEY=null; SYNC_AUTH=null; renderLock("Vault erased. Create a new master password to start over."); } break; }
     case "sync-on": openSyncOn(); break;
-    case "sync-now": { SYNC.fails = 0; SYNC.retryAt = 0; await syncRun(); if (SYNC.state === "ok") toast("Synced"); else if (SYNC.state === "waiting") toast("Close the open window first, then sync."); else if (SYNC.state && SYNC.state !== "syncing") toast(syncStatus().text, "err"); break; }
+    case "sync-now": { SYNC.fails = 0; SYNC.retryAt = 0; await syncRun(true); if (SYNC.state === "ok") toast("Synced"); else if (SYNC.state === "waiting") toast("Close the open window first, then sync."); else if (SYNC.state && SYNC.state !== "syncing") toast(syncStatus().text, "err"); break; }
     case "sync-off": syncTurnOff(); break;
     case "sync-delete": syncDeleteOnline(); break;
     case "sync-copy-link": copyText(WEB_URL, "web address"); break;

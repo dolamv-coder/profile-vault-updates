@@ -48,6 +48,8 @@
 //                              try again). base=0 creates it.
 //   DELETE /vault              removes it (the license key alone does, for a forgotten password; the
 //                              devices keep their own copies)
+// A wrong token gets 403 and counts toward a 15-minute lockout after 10; the token of the password
+// before the last change gets 403 {error:"password changed"} and doesn't count.
 // Owner:
 //   GET/POST /review/DISCORD_ID?t=TOKEN   approve or deny one request (link posted to the webhook)
 //   GET/POST /slots/review/ID?t=TOKEN     approve (optionally a different number) or deny more slots
@@ -1203,10 +1205,13 @@ async function vaultAuthCheck(env, row, token, now) {
   const lockMs = vaultLockMs(env);
   const locked = row.fails >= VAULT_FAILS && now - row.fail_at < lockMs;
   if (locked) return json({ error: "too many wrong passwords", retryAfter: Math.ceil((lockMs - (now - row.fail_at)) / 1000) }, 429, NO_STORE);
-  if (validVaultToken(token) && await sameText(await sha256Hex(token), row.auth_hash)) {
+  const hash = validVaultToken(token) ? await sha256Hex(token) : "";
+  if (hash && await sameText(hash, row.auth_hash)) {
     if (row.fails) await env.DB.prepare("UPDATE vaults SET fails = 0, fail_at = 0 WHERE key_hash = ?").bind(row.key_hash).run();
     return null;
   }
+  // A device still on the previous password: it isn't guessing, so it doesn't count.
+  if (hash && row.prev_auth_hash && await sameText(hash, row.prev_auth_hash)) return json({ error: "password changed" }, 403, NO_STORE);
   const fails = (now - row.fail_at < lockMs ? row.fails : 0) + 1;
   await env.DB.prepare("UPDATE vaults SET fails = ?, fail_at = ? WHERE key_hash = ?").bind(fails, now, row.key_hash).run();
   return json({ error: "wrong password" }, 403, NO_STORE);
@@ -1281,8 +1286,8 @@ async function vaultPut(request, env, url) {
     // whole batch is undone.
     const res = await env.DB.batch([
       ...chunks.map((c, i) => env.DB.prepare("INSERT INTO vault_chunks (key_hash, rev, idx, data) VALUES (?, ?, ?, ?)").bind(lic.hash, next, i, c)),
-      env.DB.prepare("UPDATE vaults SET rev = ?, auth_hash = ?, salt = ?, iter = ?, size = ?, chunks = ?, device = ?, updated_at = ? WHERE key_hash = ? AND rev = ? AND created_at = ?")
-        .bind(next, newToken ? await sha256Hex(newToken) : row.auth_hash, salt, iter, text.length, chunks.length, device, now, lic.hash, row.rev, row.created_at),
+      env.DB.prepare("UPDATE vaults SET rev = ?, auth_hash = ?, prev_auth_hash = ?, salt = ?, iter = ?, size = ?, chunks = ?, device = ?, updated_at = ? WHERE key_hash = ? AND rev = ? AND created_at = ?")
+        .bind(next, newToken ? await sha256Hex(newToken) : row.auth_hash, newToken ? row.auth_hash : (row.prev_auth_hash || ""), salt, iter, text.length, chunks.length, device, now, lic.hash, row.rev, row.created_at),
       env.DB.prepare("DELETE FROM vault_chunks WHERE key_hash = ? AND rev < ?").bind(lic.hash, next - 1),
     ]);
     changed = res[chunks.length].meta ? res[chunks.length].meta.changes : 0;

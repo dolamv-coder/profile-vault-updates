@@ -356,7 +356,8 @@ creates the `vaults` and `vault_chunks` tables.
   here can't be read here, by you or anyone with access to the database.
 - Reading or saving takes the license key and an access token the app derives from that same
   password. Only a hash of the token is kept. After 10 wrong passwords in a row, the vault
-  refuses tokens for 15 minutes.
+  refuses tokens for 15 minutes. A device still on the password before the last change is told
+  it changed, and that doesn't count.
 - Each save names the revision it started from, and which vault (when it was made), so a save
   never lands on a copy that was deleted and made again. If another device saved in between, the
   save is refused and the app merges the two before trying again. The current revision and the

@@ -1215,9 +1215,14 @@ try {
     await wait(350);
     assert.equal((await vault("/vault?base=5", V1, { method: "PUT", auth: token1, record: sealed(salt2) })).status, 400, "no new token");
     assert.deepEqual(await (await vault("/vault?base=5", V1, { method: "PUT", auth: token1, newAuth: token2, record: sealed(salt2) })).json(), { rev: 6, created: created1 });
-    assert.equal((await vault("/vault", V1, { auth: token1 })).status, 403);
+    const old = await vault("/vault", V1, { auth: token1 });
+    assert.equal(old.status, 403); assert.equal((await old.json()).error, "password changed", "the old password is recognized as the old one");
     assert.equal((await (await vault("/vault", V1, { auth: token2 })).json()).rev, 6);
     assert.equal((await (await vault("/vault/info", V1)).json()).salt, salt2);
+  });
+  await test("a device still on the previous password never locks the vault, however often it tries", async () => {
+    for (let i = 0; i < 12; i++) assert.equal((await vault("/vault", V1, { auth: token1 })).status, 403);
+    assert.equal((await vault("/vault", V1, { auth: token2 })).status, 200);
   });
   await test("10 wrong passwords lock the vault for a while, even for the right one; it opens again after", async () => {
     for (let i = 0; i < 10; i++) assert.equal((await vault("/vault", V1, { auth: tok() })).status, 403);

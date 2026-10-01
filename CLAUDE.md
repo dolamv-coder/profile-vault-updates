@@ -217,17 +217,29 @@ two last agreed on (`syncMerge`, between `SYNC-CORE-START` and
 `SYNC-CORE-END`; `.github/scripts/sync-merge.test.mjs` tests it against the
 newest page on every pull request that changes a page): list items by id, map
 entries (settings, caps, subs, deletedOrders) by key, slots by value. A change
-on one side wins; the same unit changed on both takes the later change, and an
-edit beats a deletion. Never synced: `S._local` (that device's bookkeeping:
-`base` hashes, `rev`, `vid`, change times `mt`), `pulls`, and
-`LOCAL_SETTINGS`. **A new setting key syncs unless it's added to
-`LOCAL_SETTINGS`**, so add per-device ones there. Merges wait while a window is
-open or email is syncing (`syncBlocked`). A password change moves the online
-copy first (`syncChangePassword`); other devices then get 403 and ask for the
-new password, or take it on the lock screen and ask for the previous one to
-bring their own copy along (`syncUnlockOnline`). Restoring a backup turns sync
-off; erasing a device keeps the online copy. 1.9.65 also stops `sanitizeState`
-dropping `deletedOrders`, which until then lasted only until Orbit closed.
+on one side wins. The same unit changed on both is merged field by field
+against its starting version (`L.orig`, kept for what this device changed), and
+a field both changed takes the later change (`mt`, noted within a second of the
+change, also with sync off); an edit beats a deletion, except that an order
+deleted on purpose (its key in `deletedOrders`) stays deleted. Never synced:
+`S._local` (that device's bookkeeping: `base` hashes, `rev`, `vid`, `mt`,
+`orig`), `pulls`, `LOCAL_SETTINGS`, and the email-sync progress fields on each
+inbox (`SYNC_DEVICE_FIELDS`). **A new setting key, or a new field email sync
+writes on an inbox, syncs unless it's added there**, so add per-device ones. A
+collecting key that loses a merge goes to `shareOld`, and codes for it still
+open (`openSubmissionAny`). Merges wait while a window is open or email is
+syncing (`syncBlocked`). The record isn't compressed (its size would leak what's
+in it), carries its revision and vault id (`seq`, `vid`, so a stale, replayed or
+other copy is refused), and a vault id that changes turns sync off rather than
+merging into a new copy. The page only derives the token with a 16-byte salt and
+at least `ITER` rounds, whatever `/vault/info` says. A password change moves the
+online copy first (`syncChangePassword`); other devices then get 403 (the old
+password's token answers "password changed" and doesn't count toward the
+lockout), stop retrying, and ask for the new password, or take it on the lock
+screen and ask for the previous one to bring their own copy along
+(`syncUnlockOnline`). Restoring a backup turns sync off; erasing a device keeps
+the online copy. 1.9.65 also stops `sanitizeState` dropping `deletedOrders`,
+which until then lasted only until Orbit closed.
 
 ## Pieces that live outside this repo
 
