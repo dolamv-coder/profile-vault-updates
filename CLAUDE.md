@@ -181,7 +181,13 @@ wrapper's own sender tests) to `surveyFrom`, since the wrapper hands survey
 senders back without its subject check. The page then groups them by the real
 sender (`relayedFrom`) and checks their subjects itself: `CLEAN_PROTECT` plus
 `CLEAN_APP_PROTECT`, a copy of the wrapper's `PROTECT`. The page's `SPAM_KEEP`
-is the wrapper's plus the order wording it lacks.
+is the wrapper's plus the order wording it lacks and, from 1.9.63, sign-in
+codes in other words (Target's "Enter code 123456 to sign in…"), which "Clear
+all of Spam" used to move to Trash. From 1.9.63 Clean emails tells a wrapper
+older than 10, which ignores `CLEAN_RULES`, to get the new download
+(`CLEAN_OLD_APP`). A page update reaches Clean emails only after Orbit
+restarts: until then auto-clean keeps running the old page's rules, so a user
+who never restarts still sees mail a newer page would clear.
 
 ## Pieces that live outside this repo
 
