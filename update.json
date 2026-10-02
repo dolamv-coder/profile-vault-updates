@@ -1,10 +1,10 @@
 {
-  "version": "1.9.67",
-  "url": "index-1.9.67.html",
-  "sha256": "ab8e3e262781725c14008ed4fd45799b64aacd03e2be56a1027e48f5b745c2ad",
-  "signature": "4FUFmWoZHvPXU5lTkSwoFDzVLesJLbk0p4O+rDywB8Uo6p+4mRgDoX5/VsN6SvgEu86698ewXk5U04ZXZJy1Dg==",
+  "version": "1.9.68",
+  "url": "index-1.9.68.html",
+  "sha256": "ad48ac0b1d2927179773ac5ce376237455a326c08ae011e0298ad4b2b5d015bd",
+  "signature": "ty2OhmuEh5cxXq9yfrDxpfj4Hhv5rAhM7nxDBZM2qhic5T/d9QVCRiyTEzyEwHtG+v6BvLLI4Qu6Y0PiPrmsDw==",
   "minAppVersion": "0",
-  "notes": "Pokémon Center profiles can now use an assigned account: choose Use Assigned Account and the seller provides the email, so Orbit doesn't ask you for one. Your own email still works as before.",
+  "notes": "Import profiles now reads spreadsheet cells written as =\"…\", the way submitted slot files now keep full card numbers, CVVs and zip codes for Excel.",
   "installerUrl": "",
-  "publishedAt": "2026-10-01T21:53:09.088Z"
+  "publishedAt": "2026-10-02T08:59:42.869Z"
 }
