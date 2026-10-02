@@ -836,9 +836,9 @@ async function submission(request, env, url) {
       return used.get(store);
     };
     attach = files.map((f) => f.kind === "profiles"
-      ? { name: `${base}-${label(f.store)}.csv`, text: f.text, type: "text/csv" }
+      ? { name: `${base}-${label(f.store)}.csv`, text: excelSafe(f.text), type: "text/csv" }
       : { name: `${base}-${label(f.store)}-logins.txt`, text: f.text });
-  } else attach = [csv !== null ? { name: base + ".csv", text: csv, type: "text/csv" } : { name: base + ".txt", text: code }];
+  } else attach = [csv !== null ? { name: base + ".csv", text: excelSafe(csv), type: "text/csv" } : { name: base + ".txt", text: code }];
   // Discord takes 10 attachments a message, so more go in follow-up messages. If one of those fails,
   // the batch counts as not sent and the app sends it again (the owner may then see the first part twice).
   let msgId = null, postedAny = false;
@@ -902,6 +902,25 @@ function parseCsv(text) {
   return rows;
 }
 const csvCell = (v) => { const t = String(v == null ? "" : v); return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+
+// The owner opens these files in Excel, which reads a run of digits as a number: a card number shows
+// as 5.55556E+15 and keeps only 15 digits (saving the file turns the 16th into 0), and CVVs, months
+// and zip codes lose a leading 0. So those cells go to the channel as ="…", which Excel and Google
+// Sheets show as the text itself, and Excel saves as the plain value. Any other cell that starts with
+// = + - or @ (buyers type these) would run as a formula, so it goes out the same way. Orbit's CSV
+// import (1.9.68+) reads ="…" as the text inside.
+const EXCEL_TEXT_COLS = new Set([
+  "phone_num", "cc_number", "cc_exp_month", "cc_cvv", "shipping_zip_code", "billing_zip_code",   // app 1.9.53+
+  "phone", "card_number", "card_exp_month", "card_cvv", "ship_zip", "bill_zip",                   // app 1.9.52
+]);
+// A string in an Excel formula holds 255 characters at most, so a longer one is joined from parts.
+const excelText = (v) => "=" + v.match(/[\s\S]{1,250}/g).map((p) => `"${p.replace(/"/g, '""')}"`).join("&");
+function excelSafe(text) {
+  const eol = /\r\n/.test(text) ? "\r\n" : "\n";
+  const rows = parseCsv(text), head = (rows[0] || []).map((h) => h.replace(/^\uFEFF/, "").trim().toLowerCase());
+  for (let r = 1; r < rows.length; r++) rows[r] = rows[r].map((v, i) => v && (EXCEL_TEXT_COLS.has(head[i]) || /^[=+\-@\t\r]/.test(v)) ? excelText(v) : v);
+  return rows.map((r) => r.map(csvCell).join(",")).join(eol) + (/\r?\n$/.test(text) ? eol : "");
+}
 
 async function assignAccounts(env, lic, batch, files, now) {
   const picks = new Map();

@@ -195,7 +195,7 @@ curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit
 ## Slots sent to your Discord
 
 Every batch people submit from a licensed Orbit is posted to the same Discord channel as files you
-can open directly, in a spreadsheet or your bot. There's nothing to set up; it uses the same
+can open directly in Excel or Google Sheets. There's nothing to set up; it uses the same
 `DISCORD_WEBHOOK_URL`. From Orbit 1.9.53 each store gets its own two files:
 
 - `orbit-slots-…-target.csv`: that store's slots, one row each, in these columns: `profile_name,
@@ -205,6 +205,13 @@ can open directly, in a spreadsheet or your bot. There's nothing to set up; it u
   billing_city, billing_state, billing_zip_code, billing_country`.
 - `orbit-slots-…-target-logins.txt`: that store's logins, one `email:password` per line, in the same
   order as the first rows of the CSV.
+
+In the CSV, the phone, card number, expiry month, CVV and zip code cells are written as `="…"`, for
+example `="5555555555554444"`, so Excel shows the full card number and keeps leading zeros. Without
+it, Excel turns them into numbers: 5.55556E+15, with the last digit lost if the file is saved. Any
+other cell that starts with `=`, `+`, `-` or `@` is written the same way, so nothing a buyer typed
+runs as a formula. Excel saves these cells as the plain value. A bot reading the file directly would
+see the `="…"`, and Orbit's **Import** (1.9.68+) reads them as the text inside.
 
 > 📦 **6 slots** from **Kim** · @kim · license …ABCD
 > Target 3 · Walmart 3
@@ -217,7 +224,8 @@ buyer added no login because you provide one, and the store line says so, e.g. "
 account)". Discord takes 10 files a message, so a batch with more stores continues in a follow-up
 message.
 
-To load a store into your own Orbit, **Import** its CSV and pick that store under Retailers, then on
+To load a store into your own Orbit (1.9.68 or later, which reads the `="…"` cells), **Import** its
+CSV and pick that store under Retailers, then on
 Store logins use **Import accounts** with the logins file and **Link to profiles** on: each account
 goes to the profile with the same email, and the "no login linked" alert lists any left over.
 From Orbit 1.9.57, a profile waiting for a login is also linked to a login you already saved with the

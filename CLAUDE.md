@@ -49,6 +49,12 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   logins as `email:password` lines in a separate `.txt`, in the same order as the first rows. The
   worker names them `orbit-slots-<time>-<sender>-<store>.csv` and `…-<store>-logins.txt`, 10
   attachments per message. Slots without a store login come after those rows.
+  The owner opens these in Excel, which shows a 16-digit card number as 5.55556E+15 (keeping only 15
+  digits) and drops leading zeros. So since 2026-10-02 the worker writes each slots CSV's phone, card
+  number, expiry month, CVV and zip code cells as `="…"` Excel text (`excelSafe`), and does the same
+  to any cell that starts with `= + - @`, so nothing a buyer typed runs as a formula. This works for
+  files from every app version. Orbit's CSV import reads `="…"` cells as their text from 1.9.68
+  (`xlUnwrap` in `parseCSV`).
   How each store on a profile checks out (`stores[].mode`, from 1.9.57): Pokémon Center on the
   buyer's own email, as a guest with no login (`"email"`; from 1.9.62 nothing asks for or shows whether it's
   verified, and `verified` is only kept for older data); every other store on a store login (`"login"`);
@@ -221,7 +227,8 @@ top-level vault keys it knows (`SYNC_LISTS`, `SYNC_MAPS`, `SYNC_SETS`, `SYNC_VAL
 store modes it doesn't know (`fixMode`). A release in the meantime that adds either would have it
 undone by a web device that syncs a change, so keep those for the big update. New fields on existing
 items and new shared settings keys are safe (a new per-device setting would still sync through a web
-device, which doesn't know to keep it local).
+device, which doesn't know to keep it local). Its Import profiles also predates `xlUnwrap`, so it
+doesn't read the `="…"` cells in slot files.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
