@@ -83,6 +83,21 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
   once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.
   Never put the accounts or their password in this repo or a page: it's public.
+  From 1.9.69 buyers hear about orders placed on the accounts they were given (Settings → Order
+  alerts for buyers). The owner's Orbit asks to send them (`POST /alerts/sender`), and the owner
+  allows that license from the review link (`/alerts/review/:id`, D1 `alert_senders`). One license
+  sends at a time; allowing another replaces it. After each email sync it sends the orders it found
+  on accounts given out (`GET /alerts/accounts`). An order is matched by `sentTo` (the address the
+  store's email went to, kept on orders from 1.9.69) or its inbox, and must be at that account's store.
+  It goes as `POST /alerts {events:[{account, store, storeName, orderNo, item, qty, total, stage, at}]}`,
+  each step (placed, shipped, arriving, delivered, canceled) once per order (`o.buyerTold`). The worker
+  routes each event to the license holding that account, and drops an order dated more than a day
+  before the account was given out. It keeps the alert 60 days without the account (D1 `alerts`), and
+  posts it to the buyer's own Discord webhook if they set one (`PUT /alerts/webhook`, D1
+  `alert_webhooks`; Discord's URLs only, and a test post first). The buyer's Orbit checks
+  `GET /alerts?since=` every 5 minutes (cursor `settings.sellerSince`). It adds each alert as an order
+  with id `sa-<oid>`, `fromSeller` and `profile`, moves it along, and notifies (`sendAlert`).
+  A deleted one stays deleted: from 1.9.69 the order editor's Delete also records `deletedOrders`.
   From 1.9.57 a store waiting for a login is linked to the saved login with the profile's email on
   its own: once per vault at unlock (`settings._linkedByEmail`), on Import profiles and inbox
   submissions, and by ticking the profile in the store login editor (`linkByEmail`).

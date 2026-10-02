@@ -30,6 +30,7 @@ const USERS = {
 };
 
 const webhookPosts = [], webhookEdits = [], webhookFail = [];
+const buyerHookPosts = [];   // posts to buyers' own webhooks (order alerts)
 let webhookHang = null;   // {ms, code}: the next webhook post waits ms, then fails with code (if given)
 const discord = createServer(async (req, res) => {
   const chunks = []; for await (const c of req) chunks.push(c);
@@ -67,6 +68,10 @@ const discord = createServer(async (req, res) => {
   if (req.method === "PATCH" && u.pathname.startsWith("/webhook/messages/")) {
     webhookEdits.push({ id: u.pathname.split("/").pop(), ...JSON.parse(body) }); return send(200, {});
   }
+  if (req.method === "POST" && u.pathname.startsWith("/buyerhook/")) {
+    if (u.pathname.includes("/dead/")) return send(404, { message: "Unknown Webhook" });
+    buyerHookPosts.push({ path: u.pathname, ...JSON.parse(body) }); return send(200, {});
+  }
   send(404, {});
 });
 
@@ -92,6 +97,7 @@ const common = [
   `PULL_STALE_MS=3000`,
   `ACCOUNT_OFFER_TTL_MS=8000`,
   `ACCOUNTS_LOW_AT=3`,
+  `ALERT_WEBHOOK_TEST_PREFIX=http://127.0.0.1:${DISCORD_PORT}/buyerhook/`,
   `GH_LICENSE_PUB=${JSON.stringify({ kty: "EC", crv: "P-256", x: pubJwk.x, y: pubJwk.y })}`,
 ];
 
@@ -1167,6 +1173,119 @@ try {
     assert.ok(limited, "hit the limit");
     const d = await (await admin("/admin/submissions")).json();
     assert.equal(d.submissions.filter((x) => x.key_last4 === frankKey.slice(-4) && Date.now() - x.created_at < 3600e3).length, 30);
+  });
+
+  console.log("\nOrder alerts (app 1.9.69+)");
+  // Frank's Orbit is the owner's here; Gina and Bob were given accounts above.
+  const getAuth = (path, key) => fetch(BASE + path, { headers: { authorization: "Bearer " + key }, cache: "no-store" });
+  const putAuth = (path, key, body) => fetch(BASE + path, { method: "PUT", headers: { authorization: "Bearer " + key, "content-type": "application/json" }, body: JSON.stringify(body) });
+  const reviewIn = (content) => (content.match(/\((http[^)]+\/alerts\/review\/[^)]+)\)/) || [])[1];
+  const today = new Date().toISOString().slice(0, 10);
+  let ginaAcct, bobAcct, firstAlert;
+  const orderEvent = (o) => ({ account: ginaAcct.email.toUpperCase(), store: "target", storeName: "Target", orderNo: "ord-1001", item: "Pokémon 151 Booster Bundle", qty: "2", total: "$59.98", stage: "placed", at: today, ...o });
+  await test("only the allowed sender sends order alerts or sees the accounts given out", async () => {
+    const given = (await accounts()).given;
+    ginaAcct = given.find((a) => a.key_last4 === ginaKey.slice(-4)); bobAcct = given.find((a) => a.key_last4 === bobKey.slice(-4));
+    assert.ok(ginaAcct && bobAcct, "accounts given out above");
+    assert.equal((await slots("/alerts", frankKey, { events: [orderEvent()] })).status, 403);
+    assert.equal((await getAuth("/alerts/accounts", frankKey)).status, 403);
+    assert.equal((await slots("/alerts", null, { events: [orderEvent()] })).status, 401);
+    assert.deepEqual(await (await getAuth("/alerts/sender", frankKey)).json(), { status: "none", canAsk: true });
+  });
+  let senderLink;
+  await test("asking posts a review link to the channel; it waits for the owner", async () => {
+    assert.deepEqual(await (await slots("/alerts/sender", frankKey, { name: "Owner" })).json(), { status: "pending" });
+    await new Promise((ok) => setTimeout(ok, 400));
+    const m = webhookPosts.at(-1).content;
+    assert.match(m, /Let this Orbit send order alerts to buyers\?/); assert.match(m, /\*\*Owner\*\* · @frank · license …/);
+    senderLink = reviewIn(m); assert.ok(senderLink, m);
+    assert.equal((await (await getAuth("/alerts/sender", frankKey)).json()).status, "pending");
+    assert.match(await (await fetch(senderLink)).text(), /Only allow it if you turned it on/);
+    assert.equal((await fetch(senderLink.replace(/t=[^&]+/, "t=wrong"))).status, 404);
+  });
+  await test("allowing it makes that license the sender, and the channel message says so", async () => {
+    assert.match(await (await offerPost(senderLink, "allow")).text(), /Allowed\. Orders on the accounts you assign now reach the buyers who have them\./);
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.match(webhookEdits.at(-1).content, /Sends order alerts to buyers/);
+    assert.equal((await (await getAuth("/alerts/sender", frankKey)).json()).status, "allowed");
+    assert.match(await (await offerPost(senderLink, "refuse")).text(), /Sends order alerts to buyers/, "decided: stays allowed");
+    const acc = (await (await getAuth("/alerts/accounts", frankKey)).json()).accounts;
+    assert.ok(acc.some((a) => a.email === ginaAcct.email && a.store === "target") && acc.some((a) => a.email === bobAcct.email), "the accounts given out");
+    assert.ok(acc.every((a) => Object.keys(a).sort().join() === "email,store"), "just the email and store, never passwords");
+    assert.equal((await getAuth("/alerts/accounts", ginaKey)).status, 403);
+  });
+  await test("an order on a given-out account reaches that buyer, without the account", async () => {
+    const r = await (await slots("/alerts", frankKey, { events: [
+      orderEvent(), orderEvent({ account: "nobody@example.com" }), orderEvent({ store: "walmart" }), orderEvent({ at: "2020-01-01", orderNo: "OLD-1" }), orderEvent({ stage: "lost" })] })).json();
+    assert.deepEqual(r, { ok: true, sent: 1, already: 0, unknown: 4 }, "not given out, another store, from before it was given out, or not a step");
+    const got = await (await getAuth("/alerts", ginaKey)).json();
+    assert.equal(got.alerts.length, 1);
+    firstAlert = got.alerts[0];
+    const { id, oid, createdAt, ...rest } = firstAlert;
+    assert.deepEqual(rest, { store: "target", storeName: "Target", profile: ginaAcct.profile, orderNo: "ORD-1001", item: "Pokémon 151 Booster Bundle", qty: "2", total: "$59.98", stage: "placed", at: today });
+    assert.ok(id && oid && createdAt > 0);
+    assert.doesNotMatch(JSON.stringify(got), new RegExp(ginaAcct.email.replace(/[.+]/g, "\\$&"), "i"), "never the account");
+    assert.equal((await (await getAuth("/alerts", bobKey)).json()).alerts.length, 0, "nothing for anyone else");
+    assert.equal((await getAuth("/alerts", null)).status, 401);
+  });
+  await test("the same step isn't sent twice; the next one is, under the same order", async () => {
+    assert.deepEqual(await (await slots("/alerts", frankKey, { events: [orderEvent()] })).json(), { ok: true, sent: 0, already: 1, unknown: 0 });
+    assert.deepEqual(await (await slots("/alerts", frankKey, { events: [orderEvent({ stage: "shipped" })] })).json(), { ok: true, sent: 1, already: 0, unknown: 0 });
+    const since = await (await getAuth("/alerts?since=" + firstAlert.createdAt, ginaKey)).json();
+    assert.deepEqual(since.alerts.map((a) => [a.stage, a.oid]), [["shipped", firstAlert.oid]]);
+    assert.equal((await slots("/alerts", frankKey, { events: [] })).status, 400);
+    assert.equal((await slots("/alerts", frankKey, { events: Array.from({ length: 201 }, () => orderEvent()) })).status, 400);
+  });
+  await test("a buyer's own Discord webhook is checked with a test post, then gets their alerts", async () => {
+    const hook = `http://127.0.0.1:${DISCORD_PORT}/buyerhook/123456789/tok_gina_abcdefghijklmnopqrstuvwxyz`;
+    assert.deepEqual(await (await getAuth("/alerts/webhook", ginaKey)).json(), { set: false });
+    for (const url of ["https://example.com/hook", "https://discord.com/api/webhooks/abc/def", "javascript:alert(1)"])
+      assert.equal((await putAuth("/alerts/webhook", ginaKey, { url })).status, 400, url);
+    const dead = await putAuth("/alerts/webhook", ginaKey, { url: hook.replace("/buyerhook/", "/buyerhook/dead/") });
+    assert.equal(dead.status, 400); assert.match((await dead.json()).error, /Discord answered 404\. Check the webhook link\./);
+    assert.deepEqual(await (await putAuth("/alerts/webhook", ginaKey, { url: hook })).json(), { set: true });
+    assert.equal(buyerHookPosts.at(-1).content, "✅ Orbit will post your order alerts here.");
+    assert.equal((await (await getAuth("/alerts/webhook", ginaKey)).json()).set, true);
+    const before = buyerHookPosts.length;
+    await slots("/alerts", frankKey, { events: [orderEvent({ stage: "delivered" }), orderEvent({ account: bobAcct.email, orderNo: "BOB-7" })] });
+    await new Promise((ok) => setTimeout(ok, 500));
+    const posted = buyerHookPosts.slice(before);
+    assert.equal(posted.length, 1, "Gina's alert only: Bob has no webhook");
+    assert.equal(posted[0].content, `🏠 **Delivered** · Target\n${ginaAcct.profile} · Pokémon 151 Booster Bundle ×2 · $59.98\n-# Order #ORD-1001 · ${today}`);
+    assert.deepEqual(posted[0].allowed_mentions, { parse: [] });
+    assert.equal((await (await getAuth("/alerts", bobKey)).json()).alerts[0].orderNo, "BOB-7");
+  });
+  await test("removing the webhook stops the posts; setting one again right away waits a moment", async () => {
+    const hook = `http://127.0.0.1:${DISCORD_PORT}/buyerhook/123456789/tok_gina_abcdefghijklmnopqrstuvwxyz`;
+    assert.equal((await putAuth("/alerts/webhook", ginaKey, { url: hook })).status, 429, "one change every 5 seconds");
+    assert.deepEqual(await (await putAuth("/alerts/webhook", ginaKey, { url: "" })).json(), { set: false });
+    const before = buyerHookPosts.length;
+    await slots("/alerts", frankKey, { events: [orderEvent({ orderNo: "ORD-2002" })] });
+    await new Promise((ok) => setTimeout(ok, 400));
+    assert.equal(buyerHookPosts.length, before);
+    assert.equal((await (await getAuth("/alerts", ginaKey)).json()).alerts.length, 4, "still kept for the app");
+  });
+  await test("allowing another license replaces the sender; refusing one leaves it out", async () => {
+    await slots("/alerts/sender", bobKey, { name: "Second PC" });
+    await new Promise((ok) => setTimeout(ok, 400));
+    await offerPost(reviewIn(webhookPosts.at(-1).content), "allow");
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal((await slots("/alerts", frankKey, { events: [orderEvent({ orderNo: "ORD-3003" })] })).status, 403, "the first one no longer sends");
+    assert.equal((await (await getAuth("/alerts/sender", frankKey)).json()).status, "none");
+    assert.ok(webhookEdits.some((e) => /No longer sends order alerts/.test(e.content)), "its channel message says so");
+    await slots("/alerts/sender", ginaKey, {});
+    await new Promise((ok) => setTimeout(ok, 400));
+    assert.match(await (await offerPost(reviewIn(webhookPosts.at(-1).content), "refuse")).text(), /Refused\. This Orbit won&#39;t send order alerts\./);
+    assert.equal((await (await getAuth("/alerts/sender", ginaKey)).json()).status, "refused");
+    assert.equal((await slots("/alerts", ginaKey, { events: [orderEvent()] })).status, 403);
+    assert.equal((await (await getAuth("/alerts/sender", bobKey)).json()).status, "allowed");
+  });
+  await test("admin lists who sends alerts and how many each buyer got, never what they say", async () => {
+    const d = await (await admin("/admin/alerts")).json();
+    assert.deepEqual(d.senders.map((s) => s.status).sort(), ["allowed", "refused", "replaced"]);
+    const g = d.buyers.find((b) => b.username === "gina");
+    assert.equal(g.alerts, 4); assert.equal(g.discordWebhook, false);
+    assert.doesNotMatch(JSON.stringify(d), /ORD-1001|Booster|review_token/);
   });
 
   console.log("\nWeb version and sync: vault storage");

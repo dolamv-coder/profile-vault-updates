@@ -206,3 +206,50 @@ CREATE TABLE IF NOT EXISTS vault_chunks (
   data     TEXT NOT NULL,
   PRIMARY KEY (key_hash, rev, idx)
 );
+
+-- Order alerts (app 1.9.69+): buyers hear about orders placed on the accounts they were given. The
+-- owner's Orbit, which reads those accounts' order emails, sends them once the owner allows that
+-- license from the review link posted to their channel. One license sends at a time.
+CREATE TABLE IF NOT EXISTS alert_senders (
+  id                 TEXT PRIMARY KEY,
+  key_hash           TEXT NOT NULL,
+  key_last4          TEXT NOT NULL,
+  name               TEXT NOT NULL DEFAULT '',
+  username           TEXT,
+  review_token       TEXT NOT NULL,
+  webhook_message_id TEXT,
+  status             TEXT NOT NULL DEFAULT 'pending',   -- pending | allowed | refused | replaced | expired
+  created_at         INTEGER NOT NULL,
+  decided_at         INTEGER
+);
+CREATE INDEX IF NOT EXISTS alert_senders_key ON alert_senders (key_hash, created_at);
+
+-- One row per step of an order (placed, shipped, …) for the buyer whose account it was placed on:
+-- the store, that slot's profile name and the order's details, never the account. `oid` is the
+-- same for every step of one order. Kept 60 days.
+CREATE TABLE IF NOT EXISTS alerts (
+  id         TEXT PRIMARY KEY,
+  key_hash   TEXT NOT NULL,                     -- the buyer's license
+  oid        TEXT NOT NULL,
+  store      TEXT NOT NULL,                     -- the app's store key ("target", "other:topps")
+  store_name TEXT NOT NULL,
+  profile    TEXT NOT NULL DEFAULT '',
+  order_no   TEXT NOT NULL,
+  item       TEXT NOT NULL DEFAULT '',
+  qty        TEXT NOT NULL DEFAULT '1',
+  total      TEXT NOT NULL DEFAULT '',
+  stage      TEXT NOT NULL,                     -- placed | shipped | arriving | delivered | canceled
+  at         TEXT NOT NULL DEFAULT '',          -- the order's date, YYYY-MM-DD
+  created_at INTEGER NOT NULL,
+  UNIQUE (key_hash, store, order_no, stage)
+);
+CREATE INDEX IF NOT EXISTS alerts_key ON alerts (key_hash, created_at);
+
+-- A buyer's own Discord webhook, which gets their order alerts too (optional).
+CREATE TABLE IF NOT EXISTS alert_webhooks (
+  key_hash   TEXT PRIMARY KEY,
+  url        TEXT NOT NULL,
+  set_at     INTEGER NOT NULL,
+  last_ok    INTEGER,
+  last_error TEXT
+);
