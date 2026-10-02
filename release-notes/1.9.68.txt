@@ -1,0 +1,1 @@
+Import profiles now reads spreadsheet cells written as ="…", the way submitted slot files now keep full card numbers, CVVs and zip codes for Excel.
