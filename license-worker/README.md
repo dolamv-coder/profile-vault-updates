@@ -353,6 +353,34 @@ curl.exe -X POST -H "Authorization: Bearer YOUR_ADMIN_TOKEN" -d "{\"email\":\"so
 The passwords are kept in your D1 database so they can go in the logins files, and they're in your
 channel with each batch, like every other login there. Keep the channel private.
 
+## Order alerts for buyers
+
+From Orbit 1.9.69, when you place an order for a buyer's slot on one of your accounts, the buyer can
+hear about it in their Orbit without ever seeing the account:
+
+1. Make sure the account's emails reach an inbox your own Orbit syncs (**Settings → Email import**).
+   With iCloud Hide My Email or a catch-all domain, that's the one inbox they all land in.
+2. In your Orbit, open **Settings → Order alerts for buyers → Turn on**. Your channel gets a review
+   link: open it and choose **Allow**. Only that license sends alerts, and allowing another one
+   replaces it.
+3. After each email sync, your Orbit sends this worker the orders it found on accounts that were given
+   out, with the account each went to: the store, the order number, the item, the quantity, the total
+   and the step (placed, shipped, out for delivery, delivered, canceled). This worker finds who has
+   that account and keeps the alert for them. Their Orbit adds it to **Orders** as "From your seller",
+   with a notification. Each step of an order goes out once.
+
+- **Buyers never get the account's email or password.** An order placed on an account more than a day
+  before it was given out isn't sent, since it was someone else's.
+- **A buyer can add their own Discord webhook** in **Settings → Alerts** to get the alerts there too.
+  It's checked with a test post when they save it.
+- **Alerts are kept 60 days.** They're in the `alert_senders`, `alerts` and `alert_webhooks` tables,
+  which `npm run db:init` (and the deploy Action) adds.
+
+```
+# Who asked to send alerts and your decisions, and how many alerts each buyer got
+curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/alerts
+```
+
 ## The web version's synced vaults
 
 From Orbit 1.9.65, a desktop app can keep an encrypted copy of its vault here (Settings → Web

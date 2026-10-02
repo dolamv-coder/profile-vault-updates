@@ -1,0 +1,1 @@
+When your seller places an order for one of your slots on an account they gave you, it now shows up in Orders as From your seller, with an alert when it's placed, shipped and delivered. To get these in your own Discord too, add a webhook in Settings → Alerts.

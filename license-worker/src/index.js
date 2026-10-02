@@ -33,6 +33,18 @@
 //   POST /accounts/offer       {store, storeName, name, accounts:[{email, password}]}: accounts sent from
 //                              the owner's Orbit, added to the list once the owner approves them in Discord.
 //                              A batch in /submissions then gets one per such slot (see assignAccounts).
+// Order alerts (app 1.9.69+): buyers hear about orders placed on the accounts they were given.
+//   GET  /alerts/sender        {status}: none | pending | allowed | refused, for this license
+//   POST /alerts/sender        {name}: ask to send order alerts; the owner allows it from the review link
+//                              posted to DISCORD_WEBHOOK_URL. One license sends at a time.
+//   GET  /alerts/accounts      the sender only: {accounts:[{email, store}]}, the accounts given out
+//   POST /alerts               the sender only: {events:[{account, store, storeName, orderNo, item, qty,
+//                              total, stage, at}]}: each is kept for the buyer that account was given to,
+//                              without the account, and posted to their own Discord webhook if they set one
+//   GET  /alerts?since=MS      {alerts:[{id, oid, store, storeName, profile, orderNo, item, qty, total,
+//                              stage, at, createdAt}]}: this license's, newer than MS
+//   GET  /alerts/webhook       {set, lastOk, lastError}: this license's Discord webhook for its alerts
+//   PUT  /alerts/webhook       {url}: set it (it gets a test post first), or "" to remove it
 // Web version and sync (app 1.9.65+). The app seals its vault (AES-GCM, with a key from the vault's
 // password) before it leaves the device, so what's kept here can't be read here. Every call takes the
 // license key (Bearer); reading or saving also takes the vault's access token (x-vault-auth), which
@@ -55,6 +67,7 @@
 //   GET/POST /slots/review/ID?t=TOKEN     approve (optionally a different number) or deny more slots
 //   GET/POST /submit/review/ID?t=TOKEN    confirm or refuse a collecting key
 //   GET/POST /accounts/review/ID?t=TOKEN  add or refuse accounts sent for Use Assigned Account
+//   GET/POST /alerts/review/ID?t=TOKEN    allow or refuse a license sending order alerts to buyers
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/applications   every request and decision
 //   GET  /admin/submissions    collecting keys (with review links), submissions sent and slots pulled
@@ -62,6 +75,7 @@
 //   POST /admin/restore        {discord_id} or {key}
 //   GET  /admin/accounts       the account list: free and given out per store, who got which, offers
 //   GET  /admin/vaults         synced vaults: whose, how big, from which device, when (never their contents)
+//   GET  /admin/alerts         order alerts: who asked to send them and the decisions, and how many each buyer got
 //   POST /admin/accounts/free  {email, store?}: give an account back to the list
 //   POST /admin/accounts/remove {email, store?}: take it off the list
 
@@ -112,6 +126,14 @@ export default {
       if (path === "/pull" && request.method === "POST") return await pull(request, env, ctx);
       if (path === "/accounts/offer" && request.method === "POST") return await accountOffer(request, env, ctx, url);
       if (path.startsWith("/accounts/review/")) return await accountReview(request, env, ctx, url, path.slice("/accounts/review/".length));
+      if (path === "/alerts/sender" && request.method === "GET") return await alertSenderGet(request, env);
+      if (path === "/alerts/sender" && request.method === "POST") return await alertSenderPost(request, env, ctx, url);
+      if (path.startsWith("/alerts/review/")) return await alertSenderReview(request, env, ctx, url, path.slice("/alerts/review/".length));
+      if (path === "/alerts/accounts" && request.method === "GET") return await alertAccounts(request, env);
+      if (path === "/alerts/webhook" && request.method === "GET") return await alertWebhookGet(request, env);
+      if (path === "/alerts/webhook" && request.method === "PUT") return await alertWebhookPut(request, env);
+      if (path === "/alerts" && request.method === "GET") return await alertsGet(request, env, url);
+      if (path === "/alerts" && request.method === "POST") return await alertsPost(request, env, ctx);
       if (path === "/vault/info" && request.method === "GET") return await vaultInfo(request, env);
       if (path === "/vault" && request.method === "GET") return await vaultGet(request, env, url);
       if (path === "/vault" && request.method === "PUT") return await vaultPut(request, env, url);
@@ -1089,6 +1111,224 @@ async function accountReview(request, env, ctx, url, id) {
      ${cur.status === "pending" ? `<div class="row">${btn("add", "Add to my list", "ok")}${btn("refuse", "Refuse", "no")}</div>` : ""}`);
 }
 
+// ---- order alerts ----------------------------------------------------------------------
+//
+// Buyers hear about orders placed on the accounts they were given (app 1.9.69+). The owner's Orbit
+// reads those accounts' order emails; once the owner allows that license from the review link posted
+// to their channel, it sends each order's store, number, item, total and step (placed, shipped, …)
+// with the account it went to. This finds the buyer the account was given to and keeps the alert for
+// their Orbit, without the account, and posts it to the buyer's own Discord webhook if they set one.
+
+const ALERT_STAGES = ["placed", "shipped", "arriving", "delivered", "canceled"];
+const ALERT_STAGE_TEXT = { placed: ["✅", "Order placed"], shipped: ["📦", "Shipped"], arriving: ["🚚", "Out for delivery"], delivered: ["🏠", "Delivered"], canceled: ["❌", "Canceled"] };
+const ALERT_SENDER_ASKS_PER_DAY = 5;
+const ALERTS_PER_POST = 200;
+const ALERT_KEEP_MS = 60 * 86400000;
+// Buyers' webhooks: Discord's only. Tests point them at a stand-in (ALERT_WEBHOOK_TEST_PREFIX).
+const DISCORD_HOOK_RE = /^https:\/\/(?:(?:ptb|canary)\.)?discord(?:app)?\.com\/api\/(?:v\d{1,2}\/)?webhooks\/\d{5,30}\/[A-Za-z0-9_-]{20,120}$/;
+const okHookUrl = (env, u) => DISCORD_HOOK_RE.test(u) || (!!env.ALERT_WEBHOOK_TEST_PREFIX && u.startsWith(env.ALERT_WEBHOOK_TEST_PREFIX) && /^[\x21-\x7e]+$/.test(u));
+
+const currentAlertSender = (env) => env.DB.prepare("SELECT * FROM alert_senders WHERE status = 'allowed' ORDER BY decided_at DESC LIMIT 1").first();
+
+async function alertSenderGet(request, env) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  const cur = await currentAlertSender(env);
+  const last = await env.DB.prepare("SELECT status, created_at FROM alert_senders WHERE key_hash = ? ORDER BY created_at DESC LIMIT 1").bind(lic.hash).first();
+  const status = cur && cur.key_hash === lic.hash ? "allowed"
+    : last && last.status === "pending" && last.created_at > Date.now() - REVIEW_TTL_MS ? "pending"
+    : last && last.status === "refused" ? "refused" : "none";
+  return json({ status, canAsk: !!env.DISCORD_WEBHOOK_URL }, 200, { "cache-control": "no-store" });
+}
+
+function alertSenderMessage(origin, s) {
+  const who = [s.name ? `**${md(s.name)}**` : "", s.username ? `@${md(s.username)}` : "", `license …${s.key_last4}`].filter(Boolean).join(" · ");
+  const head = { allowed: "🔔 **Sends order alerts to buyers**", refused: "⛔ **Not allowed to send order alerts**",
+    replaced: "🔕 **No longer sends order alerts** (another Orbit does now)", expired: "⌛ **Order alerts request expired**" }[s.status]
+    || "🔔 **Let this Orbit send order alerts to buyers?**";
+  return `${head}\n${who}${s.status === "pending" ? `\n[Review: allow or refuse](${origin}/alerts/review/${s.id}?t=${s.review_token})` : ""}`;
+}
+
+async function alertSenderPost(request, env, ctx, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  if (!env.DISCORD_WEBHOOK_URL) return json({ error: "the Discord channel isn't set up" }, 503);
+  let b; try { b = JSON.parse(await request.text()) || {}; } catch { b = {}; }
+  const cur = await currentAlertSender(env);
+  if (cur && cur.key_hash === lic.hash) return json({ status: "allowed" });
+  const now = Date.now();
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM alert_senders WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 86400000).first();
+  if (recent && recent.n >= ALERT_SENDER_ASKS_PER_DAY) return json({ error: "too many tries today" }, 429);
+  // Asking again replaces this license's request that's still waiting.
+  await env.DB.prepare("UPDATE alert_senders SET status = 'expired', decided_at = ? WHERE key_hash = ? AND status = 'pending'").bind(now, lic.hash).run();
+  const s = { id: randomId(12), key_hash: lic.hash, key_last4: lic.last4, name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60),
+    username: lic.username, review_token: randomId(24), status: "pending", created_at: now };
+  await env.DB.prepare("INSERT INTO alert_senders (id, key_hash, key_last4, name, username, review_token, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)")
+    .bind(s.id, s.key_hash, s.key_last4, s.name, s.username, s.review_token, now).run();
+  ctx.waitUntil((async () => {
+    const id = await webhookPost(env, { content: alertSenderMessage(url.origin, s) });
+    if (id) await env.DB.prepare("UPDATE alert_senders SET webhook_message_id = ? WHERE id = ?").bind(id, s.id).run();
+  })().catch((e) => console.error("webhook", e)));
+  return json({ status: "pending" });
+}
+
+async function alertSenderReview(request, env, ctx, url, id) {
+  const s = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM alert_senders WHERE id = ?").bind(id).first() : null;
+  let t = url.searchParams.get("t") || "", action = "";
+  if (request.method === "POST") {
+    const form = await request.formData().catch(() => null);
+    t = form && String(form.get("t") || "") || t;
+    action = form && String(form.get("action") || "");
+  } else if (request.method !== "GET") {
+    return page(405, "Not allowed", "");
+  }
+  if (!s || !(await sameText(t, s.review_token))) return page(404, "Request not found", "This review link isn't valid.");
+  const now = Date.now();
+  let done = "", before = [];
+  if (s.status === "pending" && s.created_at < now - REVIEW_TTL_MS) {
+    await env.DB.prepare("UPDATE alert_senders SET status = 'expired', decided_at = ? WHERE id = ? AND status = 'pending'").bind(now, s.id).run();
+  } else if (s.status === "pending" && action === "allow") {
+    before = (await env.DB.prepare("SELECT * FROM alert_senders WHERE status = 'allowed'").all()).results || [];
+    await env.DB.batch([
+      env.DB.prepare("UPDATE alert_senders SET status = 'replaced', decided_at = ? WHERE status = 'allowed'").bind(now),
+      env.DB.prepare("UPDATE alert_senders SET status = 'allowed', decided_at = ? WHERE id = ? AND status = 'pending'").bind(now, s.id),
+    ]);
+    done = "Allowed. Orders on the accounts you assign now reach the buyers who have them.";
+  } else if (s.status === "pending" && action === "refuse") {
+    await env.DB.prepare("UPDATE alert_senders SET status = 'refused', decided_at = ? WHERE id = ? AND status = 'pending'").bind(now, s.id).run();
+    done = "Refused. This Orbit won't send order alerts.";
+  }
+  const cur = await env.DB.prepare("SELECT * FROM alert_senders WHERE id = ?").bind(s.id).first();
+  if (done && cur.webhook_message_id) ctx.waitUntil(webhookEdit(env, cur.webhook_message_id, { content: alertSenderMessage(url.origin, cur) }).catch(() => {}));
+  for (const o of before) if (o.id !== cur.id && o.webhook_message_id) ctx.waitUntil(webhookEdit(env, o.webhook_message_id, { content: alertSenderMessage(url.origin, { ...o, status: "replaced" }) }).catch(() => {}));
+  const label = { pending: "Waiting for you", allowed: "Sends order alerts to buyers", refused: "Refused",
+    replaced: "Replaced: another Orbit sends order alerts now", expired: "Expired. Turn order alerts on again from Orbit." }[cur.status] || cur.status;
+  const who = [cur.name, cur.username ? "@" + cur.username : "", "license …" + cur.key_last4].filter(Boolean).join(" · ");
+  const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  const btn = (a, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${a}">${esc(text)}</button></form>`;
+  return page(200, "Order alerts for buyers", done || label,
+    `<p class="who">${esc(who)}</p>
+     <p class="small">Allowing it lets this Orbit tell buyers about orders placed on the accounts you assigned them: the store, their profile, the item, the total and the status. Never the account's email or password. One Orbit sends them at a time.</p>
+     ${cur.status === "pending" ? `<p class="small"><strong>Only allow it if you turned it on</strong> in your own Orbit (Settings → Order alerts for buyers).</p>
+     <div class="row">${btn("allow", "Allow", "ok")}${btn("refuse", "Refuse", "no")}</div>` : ""}`);
+}
+
+async function alertSender(request, env) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return { error: json({ error: "license not recognized" }, 401) };
+  const cur = await currentAlertSender(env);
+  if (!cur || cur.key_hash !== lic.hash) return { error: json({ error: "not the alert sender" }, 403) };
+  return { lic };
+}
+
+// The accounts given out, so the sender only sends orders placed on them.
+async function alertAccounts(request, env) {
+  const { error } = await alertSender(request, env);
+  if (error) return error;
+  const { results } = await env.DB.prepare("SELECT email, store FROM accounts WHERE key_hash IS NOT NULL AND sent_at IS NOT NULL").all();
+  return json({ accounts: results.map((a) => ({ email: a.email, store: a.store })) }, 200, { "cache-control": "no-store" });
+}
+
+async function alertsPost(request, env, ctx) {
+  const { error } = await alertSender(request, env);
+  if (error) return error;
+  const text = await request.text();
+  if (text.length > 300_000) return json({ error: "too large" }, 413);
+  let b; try { b = JSON.parse(text) || {}; } catch { b = {}; }
+  const list = Array.isArray(b.events) ? b.events : null;
+  if (!list || !list.length || list.length > ALERTS_PER_POST) return json({ error: "events" }, 400);
+  const clip = (v, n) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, n);
+  const now = Date.now(), fresh = [];
+  let unknown = 0, already = 0;
+  for (const ev of list) {
+    const account = clip(ev && ev.account, 120).toLowerCase(), store = clip(ev && ev.store, 64), stage = clip(ev && ev.stage, 12);
+    const orderNo = clip(ev && ev.orderNo, 40).toUpperCase(), at = /^\d{4}-\d{2}-\d{2}$/.test(String(ev && ev.at || "")) ? ev.at : "";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) || !store || !ALERT_STAGES.includes(stage) || !orderNo) { unknown++; continue; }
+    const a = await env.DB.prepare("SELECT key_hash, profile, store_name, assigned_at FROM accounts WHERE email_norm = ? AND store = ? AND key_hash IS NOT NULL AND sent_at IS NOT NULL")
+      .bind(account, store).first();
+    // Only orders from the day before it was given out on: an older one was placed for someone else.
+    if (!a || (at && at < new Date((a.assigned_at || 0) - 86400000).toISOString().slice(0, 10))) { unknown++; continue; }
+    const oid = (await sha256Hex(`${a.key_hash}|${store}|${orderNo}`)).slice(0, 20);
+    const row = { id: randomId(12), key_hash: a.key_hash, oid, store, store_name: clip(ev.storeName, 40) || a.store_name || store, profile: a.profile || "",
+      order_no: orderNo, item: clip(ev.item, 120), qty: clip(ev.qty, 6) || "1", total: clip(ev.total, 20), stage, at, created_at: now + fresh.length };
+    const r = await env.DB.prepare(`INSERT OR IGNORE INTO alerts (id, key_hash, oid, store, store_name, profile, order_no, item, qty, total, stage, at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(row.id, row.key_hash, oid, store, row.store_name, row.profile, orderNo, row.item, row.qty, row.total, stage, at, row.created_at).run();
+    if (r.meta && r.meta.changes) fresh.push(row); else already++;   // that step was already sent
+  }
+  if (fresh.length) ctx.waitUntil(alertWebhooks(env, fresh).catch((e) => console.error("alert webhooks", e)));
+  ctx.waitUntil(env.DB.prepare("DELETE FROM alerts WHERE created_at < ?").bind(now - ALERT_KEEP_MS).run().catch(() => {}));
+  return json({ ok: true, sent: fresh.length, already, unknown });
+}
+
+async function alertsGet(request, env, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  const since = Math.max(0, Math.floor(Number(url.searchParams.get("since"))) || 0);
+  const { results } = await env.DB.prepare("SELECT * FROM alerts WHERE key_hash = ? AND created_at > ? ORDER BY created_at LIMIT 200").bind(lic.hash, since).all();
+  return json({ alerts: results.map((a) => ({ id: a.id, oid: a.oid, store: a.store, storeName: a.store_name, profile: a.profile, orderNo: a.order_no,
+    item: a.item, qty: a.qty, total: a.total, stage: a.stage, at: a.at, createdAt: a.created_at })), now: Date.now() }, 200, { "cache-control": "no-store" });
+}
+
+function alertText(a) {
+  const [icon, what] = ALERT_STAGE_TEXT[a.stage] || ["🔔", a.stage];
+  const total = a.total ? (/^[$€£]/.test(a.total) ? a.total : "$" + a.total) : "";
+  const line = [a.profile, a.item ? a.item + (Number(a.qty) > 1 ? ` ×${a.qty}` : "") : "", total].filter(Boolean).map(md).join(" · ");
+  return `${icon} **${what}** · ${md(a.store_name)}${line ? "\n" + line : ""}\n-# Order #${md(a.order_no)}${a.at ? " · " + a.at : ""}`;
+}
+
+async function hookPost(url, content) {
+  const send = () => fetch(url, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content, flags: SUPPRESS_EMBEDS, allowed_mentions: { parse: [] } }) });
+  try {
+    let r = await send();
+    if (r.status === 429) {
+      const wait = Number((await r.json().catch(() => ({}))).retry_after) || 1;
+      if (wait <= 10) { await new Promise((ok) => setTimeout(ok, wait * 1000)); r = await send(); }
+    }
+    return r.ok ? { ok: true } : { ok: false, error: `Discord answered ${r.status}` };
+  } catch { return { ok: false, error: "Discord couldn't be reached" }; }
+}
+
+async function alertWebhooks(env, rows) {
+  for (const k of new Set(rows.map((r) => r.key_hash))) {
+    const h = await env.DB.prepare("SELECT url FROM alert_webhooks WHERE key_hash = ?").bind(k).first();
+    if (!h) continue;
+    for (const r of rows.filter((x) => x.key_hash === k)) {
+      const res = await hookPost(h.url, alertText(r));
+      await (res.ok ? env.DB.prepare("UPDATE alert_webhooks SET last_ok = ?, last_error = NULL WHERE key_hash = ?").bind(Date.now(), k)
+        : env.DB.prepare("UPDATE alert_webhooks SET last_error = ? WHERE key_hash = ?").bind(res.error, k)).run();
+    }
+  }
+}
+
+async function alertWebhookGet(request, env) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  const h = await env.DB.prepare("SELECT set_at, last_ok, last_error FROM alert_webhooks WHERE key_hash = ?").bind(lic.hash).first();
+  return json(h ? { set: true, setAt: h.set_at, lastOk: h.last_ok, lastError: h.last_error } : { set: false }, 200, { "cache-control": "no-store" });
+}
+
+async function alertWebhookPut(request, env) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  let b; try { b = JSON.parse(await request.text()) || {}; } catch { b = {}; }
+  const u = String(b.url || "").trim();
+  if (!u) {
+    await env.DB.prepare("DELETE FROM alert_webhooks WHERE key_hash = ?").bind(lic.hash).run();
+    return json({ set: false });
+  }
+  if (u.length > 300 || !okHookUrl(env, u)) return json({ error: "That isn't a Discord webhook link." }, 400);
+  const now = Date.now();
+  const had = await env.DB.prepare("SELECT set_at FROM alert_webhooks WHERE key_hash = ?").bind(lic.hash).first();
+  if (had && had.set_at > now - 5000) return json({ error: "Wait a moment, then try again." }, 429);
+  // A test post first, so a wrong or deleted webhook is caught now.
+  const res = await hookPost(u, "✅ Orbit will post your order alerts here.");
+  if (!res.ok) return json({ error: `${res.error}. Check the webhook link.` }, 400);
+  await env.DB.prepare(`INSERT INTO alert_webhooks (key_hash, url, set_at, last_ok) VALUES (?, ?, ?, ?)
+    ON CONFLICT (key_hash) DO UPDATE SET url = excluded.url, set_at = excluded.set_at, last_ok = excluded.last_ok, last_error = NULL`).bind(lic.hash, u, now, now).run();
+  return json({ set: true });
+}
+
 // ---- pulls ---------------------------------------------------------------------------
 //
 // Pulling slots on the Submit page after they were sent tells the owner, in the same channel, so they
@@ -1402,6 +1642,12 @@ async function admin(request, env, path) {
     const { results } = await env.DB.prepare(`SELECT v.key_hash, v.rev, v.size, v.device, v.created_at, v.updated_at, v.fails, l.username, l.discord_id
       FROM vaults v LEFT JOIN licenses l ON l.key_hash = v.key_hash ORDER BY v.updated_at DESC`).all();
     return json({ vaults: results.map((r) => ({ license: r.key_hash.slice(0, 12), username: r.username || null, discordId: r.discord_id || null, rev: r.rev, size: r.size, device: r.device, createdAt: r.created_at, updatedAt: r.updated_at, wrongPasswords: r.fails })) });
+  }
+  if (path === "/admin/alerts" && request.method === "GET") {
+    const senders = await env.DB.prepare("SELECT id, key_last4, name, username, status, created_at, decided_at FROM alert_senders ORDER BY created_at DESC LIMIT 50").all();
+    const sent = await env.DB.prepare(`SELECT a.key_hash, COUNT(*) AS n, MAX(a.created_at) AS last, l.username, w.key_hash IS NOT NULL AS hook
+      FROM alerts a LEFT JOIN licenses l ON l.key_hash = a.key_hash LEFT JOIN alert_webhooks w ON w.key_hash = a.key_hash GROUP BY a.key_hash ORDER BY last DESC`).all();
+    return json({ senders: senders.results, buyers: sent.results.map((r) => ({ license: r.key_hash.slice(0, 12), username: r.username || null, alerts: r.n, last: r.last, discordWebhook: !!r.hook })) });
   }
   return json({ error: "not found" }, 404);
 }
