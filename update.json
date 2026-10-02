@@ -1,10 +1,10 @@
 {
-  "version": "1.9.68",
-  "url": "index-1.9.68.html",
-  "sha256": "ad48ac0b1d2927179773ac5ce376237455a326c08ae011e0298ad4b2b5d015bd",
-  "signature": "ty2OhmuEh5cxXq9yfrDxpfj4Hhv5rAhM7nxDBZM2qhic5T/d9QVCRiyTEzyEwHtG+v6BvLLI4Qu6Y0PiPrmsDw==",
+  "version": "1.9.69",
+  "url": "index-1.9.69.html",
+  "sha256": "d399baea56e4df6a54efe53144e697500d96dafb3059c79e692e524f314369f7",
+  "signature": "PlH/b90TjrI0ElaDYaf2kgFRUzgnbv+uTdwempZKDTdGc/VRiP8f3XIq7+gx52iPbVf8YQlIIS6/J/ibfXs+AQ==",
   "minAppVersion": "0",
-  "notes": "Import profiles now reads spreadsheet cells written as =\"…\", the way submitted slot files now keep full card numbers, CVVs and zip codes for Excel.",
+  "notes": "When your seller places an order for one of your slots on an account they gave you, it now shows up in Orders as From your seller, with an alert when it's placed, shipped and delivered. To get these in your own Discord too, add a webhook in Settings → Alerts.",
   "installerUrl": "",
-  "publishedAt": "2026-10-02T08:59:42.869Z"
+  "publishedAt": "2026-10-02T14:40:33.521Z"
 }
