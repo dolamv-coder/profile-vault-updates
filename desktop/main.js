@@ -110,9 +110,10 @@ ipcMain.handle("app:focus", () => { if (win && !win.isDestroyed()) { if (win.isM
 ipcMain.handle("app:attention", () => { if (win && !win.isDestroyed() && !win.isFocused()) win.flashFrame(true); return true; });
 
 function createWindow(){
+  // The background shows until the page paints: Deep space blue's, the default theme from page 1.9.70.
   win = new BrowserWindow({
     width: 1280, height: 860, minWidth: 380, minHeight: 560,
-    title: "Orbit", backgroundColor: "#1F2226", autoHideMenuBar: true,
+    title: "Orbit", backgroundColor: "#040A1C", autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false }
   });
   const page = updater.pageToLoad();
