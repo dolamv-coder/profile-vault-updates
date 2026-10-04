@@ -1,0 +1,1 @@
+Profiles and drafts with something missing now show a red warning icon: point at it to see what to fix. Mass edit takes one email per draft, and asks before leaving drafts out or adding more for extra emails.

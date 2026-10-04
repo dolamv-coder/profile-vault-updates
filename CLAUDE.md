@@ -326,6 +326,16 @@ drafts and saved addresses), New random phone numbers (on) uses the state's area
 off, and pasted emails go one each. The new drafts come selected, with Undo. They're ordinary entries in
 `genDrafts`, so the paused web version is unaffected.
 
+From 1.9.78 a red icon (`issueIcon`) by the name of a profile (every layout) or draft says it couldn't check
+out as it is; hovering, focusing or tapping it shows what's wrong, one line per part (a floating `.issue-tip`).
+`profileProblems` makes the profile editor's own checks: shipping and billing addresses (`addrProblems`), the
+card (`cardProblems`: missing, `validateCard`, expiry, CVV, name on card), the email (none needed when every
+store is on Use Assigned Account; otherwise a store login's email, the 1.9.66 rule), the phone, and each store's
+login or Pokémon Center checkout email. `draftProblems` checks a draft's name, address, email and phone. Mass
+edit's Email is a box of emails, one per draft in the order shown (`dmPlan`): fewer leaves the drafts after
+them out of the whole edit, more makes new drafts for the rest (copies from `dupPlan`, jigged, new numbers)
+that get the edit too, and both ask first (`confirmDialog`, which now takes a `cancel` label).
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
