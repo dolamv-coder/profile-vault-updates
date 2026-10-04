@@ -280,6 +280,15 @@ it will be before Change, with Jig on each address line, City and ZIP, and New r
 as boxes instead of codes. The draft editor has the same Jig links (`jigNext`). Drafts only gain the
 `zip4` field, so the paused web version is unaffected.
 
+From 1.9.74 one profile can be jigged on Profiles too (never several at once: the owner keeps bulk Jig on
+Generate): Jig address in its ⋯ and right-click menu (`jigProfile`, with Undo), and in the profile editor
+Jig links on the shipping address's Address 1 and 2, City and ZIP plus Jig all beside Standardize
+(`data-pe-jig`, `jigOneAddr`). A jigged address mustn't match any saved address or draft (`jigTakenAll`),
+and a copy is made when other profiles share it. Billing never gets jigged: a profile billing to its
+shipping address keeps the address as it was as billing (`billSame` off, the old address as `billId`),
+since the bank checks it against the card. At the owner's request the Shipping address section says not
+to jig a billing address unless the card is a virtual credit card.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
