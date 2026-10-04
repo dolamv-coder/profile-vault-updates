@@ -1,10 +1,10 @@
 {
-  "version": "1.9.75",
-  "url": "index-1.9.75.html",
-  "sha256": "49afcba1bb069994a3d7edb433078812f37934cd4d0c9c57dc032c940f7c78ec",
-  "signature": "MAJLHb6YPBV3iklo3njSDk5YPzaojmBmGjXf3lEdBlI76Js5NrCCXg4t91PHEYjy/RbH7h+6DOI7wJ/Q9hhAAw==",
+  "version": "1.9.76",
+  "url": "index-1.9.76.html",
+  "sha256": "05b5670bcb7968afaea51ff1e055f6d0bda9ce054133de10782ecbbbbb697a53",
+  "signature": "Qs0K9h8u5hU/W8bdtPmyqxdXbsL1CXwA/0+s8Fa/lvNvqzdz59PIn691I+lUuj8KpOI8HOXeFkYzlTwkfbGcCw==",
   "minAppVersion": "0",
-  "notes": "Import from Generate now asks which billing address to use: the address you typed in Generate, for regular credit cards, or each profile's jigged shipping address, for virtual credit cards.",
+  "notes": "Orbit is now FAFO. Only the name changed: your vault, license, settings and inboxes stay as they are.",
   "installerUrl": "",
-  "publishedAt": "2026-10-04T17:27:44.151Z"
+  "publishedAt": "2026-10-04T19:43:32.188Z"
 }
