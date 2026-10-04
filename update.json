@@ -1,10 +1,10 @@
 {
-  "version": "1.9.78",
-  "url": "index-1.9.78.html",
-  "sha256": "42ffc4e1f58f050dda44f2ab1ee6220b81a7325261f0a6badd2c45ca93aa7b9f",
-  "signature": "ezwGmQS4iW6de8WArxz0jdj4uOtdUe4sZXkpdMs5XUxCnVRXc4/qKnBUi9TmvFFg8wntDWq0L06GnF34O7r5AA==",
+  "version": "1.9.79",
+  "url": "index-1.9.79.html",
+  "sha256": "bd7dca9edefaf9f3974e7e0057bacb44655390a112b3f35d8b1af1a0e16472a5",
+  "signature": "xQsaDBV8kZE8V4GZqCcD/ycXu2k4xg5++/M//R5jZI67Dy97Oaifqfql+Zrrr25EokyVaorIFsfm+cXkoZ/NDw==",
   "minAppVersion": "0",
-  "notes": "Profiles and drafts with something missing now show a red warning icon: point at it to see what to fix. Mass edit takes one email per draft, and asks before leaving drafts out or adding more for extra emails.",
+  "notes": "Profile names no longer get cut off by their group or the warning icon. On cards, the group moves under the name when both don't fit, and in the List the group gets shorter instead of the name.",
   "installerUrl": "",
-  "publishedAt": "2026-10-04T21:41:14.685Z"
+  "publishedAt": "2026-10-04T22:58:13.284Z"
 }
