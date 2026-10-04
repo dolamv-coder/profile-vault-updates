@@ -5940,7 +5940,7 @@ function openGenerate(){
       ${fieldHTML({name:"gp_line2", label:"Address line 2", ac:"address-line2", placeholder:"Apt, suite, unit"})}
       ${fieldHTML({name:"gp_city", label:"City", cls:"c2", required:true, ac:"address-level2"})}
       ${fieldHTML({type:"select", name:"gp_state", label:"State", cls:"c2", required:true, options:opt(US_STATES, "", "Select a state"), ac:"address-level1"})}
-      ${fieldHTML({name:"gp_zip", label:"ZIP code", cls:"c2", required:true, ac:"postal-code", attrs:'inputmode="numeric" maxlength="10"'})}
+      ${fieldHTML({name:"gp_zip", label:"ZIP code", cls:"c2", required:true, ac:"postal-code", attrs:'inputmode="numeric" maxlength="10"', hint:"Your ZIP+4 from USPS doubles the jigs."})}
       <div class="c6 section-head gp-h"><h3>Emails</h3></div>
       <div class="field c6" data-field="gp_emails"><label for="gp-emails">Paste your emails <span class="opt">(optional)</span></label><textarea id="gp-emails" spellcheck="false" autocomplete="off" style="min-height:120px" placeholder="One per line. email:password lines work too; only the email is used."></textarea><span class="hint">Each draft gets the next email. Drafts without one can get it later.</span><span class="err"></span></div>
       <div class="c6 section-head gp-h"><h3>Phone</h3></div>
@@ -6037,9 +6037,9 @@ function openGenerate(){
 }
 
 // A Jig link beside a field's label (1.9.73+).
-const jigLink = (html, k) => html.replace(/(<label[^>]*>[\s\S]*?<\/label>)/, `<div class="me-lab">$1<button type="button" class="link me-jig" data-gd-jig="${k}" aria-label="Jig address line ${k === "line1" ? 1 : 2}">Jig</button></div>`);
+const jigLink = (html, k) => html.replace(/(<label[^>]*>[\s\S]*?<\/label>)/, `<div class="me-lab">$1<button type="button" class="link me-jig" data-gd-jig="${k}" aria-label="Jig ${({line1:"address line 1", line2:"address line 2", city:"city", zip:"ZIP code"})[k]}">Jig</button></div>`);
 // One draft: its name, address, email and phone. Save and next goes through the drafts in the order shown.
-// Jig on either address line puts the next way of writing it in the field.
+// Jig on an address line, the city or the ZIP code puts the next way of writing it in the field.
 function openDraftEditor(id){
   const d0 = genDrafts()[id]; if (!d0) return;
   const d = Object.assign({}, d0), ids = visibleDrafts().map(x => x.id), next = ids[ids.indexOf(id) + 1] || null;
@@ -6053,9 +6053,9 @@ function openDraftEditor(id){
       ${fieldHTML({name:"gd_last", label:"Last name", value:d.last, cls:"c3", required:true})}
       ${jigLink(fieldHTML({name:"gd_line1", label:"Address line 1", value:d.line1, required:true, placeholder:"Street and number"}), "line1")}
       ${jigLink(fieldHTML({name:"gd_line2", label:"Address line 2", value:d.line2, placeholder:"Apt, suite, unit"}), "line2")}
-      ${fieldHTML({name:"gd_city", label:"City", value:d.city, cls:"c2", required:true})}
+      ${jigLink(fieldHTML({name:"gd_city", label:"City", value:d.city, cls:"c2", required:true}), "city")}
       ${fieldHTML({type:"select", name:"gd_state", label:"State", cls:"c2", required:true, options:opt(US_STATES, d.state, "Select a state")})}
-      ${fieldHTML({name:"gd_zip", label:"ZIP code", value:d.zip, cls:"c2", required:true, attrs:'inputmode="numeric" maxlength="10"'})}
+      ${jigLink(fieldHTML({name:"gd_zip", label:"ZIP code", value:d.zip, cls:"c2", required:true, attrs:'inputmode="numeric" maxlength="10"'}), "zip")}
       ${fieldHTML({name:"gd_email", label:"Email", value:d.email, type:"email", cls:"c3"})}
       ${fieldHTML({name:"gd_phone", label:"Phone", value:d.phone, type:"tel", cls:"c3", placeholder:"5550000000", hint:"Digits only."})}
       <div class="c6 gd-links"><button type="button" class="link" id="gd-rname">New random name</button><button type="button" class="link" id="gd-rphone">New random phone number</button></div>
@@ -6081,12 +6081,15 @@ function openDraftEditor(id){
         setErr(panel, "gd_first", ""); setErr(panel, "gd_last", ""); refresh();
       });
       $("#gd-rphone", panel).addEventListener("click", () => { $('[name="gd_phone"]', panel).value = genPhone(val(panel, "gd_state")); setErr(panel, "gd_phone", ""); refresh(); });
-      const shown = {line1:new Set([norm(d.line1)]), line2:new Set([norm(d.line2)])};
+      const shown = {line1:new Set([norm(d.line1)]), line2:new Set([norm(d.line2)]), city:new Set([norm(d.city)]), zip:new Set([norm(d.zip)])};
       panel.addEventListener("click", (e) => {
         const b = e.target.closest("[data-gd-jig]"); if (!b) return;
         const k = b.dataset.gdJig; read();
+        if (k === "zip" && /^\d{5}-?\d{4}$/.test(d.zip)) d.zip4 = d.zip.slice(0, 5) + "-" + d.zip.slice(-4);
         const v = jigNext(d, k, jigTaken(new Set([id])), shown[k]);
-        if (v == null){ toast(k === "line2" ? (d.line2 ? "Jig writes an apartment, suite or unit another way, like Apt 4 or #4" : "There's no address line 2 to jig") : d.line1 ? "There's no other way to write this street" : "Enter a street address first", "err"); return; }
+        if (v == null){ toast(({line2:d.line2 ? "Jig writes an apartment, suite or unit another way, like Apt 4 or # 4" : "There's no address line 2 to jig",
+          city:"Jig only changes a city's name where it has Saint, Fort or Mount (St, Ft, Mt) in it", zip:"Put the ZIP+4 from USPS's ZIP Code lookup in ZIP code to jig it"})[k]
+          || (d.line1 ? "There's no other way to write this street" : "Enter a street address first"), "err"); return; }
         const inp = $(`[name="gd_${k}"]`, panel); inp.value = v; shown[k].add(norm(v)); setErr(panel, "gd_" + k, ""); refresh();
       });
       const save = (andNext) => {
@@ -6207,113 +6210,212 @@ function openDraftImport(ids){
 // Undo puts back what changed. (1.9.72 had Mass edit on Profiles; it moved here, where drafts are
 // finished before they become profiles.)
 //
-// Jig only writes street words another usual way: a direction before or after the street name (N, N.,
-// North), the street type at its end (Dr, Dr., Drive) and the unit (Apt 4, Apt #4, #4). Stores cancel
-// orders to addresses that look made up, so that's all it changes until those run out; only then does it
-// put a dot inside the street name (Or.chard), which works some of the time. Each draft's address is kept
+// Jig only writes an address the ways USPS itself reads as the same address (Publication 28, which USPS's
+// own address lookup follows): a direction before or after the street name (N, N., North), the street
+// type at its end (USPS's standard abbreviation: Dr, Dr., Drive), the unit (Apt 4, Apt #4, # 4) and
+// whether it's on line 1 or line 2, Saint, Fort or Mount in the city (St, St.), and the ZIP code with or
+// without its ZIP+4. Stores cancel orders to addresses that look made up, so it uses those first, fewest
+// changes first, then the address as it was. Only once they run out: a numbered street written out (18th,
+// Eighteenth), then the other spellings USPS lists for street types (Str, Strt, Avn, Drv: they pass USPS
+// but look like typos, and the owner wanted to try them), and last a dot inside the street name
+// (Or.chard), which USPS's rules don't cover and only works some of the time. Each draft's address is kept
 // different from every other draft's and every saved address.
 const JIG_DIRS = [["North", "N"], ["South", "S"], ["East", "E"], ["West", "W"], ["Northeast", "NE"], ["Northwest", "NW"], ["Southeast", "SE"], ["Southwest", "SW"]];
-const JIG_TYPES = [["Street", "St"], ["Avenue", "Ave"], ["Drive", "Dr"], ["Road", "Rd"], ["Boulevard", "Blvd"], ["Lane", "Ln"], ["Court", "Ct"], ["Place", "Pl"],
-  ["Way", "Wy"], ["Parkway", "Pkwy"], ["Circle", "Cir"], ["Highway", "Hwy"], ["Terrace", "Ter"], ["Trail", "Trl"], ["Square", "Sq"], ["Plaza", "Plz"], ["Point", "Pt"],
-  ["Crossing", "Xing"], ["Cove", "Cv"], ["Crescent", "Cres"], ["Expressway", "Expy"], ["Freeway", "Fwy"], ["Heights", "Hts"], ["Junction", "Jct"], ["Landing", "Lndg"],
-  ["Ridge", "Rdg"], ["Turnpike", "Tpke"], ["Center", "Ctr"], ["Alley", "Aly"]];
+// Street types from Publication 28's Appendix C1, "TYPE:USPS standard abbreviation:other spellings USPS
+// recognizes". No abbreviation where USPS writes the word in full; Way's is Wy. Plurals USPS maps to the
+// same type are left out, since they'd read as another street.
+const JIG_C1 = ("ALLEY:ALY:ALLEE,ALLY|ANNEX:ANX:ANEX,ANNX|ARCADE:ARC|AVENUE:AVE:AV,AVEN,AVENU,AVN,AVNUE|BAYOU:BYU:BAYOO|BEACH:BCH|BEND:BND|BLUFF:BLF:BLUF|BLUFFS:BLFS|" +
+  "BOTTOM:BTM:BOT,BOTTM|BOULEVARD:BLVD:BOUL,BOULV|BRANCH:BR:BRNCH|BRIDGE:BRG:BRDGE|BROOK:BRK|BROOKS:BRKS|BURG:BG|BURGS:BGS|BYPASS:BYP:BYPA,BYPAS,BYPS|" +
+  "CAMP:CP:CMP|CANYON:CYN:CANYN,CNYN|CAPE:CPE|CAUSEWAY:CSWY:CAUSWA|CENTER:CTR:CEN,CENT,CENTR,CENTRE,CNTER,CNTR|CENTERS:CTRS|" +
+  "CIRCLE:CIR:CIRC,CIRCL,CRCL,CRCLE|CIRCLES:CIRS|CLIFF:CLF|CLIFFS:CLFS|CLUB:CLB|COMMON:CMN|COMMONS:CMNS|CORNER:COR|CORNERS:CORS|COURSE:CRSE|COURT:CT|" +
+  "COURTS:CTS|COVE:CV|COVES:CVS|CREEK:CRK|CRESCENT:CRES:CRSENT,CRSNT|CREST:CRST|CROSSING:XING:CRSSNG|CROSSROAD:XRD|CROSSROADS:XRDS|CURVE:CURV|DALE:DL|" +
+  "DAM:DM|DIVIDE:DV:DIV,DVD|DRIVE:DR:DRIV,DRV|DRIVES:DRS|ESTATE:EST|ESTATES:ESTS|EXPRESSWAY:EXPY:EXP,EXPR,EXPW|EXTENSION:EXT:EXTN,EXTNSN|EXTENSIONS:EXTS|" +
+  "FALL|FALLS:FLS|FERRY:FRY:FRRY|FIELD:FLD|FIELDS:FLDS|FLAT:FLT|FLATS:FLTS|FORD:FRD|FORDS:FRDS|FOREST:FRST|FORGE:FRG:FORG|FORGES:FRGS|FORK:FRK|FORKS:FRKS|" +
+  "FORT:FT:FRT|FREEWAY:FWY:FREEWY,FRWAY,FRWY|GARDEN:GDN:GARDN,GRDEN,GRDN|GARDENS:GDNS:GRDNS|GATEWAY:GTWY:GATEWY,GATWAY,GTWAY|GLEN:GLN|GLENS:GLNS|" +
+  "GREEN:GRN|GREENS:GRNS|GROVE:GRV:GROV|GROVES:GRVS|HARBOR:HBR:HARB,HARBR,HRBOR|HARBORS:HBRS|HAVEN:HVN|HEIGHTS:HTS:HT|HIGHWAY:HWY:HIGHWY,HIWAY,HIWY,HWAY|" +
+  "HILL:HL|HILLS:HLS|HOLLOW:HOLW:HLLW|INLET:INLT|ISLAND:IS:ISLND|ISLANDS:ISS:ISLNDS|ISLE|JUNCTION:JCT:JCTION,JCTN,JUNCTN,JUNCTON|JUNCTIONS:JCTS:JCTNS|" +
+  "KEY:KY|KEYS:KYS|KNOLL:KNL:KNOL|KNOLLS:KNLS|LAKE:LK|LAKES:LKS|LAND|LANDING:LNDG:LNDNG|LANE:LN|LIGHT:LGT|LIGHTS:LGTS|LOAF:LF|LOCK:LCK|LOCKS:LCKS|" +
+  "LODGE:LDG:LDGE,LODG|LOOP|MALL|MANOR:MNR|MANORS:MNRS|MEADOW:MDW|MEADOWS:MDWS:MDW,MEDOWS|MEWS|MILL:ML|MILLS:MLS|MISSION:MSN:MISSN,MSSN|MOTORWAY:MTWY|" +
+  "MOUNT:MT:MNT|MOUNTAIN:MTN:MNTAIN,MNTN,MOUNTIN,MTIN|MOUNTAINS:MTNS:MNTNS|NECK:NCK|ORCHARD:ORCH:ORCHRD|OVAL::OVL|OVERPASS:OPAS|PARK::PRK|" +
+  "PARKWAY:PKWY:PARKWY,PKWAY,PKY|PASS|PASSAGE:PSGE|PATH|PIKE|PINE:PNE|PINES:PNES|PLACE:PL|PLAIN:PLN|PLAINS:PLNS|PLAZA:PLZ:PLZA|POINT:PT|POINTS:PTS|" +
+  "PORT:PRT|PORTS:PRTS|PRAIRIE:PR:PRR|RADIAL:RADL:RAD,RADIEL|RAMP|RANCH:RNCH|RAPID:RPD|RAPIDS:RPDS|REST:RST|RIDGE:RDG:RDGE|RIDGES:RDGS|RIVER:RIV:RVR,RIVR|" +
+  "ROAD:RD|ROADS:RDS|ROUTE:RTE|ROW|RUE|RUN|SHOAL:SHL|SHOALS:SHLS|SHORE:SHR:SHOAR|SHORES:SHRS:SHOARS|SKYWAY:SKWY|SPRING:SPG:SPNG,SPRNG|" +
+  "SPRINGS:SPGS:SPNGS,SPRNGS|SPUR|SQUARE:SQ:SQR,SQRE,SQU|SQUARES:SQS:SQRS|STATION:STA:STATN,STN|STRAVENUE:STRA:STRAV,STRAVEN,STRAVN,STRVN,STRVNUE|" +
+  "STREAM:STRM:STREME|STREET:ST:STRT,STR|STREETS:STS|SUMMIT:SMT:SUMIT,SUMITT|TERRACE:TER:TERR|THROUGHWAY:TRWY|TRACE:TRCE|TRACK:TRAK:TRK|TRAFFICWAY:TRFY|" +
+  "TRAIL:TRL|TUNNEL:TUNL:TUNEL,TUNNL|TURNPIKE:TPKE:TRNPK,TURNPK|UNDERPASS:UPAS|UNION:UN|UNIONS:UNS|VALLEY:VLY:VALLY,VLLY|VALLEYS:VLYS|" +
+  "VIADUCT:VIA:VDCT,VIADCT|VIEW:VW|VIEWS:VWS|VILLAGE:VLG:VILL,VILLAG,VILLG,VILLIAGE|VILLAGES:VLGS|VILLE:VL|VISTA:VIS:VIST,VST,VSTA|WALK|WALL|WAY:WY|WAYS|" +
+  "WELL:WL|WELLS:WLS");
+const JIG_TYPES = new Map();
+JIG_C1.split("|").forEach(r => {
+  const [full, std, other] = r.split(":"), t = (x) => x[0] + x.slice(1).toLowerCase(), others = other ? other.split(",") : [];
+  const row = {full:t(full), std:std ? t(std) : "", other:others.map(t)};
+  [full, std].concat(others).forEach(f => { if (f && !JIG_TYPES.has(f)) JIG_TYPES.set(f, row); });
+});
+// Saint, Sainte, Fort and Mount in a city's name, as USPS abbreviates them.
+const JIG_CITY = [["Saint", "St"], ["Sainte", "Ste"], ["Fort", "Ft"], ["Mount", "Mt"]];
+const JIG_ORD = ",First,Second,Third,Fourth,Fifth,Sixth,Seventh,Eighth,Ninth,Tenth,Eleventh,Twelfth,Thirteenth,Fourteenth,Fifteenth,Sixteenth,Seventeenth,Eighteenth,Nineteenth".split(",");
+const JIG_TENS = ",,Twenty,Thirty,Forty,Fifty,Sixty,Seventy,Eighty,Ninety".split(",");
+const JIG_TENTH = ",,Twentieth,Thirtieth,Fortieth,Fiftieth,Sixtieth,Seventieth,Eightieth,Ninetieth".split(",");
 const genShuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--){ const j = genRand(i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; };
-const jigUniq = (list) => { const seen = new Set(); return list.filter(x => { const k = norm(x); if (seen.has(k)) return false; seen.add(k); return true; }); };
-// Spellings come out in the case the line is written in: all capitals, all small letters, or as listed.
+// Spellings come out in the case the text is written in: all capitals, all small letters, or as listed.
 const jigCase = (s) => { const L = String(s).replace(/[^A-Za-z]/g, ""); return L.length > 2 && L === L.toUpperCase() ? (x => x.toUpperCase()) : L && L === L.toLowerCase() ? (x => x.toLowerCase()) : (x => x); };
-// The usual ways of writing w if it's a direction or street type (the word, its abbreviation, that with a
-// period: N.E. for two-letter directions), w itself first; just [w] if it's neither.
-function jigWord(w, list, caseOf){
-  const bare = w.replace(/\./g, ""), row = list.find(r => r.some(x => x.toLowerCase() === bare.toLowerCase()));
-  if (!row) return [w];
-  const [full, ab] = row;
-  return jigUniq([w, full, ab, list === JIG_DIRS && ab.length === 2 ? ab[0] + "." + ab[1] + "." : ab + "."].map((x, i) => i ? caseOf(x) : x));
+// A slot is one part of the address Jig can write another way: [{s, tier}], what's there now first.
+// Tier 0 is a usual spelling, 1 a numbered street written out, 2 another USPS spelling, 3 a dot.
+const jigSlot = (orig, forms) => { const seen = new Set([norm(orig)]), out = [{s:orig, tier:0}]; forms.forEach(([s, tier]) => { const k = norm(s); if (s && !seen.has(k)){ seen.add(k); out.push({s, tier}); } }); return out; };
+function jigDir(w, caseOf){
+  const bare = w.replace(/\./g, ""), row = JIG_DIRS.find(r => r.some(x => x.toLowerCase() === bare.toLowerCase()));
+  return row ? jigSlot(w, [row[0], row[1], row[1].length === 2 ? row[1][0] + "." + row[1][1] + "." : row[1] + "."].map(x => [caseOf(x), 0])) : null;
 }
-// The same unit written the usual other ways, s itself first: an apartment stays an apartment, a suite a suite.
+function jigType(w, caseOf){
+  const row = JIG_TYPES.get(w.replace(/\.$/, "").toUpperCase()); if (!row) return null;
+  return jigSlot(w, [[row.full, 0]].concat(row.std ? [[row.std, 0], [row.std + ".", 0]] : [], row.other.map(x => [x, 2])).map(([x, t]) => [caseOf(x), t]));
+}
+// 18th <-> Eighteenth and 21st <-> Twenty First (as USPS writes it), 1 to 99; null for anything else.
+function jigOrdinal(w, caseOf){
+  const m = /^(\d{1,2})(st|nd|rd|th)$/i.exec(w);
+  if (m){ const n = +m[1]; return n ? caseOf(n < 20 ? JIG_ORD[n] : n % 10 ? JIG_TENS[(n / 10) | 0] + " " + JIG_ORD[n % 10] : JIG_TENTH[n / 10]) : null; }
+  const k = w.toLowerCase().replace(/-/g, " ").split(" "), at = (list, x) => list.findIndex((y, i) => i && y.toLowerCase() === x);
+  let n = -1;
+  if (k.length === 1){ n = at(JIG_ORD, k[0]); if (n < 1){ const t = at(JIG_TENTH, k[0]); n = t > 1 ? t * 10 : -1; } }
+  else if (k.length === 2){ const t = at(JIG_TENS, k[0]), o = at(JIG_ORD, k[1]); n = t > 1 && o >= 1 && o <= 9 ? t * 10 + o : -1; }
+  return n >= 1 && n <= 99 ? caseOf(n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th")) : null;
+}
+// The same unit written the usual other ways, s itself first: an apartment stays an apartment, a suite a
+// suite. "# 4", with the space, is how USPS writes it.
 function jigUnit(s){
   s = String(s || "").trim().replace(/\s+/g, " ");
   const m = s.match(/^(?:(apt|apartment|unit|ste|suite)\.?\s*#?\s*|#\s*)([A-Za-z0-9-]+)$/i); if (!m) return [s];
   const kind = (m[1] || "#").toLowerCase(), u = m[2], caseOf = jigCase(s);
   const forms = /^(ste|suite)$/.test(kind) ? ["Suite " + u, "Ste " + u, "Ste. " + u, "Suite #" + u, "Ste #" + u]
-    : kind === "unit" ? ["Unit " + u, "Unit #" + u, "#" + u]
-    : ["Apt " + u, "Apt #" + u, "Apt. " + u, "Apartment " + u, "#" + u];
-  return jigUniq([s].concat(forms.map(caseOf)));
+    : kind === "unit" ? ["Unit " + u, "Unit #" + u, "#" + u, "# " + u]
+    : ["Apt " + u, "Apt #" + u, "Apt. " + u, "Apartment " + u, "#" + u, "# " + u];
+  return jigSlot(s, forms.map(x => [caseOf(x), 0])).map(x => x.s);
 }
-// The next way of writing one line (which) of address a, for the draft editor's Jig: one it hasn't shown
-// yet (shown) that no other draft or saved address has, if there is one, spellings before dots. Null if
-// the line can't be written another way.
-function jigNext(a, which, taken, shown){
-  const c = jigChoices(a, which), t = new Set(taken), free = (x) => !t.has(draftAddrKey(Object.assign({}, a, x)));
-  const list = c.simple.concat([c.orig], c.dotted).filter(x => norm(x[which]) !== norm(a[which])), fresh = (x) => !shown.has(norm(x[which]));
-  if (!list.length) return null;
-  return (list.find(x => free(x) && fresh(x)) || list.find(free) || list.find(fresh) || list[0])[which];
-}
-// Every way Jig writes an address's first line, s itself first: {simple} with only the street words
-// changed (a direction before or after the street name, the type at its end, a unit after it), and
-// {dotted} with a dot inside a word of the street name as well, each {s, k}: k is how many words it
-// changes. "123 N St" keeps its N: that's the street's name.
-function jigLine1(s){
-  s = String(s || "").trim().replace(/\s+/g, " ");
-  if (!s) return {simple:[{s:"", k:0}], dotted:[]};
-  const caseOf = jigCase(s);
-  let head = s, sep = "", unit = "";
-  const um = s.match(/^(.*?\S)(,?\s+)((?:apt|apartment|unit|ste|suite)\.?\s*#?\s*[A-Za-z0-9-]+|#\s*[A-Za-z0-9-]+)$/i);
-  if (um && /\s/.test(um[1])){ head = um[1]; sep = um[2]; unit = um[3]; }
-  const words = head.split(" "), slots = [];
-  const isDir = (w) => jigWord(w, JIG_DIRS, caseOf).length > 1, isType = (w) => jigWord(w, JIG_TYPES, caseOf).length > 1;
-  const start = words.length > 1 && /\d/.test(words[0]) ? 1 : 0;
-  let end = words.length, nameAt = start;
-  if (end - start >= 3 && isDir(words[end - 1]) && !isDir(words[end - 2])){ slots.push([end - 1, jigWord(words[end - 1], JIG_DIRS, caseOf)]); end--; }
-  if (end - start >= 2 && isType(words[end - 1])){ slots.push([end - 1, jigWord(words[end - 1], JIG_TYPES, caseOf)]); end--; }
-  if (end - start >= 2 && isDir(words[start]) && !isDir(words[start + 1])){ slots.push([start, jigWord(words[start], JIG_DIRS, caseOf)]); nameAt = start + 1; }
-  // Each way with how many words it changes (k), so the ones that change least can go first.
-  let combos = [{ws:words, k:0}];
-  slots.forEach(([i, forms]) => { combos = combos.flatMap(c => forms.map((f, j) => { const ws = c.ws.slice(); ws[i] = f; return {ws, k:c.k + (j ? 1 : 0)}; })); });
-  const units = (unit ? jigUnit(unit) : [""]).map((u, j) => ({u, k:j ? 1 : 0}));
-  const join = (ws, u) => ws.join(" ") + (u ? sep + u : "");
-  const simple = combos.flatMap(c => units.map(u => ({s:join(c.ws, u.u), k:c.k + u.k})));
-  const dotted = [];
-  for (let i = nameAt; i < end; i++){
-    const w = words[i]; if (!/^[A-Za-z]{4,}$/.test(w)) continue;
-    for (let at = 1; at < w.length && dotted.length < 4000; at++) combos.forEach(c => units.forEach(u => { const ws = c.ws.slice(); ws[i] = w.slice(0, at) + "." + w.slice(at); dotted.push({s:join(ws, u.u), k:c.k + u.k + 1}); }));
+const JIG_UNIT_AT_END = /^(.*?\S)(,?\s+)((?:apt|apartment|unit|ste|suite)\.?\s*#?\s*[A-Za-z0-9-]+|#\s*[A-Za-z0-9-]+)$/i;
+const JIG_PARTS = ["line1", "line2", "city", "zip"];
+// Every way Jig writes address a, changing only the parts named (line1, line2, city, zip), in the order it
+// uses them: usual spellings (fewest changes first, at random within that), the address as it was, then
+// numbered streets written out, other USPS spellings, and dots. Each {line1, line2, city, zip, zip4, tier,
+// ord, usps, dot}, where zip4 keeps a ZIP+4 Jig left off; orig is the address as it was. "123 N St" keeps
+// its N: that's the street's name.
+function jigChoices(a, parts){
+  parts = new Set(parts || JIG_PARTS);
+  const clean = (s) => String(s || "").trim().replace(/\s+/g, " ");
+  const line1 = clean(a.line1), line2 = clean(a.line2), city = clean(a.city), zip = clean(a.zip);
+  const slots = [];   // {opts} and where it goes: word (and span), unit, place (the unit's line), city (a word) or zip
+  let words = [], head = line1, sep = "", unit = "", unitAt = "", nameAt = 0, end = 0;
+  if (line1){
+    const um = line1.match(JIG_UNIT_AT_END);
+    if (um && /\s/.test(um[1])){ head = um[1]; sep = um[2]; unit = um[3]; unitAt = "line1"; }
+    words = head.split(" ");
+    const caseOf = jigCase(line1), start = words.length > 1 && /\d/.test(words[0]) ? 1 : 0;
+    end = words.length; nameAt = start;
+    if (parts.has("line1")){
+      const add = (i, opts) => { if (opts && opts.length > 1) slots.push({opts, word:i}); };
+      if (end - start >= 3 && jigDir(words[end - 1], caseOf) && !jigDir(words[end - 2], caseOf)){ add(end - 1, jigDir(words[end - 1], caseOf)); end--; }
+      if (end - start >= 2 && jigType(words[end - 1], caseOf)){ add(end - 1, jigType(words[end - 1], caseOf)); end--; }
+      if (end - start >= 2 && jigDir(words[start], caseOf) && !jigDir(words[start + 1], caseOf)){ add(start, jigDir(words[start], caseOf)); nameAt = start + 1; }
+      // A street named by a number alone: 18th, Eighteenth, Twenty First.
+      const name = words.slice(nameAt, end).join(" "), ord = end > nameAt && end - nameAt <= 2 ? jigOrdinal(name, caseOf) : null;
+      if (ord){ slots.push({opts:jigSlot(name, [[ord, 1]]), word:nameAt, span:end - nameAt}); }
+      if (unitAt === "line1") slots.push({opts:jigSlot(unit, jigUnit(unit).slice(1).map(x => [x, 0])), unit:true});
+    }
+  } else end = 0;
+  if (!unitAt && line2 && jigUnit(line2).length > 1){ unit = line2; unitAt = "line2"; if (parts.has("line2")) slots.push({opts:jigSlot(line2, jigUnit(line2).slice(1).map(x => [x, 0])), unit:true}); }
+  // The unit on the other line (USPS prefers it on line 1).
+  if (unitAt && head && parts.has("line1") && parts.has("line2") && (unitAt === "line2" || !line2)) slots.push({opts:[{s:unitAt, tier:0}, {s:unitAt === "line1" ? "line2" : "line1", tier:0}], place:true});
+  const cityWords = city.split(" ");
+  if (parts.has("city") && cityWords.length > 1){
+    const caseOf = jigCase(city);
+    cityWords.forEach((w, i) => { const row = JIG_CITY.find(r => r.some(x => x.toLowerCase() === w.replace(/\.$/, "").toLowerCase())); if (row) slots.push({opts:jigSlot(w, [row[0], row[1], row[1] + "."].map(x => [caseOf(x), 0])), city:i}); });
   }
-  return {simple, dotted};
+  // The ZIP+4, or the one this draft had before Jig dropped it (zip4), so Jig can put it back.
+  const zm = /^(\d{5})-?(\d{4})$/.exec(zip), z4 = zm ? zm[1] + "-" + zm[2] : /^\d{5}-\d{4}$/.test(a.zip4 || "") && a.zip4.slice(0, 5) === zip ? a.zip4 : "";
+  if (parts.has("zip") && z4) slots.push({opts:jigSlot(zip, [[z4.slice(0, 5), 0], [z4, 0]]), zip:true});
+  // An address from one pick of each slot's spellings; a part nothing changed keeps its text exactly.
+  const render = (pick) => {
+    const ws = words.slice(), cw = cityWords.slice(), ch = new Set();
+    let u = unit, at = unitAt, z = zip;
+    slots.forEach((sl, i) => {
+      if (!pick[i]) return;
+      const s = sl.opts[pick[i]].s;
+      if (sl.unit){ u = s; ch.add(unitAt); } else if (sl.place){ at = s; ch.add("line1").add("line2"); } else if (sl.zip){ z = s; ch.add("zip"); }
+      else if (sl.city != null){ cw[sl.city] = s; ch.add("city"); }
+      else { ws[sl.word] = s; for (let j = 1; j < (sl.span || 1); j++) ws[sl.word + j] = ""; ch.add("line1"); }
+    });
+    if (pick.dot){ ws[pick.dot[0]] = pick.dot[1]; ch.add("line1"); }
+    const street = ws.filter(Boolean).join(" ");
+    const out = {line1:street, line2, city:cw.join(" "), zip:z, zip4:z4 && z === z4.slice(0, 5) ? z4 : String(a.zip4 || "")};
+    if (unitAt === "line1") { if (at === "line2"){ out.line2 = u; } else out.line1 = street + sep + u; }
+    else if (unitAt === "line2"){ if (at === "line1"){ out.line1 = street + " " + u; out.line2 = ""; } else out.line2 = u; }
+    JIG_PARTS.forEach(k => { if (!ch.has(k)) out[k] = String(a[k] == null ? "" : a[k]); });
+    return out;
+  };
+  // Every combination of the slots' spellings: highest tier and how many parts it changes.
+  let combos = [{pick:[], tier:0, k:0}];
+  slots.forEach((sl) => {
+    let opts = sl.opts.map((o, j) => ({j, tier:o.tier}));
+    if (combos.length * opts.length > 12000) opts = opts.filter(o => o.tier < 2);   // a very long address: no typo-like spellings
+    combos = combos.flatMap(c => opts.map(o => ({pick:c.pick.concat(o.j), tier:Math.max(c.tier, o.tier), k:c.k + (o.j ? 1 : 0)})));
+  });
+  const flags = (c) => ({ord:slots.some((sl, i) => sl.opts[c.pick[i]].tier === 1), usps:slots.some((sl, i) => sl.opts[c.pick[i]].tier === 2)});
+  const make = (c, dot) => Object.assign(render(Object.assign(c.pick.slice(), {dot})), {tier:dot ? 3 : c.tier}, flags(c), {dot:!!dot});
+  const byK = (list) => genShuffle(list).sort((x, y) => x.k - y.k);
+  const orig = make(combos[0]);
+  const order = byK(combos.filter(c => c.tier === 0 && c.k)).map(c => make(c));
+  order.push(orig);
+  [1, 2].forEach(t => byK(combos.filter(c => c.tier === t)).forEach(c => order.push(make(c))));
+  // Last: a dot inside a word of the street name (not a number written out), with the usual spellings.
+  if (parts.has("line1") && !slots.some(sl => sl.span)){
+    const dots = [], plain = combos.filter(c => c.tier === 0);
+    for (let i = nameAt; i < end && dots.length < 3000; i++){
+      const w = words[i]; if (!/^[A-Za-z]{4,}$/.test(w)) continue;
+      for (let p = 1; p < w.length; p++) plain.forEach(c => dots.push({c, dot:[i, w.slice(0, p) + "." + w.slice(p)], k:c.k + 1}));
+    }
+    byK(dots).forEach(d => order.push(make(d.c, d.dot)));
+  }
+  return {orig, order};
 }
-// The ways Jig can write draft d's address (which: "line1", "line2" or "both"), in the order it uses them:
-// the other spellings, the address as it is, then with a dot in the street name. Each in random order,
-// but those that change one word before those that change two, and so on.
-function jigChoices(d, which){
-  const l1 = which === "line2" ? {simple:[{s:String(d.line1 || ""), k:0}], dotted:[]} : jigLine1(d.line1);
-  const l2 = which === "line1" ? [String(d.line2 || "")] : jigUnit(d.line2);
-  const pairs = (list) => list.flatMap(a => l2.map((b, j) => ({line1:a.s, line2:b, k:a.k + (j ? 1 : 0)})));
-  const tiers = (list) => genShuffle(list).sort((x, y) => x.k - y.k);
-  const simple = pairs(l1.simple);
-  return {orig:simple[0], simple:tiers(simple.slice(1)), dotted:tiers(pairs(l1.dotted))};
+// The next way of writing one part (line1, line2, city or zip) of address a, for the draft editor's Jig:
+// one it hasn't shown yet (shown) that no other draft or saved address has, if there is one, in Jig's
+// usual order. Null if that part can't be written another way.
+function jigNext(a, part, taken, shown){
+  const c = jigChoices(a, [part]), t = new Set(taken), free = (x) => !t.has(draftAddrKey(Object.assign({}, a, x)));
+  const list = c.order.filter(x => norm(x[part]) !== norm(a[part])), fresh = (x) => !shown.has(norm(x[part]));
+  if (!list.length) return null;
+  return (list.find(x => free(x) && fresh(x)) || list.find(free) || list.find(fresh) || list[0])[part];
 }
 // Addresses a jigged draft mustn't end up with: the other drafts' (all but those in skip) and every saved one.
 const jigTaken = (skip) => draftList().filter(d => !skip.has(d.id)).map(draftAddrKey).concat(S.addresses.map(draftAddrKey));
-// New first and second lines for each of rows, each address different from the others' and from taken:
-// another spelling while there is one, then the address as it is, then one with a dot. One with no way
-// left keeps its address. {out, repeats, dotted}: how many still match another address, and how many
-// got a dot.
-function jigAssign(rows, which, taken){
-  const used = new Set(taken);
-  let repeats = 0, dotted = 0;
-  const out = rows.map(d => {
-    const c = jigChoices(d, which), key = (x) => draftAddrKey(Object.assign({}, d, x)), free = (x) => !used.has(key(x));
-    let v = c.simple.find(free) || (free(c.orig) ? c.orig : null), dot = false;
-    if (!v){ v = c.dotted.find(free); dot = !!v; }
-    if (!v){ v = c.orig; repeats++; }
-    if (dot) dotted++;
+// A new address for each of rows (the parts named), each different from the others' and from taken, in
+// Jig's order. One with no way left keeps its address. {out, repeats, ord, usps, dotted}: how many still
+// match another address, and how many needed a numbered street written out, another USPS spelling or a dot.
+function jigAssign(rows, parts, taken){
+  const used = new Set(taken), groups = new Map();
+  const res = {out:[], repeats:0, ord:0, usps:0, dotted:0};
+  rows.forEach(d => {
+    const gk = draftAddrKey(d);
+    let g = groups.get(gk); if (!g){ g = {c:jigChoices(d, parts), i:0}; groups.set(gk, g); }
+    const key = (x) => draftAddrKey(Object.assign({}, d, x));
+    while (g.i < g.c.order.length && used.has(key(g.c.order[g.i]))) g.i++;
+    let v = g.c.order[g.i];
+    if (v) g.i++; else { v = g.c.orig; res.repeats++; }
+    if (v !== g.c.orig){ if (v.ord) res.ord++; if (v.usps) res.usps++; if (v.dot) res.dotted++; }
     used.add(key(v));
-    return {line1:v.line1, line2:v.line2};
+    res.out.push({line1:v.line1, line2:v.line2, city:v.city, zip:v.zip, zip4:v.zip4});
   });
-  return {out, repeats, dotted};
+  return res;
 }
-// How many different addresses Jig can make of d (which lines), not counting ones already taken.
-function jigWays(d, which, taken){
-  const c = jigChoices(d, which), t = new Set(taken), key = (x) => draftAddrKey(Object.assign({}, d, x));
-  return [c.orig].concat(c.simple, c.dotted).filter(x => !t.has(key(x))).length;
+// How many different addresses Jig can make of a (the parts named), not counting ones already taken.
+function jigWays(a, parts, taken){
+  const t = new Set(taken);
+  return jigChoices(a, parts).order.filter(x => !t.has(draftAddrKey(Object.assign({}, a, x)))).length;
+}
+// What jigging needed beyond the usual spellings, for a summary: lines of text.
+function jigNotes(res){
+  return [res.ord ? `${plural(res.ord, "draft")} ${res.ord === 1 ? "writes" : "write"} the street's number out (like Eighteenth), since the usual spellings ran out` : "",
+    res.usps ? `${plural(res.usps, "draft")} ${res.usps === 1 ? "uses" : "use"} one of USPS's other spellings for the street type (like Str or Drv)` : "",
+    res.dotted ? `${plural(res.dotted, "draft")} ${res.dotted === 1 ? "has" : "have"} a dot in the street name, since every other way of writing it ran out` : ""].filter(Boolean);
 }
 
 // The selected drafts, in the order the page shows them (then any it doesn't).
@@ -6334,17 +6436,16 @@ function undoDraftChanges(before){
   setDrafts(m); render();
 }
 
-// Jig addresses: each of the drafts gets its own way of writing its address, both lines, at once.
+// Jig addresses: each of the drafts gets its own way of writing its address (street, unit, city, ZIP), at once.
 function jigDrafts(ids){
   const rows = draftsInOrder(ids); if (!rows.length) return;
-  const res = jigAssign(rows, "both", jigTaken(new Set(rows.map(d => d.id))));
-  const list = rows.map((d, i) => ({id:d.id, set:draftChanges(d, res.out[i], ["line1", "line2"])})), n = list.filter(x => Object.keys(x.set).length).length;
+  const res = jigAssign(rows, JIG_PARTS, jigTaken(new Set(rows.map(d => d.id))));
+  const list = rows.map((d, i) => ({id:d.id, set:draftChanges(d, res.out[i], JIG_PARTS.concat("zip4"))})), n = list.filter(x => JIG_PARTS.some(k => k in x.set)).length;
   if (!n){ toast(rows.length === 1 ? "There's no other way to write this address" : "There's no other way to write these addresses", "err"); return; }
   const before = applyDraftChanges(list);
   const kept = rows.length - n - res.repeats;
-  const msg = [`Jigged ${plural(n, "address", "addresses")}${kept > 0 ? `, and ${kept} ${kept === 1 ? "keeps its address" : "keep their addresses"} as it was` : ""}.`,
-    res.dotted ? `${res.dotted} ${res.dotted === 1 ? "has" : "have"} a dot in the street name, since the other spellings ran out.` : "",
-    res.repeats ? `${res.repeats} still ${res.repeats === 1 ? "matches" : "match"} another address: there's no other way left to write it.` : ""].filter(Boolean).join(" ");
+  const msg = [`Jigged ${plural(n, "address", "addresses")}${kept > 0 ? `, and ${kept} ${kept === 1 ? "keeps its address" : "keep their addresses"} as it was` : ""}.`]
+    .concat(jigNotes(res).map(x => x + "."), res.repeats ? [`${res.repeats} still ${res.repeats === 1 ? "matches" : "match"} another address: there's no other way left to write it.`] : []).join(" ");
   toast(msg, res.repeats ? "err" : "", {label:"Undo", run:() => { undoDraftChanges(before); toast("Jig undone"); }});
 }
 async function deleteSelectedDrafts(){
@@ -6379,7 +6480,7 @@ function openDraftMassEdit(ids){
   const n0 = rows0.length;
   const fld = (k, label, ctrl, o = {}) => `<div class="field ${o.cls || "c6"} me-f" data-field="dm_${k}">
     <div class="me-lab"><label class="me-tick"><input type="checkbox" data-dm-tick="${k}" aria-label="Change ${esc(label)}"><span data-dm-label="${k}">${esc(label)}</span></label>${o.link ? `<button type="button" class="link me-jig" data-dm-mode="${o.mode}">${esc(o.link)}</button>` : ""}</div>
-    <div class="dm-ctrl">${ctrl}</div>${o.mode ? `<div class="dm-rnd" data-dm-box="${o.mode}" hidden>${ic("refresh")}<span>${esc(o.box)}</span><button type="button" class="link" data-dm-shuffle="${o.mode}">Shuffle</button><button type="button" class="icon-btn" data-dm-stop="${o.mode}" aria-label="Stop: ${esc(o.link)}" title="Stop">${ic("x")}</button></div>` : ""}
+    <div class="dm-ctrl">${ctrl}</div>${o.mode ? `<div class="dm-rnd" data-dm-box="${o.mode}" hidden>${ic("refresh")}<span title="${esc(o.box === "Jigged" ? "Each draft gets its own way of writing it" : o.box)}">${esc(o.box)}</span><button type="button" class="link" data-dm-shuffle="${o.mode}">Shuffle</button><button type="button" class="icon-btn" data-dm-stop="${o.mode}" aria-label="Stop: ${esc(o.link)}" title="Stop">${ic("x")}</button></div>` : ""}
     ${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ""}<span class="err"></span></div>`;
   const text = (k, label, o = {}) => fld(k, label, `<input name="dm_${k}" aria-label="${esc(label)}" autocomplete="off" ${o.ph ? `placeholder="${esc(o.ph)}"` : ""} ${o.attrs || ""}>`, o);
   openLayer({
@@ -6392,9 +6493,9 @@ function openDraftMassEdit(ids){
       ${text("last", "Last name", {cls:"c3"})}
       ${text("line1", "Address line 1", {link:"Jig", mode:"jig1", box:"Jigged: each draft gets its own way of writing it", ph:"Street and number"})}
       ${text("line2", "Address line 2", {link:"Jig", mode:"jig2", box:"Jigged: each draft's unit written its own way", ph:"Apt, suite, unit"})}
-      ${text("city", "City", {cls:"c2"})}
+      ${text("city", "City", {cls:"c2", link:"Jig", mode:"jigc", box:"Jigged"})}
       ${fld("state", "State", `<select name="dm_state" aria-label="State">${opt(US_STATES, "", "Select a state")}</select>`, {cls:"c2"})}
-      ${text("zip", "ZIP code", {cls:"c2", attrs:'inputmode="numeric" maxlength="10"'})}
+      ${text("zip", "ZIP code", {cls:"c2", attrs:'inputmode="numeric" maxlength="10"', link:"Jig", mode:"jigz", box:"Jigged"})}
       ${text("email", "Email", {cls:"c3", attrs:'type="email"'})}
       ${text("phone", "Phone", {cls:"c3", attrs:'inputmode="tel"', ph:"5550000000", link:"New random numbers", mode:"phone", box:"New random numbers, with each draft's state's area codes"})}
     </form>${groupNamesList("dm-groups")}
@@ -6404,7 +6505,7 @@ function openDraftMassEdit(ids){
       const form = $("#dm-form", panel), go = $("#dm-go", panel), sum = $("#dm-sum", panel);
       const modes = new Set(), cache = new Map();
       let plan = null;
-      const MODE_FIELD = {names:"first", jig1:"line1", jig2:"line2", phone:"phone"};
+      const MODE_FIELD = {names:"first", jig1:"line1", jig2:"line2", jigc:"city", jigz:"zip", phone:"phone"};
       // Shuffle (or switching a mode) forgets its random results, so the next preview rolls new ones.
       const forget = (m) => { const pre = /^jig/.test(m) ? "jig" : m; [...cache.keys()].forEach(x => { if (x.startsWith(pre)) cache.delete(x); }); };
       const tick = (k, on) => { const c = $(`[data-dm-tick="${k}"]`, panel); if (c) c.checked = !!on; const f = c && c.closest(".me-f"); if (f) f.classList.toggle("is-on", !!on); };
@@ -6432,7 +6533,7 @@ function openDraftMassEdit(ids){
         DM_FIELDS.forEach(k => setErr(panel, "dm_" + k, ""));
         plan = dmPlan(rows0.map(d => d.id), read(), cache);
         plan.errs.forEach(([k, msg]) => setErr(panel, k, msg));
-        const changed = plan.rows.filter(x => Object.keys(x.set).length);
+        const changed = plan.rows.filter(x => DM_FIELDS.some(k => k in x.set));
         const cols = plan.cols;
         const cell = (x, c) => { const on = c.keys.some(k => k in x.set); return `<td class="${on ? "" : "dm-same"}">${esc(c.show(x.after)) || "—"}</td>`; };
         const MAX = 100;
@@ -6472,7 +6573,7 @@ function openDraftMassEdit(ids){
       form.addEventListener("submit", (e) => e.preventDefault());
       go.addEventListener("click", () => {
         if (!plan || plan.errs.length) return;
-        const list = plan.rows.filter(x => Object.keys(x.set).length); if (!list.length) return;
+        const list = plan.rows.filter(x => DM_FIELDS.some(k => k in x.set)); if (!list.length) return;
         const before = applyDraftChanges(list);
         close();
         toast(`Changed ${plural(list.length, "draft")}`, "", {label:"Undo", run:() => { undoDraftChanges(before); toast("Mass edit undone"); }});
@@ -6528,33 +6629,35 @@ function dmPlan(ids, r, cache){
     after.forEach((a, i) => { a.phone = list[i]; });
   }
   // Jig, after any typed address changes, so it jigs the address each draft will have.
-  const j1 = M.has("jig1"), j2 = M.has("jig2");
-  if (j1 || j2){
-    const which = j1 && j2 ? "both" : j1 ? "line1" : "line2", taken = jigTaken(sel), base = after.map(a => Object.assign({}, a));
-    const key = "jig|" + which + "|" + base.map(draftAddrKey).join("/");
+  const parts = [["jig1", "line1"], ["jig2", "line2"], ["jigc", "city"], ["jigz", "zip"]].filter(([m]) => M.has(m)).map(([, k]) => k), jigging = parts.length > 0;
+  if (jigging){
+    const taken = jigTaken(sel), base = after.map(a => Object.assign({}, a));
+    const key = "jig|" + parts.join(",") + "|" + base.map(draftAddrKey).join("/");
     let res = cache.get(key);
-    if (!res){ res = jigAssign(base, which, taken); [...cache.keys()].forEach(x => { if (x.startsWith("jig")) cache.delete(x); }); cache.set(key, res); }
-    after.forEach((a, i) => { a.line1 = res.out[i].line1; a.line2 = res.out[i].line2; });
-    if (j2 && !base.some(a => jigUnit(a.line2).length > 1)) plan.warns.push(base.some(a => a.line2) ? "Address line 2 isn't an apartment, suite or unit that Jig can write another way" : "None of these drafts has an address line 2 to jig");
-    if (res.dotted) plan.lines.push(`${plural(res.dotted, "draft")} ${res.dotted === 1 ? "has" : "have"} a dot in the street name, since the other ways of writing it ran out`);
+    if (!res){ res = jigAssign(base, parts, taken); [...cache.keys()].forEach(x => { if (x.startsWith("jig")) cache.delete(x); }); cache.set(key, res); }
+    after.forEach((a, i) => { JIG_PARTS.concat("zip4").forEach(k => { a[k] = res.out[i][k]; }); });
+    if (M.has("jig2") && !base.some(a => jigUnit(a.line2).length > 1)) plan.warns.push(base.some(a => a.line2) ? "Address line 2 isn't an apartment, suite or unit that Jig can write another way" : "None of these drafts has an address line 2 to jig");
+    if (M.has("jigc") && !base.some(a => jigChoices(a, ["city"]).order.length > 1)) plan.warns.push("Jig only changes a city's name where it has Saint, Fort or Mount (St, Ft, Mt) in it");
+    if (M.has("jigz") && !base.some(a => /^\d{5}-?\d{4}$/.test(String(a.zip || "").trim()))) plan.warns.push("None of these drafts has a ZIP+4 to jig. Put the ZIP+4 from USPS's ZIP Code lookup in ZIP code first, then jig it.");
+    jigNotes(res).forEach(x => plan.lines.push(x));
     if (res.repeats){
       const one = new Set(base.map(draftAddrKey)).size === 1;
-      plan.warns.push(`${plural(res.repeats, "draft")} still ${res.repeats === 1 ? "matches" : "match"} another address: ${one ? `${esc(base[0].line1)}${which === "line1" ? "" : base[0].line2 ? ", " + esc(base[0].line2) : ""} can be written only ${plural(jigWays(base[0], which, taken), "way")} that no other draft or saved address uses` : "there's no other way left to write it"}. Change the rest by hand, or select fewer drafts.`);
+      plan.warns.push(`${plural(res.repeats, "draft")} still ${res.repeats === 1 ? "matches" : "match"} another address: ${one ? `${esc([base[0].line1, base[0].line2, base[0].city].filter(Boolean).join(", "))} can be written only ${plural(jigWays(base[0], parts, taken), "way")} that no other draft or saved address uses` : "there's no other way left to write it"}. Jig more of the address, change the rest by hand, or select fewer drafts.`);
     }
   }
-  plan.rows = rows.map((d, i) => ({id:d.id, after:after[i], set:draftChanges(d, after[i], DM_FIELDS)}));
+  plan.rows = rows.map((d, i) => ({id:d.id, after:after[i], set:draftChanges(d, after[i], DM_FIELDS.concat("zip4"))}));
   // The preview's columns: the ones anything changes in.
   const any = (keys) => plan.rows.some(x => keys.some(k => k in x.set));
   const COLS = [{label:"Group", keys:["group"], show:(a) => a.group}, {label:"Name", keys:["first", "last"], show:(a) => [a.first, a.last].filter(Boolean).join(" ")},
     {label:"Address", keys:["line1", "line2", "city", "state", "zip"], show:(a) => draftAddrLine(a)}, {label:"Email", keys:["email"], show:(a) => a.email}, {label:"Phone", keys:["phone"], show:(a) => fmtPhone(a.phone)}];
   plan.cols = COLS.filter(c => any(c.keys));
   // Addresses: all different, or how many still share one.
-  if (any(["line1", "line2", "city", "state", "zip"]) || j1 || j2){
+  if (any(["line1", "line2", "city", "state", "zip"]) || jigging){
     const t = new Set(jigTaken(sel)), seen = new Map();
     after.forEach(a => { const k = draftAddrKey(a); seen.set(k, (seen.get(k) || 0) + 1); });
     const clash = after.filter(a => seen.get(draftAddrKey(a)) > 1 || t.has(draftAddrKey(a))).length;
     if (!clash && rows.length > 1) plan.lines.push(`All ${rows.length} addresses are different, and none matches another draft or a saved address`);
-    else if (clash && !(j1 || j2)) plan.warns.push(`${plural(clash, "draft")} would share an address with another. Jig address line 1 to make each one different.`);
+    else if (clash && !jigging) plan.warns.push(`${plural(clash, "draft")} would share an address with another. Jig the address to make each one different.`);
   }
   return plan;
 }

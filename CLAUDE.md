@@ -262,16 +262,23 @@ so 1.9.73 moved it to Generate and dropped the expressions.)
 
 From 1.9.73, **Jig and Mass edit** are on the Generate page, for drafts: right-click a draft (or the
 selection bar) for Mass edit, Jig addresses, Import and Delete. Jig must stay simple, since stores cancel
-orders to addresses that look made up (the owner's rule): it only writes street words another usual way,
-a direction before or after the street name (N, N., North), the street type at its end (`JIG_TYPES`: Dr,
-Dr., Drive; Way, Wy) and the unit (Apt 4, Apt #4, #4), never letters in front (`jigLine1`, `jigUnit`).
-Only once those run out does it put a dot inside a street-name word ("Or.chard"), which works some of the
-time. `jigAssign` gives each draft an address no other draft or saved address has (`jigTaken`), fewest
-words changed first, then the address as it was, then dots; ones with no way left keep theirs and are
-counted. Jig addresses applies at once with Undo; Mass edit (`openDraftMassEdit`, `dmPlan`) shows every
-draft as it will be before Change, with Jig, New random names and New random numbers as boxes instead of
-codes. The draft editor has a Jig link on each address line (`jigNext`). Drafts keep the same fields, so
-the paused web version is unaffected.
+orders to addresses that look made up (the owner's rule), so it only writes an address the ways USPS reads
+as the same address (Publication 28, which USPS's own lookup follows; its site is blocked from Claude's
+environment, so the rules came from public copies of its tables). `jigChoices` works on parts (line 1,
+line 2, city, ZIP) and uses, in order: the usual spellings, fewest changes first (a direction N, N.,
+North; the street type's USPS standard abbreviation Dr, Dr., Drive, or Way/Wy; the unit Apt 4, Apt #4,
+`# 4` as USPS writes it, on line 1 or line 2; Saint/St/St., Fort/Ft, Mount/Mt in the city; the ZIP with or
+without its ZIP+4), then the address as it was, then a numbered street written out (18th/Eighteenth, 21st/
+Twenty First; USPS treats them as one street unless an area has both), then the other spellings USPS lists
+for street types (`JIG_C1`, Appendix C1: Str, Strt, Avn, Drv… they look like typos; the owner wanted to
+test them), and last a dot inside a street-name word ("Or.chard"), which USPS's rules don't cover and works
+some of the time. Never letters in front. `jigAssign` gives each draft an address no other draft or saved
+address has (`jigTaken`); ones with no way left keep theirs and are counted, as are those that needed
+the later tiers (`jigNotes`). A draft keeps a ZIP+4 Jig left off in `zip4`, so Jig can put it back.
+Jig addresses applies at once with Undo; Mass edit (`openDraftMassEdit`, `dmPlan`) shows every draft as
+it will be before Change, with Jig on each address line, City and ZIP, and New random names and numbers,
+as boxes instead of codes. The draft editor has the same Jig links (`jigNext`). Drafts only gain the
+`zip4` field, so the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
