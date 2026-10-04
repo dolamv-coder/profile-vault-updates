@@ -1,10 +1,10 @@
 {
-  "version": "1.9.71",
-  "url": "index-1.9.71.html",
-  "sha256": "5c59f8897e59d61f2d1468f80c30e126fa027a41b2a69227bd3a3666795dc8da",
-  "signature": "+C0Drfnv/aRpHPA5X9goOFzBjV/bYnr8OcITFhLFd7kNe+bCwWrc94t0HDioOxHkZ2JmrN6Ak5uv9fZry92jAw==",
+  "version": "1.9.72",
+  "url": "index-1.9.72.html",
+  "sha256": "675eddce39f764712a3c0a1bc2d6189f3b1ad5f2a0f68c720fd9cc4b8692083e",
+  "signature": "uGQlo7dp0r+LLpQ/1zW26z61CbCiMJkPif4vmtO4ZefptXgScxTSKFUsFyLYo8W72GLowrmsesYWoJ5dABh+CQ==",
   "minAppVersion": "0",
-  "notes": "New: Generate, under Cards, makes profiles in bulk. Enter the address you want to use and your emails, and Orbit makes that many drafts at it, each with a random name and phone number; jig each draft's address, then import them into Profiles.",
+  "notes": "New: Mass edit. Select profiles, right-click (or press and hold) and choose Mass edit to change their group, name, email, phone, address, card or retailers all at once; only the fields you tick change, and Jig gives each profile its own variation, like a different spelling of the address. You can undo it.",
   "installerUrl": "",
-  "publishedAt": "2026-10-04T07:25:48.950Z"
+  "publishedAt": "2026-10-04T08:10:34.734Z"
 }
