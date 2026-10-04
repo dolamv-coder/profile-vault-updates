@@ -1,10 +1,10 @@
 {
   "name": "profile-vault",
-  "productName": "Orbit",
-  "version": "1.9.75",
-  "description": "Orbit: encrypted checkout profiles and order tracking",
+  "productName": "FAFO",
+  "version": "1.9.76",
+  "description": "FAFO: encrypted checkout profiles and order tracking",
   "main": "main.js",
-  "author": "Orbit",
+  "author": "FAFO",
   "private": true,
   "dependencies": {
     "imapflow": "1.7.8",

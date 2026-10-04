@@ -1,10 +1,12 @@
-# Orbit (formerly Profile Vault)
+# FAFO (formerly Orbit, before that Profile Vault)
 
-Orbit is a desktop app for keeping shopping profiles, cards, store logins and
-orders, encrypted locally. It was called Profile Vault until version 1.9.36, so
-older code, storage keys (`pv-license`), license keys (`PVLT-…`) and this repo's
-name still say "profile vault". Keep those names as they are: changing them
-breaks installed copies.
+FAFO is a desktop app for keeping shopping profiles, cards, store logins and
+orders, encrypted locally. It was called Profile Vault until version 1.9.36 and
+Orbit until 1.9.75, so older code, storage keys (`pv-license`, `orbit-…`), license
+keys (`PVLT-…`), the workers' names and addresses (`orbit-license`,
+`*.orbit-app.workers.dev`) and this repo's name still say "profile vault" or
+"orbit", and most of this file still says Orbit. Keep those names as they are:
+changing them breaks installed copies.
 
 **This repo is public.** Never commit secrets, private keys, tokens or `.env`
 files here.
@@ -113,8 +115,10 @@ The release feed for installed copies of Orbit. It is not the full source tree.
 - `web-worker/`: the web version, a Cloudflare Worker (`app`) at
   `https://app.orbit-app.workers.dev`. See "Web version and sync" below.
 - GitHub Releases: the app links new users to
-  `releases/latest/download/Orbit-Windows.zip` on this repo. From v1.9.61 the
-  "Release desktop app" Action makes these from `desktop/`.
+  `releases/latest/download/FAFO-Windows.zip` on this repo (`Orbit-Windows.zip`
+  until 1.9.75; each release also carries the same zip as `Orbit-Windows.zip` and
+  `ProfileVault-Windows.zip` for older pages). From v1.9.61 the "Release desktop
+  app" Action makes these from `desktop/`.
 
 `licenses.json` goes live as soon as it's on `main`. So does a new app version:
 the desktop wrapper checks
@@ -183,10 +187,15 @@ inbox sync, promo scanning, attention and focus). The original project folder
 was lost; `desktop/` holds the code from the v1.9.49 download's
 `resources/app.asar` and what came after. Changes there need a new download:
 "Release desktop app" (`.github/workflows/desktop-release.yml`) tests and
-builds `Orbit-Windows.zip` on pull requests, and publishes release
+builds `FAFO-Windows.zip` on pull requests, and publishes release
 `v<desktop/package.json version>` when run by hand on main, once the page of
-that version is out. `pvDesktop.version` is 10 in the v1.9.49 download and 11
-from the v1.9.61 download.
+that version is out. `pvDesktop.version` is 10 in the v1.9.49 download, 11
+from the v1.9.61 download and 12 from the v1.9.76 download, the first that is
+`FAFO.exe` (in `FAFO-win32-x64`; `build.mjs` renames the base's `Orbit.exe` and
+writes FAFO into its version information). It keeps Profile Vault's data folder
+and Windows app ID, and on its first start `shortcuts.js` replaces the Orbit
+Start menu shortcut with FAFO and points desktop and pinned shortcuts to an
+older `Orbit.exe` or `Profile Vault.exe` at it.
 
 Email connections check the mail server's certificate before signing in. From
 desktop 11 they also trust Windows' trusted root certificates (`trust.js`,
@@ -296,6 +305,17 @@ regular cards and picked by default (each jigged profile gets it as a billing ad
 `billSame` off), or the jigged shipping address, for virtual cards (`billSame` on, as before). The last
 choice is the shared setting `genBill`. Drafts made before 1.9.75 have no `billTo` and bill to their
 shipping address; the Import window counts them.
+
+From 1.9.76 the app is called **FAFO** (the owner's choice, in capitals), everywhere a person reads it: the
+window title, every message, the Discord messages and pages from the license worker, the share image's footer,
+and files it saves (`fafo-backup-<date>.json`, `fafo-template.csv`). The name itself (`.wordmark`) is in
+Bruno Ace SC, loaded from Google Fonts with only its letters (`text=FAFO`), at 59px on the lock and license
+screens and 30px in the top bar (times `--fs`), the same in every theme. Messages that name the app's file
+say `FAFO.exe` on desktop 12 and `Orbit.exe` on older downloads (`DESK_EXE`); download links point at
+`FAFO-Windows.zip`; Import still says it reads Orbit exports. Still Orbit, on purpose: the web version
+(paused at 1.9.67), the relay's phone page (not in this repo), every storage key, sync format (`orbit-sync…`,
+`orbit-cmd`) and worker name or address, the hidden "Profile Vault" username for password managers, and the
+Actions' names ("Publish Orbit update").
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

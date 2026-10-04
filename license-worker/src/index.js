@@ -89,7 +89,7 @@ const SUPPRESS_EMBEDS = 1 << 2;
 
 // Shown by the app while a request waits. Orbit 1.9.41 shows it as the final message and stops
 // waiting; later versions keep waiting and activate once it's approved.
-const REVIEW_MSG = "Request sent. You can use Orbit once the seller approves it. Then click Continue with Discord again.";
+const REVIEW_MSG = "Request sent. You can use FAFO once the seller approves it. Then click Continue with Discord again.";
 const DECLINED_MSG = "Your request for a key was declined. Contact the seller if you think this is a mistake.";
 const REVOKED_MSG = "The license for this Discord account was turned off. Contact the seller for help.";
 
@@ -163,7 +163,7 @@ const day = (ms) => new Date(ms).toISOString().slice(0, 10);
 
 async function start(request, env, ctx, url) {
   const r = url.searchParams.get("r") || "";
-  if (!validId(r)) return page(400, "This link isn't valid", "Go back to Orbit and click Continue with Discord again.");
+  if (!validId(r)) return page(400, "This link isn't valid", "Go back to FAFO and click Continue with Discord again.");
   if (!isReady(env)) return page(503, "Not available yet", "Getting a key with Discord isn't set up yet. Contact the seller for a key.");
 
   const now = Date.now();
@@ -179,7 +179,7 @@ async function start(request, env, ctx, url) {
      ON CONFLICT (r) DO UPDATE SET state = excluded.state, created_at = excluded.created_at
      WHERE requests.status = 'pending'`
   ).bind(r, state, ip, now).run();
-  if (!res.meta || !res.meta.changes) return page(200, "Already done", "Go back to Orbit.");
+  if (!res.meta || !res.meta.changes) return page(200, "Already done", "Go back to FAFO.");
 
   const params = new URLSearchParams({
     client_id: env.DISCORD_CLIENT_ID,
@@ -196,20 +196,20 @@ async function callback(env, ctx, url) {
   const code = url.searchParams.get("code") || "";
   const req = state ? await env.DB.prepare("SELECT * FROM requests WHERE state = ?").bind(state).first() : null;
   if (!req || Date.now() - req.created_at > REQUEST_TTL_MS) {
-    return page(400, "This sign-in expired", "Go back to Orbit and click Continue with Discord again.");
+    return page(400, "This sign-in expired", "Go back to FAFO and click Continue with Discord again.");
   }
-  if (req.status === "issued") return page(200, "You're all set", "Go back to Orbit. It has your key.");
+  if (req.status === "issued") return page(200, "You're all set", "Go back to FAFO. It has your key.");
   if (req.status === "review") return page(200, "Request sent", "The seller will review your request.");
-  if (req.status !== "pending") return page(400, "Something went wrong", req.error || "Go back to Orbit and try again.");
+  if (req.status !== "pending") return page(400, "Something went wrong", req.error || "Go back to FAFO and try again.");
 
   const fail = async (title, msg, statusCode = 403) => {
     await env.DB.prepare("UPDATE requests SET status = 'error', error = ? WHERE r = ? AND status = 'pending'").bind(msg, req.r).run();
     return page(statusCode, title, msg);
   };
-  if (url.searchParams.get("error") || !code) return fail("Sign-in cancelled", "Discord sign-in was cancelled. Click Continue with Discord in Orbit to try again.", 400);
+  if (url.searchParams.get("error") || !code) return fail("Sign-in cancelled", "Discord sign-in was cancelled. Click Continue with Discord in FAFO to try again.", 400);
 
   const token = await exchangeCode(env, code, url.origin + "/discord/callback");
-  if (!token) return fail("Sign-in failed", "Discord didn't accept the sign-in. Click Continue with Discord in Orbit to try again.", 502);
+  if (!token) return fail("Sign-in failed", "Discord didn't accept the sign-in. Click Continue with Discord in FAFO to try again.", 502);
   const user = await discordGet(env, "/users/@me", token);
   if (!user || !user.id) return fail("Sign-in failed", "Couldn't read your Discord account. Try again.", 502);
   const username = String(user.username || user.global_name || user.id);
@@ -238,7 +238,7 @@ async function callback(env, ctx, url) {
     if (app.status === "denied") return fail("Request declined", DECLINED_MSG);
     if (app.status === "pending") {
       await env.DB.prepare("UPDATE requests SET status = 'review', discord_id = ? WHERE r = ? AND status = 'pending'").bind(user.id, req.r).run();
-      return page(200, "Request sent", "The seller will review your request. Once it's approved, Orbit activates by itself if it's waiting, or click Continue with Discord in Orbit again.");
+      return page(200, "Request sent", "The seller will review your request. Once it's approved, FAFO activates by itself if it's waiting, or click Continue with Discord in FAFO again.");
     }
   }
 
@@ -248,7 +248,7 @@ async function callback(env, ctx, url) {
     return app && app.status === "denied" ? fail("Request declined", DECLINED_MSG) : fail("License turned off", REVOKED_MSG);
   }
   await env.DB.prepare("UPDATE requests SET status = 'issued', discord_id = ? WHERE r = ? AND status = 'pending'").bind(user.id, req.r).run();
-  return page(200, "You're all set", "Go back to Orbit. It activates by itself in a few seconds.",
+  return page(200, "You're all set", "Go back to FAFO. It activates by itself in a few seconds.",
     `<p class="small">Your license key, in case you need it later:</p><p class="key">${esc(lic.license_key)}</p>`);
 }
 
@@ -291,7 +291,7 @@ async function issueLicense(env, ctx, discordId, username, notify) {
     env.DB.prepare("UPDATE list_state SET version = version + 1 WHERE id = 1"),
   ]);
   if (notify && ins.meta && ins.meta.changes) {
-    ctx.waitUntil(webhookPost(env, { content: `🔑 New Orbit license issued to **@${md(username)}** (Discord ID ${discordId}).` }).catch(() => {}));
+    ctx.waitUntil(webhookPost(env, { content: `🔑 New FAFO license issued to **@${md(username)}** (Discord ID ${discordId}).` }).catch(() => {}));
   }
   return env.DB.prepare("SELECT * FROM licenses WHERE discord_id = ?").bind(discordId).first();
 }
@@ -342,7 +342,7 @@ function reviewMessage(origin, app) {
   const link = `${origin}/review/${app.discord_id}?t=${app.review_token}`;
   if (app.status === "approved") return `✅ **Approved** · ${who}\n[Change decision](${link})`;
   if (app.status === "denied") return `⛔ **Denied** · ${who}\n[Change decision](${link})`;
-  return `📝 **New Orbit key request** from ${who}\n[Review: approve or deny](${link})`;
+  return `📝 **New FAFO key request** from ${who}\n[Review: approve or deny](${link})`;
 }
 
 async function review(request, env, ctx, url, discordId) {
@@ -706,7 +706,7 @@ function submitKeyMessage(origin, k) {
     denied: `⛔ **Key ${k.key_id} refused**`,
     replaced: `↩️ **Key ${k.key_id} replaced by a newer one**`,
   }[k.status] || `🔑 **Receive submissions here with key ${k.key_id}?**`;
-  const note = k.status === "pending" ? "\nOnly confirm if the key ID and fingerprint on the review page match your own Orbit (Settings → Password and sharing)." : "";
+  const note = k.status === "pending" ? "\nOnly confirm if the key ID and fingerprint on the review page match your own FAFO (Settings → Password and sharing)." : "";
   return `${head}\nOffered by ${who}${note}\n[${k.status === "pending" ? "Review: confirm or refuse" : "Change decision"}](${link})`;
 }
 
@@ -732,11 +732,11 @@ async function submitKeyReview(request, env, ctx, url, id) {
       env.DB.prepare("UPDATE submit_keys SET status = 'active', decided_at = ? WHERE id = ?").bind(now, k.id),
     ]);
     touched.push(...old.map((o) => o.id), k.id);
-    done = "Confirmed. Submissions now come to your channel, and only the Orbit with this key can open them.";
+    done = "Confirmed. Submissions now come to your channel, and only the FAFO with this key can open them.";
   } else if (action === "deny" && k.status !== "denied") {
     await env.DB.prepare("UPDATE submit_keys SET status = 'denied', decided_at = ? WHERE id = ?").bind(now, k.id).run();
     touched.push(k.id);
-    done = k.status === "active" ? "Stopped. Orbit won't send submissions to your channel until you confirm a key again." : "Refused.";
+    done = k.status === "active" ? "Stopped. FAFO won't send submissions to your channel until you confirm a key again." : "Refused.";
   }
   for (const tid of touched) {
     const row = await env.DB.prepare("SELECT * FROM submit_keys WHERE id = ?").bind(tid).first();
@@ -750,7 +750,7 @@ async function submitKeyReview(request, env, ctx, url, id) {
   return page(200, "Collecting key", done || label,
     `<p class="small" style="margin-top:8px">Key ID</p><p class="key">${esc(cur.key_id)}</p>
      <p class="small" style="margin-top:8px">Fingerprint</p><p class="key" style="font-size:15px">${esc((await collectKey(cur.pub)).fingerprint)}</p>
-     <p class="small">Only confirm if the key ID and fingerprint match the ones in your own Orbit, under Settings → Password and sharing. Submissions are encrypted for it, and only the Orbit that has this key can open them.</p>
+     <p class="small">Only confirm if the key ID and fingerprint match the ones in your own FAFO, under Settings → Password and sharing. Submissions are encrypted for it, and only the FAFO that has this key can open them.</p>
      <p class="small">Offered by ${esc(who)}<br>${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC${done ? `<br>Status: ${esc(label)}` : ""}</p>
      <div class="row">${cur.status !== "active" ? btn("confirm", cur.status === "pending" ? "Confirm" : "Use this key", "ok") : ""}${cur.status !== "denied" ? btn("deny", cur.status === "active" ? "Stop using it" : "Refuse", "no") : ""}</div>`);
 }
@@ -845,7 +845,7 @@ async function submission(request, env, url) {
   const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
   const tail = files !== null
     ? `-# One profiles file (.csv) per store${files.some((f) => f.kind === "logins") ? ", with its logins (email:password, .txt) in the same order" : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
-    : csv !== null ? "-# CSV attached." : `-# Encrypted for key ${keyId}. To open: download the file, then in Orbit choose **Import** and drop it in.`;
+    : csv !== null ? "-# CSV attached." : `-# Encrypted for key ${keyId}. To open: download the file, then in FAFO choose **Import** and drop it in.`;
   const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n${tail}`;
   const base = `orbit-slots-${stamp}${slug ? "-" + slug : ""}`;
   let attach;
@@ -1002,8 +1002,8 @@ async function stockCheck(env, store, name, post) {
        SET low_at = excluded.low_at WHERE account_stock.low_at IS NULL`).bind(...(empty ? [store, now, now] : [store, now])).run();
   if (!r.meta || !r.meta.changes) return;
   await webhookPost(env, { content: empty
-    ? `🚫 **No ${md(name)} accounts left** on your list for Use Assigned Account. Slots on it wait for you to assign one by hand until you send more from Orbit (Settings → Accounts to assign).`
-    : `⚠️ **Only ${free} ${md(name)} account${free === 1 ? "" : "s"} left** on your list for Use Assigned Account. Send more from Orbit (Settings → Accounts to assign).` });
+    ? `🚫 **No ${md(name)} accounts left** on your list for Use Assigned Account. Slots on it wait for you to assign one by hand until you send more from FAFO (Settings → Accounts to assign).`
+    : `⚠️ **Only ${free} ${md(name)} account${free === 1 ? "" : "s"} left** on your list for Use Assigned Account. Send more from FAFO (Settings → Accounts to assign).` });
 }
 
 // sent: the batch (or part of it) reached the channel, so its accounts are given out for good.
@@ -1097,7 +1097,7 @@ async function accountReview(request, env, ctx, url, id) {
   const cur = await env.DB.prepare("SELECT * FROM account_offers WHERE id = ?").bind(o.id).first();
   if (done && cur.webhook_message_id) ctx.waitUntil(webhookEdit(env, cur.webhook_message_id, { content: offerMessage(url.origin, cur) }).catch(() => {}));
   const stats = await env.DB.prepare("SELECT COUNT(*) AS n, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free FROM accounts WHERE store = ?").bind(cur.store).first();
-  const label = { pending: "Waiting for you", added: `Added ${cur.added} to your list`, refused: "Refused", expired: "Expired before it was added. Send the accounts again from Orbit." }[cur.status] || cur.status;
+  const label = { pending: "Waiting for you", added: `Added ${cur.added} to your list`, refused: "Refused", expired: "Expired before it was added. Send the accounts again from FAFO." }[cur.status] || cur.status;
   const who = [cur.name, cur.username ? "@" + cur.username : "", "license …" + cur.key_last4].filter(Boolean).join(" · ");
   const emails = cur.status === "pending" ? JSON.parse(cur.accounts || "[]").map((a) => a.email) : [];
   const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
@@ -1105,7 +1105,7 @@ async function accountReview(request, env, ctx, url, id) {
   return page(200, `${cur.store_name} accounts`, done || label,
     `<p class="who">${cur.count} account${cur.count === 1 ? "" : "s"} for Use Assigned Account</p>
      <p class="small">Each slot on Use Assigned Account gets one of your free accounts when its batch reaches your channel, with the email in its row and email:password in the logins file. Buyers never see them, and each one goes to one slot only.</p>
-     ${cur.status === "pending" ? `<p class="small"><strong>Only add these if you sent them</strong> from your own Orbit (Settings → Accounts to assign).</p>` : ""}
+     ${cur.status === "pending" ? `<p class="small"><strong>Only add these if you sent them</strong> from your own FAFO (Settings → Accounts to assign).</p>` : ""}
      ${emails.length ? `<p class="small">${emails.slice(0, 12).map(esc).join("<br>")}${emails.length > 12 ? `<br>and ${emails.length - 12} more` : ""}</p>` : ""}
      <p class="small">Your ${esc(cur.store_name)} list: ${stats.n || 0} account${stats.n === 1 ? "" : "s"}, ${stats.free || 0} free.<br>Sent by ${esc(who)}, ${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC</p>
      ${cur.status === "pending" ? `<div class="row">${btn("add", "Add to my list", "ok")}${btn("refuse", "Refuse", "no")}</div>` : ""}`);
@@ -1144,8 +1144,8 @@ async function alertSenderGet(request, env) {
 function alertSenderMessage(origin, s) {
   const who = [s.name ? `**${md(s.name)}**` : "", s.username ? `@${md(s.username)}` : "", `license …${s.key_last4}`].filter(Boolean).join(" · ");
   const head = { allowed: "🔔 **Sends order alerts to buyers**", refused: "⛔ **Not allowed to send order alerts**",
-    replaced: "🔕 **No longer sends order alerts** (another Orbit does now)", expired: "⌛ **Order alerts request expired**" }[s.status]
-    || "🔔 **Let this Orbit send order alerts to buyers?**";
+    replaced: "🔕 **No longer sends order alerts** (another FAFO does now)", expired: "⌛ **Order alerts request expired**" }[s.status]
+    || "🔔 **Let this FAFO send order alerts to buyers?**";
   return `${head}\n${who}${s.status === "pending" ? `\n[Review: allow or refuse](${origin}/alerts/review/${s.id}?t=${s.review_token})` : ""}`;
 }
 
@@ -1196,20 +1196,20 @@ async function alertSenderReview(request, env, ctx, url, id) {
     done = "Allowed. Orders on the accounts you assign now reach the buyers who have them.";
   } else if (s.status === "pending" && action === "refuse") {
     await env.DB.prepare("UPDATE alert_senders SET status = 'refused', decided_at = ? WHERE id = ? AND status = 'pending'").bind(now, s.id).run();
-    done = "Refused. This Orbit won't send order alerts.";
+    done = "Refused. This FAFO won't send order alerts.";
   }
   const cur = await env.DB.prepare("SELECT * FROM alert_senders WHERE id = ?").bind(s.id).first();
   if (done && cur.webhook_message_id) ctx.waitUntil(webhookEdit(env, cur.webhook_message_id, { content: alertSenderMessage(url.origin, cur) }).catch(() => {}));
   for (const o of before) if (o.id !== cur.id && o.webhook_message_id) ctx.waitUntil(webhookEdit(env, o.webhook_message_id, { content: alertSenderMessage(url.origin, { ...o, status: "replaced" }) }).catch(() => {}));
   const label = { pending: "Waiting for you", allowed: "Sends order alerts to buyers", refused: "Refused",
-    replaced: "Replaced: another Orbit sends order alerts now", expired: "Expired. Turn order alerts on again from Orbit." }[cur.status] || cur.status;
+    replaced: "Replaced: another FAFO sends order alerts now", expired: "Expired. Turn order alerts on again from FAFO." }[cur.status] || cur.status;
   const who = [cur.name, cur.username ? "@" + cur.username : "", "license …" + cur.key_last4].filter(Boolean).join(" · ");
   const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
   const btn = (a, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${a}">${esc(text)}</button></form>`;
   return page(200, "Order alerts for buyers", done || label,
     `<p class="who">${esc(who)}</p>
-     <p class="small">Allowing it lets this Orbit tell buyers about orders placed on the accounts you assigned them: the store, their profile, the item, the total and the status. Never the account's email or password. One Orbit sends them at a time.</p>
-     ${cur.status === "pending" ? `<p class="small"><strong>Only allow it if you turned it on</strong> in your own Orbit (Settings → Order alerts for buyers).</p>
+     <p class="small">Allowing it lets this FAFO tell buyers about orders placed on the accounts you assigned them: the store, their profile, the item, the total and the status. Never the account's email or password. One FAFO sends them at a time.</p>
+     ${cur.status === "pending" ? `<p class="small"><strong>Only allow it if you turned it on</strong> in your own FAFO (Settings → Order alerts for buyers).</p>
      <div class="row">${btn("allow", "Allow", "ok")}${btn("refuse", "Refuse", "no")}</div>` : ""}`);
 }
 
@@ -1322,7 +1322,7 @@ async function alertWebhookPut(request, env) {
   const had = await env.DB.prepare("SELECT set_at FROM alert_webhooks WHERE key_hash = ?").bind(lic.hash).first();
   if (had && had.set_at > now - 5000) return json({ error: "Wait a moment, then try again." }, 429);
   // A test post first, so a wrong or deleted webhook is caught now.
-  const res = await hookPost(u, "✅ Orbit will post your order alerts here.");
+  const res = await hookPost(u, "✅ FAFO will post your order alerts here.");
   if (!res.ok) return json({ error: `${res.error}. Check the webhook link.` }, 400);
   await env.DB.prepare(`INSERT INTO alert_webhooks (key_hash, url, set_at, last_ok) VALUES (?, ?, ?, ?)
     ON CONFLICT (key_hash) DO UPDATE SET url = excluded.url, set_at = excluded.set_at, last_ok = excluded.last_ok, last_error = NULL`).bind(lic.hash, u, now, now).run();
@@ -1685,11 +1685,12 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
 function page(statusCode, title, msg, extra = "") {
   return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
-<title>Orbit · ${esc(title)}</title>
+<title>FAFO · ${esc(title)}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bruno+Ace+SC&text=FAFO&display=swap">
 <style>
   body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1433;color:#e6ecff;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:16px;box-sizing:border-box}
   main{max-width:440px;width:100%;background:#0f1d45;border:1px solid #2a3f7a;border-radius:16px;padding:28px;box-sizing:border-box}
-  h1{margin:0 0 4px;font:600 34px Georgia,serif;color:#4a9dff}
+  h1{margin:0 0 4px;font:400 34px "Bruno Ace SC",system-ui,sans-serif;letter-spacing:.06em;color:#4a9dff}
   h2{margin:0 0 12px;font-size:18px}
   p{margin:0 0 12px;color:#b9c6ea}
   .small{font-size:14px;margin-top:20px}
@@ -1702,6 +1703,6 @@ function page(statusCode, title, msg, extra = "") {
   button{width:100%;padding:12px;border:0;border-radius:10px;font:600 16px system-ui,sans-serif;cursor:pointer;color:#fff}
   button.ok{background:#1f9d5c} button.no{background:#c4372f}
   button.copy{width:auto;padding:8px 14px;font-size:14px;background:#2a3f7a}
-</style></head><body><main><h1>Orbit</h1><h2>${esc(title)}</h2>${msg ? `<p>${esc(msg)}</p>` : ""}${extra}</main></body></html>`,
+</style></head><body><main><h1>FAFO</h1><h2>${esc(title)}</h2>${msg ? `<p>${esc(msg)}</p>` : ""}${extra}</main></body></html>`,
     { status: statusCode, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
 }
