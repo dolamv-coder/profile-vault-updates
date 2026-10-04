@@ -1,0 +1,1 @@
+Mass edit and Jig move to Generate, where drafts get finished: select drafts and right-click to Jig their addresses or Mass edit them, with a preview of every draft first. Jig is gentler too: it only writes street words another usual way (N., North, Wy), and puts a dot in the street name only once those run out.

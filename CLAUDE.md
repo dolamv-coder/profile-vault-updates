@@ -256,15 +256,22 @@ then, each with an address of its own, billing the same, no card, and store logi
 move to a list of their own in the big update.
 
 From 1.9.72, right-clicking a profile (or touch and hold, or Shift+F10) opens its menu, and on one of
-several selected profiles the menu acts on all of them: **Mass edit**, Move to group, Export, Delete.
-Mass edit (`openMassEdit`, also on the selection bar) puts each ticked field onto every selected profile:
-`mePlan` works out each profile's values and the summary without changing anything, `meApply` does it,
-and Undo restores what changed. Text takes expressions (`meEval`): `{n}`, `{same}`, `{letters:N}`,
-`{digits:N}`, `{symbol}`, and `{jig}`, a variation of what the profile has (`jigValue`, per field). Random
-results stay put until their expression changes or Shuffle, so what the summary shows is what's saved.
-Addresses go through `resolveAddr` like the profile editor's. A new email relinks stores on a login to
-the saved login with that email, and Pokémon Center's checkout email follows it. It only writes fields
-profiles already have, so it's safe with the paused web version.
+several selected profiles the menu acts on all of them: Move to group, Export, Delete. (1.9.72 also had
+Mass edit there, with `{jig}`-style expressions; the owner wanted profiles left alone once they're done,
+so 1.9.73 moved it to Generate and dropped the expressions.)
+
+From 1.9.73, **Jig and Mass edit** are on the Generate page, for drafts: right-click a draft (or the
+selection bar) for Mass edit, Jig addresses, Import and Delete. Jig must stay simple, since stores cancel
+orders to addresses that look made up (the owner's rule): it only writes street words another usual way,
+a direction before or after the street name (N, N., North), the street type at its end (`JIG_TYPES`: Dr,
+Dr., Drive; Way, Wy) and the unit (Apt 4, Apt #4, #4), never letters in front (`jigLine1`, `jigUnit`).
+Only once those run out does it put a dot inside a street-name word ("Or.chard"), which works some of the
+time. `jigAssign` gives each draft an address no other draft or saved address has (`jigTaken`), fewest
+words changed first, then the address as it was, then dots; ones with no way left keep theirs and are
+counted. Jig addresses applies at once with Undo; Mass edit (`openDraftMassEdit`, `dmPlan`) shows every
+draft as it will be before Change, with Jig, New random names and New random numbers as boxes instead of
+codes. The draft editor has a Jig link on each address line (`jigNext`). Drafts keep the same fields, so
+the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
