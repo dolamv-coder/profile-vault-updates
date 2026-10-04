@@ -3,54 +3,27 @@ const path = require("path");
 const fs = require("fs");
 const imap = require("./imap-sync");
 const { Updater } = require("./updater");
+const { ensureShortcuts } = require("./shortcuts");
 
-// The app was called Profile Vault before it became Orbit. Keep using that data folder so the
-// vault, saved inboxes, license and page updates carry over. (Must run before anything touches it.)
+// The app was called Profile Vault, then Orbit, before it became FAFO. Keep using that first data
+// folder so the vault, saved inboxes, license and page updates carry over. (Must run before anything touches it.)
 app.setPath("userData", path.join(app.getPath("appData"), "Profile Vault"));
 
 if (!app.requestSingleInstanceLock()) app.quit();
 
 // Windows shows a notification's app name and icon from the app's ID, which it looks up
-// on a Start menu shortcut. Set the ID and keep a Start menu shortcut pointing at this copy.
+// on a Start menu shortcut. Set the ID and keep a Start menu shortcut pointing at this copy
+// (shortcuts.js, which also moves shortcuts to an older Orbit or Profile Vault copy over to this one).
 const APP_ID = "com.profilevault.app";
 if (process.platform === "win32") app.setAppUserModelId(APP_ID);
-const START_MENU = () => path.join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs");
 function ensureStartMenuShortcut() {
   if (process.platform !== "win32") return;
-  // The old Start menu shortcut from before the rename; Orbit.lnk below replaces it.
-  try {
-    const old = path.join(START_MENU(), "Profile Vault.lnk");
-    if (fs.existsSync(old) && shell.readShortcutLink(old).appUserModelId === APP_ID) fs.unlinkSync(old);
-  } catch {}
-  try {
-    const lnk = path.join(START_MENU(), "Orbit.lnk");
-    let cur = null;
-    try { cur = shell.readShortcutLink(lnk); } catch {}
-    if (cur && cur.target === process.execPath && cur.appUserModelId === APP_ID) return;
-    shell.writeShortcutLink(lnk, cur ? "replace" : "create", {
-      target: process.execPath, cwd: path.dirname(process.execPath), description: "Orbit",
-      icon: process.execPath, iconIndex: 0, appUserModelId: APP_ID
-    });
-  } catch {}
-  // Give the same ID to desktop and pinned-taskbar shortcuts that open this copy, so the
-  // running window groups with a pinned icon instead of showing a second taskbar button.
-  // Shortcuts to the old "Profile Vault.exe" are pointed at this copy so they keep working
-  // (a desktop one is also renamed; renaming a pinned one would unpin it).
-  for (const dir of [app.getPath("desktop"), path.join(app.getPath("appData"), "Microsoft", "Internet Explorer", "Quick Launch", "User Pinned", "TaskBar")]) {
-    let files = [];
-    try { files = fs.readdirSync(dir).filter(f => /\.lnk$/i.test(f)); } catch { continue; }
-    for (const f of files) {
-      try {
-        const p = path.join(dir, f), s = shell.readShortcutLink(p);
-        if (s.target === process.execPath && s.appUserModelId !== APP_ID) shell.writeShortcutLink(p, "update", { appUserModelId: APP_ID });
-        else if (path.basename(s.target || "") === "Profile Vault.exe" && process.execPath !== s.target && path.basename(process.execPath) === "Orbit.exe") {
-          shell.writeShortcutLink(p, "update", { target: process.execPath, cwd: path.dirname(process.execPath), icon: process.execPath, iconIndex: 0, appUserModelId: APP_ID, description: "Orbit" });
-          const renamed = path.join(dir, "Orbit.lnk");
-          if (dir === app.getPath("desktop") && f === "Profile Vault.lnk" && !fs.existsSync(renamed)) fs.renameSync(p, renamed);
-        }
-      } catch {}
-    }
-  }
+  ensureShortcuts({
+    shell, fs, path, execPath: process.execPath, appId: APP_ID,
+    startMenu: path.join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs"),
+    desktop: app.getPath("desktop"),
+    pinned: path.join(app.getPath("appData"), "Microsoft", "Internet Explorer", "Quick Launch", "User Pinned", "TaskBar")
+  });
 }
 
 let updater = null;
@@ -113,7 +86,7 @@ function createWindow(){
   // The background shows until the page paints: Deep space blue's, the default theme from page 1.9.70.
   win = new BrowserWindow({
     width: 1280, height: 860, minWidth: 380, minHeight: 560,
-    title: "Orbit", backgroundColor: "#040A1C", autoHideMenuBar: true,
+    title: "FAFO", backgroundColor: "#040A1C", autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false }
   });
   const page = updater.pageToLoad();

@@ -1,5 +1,6 @@
 // Desktop app tests. Makes throwaway certificates with openssl, then runs tls.test.cjs with the
-// "public" test root trusted the way Node trusts real public authorities (NODE_EXTRA_CA_CERTS).
+// "public" test root trusted the way Node trusts real public authorities (NODE_EXTRA_CA_CERTS),
+// then powershell.test.cjs and shortcuts.test.cjs.
 // With ELECTRON=path/to/electron it runs under Electron's own Node instead (ELECTRON_RUN_AS_NODE).
 import fs from "node:fs";
 import os from "node:os";
@@ -8,7 +9,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-certs-"));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fafo-certs-"));
 const ssl = (...args) => execFileSync("openssl", args, { cwd: dir, stdio: ["ignore", "ignore", "pipe"] });
 
 function ca(name, cn, org) {
@@ -41,7 +42,7 @@ const cmd = electron || process.execPath;
 const env = { ...process.env, CERT_DIR: dir, NODE_EXTRA_CA_CERTS: path.join(dir, "public.pem"), ...(electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) };
 console.log(`Running under ${electron ? "Electron " + execFileSync(cmd, ["-p", "process.versions.electron + ' (Node ' + process.versions.node + ')'"], { env }).toString().trim() : "Node " + process.versions.node}`);
 let status = 0;
-for (const test of ["tls.test.cjs", "powershell.test.cjs"]) {
+for (const test of ["tls.test.cjs", "powershell.test.cjs", "shortcuts.test.cjs"]) {
   console.log(`\n# ${test}`);
   const r = spawnSync(cmd, [path.join(HERE, test)], { env, stdio: "inherit" });
   if (r.status !== 0) status = 1;

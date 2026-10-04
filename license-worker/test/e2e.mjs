@@ -231,7 +231,10 @@ try {
     const { state } = await signIn(r, "bob");
     const again = await get(`/discord/callback?state=${state}&code=bob`);
     assert.equal(again.status, 200);
-    assert.match(await again.text(), /all set/);
+    const html = await again.text();
+    assert.match(html, /all set/);
+    assert.match(html, /<title>FAFO · You&#39;re all set<\/title>/); assert.match(html, /<h1>FAFO<\/h1>/); assert.match(html, /family=Bruno\+Ace\+SC&text=FAFO/);
+    assert.match(html, /Go back to FAFO/); assert.doesNotMatch(html, /Orbit/);
     const b = await verifyList(await getJson("/licenses"));
     assert.equal(b.keys.length, 2);
   });
@@ -328,7 +331,7 @@ try {
     assert.equal(webhookPosts.length, 1);
     const m = webhookPosts[0];
     assert.equal(m.wait, "true"); assert.equal(m.flags, 4);
-    assert.match(m.content, /New Orbit key request/);
+    assert.match(m.content, /New FAFO key request/);
     assert.match(m.content, /@carol\\_x/, "username markdown is escaped");
     assert.match(m.content, new RegExp("Discord ID " + USERS.carol.id));
     carolLink = linkIn(m.content);
@@ -606,7 +609,7 @@ try {
     await new Promise((ok) => setTimeout(ok, 400));
     assert.equal(webhookPosts.length, before + 1);
     const m = webhookPosts.at(-1).content;
-    assert.match(m, new RegExp("with key " + ownerKey.keyId)); assert.match(m, /Only confirm if the key ID and fingerprint on the review page match your own Orbit/);
+    assert.match(m, new RegExp("with key " + ownerKey.keyId)); assert.match(m, /Only confirm if the key ID and fingerprint on the review page match your own FAFO/);
     ownerLink = keyLink(m); assert.ok(ownerLink);
     assert.equal((await getJson("/submit/key")).pub, null);
     assert.equal((await getJson("/submit/key?pub=" + ownerKey.pub)).mine, "pending");
@@ -1096,7 +1099,7 @@ try {
     const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 6, batch: "asg5" + rid(), stores: [{ name: "Target", n: 6, seller: 6 }] })).json();
     assert.deepEqual(r.accounts, { Target: { asked: 6, got: 5 } });
     const m = webhookPosts.at(-2), em = emailsIn(m.files[0].text);
-    assert.match(webhookPosts.at(-1).content, /^⚠️ \*\*Only 3 Target accounts left\*\* on your list for Use Assigned Account\. Send more from Orbit/, "down to ACCOUNTS_LOW_AT (3 here): the owner is told");
+    assert.match(webhookPosts.at(-1).content, /^⚠️ \*\*Only 3 Target accounts left\*\* on your list for Use Assigned Account\. Send more from FAFO/, "down to ACCOUNTS_LOW_AT (3 here): the owner is told");
     assert.match(m.content, /\nTarget 6 \(5 assigned accounts, 1 needs an account\)\n/);
     assert.equal(em[5], "hal5@example.com", "the last one keeps its own email");
     assert.equal(m.files[1].text.split("\r\n").length, 5, "five login lines, for the first five rows");
@@ -1197,7 +1200,7 @@ try {
     assert.deepEqual(await (await slots("/alerts/sender", frankKey, { name: "Owner" })).json(), { status: "pending" });
     await new Promise((ok) => setTimeout(ok, 400));
     const m = webhookPosts.at(-1).content;
-    assert.match(m, /Let this Orbit send order alerts to buyers\?/); assert.match(m, /\*\*Owner\*\* · @frank · license …/);
+    assert.match(m, /Let this FAFO send order alerts to buyers\?/); assert.match(m, /\*\*Owner\*\* · @frank · license …/);
     senderLink = reviewIn(m); assert.ok(senderLink, m);
     assert.equal((await (await getAuth("/alerts/sender", frankKey)).json()).status, "pending");
     assert.match(await (await fetch(senderLink)).text(), /Only allow it if you turned it on/);
@@ -1244,7 +1247,7 @@ try {
     const dead = await putAuth("/alerts/webhook", ginaKey, { url: hook.replace("/buyerhook/", "/buyerhook/dead/") });
     assert.equal(dead.status, 400); assert.match((await dead.json()).error, /Discord answered 404\. Check the webhook link\./);
     assert.deepEqual(await (await putAuth("/alerts/webhook", ginaKey, { url: hook })).json(), { set: true });
-    assert.equal(buyerHookPosts.at(-1).content, "✅ Orbit will post your order alerts here.");
+    assert.equal(buyerHookPosts.at(-1).content, "✅ FAFO will post your order alerts here.");
     assert.equal((await (await getAuth("/alerts/webhook", ginaKey)).json()).set, true);
     const before = buyerHookPosts.length;
     await slots("/alerts", frankKey, { events: [orderEvent({ stage: "delivered" }), orderEvent({ account: bobAcct.email, orderNo: "BOB-7" })] });
@@ -1275,7 +1278,7 @@ try {
     assert.ok(webhookEdits.some((e) => /No longer sends order alerts/.test(e.content)), "its channel message says so");
     await slots("/alerts/sender", ginaKey, {});
     await new Promise((ok) => setTimeout(ok, 400));
-    assert.match(await (await offerPost(reviewIn(webhookPosts.at(-1).content), "refuse")).text(), /Refused\. This Orbit won&#39;t send order alerts\./);
+    assert.match(await (await offerPost(reviewIn(webhookPosts.at(-1).content), "refuse")).text(), /Refused\. This FAFO won&#39;t send order alerts\./);
     assert.equal((await (await getAuth("/alerts/sender", ginaKey)).json()).status, "refused");
     assert.equal((await slots("/alerts", ginaKey, { events: [orderEvent()] })).status, 403);
     assert.equal((await (await getAuth("/alerts/sender", bobKey)).json()).status, "allowed");

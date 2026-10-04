@@ -1,12 +1,15 @@
-# Orbit license worker
+# FAFO license worker
 
-Gives new users a license key through Discord. In Orbit (1.9.41 and later), a new user
+FAFO was called Orbit until 1.9.75 (and Profile Vault before that), so older versions are called Orbit here.
+The worker's own names (`orbit-license`, its address and its D1 database) stay as they are: installed apps use them.
+
+Gives new users a license key through Discord. In FAFO (1.9.41 and later), a new user
 clicks **Continue with Discord** and signs in with Discord in their browser. Then either:
 
 - **You approve each request** (`REQUIRE_APPROVAL = "true"`, the setting in
   `wrangler.toml`): the request appears in your Discord channel with a link to approve or
   deny it. See [Approving each key yourself](#approving-each-key-yourself).
-- **Or keys are handed out straight away** (`REQUIRE_APPROVAL = ""`): Orbit activates by
+- **Or keys are handed out straight away** (`REQUIRE_APPROVAL = ""`): FAFO activates by
   itself a few seconds after sign-in, and you don't have to do anything.
 
 - Each Discord account gets one key. Signing in again gives the same key back.
@@ -91,7 +94,7 @@ Run these in a terminal inside this `license-worker` folder.
    ```
 
 6. **Check it.** Open https://orbit-license.orbit-app.workers.dev/discord/ready in a
-   browser. It should say `{"ready":true}`. Until it does, Orbit hides the Discord
+   browser. It should say `{"ready":true}`. Until it does, FAFO hides the Discord
    button, so nothing breaks while you set up.
 
 ## Deploying automatically
@@ -122,7 +125,7 @@ across deploys.
 With `REQUIRE_APPROVAL = "true"`, each new Discord account that signs in is posted to a
 channel of yours:
 
-> 📝 **New Orbit key request** from **@name** · Discord ID … · account created …
+> 📝 **New FAFO key request** from **@name** · Discord ID … · account created …
 > [Review: approve or deny](…)
 
 The link opens a page with **Approve** and **Deny** buttons. Approving issues the key
@@ -134,7 +137,7 @@ Opening the link by itself changes nothing: only the buttons do.
 
 What the person sees:
 - **Orbit 1.9.42 and later** says it's waiting for your approval and activates by itself
-  once you approve, even if they closed Orbit in between (for up to 7 days).
+  once you approve, even if they closed FAFO in between (for up to 7 days).
 - **Orbit 1.9.41** says "Request sent" and asks them to click Continue with Discord
   again after you approve. Doing that activates it straight away.
 
@@ -157,7 +160,7 @@ People who already have a key always get it back without a new request.
    Paste the webhook address when asked. `db:init` adds the table for requests; running it
    again is safe and keeps the keys already issued.
 
-Until the webhook is set, `/discord/ready` says `false` and Orbit hides the Discord
+Until the webhook is set, `/discord/ready` says `false` and FAFO hides the Discord
 button, so requests can't get lost.
 
 If posting a request to your channel fails (for example Discord is down), it's posted
@@ -169,11 +172,11 @@ To go back to handing keys out straight away, set `REQUIRE_APPROVAL = ""` in
 
 ## Slot limits
 
-Orbit (1.9.46 and later) lets each license have at most **20 slots** switched on at once on
+FAFO (1.9.46 and later) lets each license have at most **20 slots** switched on at once on
 the Submit page, across all stores. Change the starting number with `DEFAULT_SLOT_LIMIT` in
 `wrangler.toml`.
 
-When someone needs more, they press **Request more slots** in Orbit, say how many they need in
+When someone needs more, they press **Request more slots** in FAFO, say how many they need in
 total and why. The request is posted to the same Discord channel as key requests:
 
 > 🎟️ **More slots requested** · **Kim** · @kim · license …ABCD
@@ -181,7 +184,7 @@ total and why. The request is posted to the same Discord channel as key requests
 > [Review: approve or deny](…)
 
 The link opens a page where you can approve the number they asked for, change it first, or
-deny it. Their Orbit picks up the new limit within a minute or so while the Submit page is
+deny it. Their FAFO picks up the new limit within a minute or so while the Submit page is
 open, or the next time they unlock. You can change your mind later from the same link:
 denying an approved request puts their limit back to what it was.
 
@@ -194,7 +197,7 @@ curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit
 
 ## Slots sent to your Discord
 
-Every batch people submit from a licensed Orbit is posted to the same Discord channel as files you
+Every batch people submit from a licensed FAFO is posted to the same Discord channel as files you
 can open directly in Excel or Google Sheets. There's nothing to set up; it uses the same
 `DISCORD_WEBHOOK_URL`. From Orbit 1.9.53 each store gets its own two files:
 
@@ -211,7 +214,7 @@ example `="5555555555554444"`, so Excel shows the full card number and keeps lea
 it, Excel turns them into numbers: 5.55556E+15, with the last digit lost if the file is saved. Any
 other cell that starts with `=`, `+`, `-` or `@` is written the same way, so nothing a buyer typed
 runs as a formula. Excel saves these cells as the plain value. A bot reading the file directly would
-see the `="…"`, and Orbit's **Import** (1.9.68+) reads them as the text inside.
+see the `="…"`, and FAFO's **Import** (1.9.68+) reads them as the text inside.
 
 > 📦 **6 slots** from **Kim** · @kim · license …ABCD
 > Target 3 · Walmart 3
@@ -224,7 +227,7 @@ buyer added no login because you provide one, and the store line says so, e.g. "
 account)". Discord takes 10 files a message, so a batch with more stores continues in a follow-up
 message.
 
-To load a store into your own Orbit (1.9.68 or later, which reads the `="…"` cells), **Import** its
+To load a store into your own FAFO (1.9.68 or later, which reads the `="…"` cells), **Import** its
 CSV and pick that store under Retailers, then on
 Store logins use **Import accounts** with the logins file and **Link to profiles** on: each account
 goes to the profile with the same email, and the "no login linked" alert lists any left over.
@@ -246,27 +249,27 @@ you've loaded them.
 
 ### Encrypted files from Orbit 1.9.47–1.9.51
 
-People still on an older Orbit send an encrypted `.txt` instead, once you've set up a collecting
-key. The file is encrypted in their Orbit before it's sent, for a key only your own Orbit has, so
+People still on an older FAFO send an encrypted `.txt` instead, once you've set up a collecting
+key. The file is encrypted in their FAFO before it's sent, for a key only your own FAFO has, so
 card numbers and passwords are never readable by Discord or by this worker. Without a key, those
 versions give people a code to send you themselves.
 
-Turn it on once, from your own Orbit (the one you'll open submissions with):
+Turn it on once, from your own FAFO (the one you'll open submissions with):
 
 1. **Settings → Password and sharing**. Under **Collect profiles from others**, choose **Set up
    collecting** if you haven't already.
 2. Under **Receive slots in Discord**, choose **Send my key to Discord**.
-3. Orbit shows a **key ID** and a longer **fingerprint**. In your channel, a message asks you to
+3. FAFO shows a **key ID** and a longer **fingerprint**. In your channel, a message asks you to
    confirm that key. Open its link and choose **Confirm**, but only if the key ID and fingerprint on
-   that page match the ones in your Orbit.
+   that page match the ones in your FAFO.
 
 From then on, their batches arrive in your channel with the same message and a `.txt` file attached.
-To open one, download the file, then in your Orbit choose **Import** and drop it in.
+To open one, download the file, then in your FAFO choose **Import** and drop it in.
 
-- **Back up your vault.** Only the Orbit with that key can open the files. If it's lost, files
+- **Back up your vault.** Only the FAFO with that key can open the files. If it's lost, files
   already sent can't be opened; set up collecting again and send the new key.
-- To switch to a new key, send it the same way and confirm it. Orbit seals new batches for the new
-  one; older files still need the old vault. Each person's Orbit remembers the key it last sent
+- To switch to a new key, send it the same way and confirm it. FAFO seals new batches for the new
+  one; older files still need the old vault. Each person's FAFO remembers the key it last sent
   with, and the first time they send after a change it tells them the key changed and asks them to
   press **Send to the new key**, so tell people when you change it. The link in each key's message lets you change your
   mind later, and **Stop using it** turns encrypted sending off for those versions (they then give
@@ -306,7 +309,7 @@ A store on a buyer's profile can be set to **Use Assigned Account** (Orbit 1.9.5
 login, and you provide one of your own accounts. From Orbit 1.9.58 this worker hands them out from a
 list you keep here:
 
-1. In your own Orbit, open **Settings → Accounts to assign → Send accounts**. Pick the store, then
+1. In your own FAFO, open **Settings → Accounts to assign → Send accounts**. Pick the store, then
    paste `email:password` lines, or just emails with the password in the box below (for a list that
    all uses one password), or click **Add my Target logins that no profile uses**.
 2. Your channel gets a message with the count and a review link. Open it, check the emails, and
@@ -356,17 +359,17 @@ channel with each batch, like every other login there. Keep the channel private.
 ## Order alerts for buyers
 
 From Orbit 1.9.69, when you place an order for a buyer's slot on one of your accounts, the buyer can
-hear about it in their Orbit without ever seeing the account:
+hear about it in their FAFO without ever seeing the account:
 
-1. Make sure the account's emails reach an inbox your own Orbit syncs (**Settings → Email import**).
+1. Make sure the account's emails reach an inbox your own FAFO syncs (**Settings → Email import**).
    With iCloud Hide My Email or a catch-all domain, that's the one inbox they all land in.
-2. In your Orbit, open **Settings → Order alerts for buyers → Turn on**. Your channel gets a review
+2. In your FAFO, open **Settings → Order alerts for buyers → Turn on**. Your channel gets a review
    link: open it and choose **Allow**. Only that license sends alerts, and allowing another one
    replaces it.
-3. After each email sync, your Orbit sends this worker the orders it found on accounts that were given
+3. After each email sync, your FAFO sends this worker the orders it found on accounts that were given
    out, with the account each went to: the store, the order number, the item, the quantity, the total
    and the step (placed, shipped, out for delivery, delivered, canceled). This worker finds who has
-   that account and keeps the alert for them. Their Orbit adds it to **Orders** as "From your seller",
+   that account and keeps the alert for them. Their FAFO adds it to **Orders** as "From your seller",
    with a notification. Each step of an order goes out once.
 
 - **Buyers never get the account's email or password.** An order placed on an account more than a day

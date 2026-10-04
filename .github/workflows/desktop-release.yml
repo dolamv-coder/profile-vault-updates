@@ -1,9 +1,10 @@
 name: Release desktop app
 
-# Builds the Windows download, Orbit-Windows.zip, from desktop/ (see desktop/README.md) and tests it:
+# Builds the Windows download, FAFO-Windows.zip, from desktop/ (see desktop/README.md) and tests it:
 # pull requests that touch desktop/ run the tests and the build. Run it by hand from the Actions tab on
 # main to publish the build as the GitHub release v<desktop/package.json version>, which becomes the
-# latest one that the app's download links point to (releases/latest/download/Orbit-Windows.zip).
+# latest one that the app's download links point to (releases/latest/download/FAFO-Windows.zip, and
+# Orbit-Windows.zip and ProfileVault-Windows.zip, the same zip under the names older pages link to).
 # The page of that version has to be published first (update.json), and the release mustn't exist yet.
 on:
   pull_request:
@@ -43,15 +44,15 @@ jobs:
           fi
 
       - name: Check the build
-        run: ELECTRON="$(node -p "require('electron')")" node test/check-build.mjs dist/Orbit-Windows.zip
+        run: ELECTRON="$(node -p "require('electron')")" node test/check-build.mjs dist/FAFO-Windows.zip
 
       - name: Keep the build for the release
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: orbit-windows
+          name: fafo-windows
           path: |
-            desktop/dist/Orbit-Windows.zip
+            desktop/dist/FAFO-Windows.zip
             desktop/dist/build.json
             desktop/dist/notes.md
           retention-days: 7
@@ -68,7 +69,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: orbit-windows
+          name: fafo-windows
           path: dist
 
       - name: Publish the release
@@ -78,13 +79,15 @@ jobs:
           version="$(jq -r .version dist/build.json)"
           sha="$(jq -r .sha256 dist/build.json)"
           tag="v$version"
-          if [ "$(sha256sum dist/Orbit-Windows.zip | cut -d' ' -f1)" != "$sha" ]; then echo "::error::The zip isn't the one the build job checked."; exit 1; fi
+          if [ "$(sha256sum dist/FAFO-Windows.zip | cut -d' ' -f1)" != "$sha" ]; then echo "::error::The zip isn't the one the build job checked."; exit 1; fi
           if gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "::error::Release $tag already exists. To publish another build, set desktop/package.json to a newer page's version."
             exit 1
           fi
-          cp dist/Orbit-Windows.zip dist/ProfileVault-Windows.zip   # the name older pages link to
-          printf '\n\nsha256 of Orbit-Windows.zip: `%s`\n' "$sha" >> dist/notes.md
-          gh release create "$tag" dist/Orbit-Windows.zip dist/ProfileVault-Windows.zip -R "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --title "Orbit $version for Windows" --notes-file dist/notes.md --latest
+          # The same zip under the names older pages link to.
+          cp dist/FAFO-Windows.zip dist/Orbit-Windows.zip
+          cp dist/FAFO-Windows.zip dist/ProfileVault-Windows.zip
+          printf '\n\nsha256 of FAFO-Windows.zip (and the same zip as Orbit-Windows.zip and ProfileVault-Windows.zip): `%s`\n' "$sha" >> dist/notes.md
+          gh release create "$tag" dist/FAFO-Windows.zip dist/Orbit-Windows.zip dist/ProfileVault-Windows.zip -R "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --title "FAFO $version for Windows" --notes-file dist/notes.md --latest
           echo "Published https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag"
