@@ -1,10 +1,10 @@
 {
-  "version": "1.9.73",
-  "url": "index-1.9.73.html",
-  "sha256": "4eda960f67861bebc2b3f0ca59d2a8a9ef701d3e7d319beac1199646bcc0881e",
-  "signature": "BEJVpJgBOh62QcPWynXBKR7zCmiImHcMDc1sJ8rKwqCPsZSn4yoN1z8mPI/OvOstF+v5Ry0aVds9NeX+ZxuBCg==",
+  "version": "1.9.74",
+  "url": "index-1.9.74.html",
+  "sha256": "44f312471a07d36f2d64fe0c97368ae411e01ac38995c55384d24f22dd7a3d60",
+  "signature": "D4hkTUstgDxYw78/kL8ABpsp9ytBRXdvdVHHmSD5v3V/WxkmrdHANwSxHA2mUyxH4Qnb/VrWJDQyS/8pdq87BA==",
   "minAppVersion": "0",
-  "notes": "Mass edit and Jig move to Generate: select drafts and right-click to Jig their addresses or Mass edit them, with a preview of every draft first. Jig now only uses spellings USPS reads as the same address, like N. or North, St Petersburg, # 4 and ZIP+4; when those run out it writes the street number out (Eighteenth), then uses USPS's other spellings (Drv, Strt), and adds a dot to the street name only last.",
+  "notes": "Jig one profile: choose Jig address from a profile's menu, or click Jig next to its shipping address in the profile editor. Billing keeps the address as it was, so it still matches your card; don't jig a billing address unless the card is a virtual credit card.",
   "installerUrl": "",
-  "publishedAt": "2026-10-04T15:01:20.031Z"
+  "publishedAt": "2026-10-04T15:54:05.555Z"
 }
