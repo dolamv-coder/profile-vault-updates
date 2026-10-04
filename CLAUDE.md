@@ -245,6 +245,16 @@ items and new shared settings keys are safe (a new per-device setting would stil
 device, which doesn't know to keep it local). Its Import profiles also predates `xlUnwrap`, so it
 doesn't read the `="…"` cells in slot files.
 
+From 1.9.71, **Generate** (sidebar, under Cards) makes profiles in bulk: one address, a name prefix
+(`<name> #n`, numbered after the highest in use), how many, and pasted emails (the first word of each
+line, so `email:password` works). Each draft gets the address, a random name (`GEN_FEMALE`/`GEN_MALE`,
+`GEN_LAST`), a random phone number with one of the state's area codes (`GEN_AREA`) and the next email.
+The drafts are edited one by one (to jig the address), then imported into Profiles on the stores picked
+then, each with an address of its own, billing the same, no card, and store logins linked by email
+(`linkByEmail`). Because of the pause, drafts aren't a vault list: they're the shared setting
+`genDrafts` (`{id: draft}`), which 1.9.67 keeps and syncs as it is, and which merges per draft. They can
+move to a list of their own in the big update.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
