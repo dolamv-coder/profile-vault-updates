@@ -1,10 +1,10 @@
 {
-  "version": "1.9.76",
-  "url": "index-1.9.76.html",
-  "sha256": "05b5670bcb7968afaea51ff1e055f6d0bda9ce054133de10782ecbbbbb697a53",
-  "signature": "Qs0K9h8u5hU/W8bdtPmyqxdXbsL1CXwA/0+s8Fa/lvNvqzdz59PIn691I+lUuj8KpOI8HOXeFkYzlTwkfbGcCw==",
+  "version": "1.9.77",
+  "url": "index-1.9.77.html",
+  "sha256": "fca4e3c928750ff3f59d67a8aed38c87b590d9ce260194c62ee52d669ead62b6",
+  "signature": "tRUATWTQfNeenutZYF+pTaFEhQq/XRH4kNndkIAcosydVXNQs3q7yKEtqrSBxSOrdv8sy50UxzNCnJzOtAO1AQ==",
   "minAppVersion": "0",
-  "notes": "Orbit is now FAFO. Only the name changed: your vault, license, settings and inboxes stay as they are.",
+  "notes": "Generate: select drafts and choose Duplicate to add more after the last one (Target #11, #12…), each with its own jigged address and phone number.",
   "installerUrl": "",
-  "publishedAt": "2026-10-04T19:43:32.188Z"
+  "publishedAt": "2026-10-04T21:03:51.607Z"
 }
