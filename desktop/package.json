@@ -1,7 +1,7 @@
 {
   "name": "profile-vault",
   "productName": "Orbit",
-  "version": "1.9.61",
+  "version": "1.9.70",
   "description": "Orbit: encrypted checkout profiles and order tracking",
   "main": "main.js",
   "author": "Orbit",

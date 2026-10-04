@@ -1,0 +1,1 @@
+Deep space blue is now Orbit's default theme. If you never picked a theme, Orbit switches to it; to keep the previous look, choose Dark in Settings → Preferences → Theme.
