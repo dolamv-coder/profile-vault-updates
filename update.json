@@ -1,10 +1,10 @@
 {
-  "version": "1.9.74",
-  "url": "index-1.9.74.html",
-  "sha256": "44f312471a07d36f2d64fe0c97368ae411e01ac38995c55384d24f22dd7a3d60",
-  "signature": "D4hkTUstgDxYw78/kL8ABpsp9ytBRXdvdVHHmSD5v3V/WxkmrdHANwSxHA2mUyxH4Qnb/VrWJDQyS/8pdq87BA==",
+  "version": "1.9.75",
+  "url": "index-1.9.75.html",
+  "sha256": "49afcba1bb069994a3d7edb433078812f37934cd4d0c9c57dc032c940f7c78ec",
+  "signature": "MAJLHb6YPBV3iklo3njSDk5YPzaojmBmGjXf3lEdBlI76Js5NrCCXg4t91PHEYjy/RbH7h+6DOI7wJ/Q9hhAAw==",
   "minAppVersion": "0",
-  "notes": "Jig one profile: choose Jig address from a profile's menu, or click Jig next to its shipping address in the profile editor. Billing keeps the address as it was, so it still matches your card; don't jig a billing address unless the card is a virtual credit card.",
+  "notes": "Import from Generate now asks which billing address to use: the address you typed in Generate, for regular credit cards, or each profile's jigged shipping address, for virtual credit cards.",
   "installerUrl": "",
-  "publishedAt": "2026-10-04T15:54:05.555Z"
+  "publishedAt": "2026-10-04T17:27:44.151Z"
 }
