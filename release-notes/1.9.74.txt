@@ -1,0 +1,1 @@
+Jig one profile: choose Jig address from a profile's menu, or click Jig next to its shipping address in the profile editor. Billing keeps the address as it was, so it still matches your card; don't jig a billing address unless the card is a virtual credit card.
