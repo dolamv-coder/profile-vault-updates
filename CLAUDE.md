@@ -255,6 +255,17 @@ then, each with an address of its own, billing the same, no card, and store logi
 `genDrafts` (`{id: draft}`), which 1.9.67 keeps and syncs as it is, and which merges per draft. They can
 move to a list of their own in the big update.
 
+From 1.9.72, right-clicking a profile (or touch and hold, or Shift+F10) opens its menu, and on one of
+several selected profiles the menu acts on all of them: **Mass edit**, Move to group, Export, Delete.
+Mass edit (`openMassEdit`, also on the selection bar) puts each ticked field onto every selected profile:
+`mePlan` works out each profile's values and the summary without changing anything, `meApply` does it,
+and Undo restores what changed. Text takes expressions (`meEval`): `{n}`, `{same}`, `{letters:N}`,
+`{digits:N}`, `{symbol}`, and `{jig}`, a variation of what the profile has (`jigValue`, per field). Random
+results stay put until their expression changes or Shuffle, so what the summary shows is what's saved.
+Addresses go through `resolveAddr` like the profile editor's. A new email relinks stores on a login to
+the saved login with that email, and Pokémon Center's checkout email follows it. It only writes fields
+profiles already have, so it's safe with the paused web version.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
