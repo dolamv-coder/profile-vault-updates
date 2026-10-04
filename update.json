@@ -1,10 +1,10 @@
 {
-  "version": "1.9.72",
-  "url": "index-1.9.72.html",
-  "sha256": "675eddce39f764712a3c0a1bc2d6189f3b1ad5f2a0f68c720fd9cc4b8692083e",
-  "signature": "uGQlo7dp0r+LLpQ/1zW26z61CbCiMJkPif4vmtO4ZefptXgScxTSKFUsFyLYo8W72GLowrmsesYWoJ5dABh+CQ==",
+  "version": "1.9.73",
+  "url": "index-1.9.73.html",
+  "sha256": "4eda960f67861bebc2b3f0ca59d2a8a9ef701d3e7d319beac1199646bcc0881e",
+  "signature": "BEJVpJgBOh62QcPWynXBKR7zCmiImHcMDc1sJ8rKwqCPsZSn4yoN1z8mPI/OvOstF+v5Ry0aVds9NeX+ZxuBCg==",
   "minAppVersion": "0",
-  "notes": "New: Mass edit. Select profiles, right-click (or press and hold) and choose Mass edit to change their group, name, email, phone, address, card or retailers all at once; only the fields you tick change, and Jig gives each profile its own variation, like a different spelling of the address. You can undo it.",
+  "notes": "Mass edit and Jig move to Generate: select drafts and right-click to Jig their addresses or Mass edit them, with a preview of every draft first. Jig now only uses spellings USPS reads as the same address, like N. or North, St Petersburg, # 4 and ZIP+4; when those run out it writes the street number out (Eighteenth), then uses USPS's other spellings (Drv, Strt), and adds a dot to the street name only last.",
   "installerUrl": "",
-  "publishedAt": "2026-10-04T08:10:34.734Z"
+  "publishedAt": "2026-10-04T15:01:20.031Z"
 }
