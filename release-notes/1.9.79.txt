@@ -1,0 +1,1 @@
+Profile names no longer get cut off by their group or the warning icon. On cards, the group moves under the name when both don't fit, and in the List the group gets shorter instead of the name.

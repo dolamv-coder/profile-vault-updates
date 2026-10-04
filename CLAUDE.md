@@ -336,6 +336,15 @@ edit's Email is a box of emails, one per draft in the order shown (`dmPlan`): fe
 them out of the whole edit, more makes new drafts for the rest (copies from `dupPlan`, jigged, new numbers)
 that get the edit too, and both ask first (`confirmDialog`, which now takes a `cancel` label).
 
+From 1.9.79 a profile's name comes first on Profiles, before its group tag (which used to squeeze it to a
+letter or two in Compact and the List). On a card (`slipTitleHTML`, `.slip-title`) the name takes up to two lines
+(its text is in `.sn-t` inside the button, as Electron 33 may not clamp a button's own lines), the group moves
+under it when both don't fit on one line, and the checkbox, problem icon and buttons line up with its first line.
+The icon and the name stay together (`.slip-nm`). In the List the Name column is wider (20%), and the group gets
+shorter, then goes onto a hidden second line (`.pl-name` wraps and clips), before the name is cut; hovering the
+name shows its group. Generate's Profile column is 19%. Tests that find a card's name button by its exact text
+need `:has-text` or a `hasText` regex now, since the text is in the span.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
