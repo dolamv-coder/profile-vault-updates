@@ -1,0 +1,1 @@
+New: Generate, under Cards, makes profiles in bulk. Enter the address you want to use and your emails, and Orbit makes that many drafts at it, each with a random name and phone number; jig each draft's address, then import them into Profiles.
