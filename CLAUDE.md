@@ -317,6 +317,15 @@ say `FAFO.exe` on desktop 12 and `Orbit.exe` on older downloads (`DESK_EXE`); do
 `orbit-cmd`) and worker name or address, the hidden "Profile Vault" username for password managers, and the
 Actions' names ("Publish Orbit update").
 
+From 1.9.77, **Duplicate** on the Generate page (selection bar and right-click menu, `openDraftDuplicate`,
+`dupPlan`) adds drafts like the ones picked: How many (one of each picked to start; more goes round them in the
+order shown), each numbered after the highest `<name> #n` in use for its name (drafts and profiles,
+`genNextNumber`), so Target #1–#10 give Target #11 on. A copy keeps its draft's name, group, address, `zip4`
+and `billTo`, never its email; Jig each address (on) gives every copy its own spelling (`jigAssign` against all
+drafts and saved addresses), New random phone numbers (on) uses the state's area codes, New random names is
+off, and pasted emails go one each. The new drafts come selected, with Undo. They're ordinary entries in
+`genDrafts`, so the paused web version is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
