@@ -1,10 +1,10 @@
 {
-  "version": "1.9.70",
-  "url": "index-1.9.70.html",
-  "sha256": "1a060a7db3952d55dd6dc678d348bfd9ff9782d1a6ab0f2e7a2ae900f9e45fe5",
-  "signature": "rRf6U/IRM9+Onnhr0j2lUYhkc+WVjjhWj3th0H0iPOyHMf5QGoRszB0UYkWvoS7jFQ10QYPGXVp/y+WHsFinAw==",
+  "version": "1.9.71",
+  "url": "index-1.9.71.html",
+  "sha256": "5c59f8897e59d61f2d1468f80c30e126fa027a41b2a69227bd3a3666795dc8da",
+  "signature": "+C0Drfnv/aRpHPA5X9goOFzBjV/bYnr8OcITFhLFd7kNe+bCwWrc94t0HDioOxHkZ2JmrN6Ak5uv9fZry92jAw==",
   "minAppVersion": "0",
-  "notes": "Deep space blue is now Orbit's default theme. If you never picked a theme, Orbit switches to it; to keep the previous look, choose Dark in Settings → Preferences → Theme.",
+  "notes": "New: Generate, under Cards, makes profiles in bulk. Enter the address you want to use and your emails, and Orbit makes that many drafts at it, each with a random name and phone number; jig each draft's address, then import them into Profiles.",
   "installerUrl": "",
-  "publishedAt": "2026-10-04T02:54:36.573Z"
+  "publishedAt": "2026-10-04T07:25:48.950Z"
 }
