@@ -1,10 +1,10 @@
 {
-  "version": "1.9.69",
-  "url": "index-1.9.69.html",
-  "sha256": "d399baea56e4df6a54efe53144e697500d96dafb3059c79e692e524f314369f7",
-  "signature": "PlH/b90TjrI0ElaDYaf2kgFRUzgnbv+uTdwempZKDTdGc/VRiP8f3XIq7+gx52iPbVf8YQlIIS6/J/ibfXs+AQ==",
+  "version": "1.9.70",
+  "url": "index-1.9.70.html",
+  "sha256": "1a060a7db3952d55dd6dc678d348bfd9ff9782d1a6ab0f2e7a2ae900f9e45fe5",
+  "signature": "rRf6U/IRM9+Onnhr0j2lUYhkc+WVjjhWj3th0H0iPOyHMf5QGoRszB0UYkWvoS7jFQ10QYPGXVp/y+WHsFinAw==",
   "minAppVersion": "0",
-  "notes": "When your seller places an order for one of your slots on an account they gave you, it now shows up in Orders as From your seller, with an alert when it's placed, shipped and delivered. To get these in your own Discord too, add a webhook in Settings → Alerts.",
+  "notes": "Deep space blue is now Orbit's default theme. If you never picked a theme, Orbit switches to it; to keep the previous look, choose Dark in Settings → Preferences → Theme.",
   "installerUrl": "",
-  "publishedAt": "2026-10-02T14:40:33.521Z"
+  "publishedAt": "2026-10-04T02:54:36.573Z"
 }
