@@ -289,6 +289,14 @@ shipping address keeps the address as it was as billing (`billSame` off, the old
 since the bank checks it against the card. At the owner's request the Shipping address section says not
 to jig a billing address unless the card is a virtual credit card.
 
+From 1.9.75 each draft keeps the address typed in the Generate window (`billTo`, a draft field). Jig never
+changes it; a street, city, state or ZIP typed in Mass edit is a correction and changes it too. Import asks
+which billing address the profiles get (`planDraftImport(ids, picked, bill)`): the typed address, for
+regular cards and picked by default (each jigged profile gets it as a billing address with its own name,
+`billSame` off), or the jigged shipping address, for virtual cards (`billSame` on, as before). The last
+choice is the shared setting `genBill`. Drafts made before 1.9.75 have no `billTo` and bill to their
+shipping address; the Import window counts them.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

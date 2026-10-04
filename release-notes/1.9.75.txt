@@ -1,0 +1,1 @@
+Import from Generate now asks which billing address to use: the address you typed in Generate, for regular credit cards, or each profile's jigged shipping address, for virtual credit cards.
