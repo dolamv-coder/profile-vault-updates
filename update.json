@@ -1,10 +1,10 @@
 {
-  "version": "1.9.77",
-  "url": "index-1.9.77.html",
-  "sha256": "fca4e3c928750ff3f59d67a8aed38c87b590d9ce260194c62ee52d669ead62b6",
-  "signature": "tRUATWTQfNeenutZYF+pTaFEhQq/XRH4kNndkIAcosydVXNQs3q7yKEtqrSBxSOrdv8sy50UxzNCnJzOtAO1AQ==",
+  "version": "1.9.78",
+  "url": "index-1.9.78.html",
+  "sha256": "42ffc4e1f58f050dda44f2ab1ee6220b81a7325261f0a6badd2c45ca93aa7b9f",
+  "signature": "ezwGmQS4iW6de8WArxz0jdj4uOtdUe4sZXkpdMs5XUxCnVRXc4/qKnBUi9TmvFFg8wntDWq0L06GnF34O7r5AA==",
   "minAppVersion": "0",
-  "notes": "Generate: select drafts and choose Duplicate to add more after the last one (Target #11, #12…), each with its own jigged address and phone number.",
+  "notes": "Profiles and drafts with something missing now show a red warning icon: point at it to see what to fix. Mass edit takes one email per draft, and asks before leaving drafts out or adding more for extra emails.",
   "installerUrl": "",
-  "publishedAt": "2026-10-04T21:03:51.607Z"
+  "publishedAt": "2026-10-04T21:41:14.685Z"
 }
