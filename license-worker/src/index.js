@@ -12,6 +12,10 @@
 //   GET  /discord/callback     browser: Discord sends the user back here
 //   GET  /discord/status/ID    app polls: pending | review | issued (with key + signed list) | error
 //   GET  /licenses             {body, sig}: SHA-256 hashes of valid keys, ECDSA P-256 signed
+// A copy of GitHub's files (app 1.9.83+), for networks that block raw.githubusercontent.com:
+//   GET  /mirror/update.json, /mirror/index-X.Y.Z.html, /mirror/licenses.json   fetched from this repo's main
+//                              branch here, nothing else. All of it is signed (updates with the publisher's key,
+//                              licenses.json with the license key), so this copy can't change any of it.
 // Slots (app sends "Authorization: Bearer <license key>"):
 //   GET  /slots/limit          {limit, request}: how many slots this license can have on at once
 //   POST /slots/request        {requested, name, note}: ask for more; posted to DISCORD_WEBHOOK_URL
@@ -114,6 +118,7 @@ export default {
           if (!isConfigured(env)) return json({ error: "not configured" }, 503);
           return json(await signedList(env), 200, { "cache-control": "no-store" });
         }
+        if (path.startsWith("/mirror/")) return await mirror(env, path.slice("/mirror/".length));
       }
       if (path.startsWith("/review/")) return await review(request, env, ctx, url, path.slice("/review/".length));
       if (path === "/slots/limit" && request.method === "GET") return await slotLimit(request, env);
@@ -1674,6 +1679,32 @@ async function keyHash(key) {
 function randomId(n) {
   return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(n))))
     .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// ---- copy of GitHub's files ---------------------------------------------------------------
+// The app's update.json, released pages and licenses.json, from GitHub, for networks that block
+// raw.githubusercontent.com (security filters often do: anyone can host files there). Only those names, always
+// from MIRROR_BASE, never with the request's query, so this can't fetch anything else. Pages never change once
+// released, so they're kept a day; update.json and licenses.json a minute. A page goes out as text, so opened in
+// a browser it shows rather than runs (the desktop app checks its bytes, not its type).
+const MIRROR_BASE = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/";
+const MIRROR_FILES = /^(update\.json|licenses\.json|index-\d{1,3}\.\d{1,3}\.\d{1,4}\.html)$/;
+async function mirror(env, name) {
+  if (!MIRROR_FILES.test(name)) return json({ error: "not found" }, 404);
+  const pageFile = name.endsWith(".html");
+  let r;
+  try {
+    r = await fetch((env.MIRROR_BASE || MIRROR_BASE) + name, {
+      cf: { cacheEverything: true, cacheTtlByStatus: { "200-299": pageFile ? 86400 : 60, "404": 30, "500-599": 0 } },
+    });
+  } catch (e) {
+    return json({ error: "GitHub didn't answer" }, 502, { "cache-control": "no-store" });
+  }
+  if (!r.ok) return json({ error: "GitHub answered " + r.status }, r.status === 404 ? 404 : 502, { "cache-control": "no-store" });
+  return new Response(r.body, { status: 200, headers: { ...CORS,
+    "content-type": pageFile ? "text/plain; charset=utf-8" : "application/json; charset=utf-8",
+    "x-content-type-options": "nosniff",
+    "cache-control": pageFile ? "public, max-age=86400" : "no-store" } });
 }
 
 // ---- responses -----------------------------------------------------------------------

@@ -29,6 +29,9 @@ const USERS = {
   gina:  { id: snowflake(Date.parse("2021-07-01")), username: "gina", guilds: [] },
 };
 
+const mirrorHits = [];   // requests the worker made for /mirror
+const MIRROR_UPDATE = { version: "1.9.99", url: "index-1.9.99.html", sha256: "ab".repeat(32), signature: "c2ln", notes: "Sample" };
+const MIRROR_PAGE = "<!doctype html><title>FAFO 1.9.99</title><script>window.x = 1</script>\n";
 const webhookPosts = [], webhookEdits = [], webhookFail = [];
 const buyerHookPosts = [];   // posts to buyers' own webhooks (order alerts)
 let webhookHang = null;   // {ms, code}: the next webhook post waits ms, then fails with code (if given)
@@ -46,6 +49,16 @@ const discord = createServer(async (req, res) => {
   if (req.url === "/users/@me/guilds" && USERS[who]) return send(200, USERS[who].guilds.map((id) => ({ id })));
   const u = new URL(req.url, "http://x");
   if (req.method === "GET" && u.pathname === "/gh.json") return send(200, ghList);
+  // GitHub's raw files, for the copy at /mirror (app 1.9.83+).
+  if (u.pathname.startsWith("/mirror-src/")) {
+    mirrorHits.push(req.url);
+    const name = u.pathname.slice("/mirror-src/".length);
+    if (name === "update.json") return send(200, MIRROR_UPDATE);
+    if (name === "licenses.json") return send(200, ghList);
+    if (name === "index-1.9.99.html") { res.writeHead(200, { "content-type": "text/plain" }); return res.end(MIRROR_PAGE); }
+    if (name === "index-9.9.9.html") return send(500, { message: "GitHub had a moment" });
+    return send(404, {});
+  }
   if (req.method === "POST" && u.pathname === "/webhook") {
     if (webhookHang) {
       const hang = webhookHang; webhookHang = null;
@@ -94,6 +107,7 @@ const common = [
   `DISCORD_WEBHOOK_URL=http://127.0.0.1:${DISCORD_PORT}/webhook`,
   `DISCORD_API_BASE=http://127.0.0.1:${DISCORD_PORT}`,
   `GH_LICENSE_URL=http://127.0.0.1:${DISCORD_PORT}/gh.json`,
+  `MIRROR_BASE=http://127.0.0.1:${DISCORD_PORT}/mirror-src/`,
   `PULL_STALE_MS=3000`,
   `ACCOUNT_OFFER_TTL_MS=8000`,
   `ACCOUNTS_LOW_AT=3`,
@@ -181,6 +195,39 @@ try {
   await startWorker("auto", WORKER_PORT, ["REQUIRE_APPROVAL=", `REQUIRED_GUILD_ID=${GUILD}`, "MIN_ACCOUNT_AGE_DAYS=30"]);
   let aliceKey, firstIssued;
   await test("ready reports configured", async () => assert.deepEqual(await getJson("/discord/ready"), { ready: true }));
+  // A copy of GitHub's files for networks that block raw.githubusercontent.com (app 1.9.83+).
+  await test("mirror: update.json, a page and licenses.json come as GitHub has them", async () => {
+    mirrorHits.length = 0;
+    const u = await get("/mirror/update.json?t=123");
+    assert.equal(u.status, 200);
+    assert.deepEqual(await u.json(), MIRROR_UPDATE);
+    assert.match(u.headers.get("content-type"), /^application\/json/);
+    assert.equal(u.headers.get("access-control-allow-origin"), "*");
+    assert.equal(u.headers.get("cache-control"), "no-store");
+    const p = await get("/mirror/index-1.9.99.html");
+    assert.equal(p.status, 200);
+    assert.equal(await p.text(), MIRROR_PAGE);
+    assert.match(p.headers.get("content-type"), /^text\/plain/);
+    assert.equal(p.headers.get("x-content-type-options"), "nosniff");
+    const l = await get("/mirror/licenses.json");
+    assert.deepEqual(await l.json(), ghList);
+    assert.deepEqual(mirrorHits, ["/mirror-src/update.json", "/mirror-src/index-1.9.99.html", "/mirror-src/licenses.json"], "fetched by name only, without the query");
+  });
+  await test("mirror: a page GitHub doesn't have is 404, a GitHub error is 502", async () => {
+    const a = await get("/mirror/index-1.9.98.html");
+    assert.equal(a.status, 404);
+    assert.equal(a.headers.get("cache-control"), "no-store");
+    assert.equal((await get("/mirror/index-9.9.9.html")).status, 502);
+  });
+  await test("mirror: nothing but those files, and only GET", async () => {
+    mirrorHits.length = 0;
+    for (const p of ["/mirror/licenses.json.js", "/mirror/index-1.9.99.html.js", "/mirror/index-1.9.html", "/mirror/README.md", "/mirror/..%2Fsecrets.json",
+      "/mirror/license-worker/src/index.js", "/mirror/", "/mirror/update.json/x", "/mirror/UPDATE.JSON", "/mirror/index-1.9.99.htm"]) {
+      assert.equal((await get(p)).status, 404, p);
+    }
+    assert.equal((await get("/mirror/update.json", { method: "POST", body: "{}" })).status, 404);
+    assert.deepEqual(mirrorHits, [], "GitHub wasn't asked for any of them");
+  });
   await test("empty list is signed", async () => {
     const b = await verifyList(await getJson("/licenses"));
     assert.deepEqual(b.keys, []); firstIssued = b.issued;

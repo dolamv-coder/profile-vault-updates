@@ -1,0 +1,1 @@
+Updates and license checks now get through networks that block GitHub, using FAFO's own server as a backup. Update errors also say what went wrong in plain words.
