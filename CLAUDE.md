@@ -9,7 +9,7 @@ keys (`PVLT-…`), the workers' names and addresses (`orbit-license`,
 changing them breaks installed copies.
 
 **This repo is public.** Never commit secrets, private keys, tokens or `.env`
-files here.
+files here, or a real person's name, address, phone number or email: pages, tests and notes use sample data.
 
 ## What this repo is
 
@@ -362,6 +362,10 @@ draft with no typed address) the address before the Jig. One profile (menu, edit
 letter when its name is on the street; billing keeps the address and name as they were. Drafts only gain `pkc` and
 settings `jigFor`, so the paused web version is unaffected. Clicks on `data-act="jig-for"` are handled inside
 layers too (the global handler skips other layer clicks).
+
+From 1.9.81 Room (1–40) is one of Jig for Pokémon Center's made-up units (`PKC_MADE`), and `Room n` one of the
+words for a real unit's number. Line 1 still only reads Apt, Unit, Ste, Suite or # at its end as a unit
+(`JIG_UNIT_AT_END`, shared with Target's Jig), so Room, like Bldg or Spc, counts as a unit on line 2.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
