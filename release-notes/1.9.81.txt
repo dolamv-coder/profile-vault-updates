@@ -1,0 +1,1 @@
+Jig for Pokémon Center can now use a Room number (like Room 12) as a draft's unit, along with Ste, Bldg and the others.
