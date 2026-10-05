@@ -1,10 +1,10 @@
 {
-  "version": "1.9.82",
-  "url": "index-1.9.82.html",
-  "sha256": "1573544c6138d3d4bcf5f68b4ac0ce0ddae2a5c92f636316f6b9bc24c361ba64",
-  "signature": "lp0jTOFleDpBJwZ7PYHnVnsMuUEYHGuckEarIfls/Jv8EvXqMKpaF88d5SCnCEi8VUXQ/5uktmOU4jQmvqoyCg==",
+  "version": "1.9.83",
+  "url": "index-1.9.83.html",
+  "sha256": "ff5f3719a60689f32b9f81ff619fe082b9ba573d87c5d80300b91902a5e0bb0a",
+  "signature": "yKq3GHH0xn2kGef97y9kmMwkZ80BziHWvBlt3NFVgbvUho+OMuy+5+pzzdSd/ANU/MibfAJVhED1gP0YicrwBQ==",
   "minAppVersion": "0",
-  "notes": "Import cards can now read a CSV file: choose one or drop it on the Cards box. Columns are read by their names, like the ones Export cards writes.",
+  "notes": "Updates and license checks now get through networks that block GitHub, using FAFO's own server as a backup. Update errors also say what went wrong in plain words.",
   "installerUrl": "",
-  "publishedAt": "2026-10-05T02:30:44.980Z"
+  "publishedAt": "2026-10-05T03:34:57.111Z"
 }
