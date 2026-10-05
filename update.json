@@ -1,10 +1,10 @@
 {
-  "version": "1.9.85",
-  "url": "index-1.9.85.html",
-  "sha256": "4091b3feea1a62bf2612bdf23e60b895095b09da7a6469563de757aedd9b6df5",
-  "signature": "8D3uOkjhLbo0emNaAkqZ7izKDfBVW4buTNrhTyHKQOnk062rmXhvQ5ZtEhi/3v7mWxGjaaiXEMLrkU9m6ObLCQ==",
+  "version": "1.9.86",
+  "url": "index-1.9.86.html",
+  "sha256": "5270b412ed4356331f859387cf1ba764179d556e993e33f3835367a786e1fdb0",
+  "signature": "qT9taLCNJQ9FOWR+V0VKioVOb3EgsFrIOal/ziDbfSZetl4eIpY9GGtFWU2R2vs20UlASTou6d2MrFigHU1gDA==",
   "minAppVersion": "0",
-  "notes": "Hold Shift and click a second checkbox to select every row in between, on Profiles, Cards and Generate.",
+  "notes": "Search cards by any part of the number, the expiry, a note or the profile using them, and add a note to any card. Also new: pick which profiles get cards, search a store's logins by email, use a different billing address when importing drafts, and profiles now take their email from the store login.",
   "installerUrl": "",
-  "publishedAt": "2026-10-05T11:58:02.809Z"
+  "publishedAt": "2026-10-05T12:43:53.572Z"
 }
