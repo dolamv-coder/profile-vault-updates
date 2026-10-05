@@ -6238,7 +6238,7 @@ function openGenerate(){
       ${fieldHTML({name:"gp_group", label:"Group", cls:"c3", placeholder:"Leave blank for none", attrs:'list="gp-groups" maxlength="60"', hint:"A new name makes a new group."})}
       ${fieldHTML({name:"gp_name", label:"Name", cls:"c3", required:true, placeholder:"e.g. Beta", attrs:'maxlength="40"', hint:"Each draft gets a number: Beta #1, Beta #2…"})}
       ${fieldHTML({name:"gp_qty", label:"How many", type:"number", cls:"c3", required:true, attrs:`min="1" max="${GEN_MAX}" step="1" inputmode="numeric"`, hint:"Fills in with the number of emails."})}
-      ${fieldHTML({type:"select", name:"gp_gender", label:"First names", cls:"c3", options:opt([["any", "Any"], ["female", "Female"], ["male", "Male"]], "any"), showOpt:false})}
+      ${fieldHTML({type:"select", name:"gp_gender", label:"Gender", cls:"c3", options:opt([["any", "Any"], ["female", "Female"], ["male", "Male"]], "any"), showOpt:false})}
       <div class="c6 section-head gp-h"><h3>Address to use</h3></div>
       ${saved.length ? fieldHTML({type:"select", name:"gp_saved", label:"Start from a saved address", options:opt(saved.map(a => [a.id, addrOneLine(a) + (a.line2 ? ` (${a.line2})` : "")]), "", "Type it below"), showOpt:false}) : ""}
       ${fieldHTML({name:"gp_line1", label:"Address line 1", required:true, ac:"address-line1", placeholder:"Street and number"})}
