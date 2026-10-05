@@ -400,6 +400,10 @@ edit has New random first names and New random last names as two modes (`rfirst`
 one (`names`) for both; each list is rolled once per set of drafts and avoids another draft's full name. Cards and
 drafts gain no fields, so the paused web version is unaffected.
 
+From 1.9.85 Shift+click (or Shift+Space) on a row's tick on Profiles (every layout), Cards and Generate gives every
+row between it and the last one clicked, in the order shown, the same tick (`selRange`, `SEL_LAST`, by the order of
+`#main input[data-act=…]`), as Orders already did (`UI.orderLast`). The text selection a Shift+click makes is cleared.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
