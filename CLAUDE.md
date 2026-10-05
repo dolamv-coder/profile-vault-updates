@@ -404,6 +404,24 @@ From 1.9.85 Shift+click (or Shift+Space) on a row's tick on Profiles (every layo
 row between it and the last one clicked, in the order shown, the same tick (`selRange`, `SEL_LAST`, by the order of
 `#main input[data-act=…]`), as Orders already did (`UI.orderLast`). The text selection a Shift+click makes is cleared.
 
+From 1.9.86 a card has a note (`c.note`, up to 200 characters): the Cards list's Note column edits it in place
+(`cardNoteBtn`, `editCardNote`; an empty one says Add a note on hover), the card editor has a Note field, and card tiles
+show it. Export cards writes it in Notes before a virtual card's limit (`note; Limit …`) and Import cards splits them
+back. Searching Cards needs every word typed to match (`cardMatches`): digits match any part of the number or the expiry
+(07/31), words the nickname, name on card, note, brand, group, virtual card details and the names of the profiles using
+it. Ctrl+F goes to the search box in the desktop app. Put in profiles can go to Profiles I pick (a list to search and
+tick, Shift+click for a range). Import drafts to profiles has a third billing choice, A different billing address
+(`planDraftImport(ids, picked, bill, other)` with `bill` `"other"`), typed or started from a saved address, which every
+profile gets with its own name; the last one used is the shared setting `genBillAddr`. In the profile editor a store
+with more than six logins has a search box over them (`loginFind`: a single match is picked, Enter picks the first), the
+Name on card field only shows for a card named other than the shipping name (no checkbox: Different name on card, in the
+Payment heading, shows it; a card named in capitals keeps capitals, `capsLike`), and there's no Email box (the owner's
+request). The profile's email follows its stores
+(`emailToSave`): its store login's (the one it had, when its logins use different emails and it's one of them), or
+Pokémon Center's checkout email with no login, or none on Use Assigned Account. A store waiting for a login still gets
+the saved login with the profile's email, and a profile needs a store to save. Cards gain `note` and settings
+`genBillAddr`, so the paused web version is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

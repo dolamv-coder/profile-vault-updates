@@ -1,0 +1,1 @@
+Search cards by any part of the number, the expiry, a note or the profile using them, and add a note to any card. Also new: pick which profiles get cards, search a store's logins by email, use a different billing address when importing drafts, and profiles now take their email from the store login.
