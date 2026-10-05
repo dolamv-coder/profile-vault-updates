@@ -1,10 +1,10 @@
 {
-  "version": "1.9.79",
-  "url": "index-1.9.79.html",
-  "sha256": "bd7dca9edefaf9f3974e7e0057bacb44655390a112b3f35d8b1af1a0e16472a5",
-  "signature": "xQsaDBV8kZE8V4GZqCcD/ycXu2k4xg5++/M//R5jZI67Dy97Oaifqfql+Zrrr25EokyVaorIFsfm+cXkoZ/NDw==",
+  "version": "1.9.80",
+  "url": "index-1.9.80.html",
+  "sha256": "e3f15b26e3c5a87070588f0f34236802efc6058a6ea06a2d847649fee48d0b95",
+  "signature": "pe8N81rw5Zbac35TUiAbPq6zVA6lmwrILhKdvZpfU3TUX59RL3m58DeRmIJ+VmGfLu3qaaBMCl6hP9NwhBBdDg==",
   "minAppVersion": "0",
-  "notes": "Profile names no longer get cut off by their group or the warning icon. On cards, the group moves under the name when both don't fit, and in the List the group gets shorter instead of the name.",
+  "notes": "Jig can now be for Target or Pokémon Center. For Pokémon Center, each draft at an address gets its own unit on line 2, and repeated names get a letter doubled. Billing keeps the real address and name.",
   "installerUrl": "",
-  "publishedAt": "2026-10-04T22:58:13.284Z"
+  "publishedAt": "2026-10-05T00:12:04.298Z"
 }
