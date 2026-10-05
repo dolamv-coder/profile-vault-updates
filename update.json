@@ -1,10 +1,10 @@
 {
-  "version": "1.9.83",
-  "url": "index-1.9.83.html",
-  "sha256": "ff5f3719a60689f32b9f81ff619fe082b9ba573d87c5d80300b91902a5e0bb0a",
-  "signature": "yKq3GHH0xn2kGef97y9kmMwkZ80BziHWvBlt3NFVgbvUho+OMuy+5+pzzdSd/ANU/MibfAJVhED1gP0YicrwBQ==",
+  "version": "1.9.84",
+  "url": "index-1.9.84.html",
+  "sha256": "fae45de9c8a255c5dd4be2a9cd47fb723a27ff87a4137fd66188cbcecb422fbe",
+  "signature": "35yBeRzxvfk35ne+XtlqgFNAwTae0sBZ3QbBltw9NtEbfaRx7j9HcNi1w4ruYCQMTp9Lcge0vU/Ii5405iwsAg==",
   "minAppVersion": "0",
-  "notes": "Updates and license checks now get through networks that block GitHub, using FAFO's own server as a backup. Update errors also say what went wrong in plain words.",
+  "notes": "Change the name on many cards at once: select them on the Cards page and click Edit names, with random first and last names if you like. Mass edit on Generate now has random first names and random last names as separate choices.",
   "installerUrl": "",
-  "publishedAt": "2026-10-05T03:34:57.111Z"
+  "publishedAt": "2026-10-05T04:25:46.876Z"
 }
