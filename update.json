@@ -1,10 +1,10 @@
 {
-  "version": "1.9.80",
-  "url": "index-1.9.80.html",
-  "sha256": "e3f15b26e3c5a87070588f0f34236802efc6058a6ea06a2d847649fee48d0b95",
-  "signature": "pe8N81rw5Zbac35TUiAbPq6zVA6lmwrILhKdvZpfU3TUX59RL3m58DeRmIJ+VmGfLu3qaaBMCl6hP9NwhBBdDg==",
+  "version": "1.9.81",
+  "url": "index-1.9.81.html",
+  "sha256": "08139ea58978781060ccb1ace82374e0933135118da0429018e1bb7fbc00d964",
+  "signature": "GHQoSedYrgGp23JvAH9fXil39znfEjWG3OwvQvdLkWJy1RniHS9vOQZdXN2M1L2SDR41WpRVPmcszvmCwhAdCA==",
   "minAppVersion": "0",
-  "notes": "Jig can now be for Target or Pokémon Center. For Pokémon Center, each draft at an address gets its own unit on line 2, and repeated names get a letter doubled. Billing keeps the real address and name.",
+  "notes": "Jig for Pokémon Center can now use a Room number (like Room 12) as a draft's unit, along with Ste, Bldg and the others.",
   "installerUrl": "",
-  "publishedAt": "2026-10-05T00:12:04.298Z"
+  "publishedAt": "2026-10-05T02:03:57.437Z"
 }
