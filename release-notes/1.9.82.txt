@@ -1,0 +1,1 @@
+Import cards can now read a CSV file: choose one or drop it on the Cards box. Columns are read by their names, like the ones Export cards writes.

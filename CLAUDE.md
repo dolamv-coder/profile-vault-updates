@@ -367,6 +367,16 @@ From 1.9.81 Room (1–40) is one of Jig for Pokémon Center's made-up units (`PK
 words for a real unit's number. Line 1 still only reads Apt, Unit, Ste, Suite or # at its end as a unit
 (`JIG_UNIT_AT_END`, shared with Target's Jig), so Room, like Bldg or Spc, counts as a unit on line 2.
 
+From 1.9.82 Import cards takes a CSV file (Choose a CSV file beside the Cards box, or dropped on it) into its box;
+`readTextFile` reads UTF-8, or Windows-1252 for Excel's plain CSV. A list whose first line names its columns, comma
+or tab separated, is read by those names (`parseCardTable`, `cardColumn`: Import profiles' card names `C_AL` plus
+`CARD_COL_AL`). Before, a separate year column was taken as the CVV. FAFO's own Export cards (`CARD_CSV_COLS`) comes
+back as it went out: Category Virtual or Physical, Provider by name (`vcProviderOf`), Provider Card, Website, Notes'
+`Limit …`, and Target RedCard in Card Type. A rounded card number (4.24242E+15) is skipped and said, a CVV gets back
+the leading zeros a spreadsheet drops, `="…"` cells read as text, and Card State's closed cards are skipped. The
+summary names columns with values that no card took. Lines without column names are read as before
+(`parseCardLines`). Cards gain no fields, so the paused web version is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
