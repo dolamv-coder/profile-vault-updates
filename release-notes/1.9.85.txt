@@ -1,0 +1,1 @@
+Hold Shift and click a second checkbox to select every row in between, on Profiles, Cards and Generate.
