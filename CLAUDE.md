@@ -345,6 +345,24 @@ shorter, then goes onto a hidden second line (`.pl-name` wraps and clips), befor
 name shows its group. Generate's Profile column is 19%. Tests that find a card's name button by its exact text
 need `:has-text` or a `hasText` regex now, since the text is in the span.
 
+From 1.9.80 Jig is for **Target or Pokémon Center** (the shared setting `jigFor`; the choice is on the Generate page,
+in the draft and profile editors and in Mass edit, and Jig's buttons and menus name it). Target is the USPS-spelling
+Jig above. Pokémon Center (`pkcAssign`) follows the owner's notes on the Mega Evolution drop (18 orders, none
+canceled): each draft at one building gets a line 2 of its own, a unit the building doesn't have (`PKC_MADE`: Ste,
+#fl, Bldg, Ofc, Suite, Dept or Ste. with a letter, Spc, Apt, with a new number each time), a bare number on line 1,
+or no unit with the street type the other way. A building with a real apartment keeps its number and only the word
+before it changes (`pkcRealUnit`), so the package still gets there. Up to five per address went through; more get
+a warning (`pkcCrowded`, counting every draft there). A name already on the street (other drafts', and other
+profiles' shipping addresses: `pkcNamesTaken`) gets a letter doubled so it reads the same (`pkcNameForms`: a
+consonant between vowels, e or o away from other vowels, an e or h where names have one), the last name and the
+first name taking turns, and both only once those run out. Each draft remembers what that Jig changed (`d.pkc`: the
+lines and name it wrote, and what they were), and `pkcBase` gives those back while the draft still shows them: so
+jigging again, the editors and Duplicate start from the building, and Import bills to the real name and (for a
+draft with no typed address) the address before the Jig. One profile (menu, editor) gets a unit, and a doubled
+letter when its name is on the street; billing keeps the address and name as they were. Drafts only gain `pkc` and
+settings `jigFor`, so the paused web version is unaffected. Clicks on `data-act="jig-for"` are handled inside
+layers too (the global handler skips other layer clicks).
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

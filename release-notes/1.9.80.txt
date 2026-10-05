@@ -1,0 +1,1 @@
+Jig can now be for Target or Pokémon Center. For Pokémon Center, each draft at an address gets its own unit on line 2, and repeated names get a letter doubled. Billing keeps the real address and name.
