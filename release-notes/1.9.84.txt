@@ -1,0 +1,1 @@
+Change the name on many cards at once: select them on the Cards page and click Edit names, with random first and last names if you like. Mass edit on Generate now has random first names and random last names as separate choices.

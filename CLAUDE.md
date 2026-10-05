@@ -391,6 +391,15 @@ an update address of the user's own is left alone. `updErrorText` puts update er
 at the end. Older pages that are blocked can get 1.9.83 by pasting `…/mirror/update.json` into Settings → Updates →
 Update address once.
 
+From 1.9.84 **Edit names** in the Cards selection bar (`openCardNames`, `cardNamesPlan`) changes the name on every
+selected card at once: the first and the last name each stay as they are on each card unless ticked, then they're
+what's typed or New random first (or last) names, each card its own (`genName`; Shuffle rolls again). A name splits
+at its last word (`cardNameParts`: Mary Ann | Smith). A card named in capitals gets capitals; one with no name follows
+most of the others, and the preview says when a card would end up with one name. Change has Undo. Generate's Mass
+edit has New random first names and New random last names as two modes (`rfirst`, `rlast`) where 1.9.73–1.9.83 had
+one (`names`) for both; each list is rolled once per set of drafts and avoids another draft's full name. Cards and
+drafts gain no fields, so the paused web version is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
