@@ -25,7 +25,8 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   `raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/licenses.json`.
   Each hash is `sha256("pvlt:" + normalized key)`. `body` is signed with
   ECDSA P-256 (the public key is `LICENSE_PUB` in the HTML). Apps work offline
-  for 30 days after their last successful check.
+  for 30 days after their last successful check. From 1.9.83 they also try the
+  license worker's copy (`/mirror/licenses.json`) when GitHub's can't be reached.
 - `license-worker/`: the Cloudflare Worker (`orbit-license`, D1 database) that
   hands out keys automatically after "Continue with Discord" (app 1.9.41+).
   It serves a second signed list in the same format at `/licenses`, signed with
@@ -376,6 +377,19 @@ back as it went out: Category Virtual or Physical, Provider by name (`vcProvider
 the leading zeros a spreadsheet drops, `="…"` cells read as text, and Card State's closed cards are skipped. The
 summary names columns with values that no card took. Lines without column names are read as before
 (`parseCardLines`). Cards gain no fields, so the paused web version is unaffected.
+
+From 1.9.83 FAFO gets through networks that block `raw.githubusercontent.com` (the owner's did: security filters in
+routers, internet providers' apps and antivirus often block it, since anyone can host files there). The license
+worker serves a copy fetched from GitHub there: `GET /mirror/update.json`, `/mirror/index-X.Y.Z.html` and
+`/mirror/licenses.json`, only those names from this repo's main branch, never with the request's query; pages are
+kept a day and go out as `text/plain` with `nosniff`, the JSON a minute. Everything in them is signed, so the copy
+can't change anything. `licFetch` tries GitHub, then the copy, for hand-made keys (a copy whose signature fails moves
+on too). A failed update check on the built-in address with a `net::ERR_…` error tries once more through the copy
+(`updViaMirror`: `setUpdateSource(UPDATE_MIRROR)`, check, then back to the built-in address unless another was saved
+meanwhile), whether the user clicked Check for updates or a check ran on its own (those at most every 20 minutes);
+an update address of the user's own is left alone. `updErrorText` puts update errors in words, with Chromium's code
+at the end. Older pages that are blocked can get 1.9.83 by pasting `…/mirror/update.json` into Settings → Updates →
+Update address once.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

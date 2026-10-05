@@ -413,6 +413,26 @@ Someone who forgot the online copy's password can delete it from the app with th
 alone (Settings → Web version & sync → Delete the online copy, or Replace it when turning sync on),
 and turn sync on again. Their devices keep their own copies.
 
+## A copy of the update files, for networks that block GitHub
+
+Some networks block `raw.githubusercontent.com`, where FAFO gets its updates and the list of
+license keys you made by hand: security filters in routers, internet providers' apps and antivirus
+often do, since anyone can host files there. So this worker hands out a copy, fetched from GitHub
+here, where it isn't blocked:
+
+```
+https://orbit-license.orbit-app.workers.dev/mirror/update.json
+https://orbit-license.orbit-app.workers.dev/mirror/index-1.9.83.html   (any released page)
+https://orbit-license.orbit-app.workers.dev/mirror/licenses.json
+```
+
+From FAFO 1.9.83 the app uses it by itself when GitHub's address can't be reached. Anyone still on
+an older version who's blocked can paste the first address into Settings → Updates → Update address
+once to get 1.9.83. Nothing to set up. Only these files, from this repo's main branch, are ever
+fetched, and everything in them is signed (updates with your update key, `licenses.json` with your
+license key), so the copy can't change anything. Pages are kept for a day, the other two for a
+minute.
+
 ## Limiting who gets a key
 
 By default, any Discord account except bots gets a key. To limit it, edit `[vars]` in
