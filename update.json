@@ -1,10 +1,10 @@
 {
-  "version": "1.9.88",
-  "url": "index-1.9.88.html",
-  "sha256": "b8473439fde037cc8119b0c70cad0a214577f8cea7dbceef6895a00737b9bea2",
-  "signature": "LjUAoEY0DJsM3S5q9SYf4b2i/VxM1tcQNGp5jLnYDAcftMWg4M/zqqydH9LSzvwb0eyG3gE/eIJtVmN33UN4CQ==",
+  "version": "1.9.89",
+  "url": "index-1.9.89.html",
+  "sha256": "94fc172a705b6b3d66b66ab438ea5cdfeaf2f7c615a3312ec6555aef1b4c95ec",
+  "signature": "UAsOluQth7+B+jxtrbz80n5+rOzeSS6uuinFNMvukQIbBzQOj3BSJXXH/+wwds29S5faVH6u3cXDkooE/ywLCw==",
   "minAppVersion": "0",
-  "notes": "Right-click Ungrouped in the sidebar to rename it: its profiles move into a group with that name.",
+  "notes": "Right-click a store login to rename it, copy its password, edit it or delete it.",
   "installerUrl": "",
-  "publishedAt": "2026-10-06T04:13:57.440Z"
+  "publishedAt": "2026-10-06T04:45:52.309Z"
 }
