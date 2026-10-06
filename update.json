@@ -1,10 +1,10 @@
 {
-  "version": "1.9.93",
-  "url": "index-1.9.93.html",
-  "sha256": "9bc3ffd4acbb07016bf76884c8eae854c47c2072ab68fae5672b4f227d0e9428",
-  "signature": "AmH3AbSZJdFd2jQnvWDVjqhmb2kS64VBTTBzy2DCFMfLH02YOvkiHtrWhM8aj+ZKqHEfwsAdwKvNn4agO92lDQ==",
+  "version": "1.9.94",
+  "url": "index-1.9.94.html",
+  "sha256": "4a76eebf794f2d9dc0d8704436b804f79653068eadd44542f0148769d72dcdfd",
+  "signature": "cBwUu458SIxid2r5deA/0+VNn6/YCoJatli2sfrfsA7d72byzBJAKmBBRiUeFb2fdc3+7ckFdWT8+Dr1t763Cw==",
   "minAppVersion": "0",
-  "notes": "Store logins can now be ticked (Select all, or Shift+click for a range) and moved to a group, edited or deleted together, and sorted into groups of your own. Clean emails now clears forwarded store newsletters from your Inbox and Spam, and auto-clean has its own Folders setting, so scanning only Spam by hand no longer stops it cleaning your Inbox.",
+  "notes": "The store choices are now just Pokémon Center and Target, and Target's mark is its red bullseye. Anything you already saved at another store keeps it, and stays shown wherever it's used.",
   "installerUrl": "",
-  "publishedAt": "2026-10-06T21:05:17.272Z"
+  "publishedAt": "2026-10-06T23:23:21.507Z"
 }
