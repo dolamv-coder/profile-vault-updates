@@ -231,6 +231,20 @@ see the `="…"`, and FAFO's **Import** (1.9.68+) reads them as the text inside.
 > 📦 **6 slots** from **Kim** · @kim · license …ABCD
 > Target 3 · Walmart 3
 > Per store: its profiles as AYCD JSON (.json), with its logins (email:password, .txt) in the same order.
+> ⏳ **Pending your approval** · Approve
+
+### Approving a batch
+
+Since 2026-10-06 (your request) each batch's message ends with **Pending your approval** and an
+**Approve** link (on the first message, when a batch needs more than one). The link opens a page with
+who sent it, how many slots per store and when, and an **Approve** button. Approving edits the message
+to **✅ Approved** with the time. Until you approve, the sender's FAFO (1.9.91 and later) shows those
+slots as **Pending approval**, and after it, as **Success**: FAFO asks this worker about every 30
+seconds while its Submit page is open, and every 5 minutes otherwise (`GET /submissions/status`,
+with the license key, only about that license's batches). Approving can't be undone, and there's no
+decline: a batch you don't approve stays pending. Slots sent before this, or from an older FAFO, show
+Submitted as they did. Each approval is kept 90 days. `/admin/submissions` shows whether each batch is
+approved, with its Approve link.
 
 Slots without a store login come after the ones with logins and have no line in the logins file; one
 on a verified email only (Pokémon Center) has that account's email on its AYCD profile. Slots set to

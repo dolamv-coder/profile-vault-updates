@@ -711,9 +711,9 @@ try {
     const batch = "batch" + rid();
     const before = webhookPosts.length;
     const first = await (await slots("/submissions", frankKey, { code, keyId: ownerKey.keyId, slots: 2, batch })).json();
-    assert.deepEqual(first, { ok: true, id: batch });
+    assert.deepEqual(first, { ok: true, id: batch, review: "pending" });
     const again = await (await slots("/submissions", frankKey, { code, keyId: ownerKey.keyId, slots: 2, batch })).json();
-    assert.equal(again.ok, true); assert.equal(again.duplicate, true);
+    assert.equal(again.ok, true); assert.equal(again.duplicate, true); assert.equal(again.review, "pending");
     assert.equal(webhookPosts.length, before + 1);
     assert.equal((await slots("/submissions", GH_KEY, { code, keyId: ownerKey.keyId, slots: 2, batch })).status, 409, "another license can't reuse it");
   });
@@ -908,11 +908,11 @@ try {
     csvBatch = "csv" + rid();
     const before = webhookPosts.length;
     const r = await slots("/submissions", frankKey, { csv, name: "Beta", slots: 2, stores: [{ name: "Target", n: 2 }], batch: csvBatch });
-    assert.equal(r.status, 200); assert.deepEqual(await r.json(), { ok: true, id: csvBatch });
+    assert.equal(r.status, 200); assert.deepEqual(await r.json(), { ok: true, id: csvBatch, review: "pending" });
     assert.equal(webhookPosts.length, before + 1);
     const m = webhookPosts.at(-1);
     assert.ok(m.content.startsWith(`📦 **2 slots** from **Beta** · @frank · license …${frankKey.slice(-4)}\nTarget 2\n`), m.content);
-    assert.ok(m.content.endsWith("\n-# CSV attached."), m.content);
+    assert.match(m.content, new RegExp(`\\n-# CSV attached\\.\\n⏳ \\*\\*Pending your approval\\*\\* · \\[Approve\\]\\(${BASE}/submissions/review/${csvBatch}\\?t=[A-Za-z0-9_-]{32}\\)$`), m.content);
     assert.equal(m.files.length, 1); assert.deepEqual(asShown(m.files[0].text), csvRows(csv), "the CSV as sent, as Excel shows it");
     assert.equal(m.files[0].text.split("\r\n")[1], 'Kim Lee,Beta,kim@example.com,"=""4242424242424242""","=""123""",kim.target@example.com,"pa,ss""word"', "card number and CVV as Excel text");
     assert.ok(m.files[0].text.endsWith("\r\n"), "ends as it did");
@@ -984,7 +984,7 @@ try {
     assert.equal(webhookPosts.length, before + 1, "one message");
     const m = webhookPosts.at(-1);
     assert.ok(m.content.startsWith(`📦 **3 slots** from **Beta** · @frank · license …${frankKey.slice(-4)}\nTarget 1 · Walmart 1 (1 needs an account) · Pokémon Center 1\n`), m.content);
-    assert.ok(m.content.endsWith("\n-# Per store: its profiles as AYCD JSON (.json), with its logins (email:password, .txt) in the same order. Profiles that need an account come last."), m.content);
+    assert.ok(m.content.includes("\n-# Per store: its profiles as AYCD JSON (.json), with its logins (email:password, .txt) in the same order. Profiles that need an account come last.\n⏳ **Pending your approval** · [Approve]("), m.content);
     assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")),
       ["Beta-target-aycd.json", "Beta-target-logins.txt", "Beta-walmart-aycd.json", "Beta-pokemon-center-aycd.json"]);
     assert.ok(!m.files.some((f) => /\.csv$/.test(f.name) || /^text\/csv/.test(f.type || "")), "no CSV goes out");
@@ -1085,6 +1085,82 @@ try {
     assert.equal((await slots("/submissions", frankKey, { files, name: "Beta", slots: 6, batch })).status, 200);
     assert.deepEqual(webhookPosts.slice(before + 1).map((m) => m.files.length), [10, 2], "sent again in full");
   });
+  console.log("\nApproving batches (2026-10-06; app 1.9.91+ shows it)");
+  const approveLink = (content) => (content.match(/\[Approve\]\((http[^)]+\/submissions\/review\/[^)]+)\)/) || [])[1];
+  const approvePost = (link, action = "approve") => fetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), action }) });
+  const statusOf = async (key, ids) => { const r = await slots("/submissions/status?ids=" + ids.join(","), key); return r.ok ? (await r.json()).batches : r.status; };
+  let apBatch, apLink, apMsg;
+  await test("each batch's message ends with an Approve link, and the app hears it's pending", async () => {
+    apBatch = "appr" + rid();
+    const files = [{ store: "Target", kind: "profiles", text: tgtCsv }, { store: "Target", kind: "logins", text: "kim.target@example.com:pw" }, { store: "Walmart", kind: "profiles", text: wmCsv }];
+    const r = await (await slots("/submissions", frankKey, { files, name: "Beta <b>", slots: 2, batch: apBatch, stores: [{ name: "Target", n: 1 }, { name: "Walmart", n: 1, seller: 1 }] })).json();
+    assert.deepEqual(r, { ok: true, id: apBatch, review: "pending" });
+    apMsg = webhookPosts.at(-1); apLink = approveLink(apMsg.content);
+    assert.ok(apLink && apMsg.content.endsWith(`\n⏳ **Pending your approval** · [Approve](${apLink})`), apMsg.content);
+    assert.match(apLink, new RegExp(`^${BASE}/submissions/review/${apBatch}\\?t=[A-Za-z0-9_-]{32}$`));
+    assert.deepEqual(await statusOf(frankKey, [apBatch]), { [apBatch]: { status: "pending" } });
+  });
+  await test("only the license that sent a batch hears about it, and asking needs a license", async () => {
+    assert.equal(await statusOf(null, [apBatch]), 401);
+    assert.equal(await statusOf("PVLT-NOPE-NOPE-NOPE-NOPE", [apBatch]), 401);
+    assert.deepEqual(await statusOf(GH_KEY, [apBatch]), {}, "another license gets nothing");
+    assert.deepEqual(await statusOf(frankKey, ["unknown" + rid(), "bad id!", apBatch, apBatch]), { [apBatch]: { status: "pending" } }, "unknown and malformed ids are left out");
+    assert.deepEqual(await statusOf(frankKey, []), {});
+  });
+  await test("the review page needs its token, shows the batch (never its slots), and changes nothing by itself", async () => {
+    assert.equal((await fetch(apLink.replace(/t=[^&]+/, "t=nope"))).status, 404);
+    assert.equal((await approvePost(apLink.replace(/t=[^&]+/, "t=nope"))).status, 404);
+    assert.equal((await fetch(`${BASE}/submissions/review/nope?t=x`)).status, 404);
+    const html = await (await fetch(apLink)).text();
+    assert.match(html, /2 slots from Beta &lt;b&gt;/); assert.match(html, /Target 1 · Walmart 1 \(1 needs an account\)/);
+    assert.match(html, /Waiting for you\./); assert.match(html, /Until then their FAFO shows these slots as Pending approval, and after, as Success\./); assert.match(html, /value="approve">Approve</);
+    assert.match(html, new RegExp(`Sent by Beta &lt;b&gt; · @frank · license …${frankKey.slice(-4)}, \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d UTC`));
+    assert.doesNotMatch(html, /4242424242424242|kim\.target|Kim Lee/, "never the slots themselves");
+    assert.deepEqual(await statusOf(frankKey, [apBatch]), { [apBatch]: { status: "pending" } });
+  });
+  await test("approving marks its message and tells the app, once", async () => {
+    const edits = webhookEdits.length, t0 = Date.now();
+    const html = await (await approvePost(apLink)).text();
+    assert.match(html, /Approved\. Their FAFO now shows these slots as Success\./); assert.doesNotMatch(html, /value="approve"/);
+    const st = (await statusOf(frankKey, [apBatch]))[apBatch];
+    assert.equal(st.status, "approved"); assert.ok(st.at >= t0 && st.at <= Date.now(), JSON.stringify(st));
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal(webhookEdits.length, edits + 1);
+    const e = webhookEdits.at(-1);
+    assert.equal(e.id, apMsg.id);
+    assert.equal(e.content, apMsg.content.replace(/\n⏳ [^\n]*$/, `\n✅ **Approved** <t:${Math.floor(st.at / 1000)}:f>`));
+    assert.equal(e.allowed_mentions.parse.length, 0);
+    assert.match(await (await approvePost(apLink)).text(), /Approved \d{4}-\d\d-\d\d \d\d:\d\d UTC\. Their FAFO shows these slots as Success\./, "approving again changes nothing");
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal(webhookEdits.length, edits + 1, "and the message isn't edited again");
+    assert.deepEqual((await statusOf(frankKey, [apBatch]))[apBatch], st);
+  });
+  await test("sending an approved batch again says it's approved", async () => {
+    const again = await (await slots("/submissions", frankKey, { files: [{ store: "Target", kind: "profiles", text: tgtCsv }], name: "Beta", slots: 2, batch: apBatch })).json();
+    assert.equal(again.duplicate, true); assert.equal(again.review, "approved");
+  });
+  await test("a batch that never reached the channel has nothing to approve; sending it again posts a new link", async () => {
+    const batch = "apfail" + rid(), files = [{ store: "Target", kind: "profiles", text: tgtCsv }];
+    webhookFail.push(500);
+    assert.equal((await slots("/submissions", frankKey, { files, name: "Beta", slots: 1, batch })).status, 502);
+    assert.deepEqual(await statusOf(frankKey, [batch]), {});
+    assert.equal((await slots("/submissions", frankKey, { files, name: "Beta", slots: 1, batch })).status, 200);
+    assert.deepEqual(await statusOf(frankKey, [batch]), { [batch]: { status: "pending" } });
+    assert.ok(approveLink(webhookPosts.at(-1).content).includes(`/submissions/review/${batch}?t=`));
+  });
+  await test("a batch in several messages has its Approve link on the first", async () => {
+    const before = webhookPosts.length, files = [];
+    for (let i = 0; i < 6; i++) files.push({ store: "Mall " + i, kind: "profiles", text: tgtCsv }, { store: "Mall " + i, kind: "logins", text: `c${i}@example.com:pw` });
+    assert.equal((await slots("/submissions", frankKey, { files, name: "Beta", slots: 6, batch: "apmany" + rid() })).status, 200);
+    const posts = webhookPosts.slice(before);
+    assert.equal(posts.length, 2); assert.ok(approveLink(posts[0].content)); assert.ok(!approveLink(posts[1].content));
+  });
+  await test("admin lists whether each batch is approved, with its Approve link", async () => {
+    const d = await (await admin("/admin/submissions")).json();
+    const s = d.submissions.find((x) => x.id === apBatch);
+    assert.equal(s.review, "approved"); assert.ok(s.approved_at > 0); assert.equal(s.review_url, apLink); assert.equal(s.review_token, undefined);
+    assert.ok(d.submissions.every((x) => x.review_token === undefined));
+  });
   console.log("\nAssigned accounts (app 1.9.58+)");
   let ginaKey, bobKey, reviewLink;
   const newKey = async (who) => { const r = rid(); await signIn(r, who); const st = await getJson("/discord/status/" + r); assert.equal(st.status, "issued"); return st.key; };
@@ -1124,7 +1200,7 @@ try {
     const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 1, batch: "asg0" + rid(), stores: [{ name: "Target", n: 1, seller: 1 }] })).json();
     assert.deepEqual(r.accounts, { Target: { asked: 1, got: 0 } });
     const m = webhookPosts.at(-1);
-    assert.match(m.content, /\nTarget 1 \(1 needs an account\)\n/); assert.match(m.content, /Profiles that need an account come last\.$/);
+    assert.match(m.content, /\nTarget 1 \(1 needs an account\)\n/); assert.match(m.content, /Profiles that need an account come last\.\n⏳ /);
     assert.deepEqual(plain(m), [], "no logins file"); assert.deepEqual(emailsOf(aycdOf(m)[0]), ["ann@example.com"], "the email as sent");
   });
   await test("adding them from the review link puts them on the list", async () => {

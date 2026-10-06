@@ -1,1 +1,1 @@
-Slots you submit now reach the seller as AYCD profile files.
+Slots you submit now reach the seller as AYCD profile files. On the Submit page they show Pending approval until the seller approves them, then Success.

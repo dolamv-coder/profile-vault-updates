@@ -61,7 +61,16 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   the name on card. A list that doesn't have one profile for each CSV row is refused. Later on 2026-10-06 the owner
   dropped the CSV: the channel gets each store's AYCD list and its logins file only. The app still sends the CSV,
   which the worker reads to give out accounts and, for apps before 1.9.87, to make the AYCD list, and 1.9.91 says
-  "AYCD files" where the app said "CSV files" (the Submit page, Send somewhere else, the seller's Discord note).
+  "AYCD files" where the app said "CSV files" (the Submit page and window, Send somewhere else, the seller's Discord note).
+  Since 2026-10-06 (the owner's request) the owner approves each batch: its message (the first, when there are
+  several) ends with **Pending your approval · Approve**, a link to `/submissions/review/:id?t=…` (D1
+  `submission_reviews`, kept 90 days; its own table, since `db:init` can't add columns), whose Approve button edits
+  the message to **✅ Approved** with the time. There's no decline and no undo. `/submissions` answers
+  `review: "pending"`, and app 1.9.91+ keeps the batch id on each slot it sent that way (`S.subs[key].batch`), shows
+  **Pending approval** until `GET /submissions/status?ids=` (license Bearer, that license's batches only) says
+  approved, then **Success** (`okAt`) with a message (`refreshApprovals`: about every 30 seconds with Submit in front,
+  otherwise every 5 minutes). Slots sent before, through a worker that doesn't answer `review`, or as a code show
+  Submitted as before.
   The owner opened these in Excel (since the change above, only 1.9.52's single CSV is still posted), which shows a 16-digit card number as 5.55556E+15 (keeping only 15
   digits) and drops leading zeros. So since 2026-10-02 the worker writes each slots CSV's phone, card
   number, expiry month, CVV and zip code cells as `="…"` Excel text (`excelSafe`), and does the same
@@ -471,6 +480,11 @@ Addresses go through `resolveAddr`, so one shared with unselected profiles gets 
 Pokéball (`pokeballSVG`, `isPokemonCenter`; `drawPokeball` in the share image), in its pills and lists and its store
 filter chip; the relay's phone page still shows PC. Settings → Accounts to assign gains Remove accounts (the worker
 section above). Profiles gain no fields, so the paused web version is unaffected.
+
+From 1.9.91 Submit shows whether the seller has approved each batch sent to their channel (the worker section above):
+**Pending approval** with a clock (`.pill-wait`), then **Success** with a check, also counted in the store's chips and
+the Submitted stat (`subState`). The channel gets each store's AYCD list and logins only, and the app says "AYCD files".
+Submitted slots (`subs` entries) gain `batch` and `okAt`, which the paused web version keeps and shows as Submitted.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

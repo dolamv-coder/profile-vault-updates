@@ -821,6 +821,10 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .pill-warn{background:var(--caution);border-color:var(--caution);color:var(--on-caution)}
 .pill-warn{background:var(--caution);border-color:#000;color:#000}
 .pill-off{background:transparent;color:var(--ink-3)}
+/* A submitted slot waits for the seller's approval (1.9.91), then shows Success. */
+.pill-wait{background:color-mix(in srgb, var(--caution) 20%, transparent);border-color:color-mix(in srgb, var(--caution) 75%, transparent);color:var(--ink)}
+.pill > svg{width:calc(12px*var(--fs));height:calc(12px*var(--fs));vertical-align:-2px;margin-right:3px}
+.pill-on > svg{stroke-width:2.6}
 .sw{flex:none;display:inline-block;cursor:pointer}
 .sw input{position:absolute;opacity:0;width:0;height:0}
 .sw-track{display:block;width:42px;height:24px;border-radius:999px;background:var(--line);position:relative;transition:background .15s}
@@ -3351,6 +3355,7 @@ const P = {
   x:'<path d="M6 6l12 12M18 6 6 18"/>',
   dup:'<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/><path d="M14 11v6M11 14h6"/>',
   check:'<path d="m5 13 4 4L19 7"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   box:'<path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="M3 7l9 5 9-5M12 12v10"/>',
   truck:'<path d="M3 6h11v9H3z"/><path d="M14 9h4l3 3v3h-7z"/><circle cx="7" cy="18" r="1.6"/><circle cx="17.5" cy="18" r="1.6"/>',
   store:'<path d="M4 9h16l-1-4H5z"/><path d="M5 9v10h14V9"/><path d="M9 19v-5h6v5"/>',
@@ -8242,7 +8247,7 @@ function openSettings(){
         const msg = $("#st-dc-msg", dc), old = $("#st-dc-go", dc); if (old) old.remove();
         if (!d){ msg.textContent = "Couldn't reach the license server. Check your connection, then open Settings again."; return; }
         if (d.pub === mine){
-          msg.innerHTML = `Version 1.9.52 and later send submitted slots to your Discord channel as files you open directly: an AYCD profile list for each store, and its logins in a separate file. People still on an older version send a file encrypted for key ID <strong>${esc(id)}</strong>, which only this vault can open: download it, then drop it into <strong>Import</strong>.`;
+          msg.innerHTML = `Version 1.9.52 and later send submitted slots to your Discord channel as files you open directly: an AYCD profile list for each store, and its logins in a separate file. Each batch has an Approve link: the sender's FAFO shows those slots as Pending approval until you use it, then Success. People still on an older version send a file encrypted for key ID <strong>${esc(id)}</strong>, which only this vault can open: download it, then drop it into <strong>Import</strong>.`;
           SELLER = {pub:mine, keyId:id}; return;
         }
         const other = d.pub ? ` Right now they're encrypted for a different key, ID <strong>${esc(d.keyId)}</strong>.` : "";
@@ -12553,6 +12558,37 @@ function storeGroups(){
 }
 const running = () => (S.lastBatch || []).filter(k => (S.subs || {})[k]).length;
 
+/* The seller approves each batch from its message in their Discord channel (the owner's request, 2026-10-06). A slot
+   sent through the license worker from 1.9.91 keeps its batch id (S.subs[key].batch) and shows Pending approval until
+   the worker says that batch is approved, then Success (okAt: when). Slots sent before, or as a code, show Submitted.
+   FAFO asks about every 30 seconds while the Submit page is in front, and every 5 minutes otherwise. */
+const subState = (x) => !x ? "" : x.okAt ? "ok" : x.batch ? "wait" : "sent";
+let approvalAt = 0, approvalBusy = false;
+async function refreshApprovals(force){
+  const L = licRead();
+  if (!S || !DESK || !L || !L.key || approvalBusy) return;
+  const ids = [...new Set(Object.values(S.subs || {}).filter(x => subState(x) === "wait").map(x => x.batch))].slice(0, 100);
+  if (!ids.length) return;
+  if (!force && Date.now() - approvalAt < (UI.view === "submit" && !document.hidden ? 25000 : 300000)) return;
+  approvalAt = Date.now(); approvalBusy = true;
+  let d = null;
+  try { const r = await fetch(LICENSE_RELAY + "/submissions/status?ids=" + ids.join(","), {headers:{authorization:"Bearer " + L.key}, cache:"no-store", signal:typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(20000) : undefined}); if (r.ok) d = await r.json(); }
+  catch(e){}
+  approvalBusy = false;
+  if (!S || !d || !d.batches) return;
+  let n = 0;
+  Object.values(S.subs || {}).forEach(x => {
+    const b = subState(x) === "wait" && d.batches[x.batch];
+    if (b && b.status === "approved"){ x.okAt = Number(b.at) || Date.now(); n++; }
+  });
+  if (!n) return;
+  persist();
+  if (UI.view === "submit") renderMain();
+  toast(`Success: the seller approved your ${plural(n, "slot")}`);
+}
+setInterval(() => refreshApprovals(false), 10000);
+window.addEventListener("online", () => refreshApprovals(true));
+
 /* ---- slot limit: how many slots can be switched on at once, across all stores ---- */
 // The seller sets it per license on the license worker; people ask for more from the Submit page.
 const SLOT_DEFAULT = 20, SLOT_MAX = 500;
@@ -12597,7 +12633,7 @@ async function sendToSeller(from, payload, stores, batch, k){
     let r;
     try { r = await fetch(LICENSE_RELAY + "/submissions", {method:"POST", headers:{authorization:"Bearer " + L.key, "content-type":"application/json"}, body:JSON.stringify({code, keyId:k.keyId, name:from, slots:payload.slots.length, stores, batch})}); }
     catch(e){ throw new Error("Couldn't reach the seller. Check your connection and try again."); }
-    if (r.ok){ S.settings.sellerPin = {pub:k.pub, keyId:k.keyId}; persist(); return k; }
+    if (r.ok){ const d = await r.json().catch(() => ({})); S.settings.sellerPin = {pub:k.pub, keyId:k.keyId}; persist(); return Object.assign({}, k, {id:d.id || batch, review:d.review || ""}); }
     const d = await r.json().catch(() => ({}));
     if (r.status === 409){
       // The seller's key changed. Seal again only for the key this app already sent with; any other
@@ -12669,7 +12705,8 @@ async function sendFilesToSeller(from, files, n, stores, batch){
   let r;
   try { r = await fetch(LICENSE_RELAY + "/submissions", {method:"POST", headers:{authorization:"Bearer " + (licRead() || {}).key, "content-type":"application/json"}, body:JSON.stringify({files, name:from, slots:n, stores, batch})}); }
   catch(e){ throw new Error("Couldn't reach the seller. Check your connection and try again."); }
-  if (r.ok) return {keyId:"CSV"};
+  // `review` (2026-10-06): the batch waits for the seller to approve it in their channel.
+  if (r.ok){ const d = await r.json().catch(() => ({})); return {keyId:"CSV", id:d.id || batch, review:d.review || ""}; }
   if (r.status === 425) throw new Error("Still sending. Wait a moment, then try again.");
   if (r.status === 401) throw new Error("Your license wasn't recognized, so nothing was sent.");
   if (r.status === 429) throw new Error("You've sent a lot this hour. Try again later.");
@@ -12749,15 +12786,19 @@ function openSlotRequest(){
 }
 
 function submitRowHTML(r, g){
-  const sel = isSel(r.p.id, g.key), sub = isSub(r.p.id, g.key), c = cardById(r.p.cardId);
-  const done = (S.subs || {})[slotKey(r.p.id, g.key)];
+  const sel = isSel(r.p.id, g.key), c = cardById(r.p.cardId);
+  const done = (S.subs || {})[slotKey(r.p.id, g.key)], st = subState(done);
+  const day = (ms) => esc(new Date(ms).toLocaleDateString(undefined, {month:"short", day:"numeric"}));
+  const pill = st === "wait" ? ` <span class="pill pill-wait">${ic("clock")}Pending approval</span>` : st === "ok" ? ` <span class="pill pill-on">${ic("check")}Success</span>`
+    : st ? ` <span class="pill pill-on">Submitted</span>` : sel ? ` <span class="pill">Staged</span>` : ` <span class="pill pill-off">Not submitted</span>`;
+  const to = done && done.to ? " to " + esc(done.to === "CSV" ? "the seller" : done.to) : "";
   return `<article class="slot ${sel ? "is-on" : ""}">
     <div class="slot-top"><div class="slot-name">${esc(r.p.name)}</div>
       <label class="sw"><input type="checkbox" data-act="slot" data-id="${r.p.id}" data-store="${esc(g.key)}" ${sel ? "checked" : ""} aria-label="Select ${esc(r.p.name)} for ${esc(g.name)}"><span class="sw-track"></span></label></div>
     <div class="slot-meta">
-      <span>${c ? `${esc(cardBrand(c))} •• ${esc(last4(c.number))}` : `<span class="expired">No card</span>`}${sub ? ` <span class="pill pill-on">Submitted</span>` : sel ? ` <span class="pill">Staged</span>` : ` <span class="pill pill-off">Not submitted</span>`}</span>
+      <span>${c ? `${esc(cardBrand(c))} •• ${esc(last4(c.number))}` : `<span class="expired">No card</span>`}${pill}</span>
       <span>${ic("lock").replace("<svg", '<svg style="width:13px;height:13px;vertical-align:-2px;margin-right:4px"')}${asksSeller(r.e) ? `<span class="pill pill-seller">Assigned account</span>` : r.l ? esc(r.l.email) : r.e.email ? esc(r.e.email) : `<span class="expired">No login</span>`}</span>
-      ${done ? `<span>Sent ${esc(new Date(done.at).toLocaleDateString(undefined, {month:"short", day:"numeric"}))}${done.to ? " to " + esc(done.to === "CSV" ? "the seller" : done.to) : ""}</span>` : ""}
+      ${st === "ok" ? `<span>Submitted ${day(done.at)}, approved ${day(done.okAt)}</span>` : st === "wait" ? `<span>Submitted ${day(done.at)}${to}</span>` : done ? `<span>Sent ${day(done.at)}${to}</span>` : ""}
     </div>
   </article>`;
 }
@@ -12771,7 +12812,8 @@ function renderSubmit(){
   const groups = storeGroups();
   const q = norm(UI.q);
   const selN = groups.reduce((n, g) => n + g.sel.length, 0);
-  const subN = Object.keys(S.subs || {}).length;
+  const subN = Object.keys(S.subs || {}).length, waitN = Object.values(S.subs || {}).filter(x => subState(x) === "wait").length;
+  setTimeout(() => refreshApprovals(false), 0);
   const freshN = groups.reduce((n, g) => n + g.fresh.length, 0);
   if (!groups.length){
     return `<div class="view-head"><div><h1 class="view-title">Submit</h1><p class="view-sub">Stage profiles per store, then send them</p></div></div>
@@ -12782,6 +12824,7 @@ function renderSubmit(){
     const open = !UI.closed.has(g.key);
     const rows = q ? g.rows.filter(r => profileHay(r.p).includes(q) || norm(g.name).includes(q)) : g.rows;
     const full = g.sel.length >= g.cap;
+    const waitG = g.sub.filter(r => subState(S.subs[slotKey(r.p.id, g.key)]) === "wait").length, doneG = g.sub.length - waitG;
     return `<section class="store ${full ? "is-full" : ""}">
       <header class="store-head">
         <button class="icon-btn" data-act="fold" data-id="${esc(g.key)}" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand"} ${esc(g.name)}">${ic(open ? "chevD" : "chevR")}</button>
@@ -12791,7 +12834,7 @@ function renderSubmit(){
         </div>
         <div class="store-right">
           <div class="store-count"><strong>${g.sel.length}</strong> / ${g.cap} selected</div>
-          <div class="chips-row">${g.sub.length ? `<span class="pill pill-on">${g.sub.length} submitted</span>` : ""}<span class="pill">${g.rows.length} saved</span></div>
+          <div class="chips-row">${waitG ? `<span class="pill pill-wait">${waitG} pending approval</span>` : ""}${doneG ? `<span class="pill pill-on">${doneG} submitted</span>` : ""}<span class="pill">${g.rows.length} saved</span></div>
         </div>
       </header>
       ${open ? `<div class="store-body">
@@ -12804,7 +12847,7 @@ function renderSubmit(){
   const to = S.submitTo, viaCSV = csvToSeller(), seller = viaCSV ? null : submitToSeller();
   return `<div class="view-head"><div><h1 class="view-title">Submit</h1><p class="view-sub">Stage profiles per store, then send them in one batch</p></div></div>
     <div class="panelbox">
-      <div class="stats">${stat("Profiles", S.profiles.length, "saved in your library")}${stat("Selected", selN, "staged for this run")}${stat("Submitted", subN, "already sent")}${stat("Running", running(), "in the latest batch")}</div>
+      <div class="stats">${stat("Profiles", S.profiles.length, "saved in your library")}${stat("Selected", selN, "staged for this run")}${stat("Submitted", subN, waitN ? `${waitN} pending approval` : "already sent")}${stat("Running", running(), "in the latest batch")}</div>
       <div class="submit-bar">
         <p class="item-sub" style="margin:0;flex:1;min-width:220px">Toggle profiles on, then submit. Only new picks are sent, so nothing is ever sent twice.${viaCSV ? ` Going straight to the seller's Discord channel as AYCD files. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Send somewhere else</button>` : seller ? ` Going straight to the seller, encrypted so only they can open it. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Send somewhere else</button>` : to ? ` Going to <strong>${esc(to.keyId)}</strong>. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Change</button>` : ` <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Set who receives them</button>`}</p>
         <button class="btn btn-primary" data-act="submit-slots" ${freshN ? "" : "disabled"}>${ic("exp")}Submit ${freshN ? plural(freshN, "slot") : "slots"}</button>
@@ -13001,7 +13044,7 @@ function openSubmitSlots(){
     title:"Submit slots", dismiss:false,
     body:`<p style="margin:0 0 14px;color:var(--ink-2)">${plural(fresh.length, "new slot")} will be sent. Slots you already submitted are left out, so nothing is sent twice.</p>
       <div class="note" style="margin:0 0 14px"><ul class="summary-list" style="margin:0">${groups.filter(g => g.fresh.length).map(g => `<li><strong style="color:var(--ink)">${esc(g.name)}</strong>: ${esc(g.fresh.map(r => r.p.name).join(", "))}</li>`).join("")}</ul>${askN ? `<p style="margin:8px 0 0">${askN === fresh.length ? (askN === 1 ? "It uses" : "They all use") : `${plural(askN, "slot")} ${askN === 1 ? "uses" : "use"}`} an assigned account, so the seller provides the login.</p>` : ""}</div>
-      ${viaCSV ? `<p class="note" style="margin:0 0 14px">Goes to the seller's private Discord channel: a CSV of profiles for each store, and its logins in a separate file.</p>`
+      ${viaCSV ? `<p class="note" style="margin:0 0 14px">Goes to the seller's private Discord channel: an AYCD profile list for each store, and its logins in a separate file. Your slots show Pending approval here until the seller approves them.</p>`
            : seller && changedKey ? `<p class="note note-warn" style="margin:0 0 14px">The seller's key has changed since you last sent (it was <strong>${esc(pin.keyId)}</strong>, now <strong>${esc(seller.keyId)}</strong>). Only send if the seller told you they changed it.</p>`
            : seller ? `<p class="note" style="margin:0 0 14px">Sent straight to the seller, encrypted so only they can open it (key ID <strong>${esc(seller.keyId)}</strong>).</p>`
            : to ? `<p class="note" style="margin:0 0 14px">Encrypted for key ID <strong>${esc(to.keyId)}</strong>. Only they can open it.</p>`
@@ -13017,7 +13060,9 @@ function openSubmitSlots(){
         S.subs = S.subs || {}; S.lastBatch = [];
         const at = Date.now();
         const dest = sent ? sent.keyId : to ? to.keyId : "";
-        fresh.forEach(({g, r}) => { const key = slotKey(r.p.id, g.key); S.subs[key] = {at, to:dest, from}; S.lastBatch.push(key); });
+        // Sent through the license worker: Pending approval until the seller approves the batch (refreshApprovals).
+        const wait = sent && sent.review === "pending" ? {batch:sent.id} : sent && sent.review === "approved" ? {batch:sent.id, okAt:at} : {};
+        fresh.forEach(({g, r}) => { const key = slotKey(r.p.id, g.key); S.subs[key] = Object.assign({at, to:dest, from}, wait); S.lastBatch.push(key); });
         S.submitName = from; persist(); render();
       };
       $("#ss-go", panel).addEventListener("click", async () => {
@@ -13042,8 +13087,13 @@ function openSubmitSlots(){
           closers.forEach(x => x.disabled = false);
           b.hidden = true; mark(from);
           const done = $("#ss-sent", panel); done.hidden = false;
-          done.innerHTML = `<strong style="color:var(--ink)">Sent.</strong> The seller has your ${plural(fresh.length, "slot")}.`;
-          toast(`Sent ${plural(fresh.length, "slot")} to the seller`);
+          if (sent.review === "pending"){
+            done.innerHTML = `<span class="pill pill-wait">${ic("clock")}Pending approval</span> <strong style="color:var(--ink)">Submitted.</strong> The seller has your ${plural(fresh.length, "slot")}. They show Success on the Submit page once the seller approves them.`;
+            toast(`Submitted ${plural(fresh.length, "slot")}. Pending the seller's approval.`);
+          } else {
+            done.innerHTML = `<strong style="color:var(--ink)">Sent.</strong> The seller has your ${plural(fresh.length, "slot")}.`;
+            toast(`Sent ${plural(fresh.length, "slot")} to the seller`);
+          }
           return;
         }
         try {
