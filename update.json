@@ -1,10 +1,10 @@
 {
-  "version": "1.9.86",
-  "url": "index-1.9.86.html",
-  "sha256": "5270b412ed4356331f859387cf1ba764179d556e993e33f3835367a786e1fdb0",
-  "signature": "qT9taLCNJQ9FOWR+V0VKioVOb3EgsFrIOal/ziDbfSZetl4eIpY9GGtFWU2R2vs20UlASTou6d2MrFigHU1gDA==",
+  "version": "1.9.87",
+  "url": "index-1.9.87.html",
+  "sha256": "f72ab10bad4e6acbf327dfbb0f75b21fb54a386acb15cf7f2e3b749ffc1dc09c",
+  "signature": "Bt8n5DH1YuxtDdSFlBrJu48sJLIBFebrQzPP3eiWtf6X18aj9DsYWnlU+ei+OJxD0KYa8eetHQlQO0hv27GBAg==",
   "minAppVersion": "0",
-  "notes": "Search cards by any part of the number, the expiry, a note or the profile using them, and add a note to any card. Also new: pick which profiles get cards, search a store's logins by email, use a different billing address when importing drafts, and profiles now take their email from the store login.",
+  "notes": "Slots you submit now also reach the seller as an AYCD profile list, ready to load into AYCD.",
   "installerUrl": "",
-  "publishedAt": "2026-10-05T12:43:53.572Z"
+  "publishedAt": "2026-10-06T03:54:23.520Z"
 }
