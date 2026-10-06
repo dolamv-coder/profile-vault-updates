@@ -1,0 +1,1 @@
+Right-click Ungrouped in the sidebar to rename it: its profiles move into a group with that name.
