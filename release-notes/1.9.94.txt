@@ -1,1 +1,1 @@
-The store choices are now just Pokémon Center and Target. Anything you already saved at another store keeps it, and stays shown wherever it's used.
+The store choices are now just Pokémon Center and Target, and Target's mark is its red bullseye. Anything you already saved at another store keeps it, and stays shown wherever it's used.

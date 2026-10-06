@@ -523,8 +523,9 @@ retailers except Pokémon Center and Target"), with no Another store (`storePill
 which nothing passes). `STORES` keeps the rest for what's already saved: an item's own stores still show in its picker
 (`extra`, and they stay offered while its editor is open, so one taken off can go back on), Mass edit's Remove offers the
 stores the selected profiles have, Put in profiles' Limit to a store the stores profiles use, and the filters on Profiles,
-Orders and Submit list every store the data uses (`allStoreOptions`). Nothing gains a field, so the paused web version is
-unaffected.
+Orders and Submit list every store the data uses (`allStoreOptions`). Target's mark is its red bullseye (`bullseyeSVG`,
+`isTarget`; `drawBullseye` in the share image), as Pokémon Center's is a Pokéball: the owner's request, where it was a red
+tile with a T. The relay's phone page still shows T. Nothing gains a field, so the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

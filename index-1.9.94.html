@@ -277,7 +277,7 @@ img,svg{max-width:100%}
 .smark{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:7px;font-size:calc(11px*var(--fs));font-weight:800;letter-spacing:.02em;flex:none}
 /* Pokémon Center's mark is a Pokéball (1.9.90+): round at every size, with no tile behind it */
 .smark.smark-ball{background:none;border-radius:50% !important}
-.smark-ball .pokeball{display:block;width:100%;height:100%}
+.smark-ball .pokeball,.smark-ball .bullseye{display:block;width:100%;height:100%}
 /* Order card: expandable address, share */
 .o-addr-btn{border:0;background:none;padding:0;color:inherit;font:inherit;cursor:pointer;border-bottom:1px dashed var(--ink-3)}
 .o-addr-btn:hover{color:var(--ink)}
@@ -8521,10 +8521,17 @@ const loginById = (id) => (S.logins || []).find(l => l.id === id) || null;
 const inboxById = (id) => (S.inboxes || []).find(i => i.id === id) || null;
 const storeLabel = (l) => l.store === "other" ? (l.storeName || "Other store") : ((STORES.find(s => s[0] === l.store) || [0, l.store])[1]);
 const storeKeyOf = (l) => l.store === "other" ? "other:" + norm(l.storeName) : l.store;
-// Logo mark for a store filter pill (only Target has one so far: a red bullseye).
-// From 1.9.90 Pokémon Center's is a Pokéball (the owner's request), here and in its store mark (storeMark).
-const storePillMark = (k) => k === "target" || k === "other:target" ? `<svg class="store-mark" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.5" fill="#cc0000"/><circle cx="8" cy="8" r="5" fill="#fff"/><circle cx="8" cy="8" r="2.6" fill="#cc0000"/></svg>`
+// Logo mark for a store filter pill: Target's red bullseye, and from 1.9.90 Pokémon Center's Pokéball (the owner's
+// request). From 1.9.94 Target's store mark (storeMark) is the bullseye too, where it was a red tile with a T.
+const storePillMark = (k) => k === "target" || k === "other:target" ? bullseyeSVG("store-mark")
   : k === "pokemoncenter" || /^other:pok[eé]mon ?cent(er|re)$/.test(k) ? pokeballSVG("store-mark") : "";
+const isTarget = (o) => !!o && (o.store === "target" || (o.store === "other" && /^target$/i.test(String(o.storeName || "").trim())));
+const bullseyeSVG = (cls) => `<svg class="${cls} bullseye" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="#CC0000"/><circle cx="16" cy="16" r="10" fill="#FFFFFF"/><circle cx="16" cy="16" r="5.2" fill="#CC0000"/></svg>`;
+// The same bullseye on a canvas (the share image), centred on (cx, cy) with radius r.
+function drawBullseye(x, cx, cy, r){
+  const disc = (rad, fill) => { x.beginPath(); x.arc(cx, cy, rad, 0, Math.PI * 2); x.closePath(); x.fillStyle = fill; x.fill(); };
+  x.save(); disc(r, "#CC0000"); disc(r * 10 / 15, "#FFFFFF"); disc(r * 5.2 / 15, "#CC0000"); x.restore();
+}
 const isPokemonCenter = (o) => !!o && (o.store === "pokemoncenter" || (o.store === "other" && /^pok[eé]mon ?cent(er|re)$/i.test(String(o.storeName || "").trim())));
 const pokeballSVG = (cls) => `<svg class="${cls} pokeball" viewBox="0 0 32 32" aria-hidden="true"><path d="M2 16a14 14 0 0 1 28 0z" fill="#EE1515"/><path d="M2 16a14 14 0 0 0 28 0z" fill="#F7F7F7"/><path d="M2 16h28" stroke="#222" stroke-width="3"/><circle cx="16" cy="16" r="14" fill="none" stroke="#222" stroke-width="2"/><circle cx="16" cy="16" r="5.4" fill="#222"/><circle cx="16" cy="16" r="3.1" fill="#F7F7F7"/></svg>`;
 // The same Pokéball on a canvas (the share image), centred on (cx, cy) with radius r.
@@ -8730,6 +8737,7 @@ const STORE_TINT = {target:"#CC0000", walmart:"#0071CE", bestbuy:"#FFE000", amaz
 const tintOf = (o) => STORE_TINT[o.store] || STORE_TINT.other;
 function storeMark(o, big){
   if (isPokemonCenter(o)) return `<span class="smark smark-ball ${big ? "smark-lg" : ""}" aria-hidden="true">${pokeballSVG("")}</span>`;
+  if (isTarget(o)) return `<span class="smark smark-ball ${big ? "smark-lg" : ""}" aria-hidden="true">${bullseyeSVG("")}</span>`;   // 1.9.94+
   const name = storeLabel(o);
   const initials = name.replace(/[^A-Za-z0-9 ]/g, "").split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("");
   const bg = tintOf(o), light = /^#(FFE000|FFD100)$/i.test(bg);
@@ -10090,6 +10098,7 @@ async function drawSuccess(d){
       const k = Math.min((s - 12) / im.naturalWidth, (s - 12) / im.naturalHeight), iw = im.naturalWidth * k, ih = im.naturalHeight * k;
       x.save(); round(P, ry, s, s, 16); x.clip(); x.drawImage(im, P + (s - iw) / 2, ry + (s - ih) / 2, iw, ih); x.restore();
     } else if (isPokemonCenter(g.o)) drawPokeball(x, P + s / 2, ry + s / 2, s * 0.36);   // on the white tile
+    else if (isTarget(g.o)) drawBullseye(x, P + s / 2, ry + s / 2, s * 0.36);
     else {
       x.fillStyle = tintOf(g.o); round(P, ry, s, s, 16); x.fill();
       x.fillStyle = /^#(FFE000|FFD100)$/i.test(tintOf(g.o)) ? "#000" : "#fff"; x.font = F(800, 34); x.textAlign = "center";
