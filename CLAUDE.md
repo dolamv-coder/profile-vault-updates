@@ -52,6 +52,13 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   logins as `email:password` lines in a separate `.txt`, in the same order as the first rows. The
   worker names them `orbit-slots-<time>-<sender>-<store>.csv` and `…-<store>-logins.txt`, 10
   attachments per message. Slots without a store login come after those rows.
+  Since 2026-10-06 (the owner's choice) each store's slots also go out as an AYCD profile list,
+  `…-<store>-aycd.json`, posted just before its CSV, with the same rows in the same order and laid out
+  as AYCD exports a profile (`name, notes, billingAddress, shippingAddress, paymentDetails,
+  sameBillingAndShippingAddress, onlyCheckoutOnce, matchNameOnCardAndAddress`; states and countries
+  written out). App 1.9.87+ sends it (`kind: "aycd"`, `slotAycd`), with the card's own name and Only one
+  checkout; for older apps the worker makes it from the CSV (`aycdFromCsv`), with the billing name as
+  the name on card. A list that doesn't have one profile for each CSV row is refused.
   The owner opens these in Excel, which shows a 16-digit card number as 5.55556E+15 (keeping only 15
   digits) and drops leading zeros. So since 2026-10-02 the worker writes each slots CSV's phone, card
   number, expiry month, CVV and zip code cells as `="…"` Excel text (`excelSafe`), and does the same
@@ -80,7 +87,8 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   adds them from the review link (`/accounts/review/:id`, D1 `accounts`). Each profiles file carries
   `storeKey` and `assigned` (how many of its rows, right after the ones with a login, are on Use
   Assigned Account), and `/submissions` gives each such row a random free account: its email in the
-  row's `email` column and `email:password` on the matching line of the logins file. Buyers never
+  row's `email` column (and on both addresses of its AYCD profile) and `email:password` on the matching
+  line of the logins file. Buyers never
   see them; each account goes to one slot; a license gets `ASSIGNED_LIMIT` (10) in all; an account
   picked for a batch that never reached the channel goes back. Rows left without one come last.
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
@@ -421,6 +429,11 @@ request). The profile's email follows its stores
 Pokémon Center's checkout email with no login, or none on Use Assigned Account. A store waiting for a login still gets
 the saved login with the profile's email, and a profile needs a store to save. Cards gain `note` and settings
 `genBillAddr`, so the paused web version is unaffected.
+
+From 1.9.87 Submit sends each store's slots as an AYCD profile list too (`slotsFiles` adds `kind: "aycd"` after each
+store's CSV, `slotAycd` per row): the account the slot checks out with (`slotEmail`, as in the CSV) on both addresses,
+the state and country written out (`aycdCountry`, `aycdState`, which Export → AYCD JSON shares), the card's own name,
+and `matchNameOnCardAndAddress` true when that's the billing name. The worker posts it as `…-<store>-aycd.json`.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

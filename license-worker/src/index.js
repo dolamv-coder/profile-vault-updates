@@ -25,8 +25,10 @@
 //   POST /submit/key           {pub, name}: offer a collecting key; the owner confirms it in Discord
 //   POST /submissions          {files, name, slots, stores, batch} (app 1.9.53+): posted to DISCORD_WEBHOOK_URL
 //                              in plain text, with full card numbers, CVVs and passwords (the owner chose
-//                              this over encryption): per store, its profiles as a .csv in the owner's
-//                              columns and its logins (email:password) as a .txt. Each store in `stores`
+//                              this over encryption): per store, its profiles as AYCD JSON and as a .csv in
+//                              the owner's columns, and its logins (email:password) as a .txt. App 1.9.87+
+//                              sends the AYCD list (kind "aycd"); for older apps it's made from the CSV.
+//                              Each store in `stores`
 //                              may carry `seller`: how many of its slots ask the owner to assign an
 //                              account. App 1.9.52 sends {csv, ...}, one .csv; older apps {code, keyId, ...},
 //                              a code encrypted to the collecting key, posted as a .txt. None is kept here.
@@ -631,7 +633,7 @@ async function slotReview(request, env, ctx, url, id) {
 
 const SUBMISSIONS_PER_HOUR = 30;
 const SUBMISSION_MAX_CHARS = 4_000_000;     // well under Discord's attachment limit
-const SUBMISSION_MAX_FILES = 40;            // two per store
+const SUBMISSION_MAX_FILES = 60;            // three per store
 const SUBMIT_KEY_OFFERS_PER_DAY = 3;
 
 const fromB64u = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
@@ -780,7 +782,7 @@ async function submission(request, env, url) {
     for (const f of given) {
       const store = String(f && f.store || "").replace(/\s+/g, " ").trim().slice(0, 40);
       const kind = f && f.kind, t = f && typeof f.text === "string" ? f.text : "";
-      if (!store || !t.trim() || (kind !== "profiles" && kind !== "logins")) return json({ error: "files" }, 400);
+      if (!store || !t.trim() || (kind !== "profiles" && kind !== "logins" && kind !== "aycd")) return json({ error: "files" }, 400);
       if (kind === "profiles" && !/^\uFEFF?profile_name,/.test(t)) return json({ error: "that isn't a slots CSV" }, 400);
       // App 1.9.58+: the store's key, and how many of its slots (the rows right after the ones with a
       // login) are on Use Assigned Account, to get accounts from the owner's list.
@@ -790,6 +792,25 @@ async function submission(request, env, url) {
     }
     if (!files.some((f) => f.kind === "profiles")) return json({ error: "files" }, 400);
     if (files.reduce((n, f) => n + f.text.length, 0) > SUBMISSION_MAX_CHARS) return json({ error: "too large" }, 413);
+    // Each store's AYCD list goes just before its CSV: the app's (1.9.87+), when it has an entry for every
+    // row, or one made from the CSV.
+    const out = [], same = (x, f) => x.store === f.store && x.storeKey === f.storeKey;
+    for (const f of files) {
+      const twins = (kind) => files.filter((x) => x.kind === kind && same(x, f)).length;
+      if (f.kind === "aycd") {
+        if (twins("aycd") > 1 || twins("profiles") !== 1) return json({ error: "files" }, 400);
+        continue;
+      }
+      if (f.kind === "profiles") {
+        const rows = parseCsv(f.text).length - 1, sent = files.find((x) => x.kind === "aycd" && same(x, f));
+        if (rows > SLOT_MAX) return json({ error: "files" }, 400);
+        const list = sent ? aycdList(sent.text, rows) : aycdFromCsv(f.text);
+        if (!list) return json({ error: "that isn't an AYCD list for those slots" }, 400);
+        out.push({ store: f.store, kind: "aycd", list, storeKey: f.storeKey, assigned: 0 });
+      }
+      out.push(f);
+    }
+    files = out;
     keyId = "CSV";
   } else if (csv !== null) {
     if (!/^\uFEFF?profile_name,/.test(csv) || csv.length > SUBMISSION_MAX_CHARS) return json({ error: "that isn't a slots CSV" }, 400);
@@ -829,7 +850,7 @@ async function submission(request, env, url) {
   };
   // Recorded before any account is picked or anything is posted, so a retry that arrives meanwhile
   // isn't handled twice.
-  const bytes = files !== null ? files.reduce((n, f) => n + f.text.length, 0) : (csv !== null ? csv : code).length;
+  const bytes = files !== null ? files.reduce((n, f) => n + (f.kind === "aycd" ? aycdText(f.list) : f.text).length, 0) : (csv !== null ? csv : code).length;
   const ins = await env.DB.prepare(
     `INSERT OR IGNORE INTO submissions (id, key_hash, key_last4, name, username, slots, bytes, key_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -849,13 +870,13 @@ async function submission(request, env, url) {
   };
   const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
   const tail = files !== null
-    ? `-# One profiles file (.csv) per store${files.some((f) => f.kind === "logins") ? ", with its logins (email:password, .txt) in the same order" : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
+    ? `-# Per store: its profiles as AYCD JSON (.json) and CSV (.csv)${files.some((f) => f.kind === "logins") ? ", with its logins (email:password, .txt) in the same order" : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
     : csv !== null ? "-# CSV attached." : `-# Encrypted for key ${keyId}. To open: download the file, then in FAFO choose **Import** and drop it in.`;
   const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n${tail}`;
   const base = `orbit-slots-${stamp}${slug ? "-" + slug : ""}`;
   let attach;
   if (files !== null) {
-    // Each store's files carry its name: orbit-slots-…-target.csv and orbit-slots-…-target-logins.txt.
+    // Each store's files carry its name: orbit-slots-…-target-aycd.json, …-target.csv and …-target-logins.txt.
     const used = new Map();
     const label = (store) => {
       const x = store.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "store";
@@ -864,6 +885,7 @@ async function submission(request, env, url) {
     };
     attach = files.map((f) => f.kind === "profiles"
       ? { name: `${base}-${label(f.store)}.csv`, text: excelSafe(f.text), type: "text/csv" }
+      : f.kind === "aycd" ? { name: `${base}-${label(f.store)}-aycd.json`, text: aycdText(f.list), type: "application/json" }
       : { name: `${base}-${label(f.store)}-logins.txt`, text: f.text });
   } else attach = [csv !== null ? { name: base + ".csv", text: excelSafe(csv), type: "text/csv" } : { name: base + ".txt", text: code }];
   // Discord takes 10 attachments a message, so more go in follow-up messages. If one of those fails,
@@ -949,6 +971,43 @@ function excelSafe(text) {
   return rows.map((r) => r.map(csvCell).join(",")).join(eol) + (/\r?\n$/.test(text) ? eol : "");
 }
 
+// AYCD JSON (the owner's choice, 2026-10-06): each store's slots also go to the channel as an AYCD profile list,
+// laid out as AYCD exports it, in the same order as the CSV's rows. App 1.9.87+ sends it (kind "aycd") with the
+// card's own name and Only one checkout; for older apps it's made here from the CSV, with the billing name as the
+// name on card (the CSV has no column for it). States and countries are written out, as AYCD does (FAFO's lists).
+const COUNTRIES = [["US","United States"],["CA","Canada"],["GB","United Kingdom"],["IE","Ireland"],["AU","Australia"],["NZ","New Zealand"],["DE","Germany"],["FR","France"],["IT","Italy"],["ES","Spain"],["PT","Portugal"],["NL","Netherlands"],["BE","Belgium"],["LU","Luxembourg"],["AT","Austria"],["CH","Switzerland"],["SE","Sweden"],["NO","Norway"],["DK","Denmark"],["FI","Finland"],["PL","Poland"],["CZ","Czechia"],["SK","Slovakia"],["HU","Hungary"],["RO","Romania"],["BG","Bulgaria"],["GR","Greece"],["HR","Croatia"],["SI","Slovenia"],["EE","Estonia"],["LV","Latvia"],["LT","Lithuania"],["JP","Japan"],["KR","South Korea"],["CN","China"],["HK","Hong Kong"],["TW","Taiwan"],["SG","Singapore"],["MY","Malaysia"],["TH","Thailand"],["PH","Philippines"],["ID","Indonesia"],["VN","Vietnam"],["IN","India"],["AE","United Arab Emirates"],["SA","Saudi Arabia"],["IL","Israel"],["TR","Türkiye"],["ZA","South Africa"],["MX","Mexico"],["BR","Brazil"],["AR","Argentina"],["CL","Chile"],["CO","Colombia"]];
+const US_STATES = [["AL","Alabama"],["AK","Alaska"],["AZ","Arizona"],["AR","Arkansas"],["CA","California"],["CO","Colorado"],["CT","Connecticut"],["DE","Delaware"],["DC","District of Columbia"],["FL","Florida"],["GA","Georgia"],["HI","Hawaii"],["ID","Idaho"],["IL","Illinois"],["IN","Indiana"],["IA","Iowa"],["KS","Kansas"],["KY","Kentucky"],["LA","Louisiana"],["ME","Maine"],["MD","Maryland"],["MA","Massachusetts"],["MI","Michigan"],["MN","Minnesota"],["MS","Mississippi"],["MO","Missouri"],["MT","Montana"],["NE","Nebraska"],["NV","Nevada"],["NH","New Hampshire"],["NJ","New Jersey"],["NM","New Mexico"],["NY","New York"],["NC","North Carolina"],["ND","North Dakota"],["OH","Ohio"],["OK","Oklahoma"],["OR","Oregon"],["PA","Pennsylvania"],["RI","Rhode Island"],["SC","South Carolina"],["SD","South Dakota"],["TN","Tennessee"],["TX","Texas"],["UT","Utah"],["VT","Vermont"],["VA","Virginia"],["WA","Washington"],["WV","West Virginia"],["WI","Wisconsin"],["WY","Wyoming"],["PR","Puerto Rico"],["GU","Guam"],["VI","U.S. Virgin Islands"],["AS","American Samoa"],["MP","Northern Mariana Islands"],["AA","Armed Forces Americas"],["AE","Armed Forces Europe"],["AP","Armed Forces Pacific"]];
+const CA_PROVINCES = [["AB","Alberta"],["BC","British Columbia"],["MB","Manitoba"],["NB","New Brunswick"],["NL","Newfoundland and Labrador"],["NS","Nova Scotia"],["NT","Northwest Territories"],["NU","Nunavut"],["ON","Ontario"],["PE","Prince Edward Island"],["QC","Quebec"],["SK","Saskatchewan"],["YT","Yukon"]];
+const placeName = (list, code) => (list.find((x) => x[0] === code) || [code, code])[1];
+const aycdState = (state, country) => country === "US" ? placeName(US_STATES, state) : country === "CA" ? placeName(CA_PROVINCES, state) : state;
+const AYCD_CARD = (n) => /^4/.test(n) ? "Visa" : /^3[47]/.test(n) ? "Amex" : /^(5[1-5]|222[1-9]|22[3-9]\d|2[3-6]\d\d|27[01]\d|2720)/.test(n) ? "MasterCard"
+  : /^(6011|65|64[4-9]|622)/.test(n) ? "Discover" : /^35(2[89]|[3-8])/.test(n) ? "JCB" : /^3(0[0-5]|[68])/.test(n) ? "Diners Club" : /^62/.test(n) ? "UnionPay" : "";
+function aycdFromCsv(text) {
+  const rows = parseCsv(text), head = (rows[0] || []).map((h) => h.replace(/^\uFEFF/, "").trim());
+  return rows.slice(1).map((r) => {
+    const v = (k) => { const i = head.indexOf(k); return i < 0 ? "" : String(r[i] == null ? "" : r[i]).trim(); };
+    const place = (pre, first, last) => ({ name: [v(first), v(last)].filter(Boolean).join(" "), email: v("email"), phone: v("phone_num"),
+      line1: v(pre + "street"), line2: v(pre + "street_2"), line3: "", postCode: v(pre + "zip_code"), city: v(pre + "city"),
+      country: placeName(COUNTRIES, v(pre + "country")), state: aycdState(v(pre + "state"), v(pre + "country")) });
+    const ship = place("shipping_", "first_name", "last_name"), bill = place("billing_", "billing_first_name", "billing_last_name");
+    const num = v("cc_number").replace(/\D/g, "");
+    const same = ["name", "line1", "line2", "postCode", "city", "country", "state"].every((k) => ship[k] === bill[k]);
+    return { name: v("profile_name"), notes: "", billingAddress: bill, shippingAddress: ship,
+      paymentDetails: { nameOnCard: bill.name, cardType: AYCD_CARD(num), cardNumber: num, cardExpMonth: v("cc_exp_month"), cardExpYear: v("cc_exp_year"), cardCvv: v("cc_cvv") },
+      sameBillingAndShippingAddress: same, onlyCheckoutOnce: false, matchNameOnCardAndAddress: true };
+  });
+}
+// The app's list, if it's one AYCD could take for those rows: an object per row, nothing else.
+function aycdList(text, rows) {
+  let a; try { a = JSON.parse(text); } catch { return null; }
+  return Array.isArray(a) && a.length === rows && a.every((x) => x && typeof x === "object" && !Array.isArray(x)) ? a : null;
+}
+// An assigned account's email goes on both of a profile's addresses, as AYCD keeps it.
+function aycdEmails(list, from, emails) {
+  emails.forEach((e, i) => { const x = list[from + i]; if (x) for (const k of ["billingAddress", "shippingAddress"]) if (x[k] && typeof x[k] === "object") x[k].email = e; });
+}
+const aycdText = (list) => JSON.stringify(list, null, 2);
+
 async function assignAccounts(env, lic, batch, files, now) {
   const picks = new Map();
   const want = files.filter((f) => f.kind === "profiles" && f.assigned > 0);
@@ -980,6 +1039,8 @@ async function assignAccounts(env, lic, batch, files, now) {
     if (got.length) {
       if (col >= 0) got.forEach((a, i) => { rows[start + i][col] = a.email; });
       f.text = rows.map((r) => r.map(csvCell).join(",")).join(eol);
+      const aycd = files[files.indexOf(f) - 1];   // its AYCD list goes just before it
+      if (aycd && aycd.kind === "aycd") aycdEmails(aycd.list, lines.length, got.map((a) => a.email));
       const add = got.map((a) => `${a.email}:${a.password}`);
       if (logins) logins.text = logins.text.replace(/[\r\n]+$/, "") + (lines.length ? eol : "") + add.join(eol);
       else files.splice(files.indexOf(f) + 1, 0, { store: f.store, kind: "logins", text: add.join(eol), storeKey: f.storeKey, assigned: 0 });
