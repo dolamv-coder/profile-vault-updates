@@ -58,8 +58,11 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   sameBillingAndShippingAddress, onlyCheckoutOnce, matchNameOnCardAndAddress`; states and countries
   written out). App 1.9.87+ sends it (`kind: "aycd"`, `slotAycd`), with the card's own name and Only one
   checkout; for older apps the worker makes it from the CSV (`aycdFromCsv`), with the billing name as
-  the name on card. A list that doesn't have one profile for each CSV row is refused.
-  The owner opens these in Excel, which shows a 16-digit card number as 5.55556E+15 (keeping only 15
+  the name on card. A list that doesn't have one profile for each CSV row is refused. Later on 2026-10-06 the owner
+  dropped the CSV: the channel gets each store's AYCD list and its logins file only. The app still sends the CSV,
+  which the worker reads to give out accounts and, for apps before 1.9.87, to make the AYCD list, and 1.9.91 says
+  "AYCD files" where the app said "CSV files" (the Submit page, Send somewhere else, the seller's Discord note).
+  The owner opened these in Excel (since the change above, only 1.9.52's single CSV is still posted), which shows a 16-digit card number as 5.55556E+15 (keeping only 15
   digits) and drops leading zeros. So since 2026-10-02 the worker writes each slots CSV's phone, card
   number, expiry month, CVV and zip code cells as `="…"` Excel text (`excelSafe`), and does the same
   to any cell that starts with `= + - @`, so nothing a buyer typed runs as a formula. This works for

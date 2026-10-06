@@ -198,27 +198,30 @@ curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit
 ## Slots sent to your Discord
 
 Every batch people submit from a licensed FAFO is posted to the same Discord channel as files you
-can open directly in Excel or Google Sheets. There's nothing to set up; it uses the same
-`DISCORD_WEBHOOK_URL`. Each store gets its own files:
+can load directly into AYCD. There's nothing to set up; it uses the same `DISCORD_WEBHOOK_URL`.
+Each store gets its own files (since 2026-10-06 only these two; the CSV described below isn't posted
+any more, at your request):
 
-- `orbit-slots-…-target-aycd.json` (since 2026-10-06): that store's slots as an AYCD profile list,
-  one profile each, in the same order as the CSV's rows and laid out as AYCD exports it: `name`,
+- `orbit-slots-…-target-aycd.json`: that store's slots as an AYCD profile list,
+  one profile each, in the order the app sent them and laid out as AYCD exports it: `name`,
   `notes`, `billingAddress` and `shippingAddress` (`name, email, phone, line1, line2, line3, postCode,
   city, country, state`, with the state and country written out), `paymentDetails` (`nameOnCard,
   cardType, cardNumber, cardExpMonth, cardExpYear, cardCvv`), `sameBillingAndShippingAddress`,
   `onlyCheckoutOnce` and `matchNameOnCardAndAddress`. Each profile's email is the account its slot
-  checks out with, as in the CSV. FAFO 1.9.87 and later write it, with the card's own name and Only
-  one checkout; for older versions this worker makes it from the CSV, with the billing name as the
-  name on card.
-- `orbit-slots-…-target.csv`: that store's slots, one row each, in these columns: `profile_name,
-  first_name, last_name, email, phone_num, cc_number, cc_exp_month, cc_exp_year, cc_cvv,
-  shipping_street, shipping_street_2, shipping_city, shipping_state, shipping_zip_code,
-  shipping_country, billing_first_name, billing_last_name, billing_street, billing_street_2,
-  billing_city, billing_state, billing_zip_code, billing_country`.
+  checks out with. FAFO 1.9.87 and later write it, with the card's own name and Only
+  one checkout; for older versions this worker makes it from the CSV the app sends, with the billing
+  name as the name on card.
 - `orbit-slots-…-target-logins.txt`: that store's logins, one `email:password` per line, in the same
-  order as the first rows of the CSV.
+  order as the first profiles of the AYCD list. AYCD's profile format has no place for them.
 
-In the CSV, the phone, card number, expiry month, CVV and zip code cells are written as `="…"`, for
+The app still sends each store's slots as a CSV too (`profile_name, first_name, last_name, email,
+phone_num, cc_number, cc_exp_month, cc_exp_year, cc_cvv, shipping_street, shipping_street_2,
+shipping_city, shipping_state, shipping_zip_code, shipping_country, billing_first_name,
+billing_last_name, billing_street, billing_street_2, billing_city, billing_state, billing_zip_code,
+billing_country`): this worker reads it to give out accounts and, for apps before 1.9.87, to make the
+AYCD list, but doesn't post it. Until 2026-10-06 it was posted as `orbit-slots-…-target.csv`.
+
+In a CSV that's posted (only FAFO 1.9.52's single file now), the phone, card number, expiry month, CVV and zip code cells are written as `="…"`, for
 example `="5555555555554444"`, so Excel shows the full card number and keeps leading zeros. Without
 it, Excel turns them into numbers: 5.55556E+15, with the last digit lost if the file is saved. Any
 other cell that starts with `=`, `+`, `-` or `@` is written the same way, so nothing a buyer typed
@@ -227,17 +230,16 @@ see the `="…"`, and FAFO's **Import** (1.9.68+) reads them as the text inside.
 
 > 📦 **6 slots** from **Kim** · @kim · license …ABCD
 > Target 3 · Walmart 3
-> Per store: its profiles as AYCD JSON (.json) and CSV (.csv), with its logins (email:password, .txt) in the same order.
+> Per store: its profiles as AYCD JSON (.json), with its logins (email:password, .txt) in the same order.
 
 Slots without a store login come after the ones with logins and have no line in the logins file; one
-on a verified email only (Pokémon Center) has that account's email in the `email` column. Slots set to
+on a verified email only (Pokémon Center) has that account's email on its AYCD profile. Slots set to
 **Use Assigned Account** (Orbit 1.9.57+; 1.9.53 called it "Assign me an account") come last: the
 buyer added no login because you provide one, and the store line says so, e.g. "Target 3 (2 need an
-account)". An account given out for a slot (see below) goes in both its CSV row and its AYCD profile.
+account)". An account given out for a slot (see below) goes on its AYCD profile, on both addresses.
 Discord takes 10 files a message, so a batch with more stores continues in a follow-up message.
 
-To load a store into your own FAFO (1.9.68 or later, which reads the `="…"` cells), **Import** its
-CSV and pick that store under Retailers, then on
+To load a store into your own FAFO, **Import** its AYCD file and pick that store under Retailers, then on
 Store logins use **Import accounts** with the logins file and **Link to profiles** on: each account
 goes to the profile with the same email, and the "no login linked" alert lists any left over.
 From Orbit 1.9.57, a profile waiting for a login is also linked to a login you already saved with the
