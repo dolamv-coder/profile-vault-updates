@@ -335,6 +335,14 @@ list you keep here:
 - **Each account goes to one slot only.** One picked for a batch that never reached your channel
   (the post failed) goes back to the list. If part of a batch went out, its accounts stay with it,
   and sending the batch again posts the same ones.
+- **A Pokémon Center slot gets its profile's Target account again** (from 2026-10-06): when the same
+  profile (by its name) already has a Target account from you, in that batch or one sent before, its
+  Pokémon Center slot gets that account, with its email in the row and the same `email:password` in
+  the logins file, so the profile checks out with one email at both stores. The store line says so:
+  "Pokémon Center 3 (3 assigned accounts, 2 reused from Target)". It doesn't count toward
+  `ASSIGNED_LIMIT` or join your Pokémon Center list (`/admin/accounts` shows it with `reused: 1`). If
+  that email is on your Pokémon Center list too, the account from the list is used, with its own
+  password, unless another buyer has it; then the slot gets a free account as usual.
 - **Each license can be given `ASSIGNED_LIMIT` accounts in all** (10; change it in `[vars]` in
   `wrangler.toml`). Slots past that, or past the end of the list, come last with no login line, and
   the store line says "(1 needs an account)" so you can assign those by hand.

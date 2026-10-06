@@ -864,8 +864,10 @@ async function submission(request, env, url) {
   // `seller` slots that got an account from the list, and ones still waiting for the owner to assign one.
   const short = (x) => Math.max(0, x.seller - ((picks.get(x.name) || {}).got || 0));
   const accts = (x) => {
-    const got = (picks.get(x.name) || {}).got || 0, need = short(x);
-    const parts = [got ? `${got} assigned account${got === 1 ? "" : "s"}` : "", need ? `${need} need${need === 1 ? "s" : ""} an account` : ""].filter(Boolean);
+    const p = picks.get(x.name) || {}, got = p.got || 0, need = short(x);
+    // Pokémon Center slots given their profile's Target account again (reuseAccount) say so.
+    const parts = [got ? `${got} assigned account${got === 1 ? "" : "s"}${p.reused ? `, ${p.reused} reused from Target` : ""}` : "",
+      need ? `${need} need${need === 1 ? "s" : ""} an account` : ""].filter(Boolean);
     return parts.length ? ` (${parts.join(", ")})` : "";
   };
   const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
@@ -934,6 +936,16 @@ const assignLimit = (env) => { const n = Math.floor(Number(env.ASSIGNED_LIMIT));
 // A pick whose batch never reached the channel is freed after this (ASSIGN_STALE_MS overrides it for tests).
 const assignStaleMs = (env) => Number(env.ASSIGN_STALE_MS) > 0 ? Number(env.ASSIGN_STALE_MS) : 60 * 60 * 1000;
 const FREE_ACCOUNT = "key_hash = NULL, key_last4 = NULL, batch = NULL, store_name = NULL, profile = NULL, assigned_at = NULL, sent_at = NULL";
+// A Pokémon Center slot can get its profile's Target account again (reuseAccount). That account is kept as a
+// Pokémon Center row marked offer_id "reuse:target", which isn't on the owner's list: it's deleted where others are
+// freed, and doesn't count in a store's stock or toward a license's limit (OWN_ACCOUNT).
+const OWN_ACCOUNT = "COALESCE(offer_id, '') NOT LIKE 'reuse:%'";
+async function freeAccounts(env, where, ...binds) {
+  const [, r] = await env.DB.batch([
+    env.DB.prepare(`DELETE FROM accounts WHERE NOT (${OWN_ACCOUNT}) AND (${where})`).bind(...binds),
+    env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE ${where}`).bind(...binds)]);
+  return r;
+}
 
 // The slots CSV as the app writes it: comma-separated, quoted when a cell has a comma, quote or line break.
 function parseCsv(text) {
@@ -1008,12 +1020,34 @@ function aycdEmails(list, from, emails) {
 }
 const aycdText = (list) => JSON.stringify(list, null, 2);
 
+// A Pokémon Center slot on Use Assigned Account whose profile already has a Target account (given out in this batch,
+// or sent before) gets that account again (the owner's request, 2026-10-06), so the profile checks out with one email
+// at both stores: its email in the row, and the same email:password in the logins file. It's kept as a Pokémon Center
+// row (pulls and order alerts find it there). If the email is on the owner's Pokémon Center list too, that account is
+// used, with its own password, while it's free or already this profile's; if another buyer has it, the slot gets a
+// free account as usual. Nothing counts toward the license's limit.
+const REUSE_FROM = { pokemoncenter: "target" };
+async function reuseAccount(env, lic, batch, f, profile, at) {
+  const from = REUSE_FROM[f.storeKey];
+  if (!from || !profile) return null;
+  const t = await env.DB.prepare(`SELECT email, email_norm, password FROM accounts WHERE key_hash = ? AND store = ? AND profile = ? AND (sent_at IS NOT NULL OR batch = ?)
+    ORDER BY batch = ? DESC, sent_at DESC, assigned_at DESC LIMIT 1`).bind(lic.hash, from, profile, batch, batch).first();
+  if (!t) return null;
+  const cur = await env.DB.prepare("SELECT key_hash, profile, email, password FROM accounts WHERE store = ? AND email_norm = ?").bind(f.storeKey, t.email_norm).first();
+  if (cur && cur.key_hash) return cur.key_hash === lic.hash && cur.profile === profile ? { email: cur.email, password: cur.password } : null;
+  if (cur) return env.DB.prepare(`UPDATE accounts SET key_hash = ?, key_last4 = ?, batch = ?, store_name = ?, profile = ?, assigned_at = ?, sent_at = NULL
+    WHERE store = ? AND email_norm = ? AND key_hash IS NULL RETURNING email, password`).bind(lic.hash, lic.last4, batch, f.store, profile, at, f.storeKey, t.email_norm).first();
+  return env.DB.prepare(`INSERT OR IGNORE INTO accounts (store, email, email_norm, password, added_at, offer_id, key_hash, key_last4, batch, store_name, profile, assigned_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING email, password`)
+    .bind(f.storeKey, t.email, t.email_norm, t.password, at, "reuse:" + from, lic.hash, lic.last4, batch, f.store, profile, at).first();
+}
+
 async function assignAccounts(env, lic, batch, files, now) {
   const picks = new Map();
-  const want = files.filter((f) => f.kind === "profiles" && f.assigned > 0);
+  // Pokémon Center after Target, so it can reuse the Target accounts given out in the same batch.
+  const want = files.filter((f) => f.kind === "profiles" && f.assigned > 0).sort((a, b) => (REUSE_FROM[a.storeKey] ? 1 : 0) - (REUSE_FROM[b.storeKey] ? 1 : 0));
   if (!want.length) return picks;
-  await env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE sent_at IS NULL AND key_hash IS NOT NULL AND assigned_at < ?`)
-    .bind(now - assignStaleMs(env)).run();
+  await freeAccounts(env, "sent_at IS NULL AND key_hash IS NOT NULL AND assigned_at < ?", now - assignStaleMs(env));
   const limit = assignLimit(env);
   for (const f of want) {
     const logins = files.find((x) => x.kind === "logins" && x.store === f.store);
@@ -1022,30 +1056,43 @@ async function assignAccounts(env, lic, batch, files, now) {
     const rows = parseCsv(f.text), col = (rows[0] || []).findIndex((h) => h.replace(/^\uFEFF/, "").trim() === "email");
     // The app puts these slots right after the ones with a login, so they start at row N + 1.
     const start = 1 + lines.length, asked = Math.min(f.assigned, Math.max(0, rows.length - start));
-    // Sending the same batch again gets the same accounts.
-    const { results: had } = await env.DB.prepare("SELECT email, password FROM accounts WHERE key_hash = ? AND batch = ? AND store = ? ORDER BY assigned_at, rowid")
+    // Sending the same batch again gets the same accounts, each for the same profile.
+    const { results: had } = await env.DB.prepare("SELECT email, password, profile FROM accounts WHERE key_hash = ? AND batch = ? AND store = ? ORDER BY assigned_at, rowid")
       .bind(lic.hash, batch, f.storeKey).all();
-    const got = had.slice(0, asked);
-    while (got.length < asked) {
-      const held = await env.DB.prepare("SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ?").bind(lic.hash).first();
-      if ((held ? held.n : 0) >= limit) break;
-      const a = await env.DB.prepare(
+    const res = [];
+    let reused = 0, more = true;
+    for (let i = 0; i < asked; i++) {
+      const profile = String(rows[start + i][0] || "").slice(0, 80);
+      const r = await reuseAccount(env, lic, batch, f, profile, now + i);
+      if (r) { res[i] = r; reused++; continue; }
+      const h = had.findIndex((a) => a.profile === profile);
+      if (h >= 0) { res[i] = had.splice(h, 1)[0]; continue; }
+      if (!more) continue;
+      const held = await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ? AND ${OWN_ACCOUNT}`).bind(lic.hash).first();
+      const a = (held ? held.n : 0) < limit ? await env.DB.prepare(
         `UPDATE accounts SET key_hash = ?, key_last4 = ?, batch = ?, store_name = ?, profile = ?, assigned_at = ?, sent_at = NULL
          WHERE rowid = (SELECT rowid FROM accounts WHERE store = ? AND key_hash IS NULL ORDER BY random() LIMIT 1) RETURNING email, password`
-      ).bind(lic.hash, lic.last4, batch, f.store, String(rows[start + got.length][0] || "").slice(0, 80), now + got.length, f.storeKey).first();
-      if (!a) break;   // none left for this store
-      got.push(a);
+      ).bind(lic.hash, lic.last4, batch, f.store, profile, now + i, f.storeKey).first() : null;
+      if (a) res[i] = a; else more = false;   // the limit, or none left for this store: only reuse from here on
     }
+    // Rows left without an account go last, so line N of the logins file still goes with row N.
+    const order = [...Array(asked).keys()].sort((x, y) => (res[x] ? 0 : 1) - (res[y] ? 0 : 1) || x - y);
+    const aycd = files[files.indexOf(f) - 1];   // its AYCD list goes just before it
+    if (order.some((x, k) => x !== k)) {
+      const seg = order.map((x) => rows[start + x]), list = aycd && aycd.kind === "aycd" ? order.map((x) => aycd.list[lines.length + x]) : null;
+      seg.forEach((r, k) => { rows[start + k] = r; });
+      if (list) list.forEach((x, k) => { aycd.list[lines.length + k] = x; });
+    }
+    const got = order.map((x) => res[x]).filter(Boolean);
     if (got.length) {
       if (col >= 0) got.forEach((a, i) => { rows[start + i][col] = a.email; });
       f.text = rows.map((r) => r.map(csvCell).join(",")).join(eol);
-      const aycd = files[files.indexOf(f) - 1];   // its AYCD list goes just before it
       if (aycd && aycd.kind === "aycd") aycdEmails(aycd.list, lines.length, got.map((a) => a.email));
       const add = got.map((a) => `${a.email}:${a.password}`);
       if (logins) logins.text = logins.text.replace(/[\r\n]+$/, "") + (lines.length ? eol : "") + add.join(eol);
       else files.splice(files.indexOf(f) + 1, 0, { store: f.store, kind: "logins", text: add.join(eol), storeKey: f.storeKey, assigned: 0 });
     }
-    picks.set(f.store, { asked: f.assigned, got: got.length });
+    picks.set(f.store, reused ? { asked: f.assigned, got: got.length, reused } : { asked: f.assigned, got: got.length });
   }
   return picks;
 }
@@ -1054,7 +1101,7 @@ async function assignAccounts(env, lic, batch, files, now) {
 // and once more when it runs out. post=false only clears those again, after accounts are added or freed.
 const lowAt = (env) => { const n = Math.floor(Number(env.ACCOUNTS_LOW_AT)); return String(env.ACCOUNTS_LOW_AT ?? "").trim() !== "" && n >= 0 ? n : 15; };
 async function stockCheck(env, store, name, post) {
-  const c = await env.DB.prepare("SELECT COUNT(*) AS n, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free FROM accounts WHERE store = ?").bind(store).first();
+  const c = await env.DB.prepare(`SELECT COUNT(*) AS n, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free FROM accounts WHERE store = ? AND ${OWN_ACCOUNT}`).bind(store).first();
   const total = c ? c.n : 0, free = c && c.free || 0, low = lowAt(env);
   if (free > low) await env.DB.prepare("UPDATE account_stock SET low_at = NULL, empty_at = NULL WHERE store = ?").bind(store).run();
   else if (free > 0) await env.DB.prepare("UPDATE account_stock SET empty_at = NULL WHERE store = ?").bind(store).run();
@@ -1076,7 +1123,7 @@ async function stockCheck(env, store, name, post) {
 // Otherwise they go back to the list.
 async function settleAccounts(env, lic, batch, sent, now) {
   if (sent) await env.DB.prepare("UPDATE accounts SET sent_at = ? WHERE key_hash = ? AND batch = ? AND sent_at IS NULL").bind(now, lic.hash, batch).run();
-  else await env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE key_hash = ? AND batch = ? AND sent_at IS NULL`).bind(lic.hash, batch).run();
+  else await freeAccounts(env, "key_hash = ? AND batch = ? AND sent_at IS NULL", lic.hash, batch);
 }
 
 const offerStoreName = (x) => String(x || "").replace(/\s+/g, " ").trim().slice(0, 40);
@@ -1149,7 +1196,9 @@ async function accountReview(request, env, ctx, url, id) {
     let added = 0;
     for (let i = 0; i < list.length; i += 100) {
       const res = await env.DB.batch(list.slice(i, i + 100).map((a) => env.DB.prepare(
-        "INSERT OR IGNORE INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES (?, ?, ?, ?, ?, ?)"
+        // A reused Target account on this store's list (reuseAccount) becomes this one, and stays with its slot.
+        `INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (store, email_norm) DO UPDATE SET password = excluded.password, added_at = excluded.added_at, offer_id = excluded.offer_id WHERE NOT (${OWN_ACCOUNT})`
       ).bind(o.store, a.email, a.email.toLowerCase(), a.password, now, o.id)));
       added += res.reduce((n, r) => n + (r.meta && r.meta.changes || 0), 0);
     }
@@ -1162,7 +1211,7 @@ async function accountReview(request, env, ctx, url, id) {
   }
   const cur = await env.DB.prepare("SELECT * FROM account_offers WHERE id = ?").bind(o.id).first();
   if (done && cur.webhook_message_id) ctx.waitUntil(webhookEdit(env, cur.webhook_message_id, { content: offerMessage(url.origin, cur) }).catch(() => {}));
-  const stats = await env.DB.prepare("SELECT COUNT(*) AS n, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free FROM accounts WHERE store = ?").bind(cur.store).first();
+  const stats = await env.DB.prepare(`SELECT COUNT(*) AS n, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free FROM accounts WHERE store = ? AND ${OWN_ACCOUNT}`).bind(cur.store).first();
   const label = { pending: "Waiting for you", added: `Added ${cur.added} to your list`, refused: "Refused", expired: "Expired before it was added. Send the accounts again from FAFO." }[cur.status] || cur.status;
   const who = [cur.name, cur.username ? "@" + cur.username : "", "license …" + cur.key_last4].filter(Boolean).join(" · ");
   const emails = cur.status === "pending" ? JSON.parse(cur.accounts || "[]").map((a) => a.email) : [];
@@ -1672,8 +1721,8 @@ async function admin(request, env, path) {
     const origin = new URL(request.url).origin;
     const [stores, given, offers] = await env.DB.batch([
       env.DB.prepare(`SELECT store, COUNT(*) AS total, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free,
-        SUM(CASE WHEN sent_at IS NOT NULL THEN 1 ELSE 0 END) AS sent FROM accounts GROUP BY store ORDER BY store`),
-      env.DB.prepare("SELECT store, email, key_last4, store_name, profile, assigned_at, sent_at FROM accounts WHERE key_hash IS NOT NULL ORDER BY assigned_at DESC LIMIT 500"),
+        SUM(CASE WHEN sent_at IS NOT NULL THEN 1 ELSE 0 END) AS sent FROM accounts WHERE ${OWN_ACCOUNT} GROUP BY store ORDER BY store`),
+      env.DB.prepare(`SELECT store, email, key_last4, store_name, profile, assigned_at, sent_at, NOT (${OWN_ACCOUNT}) AS reused FROM accounts WHERE key_hash IS NOT NULL ORDER BY assigned_at DESC LIMIT 500`),
       env.DB.prepare("SELECT id, store, store_name, count, key_last4, name, username, status, added, created_at, decided_at, review_token FROM account_offers ORDER BY created_at DESC LIMIT 50"),
     ]);
     return json({ limit: assignLimit(env), stores: stores.results, given: given.results,
@@ -1686,8 +1735,7 @@ async function admin(request, env, path) {
     const where = free && b.key && !email ? ["key_hash = ?", await keyHash(b.key)]
       : email ? (b.store ? ["email_norm = ? AND store = ?", email, String(b.store)] : ["email_norm = ?", email]) : null;
     if (!where) return json({ error: free ? "send {email} or {key}" : "send {email}" }, 400);
-    const r = await env.DB.prepare(free ? `UPDATE accounts SET ${FREE_ACCOUNT} WHERE ${where[0]}` : `DELETE FROM accounts WHERE ${where[0]}`)
-      .bind(...where.slice(1)).run();
+    const r = free ? await freeAccounts(env, where[0], ...where.slice(1)) : await env.DB.prepare(`DELETE FROM accounts WHERE ${where[0]}`).bind(...where.slice(1)).run();
     const { results: stores } = await env.DB.prepare("SELECT DISTINCT store FROM accounts").all();
     for (const x of stores) await stockCheck(env, x.store, x.store, false);
     return json({ ok: true, changed: r.meta ? r.meta.changes : 0 });

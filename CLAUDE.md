@@ -91,6 +91,11 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   line of the logins file. Buyers never
   see them; each account goes to one slot; a license gets `ASSIGNED_LIMIT` (10) in all; an account
   picked for a batch that never reached the channel goes back. Rows left without one come last.
+  Since 2026-10-06 (the owner's request) a Pokémon Center row whose profile (by name, same license) already has a
+  Target account, in that batch or one sent before, gets that account again (`reuseAccount`, `REUSE_FROM`): kept as a
+  Pokémon Center row with `offer_id` `reuse:target`, which `freeAccounts` deletes where others are freed and
+  `OWN_ACCOUNT` leaves out of stock counts and the limit; an offered account with that email takes it over. If the
+  email is on the Pokémon Center list too, that account is used (with its password) unless another license has it.
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
   once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.
   Never put the accounts or their password in this repo or a page: it's public.
@@ -444,6 +449,20 @@ From 1.9.89 right-clicking a store login (any layout; or touch and hold it, or S
 menu (`data-lmenu`, `loginContextMenu`, the owner's request): Rename (its label, the name under the store; empty removes
 it, `renameLogin`), Copy password, Edit and Delete (`deleteLogin`, which its Delete button uses too). Any scroll closes a
 menu, so tests that right-click scroll the item into view and let it settle first.
+
+From 1.9.90 **Mass edit** is back on Profiles (the owner's request; 1.9.73 had moved it to Generate): right-click one of
+several selected profiles, or Mass edit on the selection bar (`openProfileMassEdit`, `pmPlan`, `pmApply`, `pmUndo`). As on
+Generate, each ticked field goes onto every selected profile, the window shows every profile as it will be (columns only
+for what changes), and Change has Undo. Fields: Group, Profile name (numbered in the order shown, after the highest
+`<name> #n` in use: `genNextNumber` now skips the selected profiles too), Phone (or Random, by state), Size, Only one
+checkout, Stores (add, in Store login or Use Assigned Account, which also switches a store a profile has; remove; a
+profile can't be left with none), the shipping name (or New random first or last names) and address, and Bills to
+(their shipping address, or one typed address in each profile's own name). No Jig (bulk Jig stays on Generate) and no
+Email: the email follows the stores (`pmEmail`, as `emailToSave`). A card in the old shipping name takes the new one
+(`capsLike`) when every profile using it goes the same way, and a billing address of its own in that name does too.
+Addresses go through `resolveAddr`, so one shared with unselected profiles gets a copy. Pokémon Center's mark is a
+Pokéball (`pokeballSVG`, `isPokemonCenter`; `drawPokeball` in the share image), in its pills and lists and its store
+filter chip; the relay's phone page still shows PC. Profiles gain no fields, so the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
