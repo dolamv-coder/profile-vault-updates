@@ -1,10 +1,10 @@
 {
-  "version": "1.9.92",
-  "url": "index-1.9.92.html",
-  "sha256": "ef0254d867a1f3be9f2d77084ae7aa04f981883882e4fd8f461900cdb493b029",
-  "signature": "ElWR1OxhJn/WUorp3c4Y4NaF6pwY+wSN9WTwsLK204e0fpjyewWTOATfjZCdHRvDb2InaeGUCRIVCWzghZqABA==",
+  "version": "1.9.93",
+  "url": "index-1.9.93.html",
+  "sha256": "9bc3ffd4acbb07016bf76884c8eae854c47c2072ab68fae5672b4f227d0e9428",
+  "signature": "AmH3AbSZJdFd2jQnvWDVjqhmb2kS64VBTTBzy2DCFMfLH02YOvkiHtrWhM8aj+ZKqHEfwsAdwKvNn4agO92lDQ==",
   "minAppVersion": "0",
-  "notes": "If the seller declines slots you submitted, the Submit page now shows them as Declined: switch one off and on again to send it again. Clean emails also clears Target Circle Deal Days emails that got past it.",
+  "notes": "Store logins can now be ticked (Select all, or Shift+click for a range) and moved to a group, edited or deleted together, and sorted into groups of your own. Clean emails now clears forwarded store newsletters from your Inbox and Spam, and auto-clean has its own Folders setting, so scanning only Spam by hand no longer stops it cleaning your Inbox.",
   "installerUrl": "",
-  "publishedAt": "2026-10-06T18:16:09.717Z"
+  "publishedAt": "2026-10-06T21:05:17.272Z"
 }
