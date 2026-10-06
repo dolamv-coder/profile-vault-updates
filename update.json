@@ -1,10 +1,10 @@
 {
-  "version": "1.9.91",
-  "url": "index-1.9.91.html",
-  "sha256": "9bcd4d95f7a201d701f690fdfcfe9ba4bb934c5c1ea82253e5c6eaa89884c249",
-  "signature": "64gDjcXjQfPAGlQab3Kls04jKxiB4hm9kFq5v0bpCPBoy3wTtQErfZBWU9Sq7odtqM5bcJ0aya9X8jeMbFK/Cg==",
+  "version": "1.9.92",
+  "url": "index-1.9.92.html",
+  "sha256": "ef0254d867a1f3be9f2d77084ae7aa04f981883882e4fd8f461900cdb493b029",
+  "signature": "ElWR1OxhJn/WUorp3c4Y4NaF6pwY+wSN9WTwsLK204e0fpjyewWTOATfjZCdHRvDb2InaeGUCRIVCWzghZqABA==",
   "minAppVersion": "0",
-  "notes": "Slots you submit now reach the seller as AYCD profile files. On the Submit page they show Pending approval until the seller approves them, then Success.",
+  "notes": "If the seller declines slots you submitted, the Submit page now shows them as Declined: switch one off and on again to send it again. Clean emails also clears Target Circle Deal Days emails that got past it.",
   "installerUrl": "",
-  "publishedAt": "2026-10-06T16:37:57.515Z"
+  "publishedAt": "2026-10-06T18:16:09.717Z"
 }
