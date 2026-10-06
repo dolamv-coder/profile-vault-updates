@@ -1,0 +1,1 @@
+Store logins can now be ticked (Select all, or Shift+click for a range) and moved to a group, edited or deleted together, and sorted into groups of your own. Clean emails now clears forwarded store newsletters from your Inbox and Spam, and auto-clean has its own Folders setting, so scanning only Spam by hand no longer stops it cleaning your Inbox.
