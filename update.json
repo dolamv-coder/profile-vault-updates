@@ -1,10 +1,10 @@
 {
-  "version": "1.9.87",
-  "url": "index-1.9.87.html",
-  "sha256": "f72ab10bad4e6acbf327dfbb0f75b21fb54a386acb15cf7f2e3b749ffc1dc09c",
-  "signature": "Bt8n5DH1YuxtDdSFlBrJu48sJLIBFebrQzPP3eiWtf6X18aj9DsYWnlU+ei+OJxD0KYa8eetHQlQO0hv27GBAg==",
+  "version": "1.9.88",
+  "url": "index-1.9.88.html",
+  "sha256": "b8473439fde037cc8119b0c70cad0a214577f8cea7dbceef6895a00737b9bea2",
+  "signature": "LjUAoEY0DJsM3S5q9SYf4b2i/VxM1tcQNGp5jLnYDAcftMWg4M/zqqydH9LSzvwb0eyG3gE/eIJtVmN33UN4CQ==",
   "minAppVersion": "0",
-  "notes": "Slots you submit now also reach the seller as an AYCD profile list, ready to load into AYCD.",
+  "notes": "Right-click Ungrouped in the sidebar to rename it: its profiles move into a group with that name.",
   "installerUrl": "",
-  "publishedAt": "2026-10-06T03:54:23.520Z"
+  "publishedAt": "2026-10-06T04:13:57.440Z"
 }
