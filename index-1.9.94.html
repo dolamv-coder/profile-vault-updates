@@ -9290,7 +9290,7 @@ function renderLogins(){
   const gname = UI.loginGroup === "all" ? "" : UI.loginGroup === "none" ? "Ungrouped" : (loginGroupById(UI.loginGroup) || {}).name;
   const inboxes = S.inboxes.filter(i => !q || norm([i.email, providerName(i.provider)].join(" ")).includes(q)).sort((a,b) => natural(a.email, b.email));
   let body;
-  if (!S.logins.length) body = `<div class="empty"><h2>No store logins yet</h2><p>Save your Target, Walmart and other retailer accounts, with the inbox each one gets sign-in codes at. Then link them to profiles.</p><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn" data-act="import-accounts">${ic("imp")}Import accounts</button><button class="btn btn-primary" data-act="new-login">${ic("plus")}Add store login</button></div></div>`;
+  if (!S.logins.length) body = `<div class="empty"><h2>No store logins yet</h2><p>Save your Target and Pokémon Center accounts, with the inbox each one gets sign-in codes at. Then link them to profiles.</p><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn" data-act="import-accounts">${ic("imp")}Import accounts</button><button class="btn btn-primary" data-act="new-login">${ic("plus")}Add store login</button></div></div>`;
   else if (!logins.length && !q && gname) body = `<div class="empty"><h2>No logins in this group yet</h2><p>Edit a login and pick this group, or select logins and use <strong>Move to group</strong>.</p></div>`;
   else if (!logins.length && !inboxes.length) body = `<div class="empty"><h2>No logins match "${esc(UI.q)}"</h2><p>Search by store, label, email, group or profile name.</p></div>`;
   else body = `${!logins.length ? "" : UI.loginView === "list" ? loginTableHTML(logins)
