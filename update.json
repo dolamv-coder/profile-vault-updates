@@ -1,10 +1,10 @@
 {
-  "version": "1.9.89",
-  "url": "index-1.9.89.html",
-  "sha256": "94fc172a705b6b3d66b66ab438ea5cdfeaf2f7c615a3312ec6555aef1b4c95ec",
-  "signature": "UAsOluQth7+B+jxtrbz80n5+rOzeSS6uuinFNMvukQIbBzQOj3BSJXXH/+wwds29S5faVH6u3cXDkooE/ywLCw==",
+  "version": "1.9.90",
+  "url": "index-1.9.90.html",
+  "sha256": "5a31f825312dadeee4cc7185f0cb6f5de204f6e5155572a0a50abc560fdc376c",
+  "signature": "gxd8STWMb09pMxK5sU+7TMODt91S7NUnl9Gh1iqXfh/LJelo9ZDqBye/3VAYlrq3cz0a/rnFuoNY10LMBb4hAw==",
   "minAppVersion": "0",
-  "notes": "Right-click a store login to rename it, copy its password, edit it or delete it.",
+  "notes": "Select several profiles, then right-click one (or use Mass edit on the selection bar) to change them all at once, with a preview before anything changes and Undo after. Pokémon Center's icon is now a Poké Ball.",
   "installerUrl": "",
-  "publishedAt": "2026-10-06T04:45:52.309Z"
+  "publishedAt": "2026-10-06T06:25:56.579Z"
 }
