@@ -25,13 +25,18 @@
 //   POST /submit/key           {pub, name}: offer a collecting key; the owner confirms it in Discord
 //   POST /submissions          {files, name, slots, stores, batch} (app 1.9.53+): posted to DISCORD_WEBHOOK_URL
 //                              in plain text, with full card numbers, CVVs and passwords (the owner chose
-//                              this over encryption): per store, its profiles as AYCD JSON and as a .csv in
-//                              the owner's columns, and its logins (email:password) as a .txt. App 1.9.87+
-//                              sends the AYCD list (kind "aycd"); for older apps it's made from the CSV.
+//                              this over encryption): per store, its profiles as AYCD JSON and its logins
+//                              (email:password) as a .txt. Each store's profiles also come as a .csv in the
+//                              owner's columns, read here but no longer posted (the owner's choice, 2026-10-06).
+//                              App 1.9.87+ sends the AYCD list (kind "aycd"); for older apps it's made from the CSV.
 //                              Each store in `stores`
 //                              may carry `seller`: how many of its slots ask the owner to assign an
 //                              account. App 1.9.52 sends {csv, ...}, one .csv; older apps {code, keyId, ...},
 //                              a code encrypted to the collecting key, posted as a .txt. None is kept here.
+//                              Each batch's message has an Approve link for the owner (2026-10-06), and the
+//                              answer says {review: "pending"}.
+//   GET  /submissions/status?ids=A,B   {batches:{A:{status, at}}}: whether the owner has approved this license's
+//                              batches (pending | approved, and when); app 1.9.91+ shows Pending approval, then Success
 //   POST /pull                 {keyId, name, batch, slots}: slots pulled after being sent; posted to
 //                              DISCORD_WEBHOOK_URL as a plain list, only for keys (or "CSV") this license
 //                              sent submissions to
@@ -74,12 +79,14 @@
 //   GET/POST /review/DISCORD_ID?t=TOKEN   approve or deny one request (link posted to the webhook)
 //   GET/POST /slots/review/ID?t=TOKEN     approve (optionally a different number) or deny more slots
 //   GET/POST /submit/review/ID?t=TOKEN    confirm or refuse a collecting key
+//   GET/POST /submissions/review/ID?t=TOKEN  approve a batch of slots (link on its message)
 //   GET/POST /accounts/review/ID?t=TOKEN  add or refuse accounts sent for Use Assigned Account
 //   GET/POST /accounts/removal/ID?t=TOKEN remove accounts from the list, or keep them
 //   GET/POST /alerts/review/ID?t=TOKEN    allow or refuse a license sending order alerts to buyers
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/applications   every request and decision
-//   GET  /admin/submissions    collecting keys (with review links), submissions sent and slots pulled
+//   GET  /admin/submissions    collecting keys (with review links), submissions sent (whether approved, with their
+//                              Approve links) and slots pulled
 //   POST /admin/revoke         {discord_id} or {key}: the app locks on its next check
 //   POST /admin/restore        {discord_id} or {key}
 //   GET  /admin/accounts       the account list: free and given out per store, who got which, offers
@@ -133,6 +140,8 @@ export default {
       if (path === "/submit/key" && request.method === "POST") return await submitKeyPost(request, env, ctx, url);
       if (path.startsWith("/submit/review/")) return await submitKeyReview(request, env, ctx, url, path.slice("/submit/review/".length));
       if (path === "/submissions" && request.method === "POST") return await submission(request, env, url);
+      if (path === "/submissions/status" && request.method === "GET") return await submissionStatus(request, env, url);
+      if (path.startsWith("/submissions/review/")) return await submissionReview(request, env, ctx, url, path.slice("/submissions/review/".length));
       if (path === "/pull" && request.method === "POST") return await pull(request, env, ctx);
       if (path === "/accounts/offer" && request.method === "POST") return await accountOffer(request, env, ctx, url);
       if (path.startsWith("/accounts/review/")) return await accountReview(request, env, ctx, url, path.slice("/accounts/review/".length));
@@ -629,7 +638,9 @@ async function slotReview(request, env, ctx, url, id) {
 // From app 1.9.52 the Submit page sends each batch in plain text, posted to the owner's channel as
 // files they open directly: from 1.9.53 one profiles .csv per store (the owner's columns) and that
 // store's logins as email:password lines in a .txt; 1.9.52 sends one .csv in Orbit's Export → CSV
-// columns. Full card numbers, CVVs, and store and email passwords pass through here and sit in the
+// columns. Since 2026-10-06 each store's profiles go out as AYCD JSON only (the owner's choice): its
+// .csv is still read here, to give out accounts and make the AYCD list for apps before 1.9.87, but
+// not posted. Full card numbers, CVVs, and store and email passwords pass through here and sit in the
 // channel. The owner chose this. Nothing is kept here but who sent how many slots.
 //
 // Older apps seal each batch with the owner's collecting key from Orbit (Settings → Password and
@@ -840,10 +851,11 @@ async function submission(request, env, url) {
     .filter((x) => x.name && x.n > 0);
   // The app sends the same batch id when it retries, so a batch whose answer got lost isn't posted twice.
   const batch = /^[A-Za-z0-9_-]{16,40}$/.test(b.batch || "") ? b.batch : randomId(12);
-  const seen = await env.DB.prepare("SELECT key_hash, webhook_message_id FROM submissions WHERE id = ?").bind(batch).first();
+  const seen = await env.DB.prepare(`SELECT s.key_hash, s.webhook_message_id, r.status AS review FROM submissions s
+    LEFT JOIN submission_reviews r ON r.id = s.id WHERE s.id = ?`).bind(batch).first();
   if (seen) {
     if (seen.key_hash !== lic.hash) return json({ error: "batch id taken" }, 409);
-    return seen.webhook_message_id ? json({ ok: true, id: batch, duplicate: true }) : json({ error: "still sending" }, 425);
+    return seen.webhook_message_id ? json({ ok: true, id: batch, duplicate: true, ...(seen.review ? { review: seen.review } : {}) }) : json({ error: "still sending" }, 425);
   }
   const now = Date.now();
   const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM submissions WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 3600 * 1000).first();
@@ -855,7 +867,7 @@ async function submission(request, env, url) {
   };
   // Recorded before any account is picked or anything is posted, so a retry that arrives meanwhile
   // isn't handled twice.
-  const bytes = files !== null ? files.reduce((n, f) => n + (f.kind === "aycd" ? aycdText(f.list) : f.text).length, 0) : (csv !== null ? csv : code).length;
+  const bytes = files !== null ? files.reduce((n, f) => n + (f.kind === "aycd" ? aycdText(f.list) : f.kind === "profiles" ? "" : f.text).length, 0) : (csv !== null ? csv : code).length;
   const ins = await env.DB.prepare(
     `INSERT OR IGNORE INTO submissions (id, key_hash, key_last4, name, username, slots, bytes, key_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -876,32 +888,41 @@ async function submission(request, env, url) {
     return parts.length ? ` (${parts.join(", ")})` : "";
   };
   const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
+  const plainStores = stores.map((x) => `${x.name} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
   const tail = files !== null
-    ? `-# Per store: its profiles as AYCD JSON (.json) and CSV (.csv)${files.some((f) => f.kind === "logins") ? ", with its logins (email:password, .txt) in the same order" : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
+    ? `-# Per store: its profiles as AYCD JSON (.json)${files.some((f) => f.kind === "logins") ? ", with its logins (email:password, .txt) in the same order" : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
     : csv !== null ? "-# CSV attached." : `-# Encrypted for key ${keyId}. To open: download the file, then in FAFO choose **Import** and drop it in.`;
   const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n${tail}`;
   const base = `orbit-slots-${stamp}${slug ? "-" + slug : ""}`;
   let attach;
   if (files !== null) {
-    // Each store's files carry its name: orbit-slots-…-target-aycd.json, …-target.csv and …-target-logins.txt.
+    // Each store's files carry its name: orbit-slots-…-target-aycd.json and …-target-logins.txt. Its .csv isn't
+    // posted (AYCD only, the owner's choice, 2026-10-06).
     const used = new Map();
     const label = (store) => {
       const x = store.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "store";
       if (!used.has(store)) { let y = x, i = 2; while ([...used.values()].includes(y)) y = `${x}-${i++}`; used.set(store, y); }
       return used.get(store);
     };
-    attach = files.map((f) => f.kind === "profiles"
-      ? { name: `${base}-${label(f.store)}.csv`, text: excelSafe(f.text), type: "text/csv" }
-      : f.kind === "aycd" ? { name: `${base}-${label(f.store)}-aycd.json`, text: aycdText(f.list), type: "application/json" }
+    attach = files.filter((f) => f.kind !== "profiles").map((f) => f.kind === "aycd"
+      ? { name: `${base}-${label(f.store)}-aycd.json`, text: aycdText(f.list), type: "application/json" }
       : { name: `${base}-${label(f.store)}-logins.txt`, text: f.text });
   } else attach = [csv !== null ? { name: base + ".csv", text: excelSafe(csv), type: "text/csv" } : { name: base + ".txt", text: code }];
+  // The owner approves the batch from its message (submissionReview), and the app shows the buyer whether they have.
+  // If that can't be recorded, the batch still goes out, without an Approve link.
+  const review = { id: s.id, status: "pending", review_token: randomId(24), content };
+  const reviewed = await env.DB.batch([
+    env.DB.prepare("DELETE FROM submission_reviews WHERE created_at < ?").bind(now - SUBMISSION_REVIEW_KEEP_MS),
+    env.DB.prepare("INSERT OR REPLACE INTO submission_reviews (id, key_hash, status, review_token, content, stores, created_at) VALUES (?, ?, 'pending', ?, ?, ?, ?)")
+      .bind(s.id, lic.hash, review.review_token, content, plainStores, now),
+  ]).then(() => true, (e) => { console.error("review", e); return false; });
   // Discord takes 10 attachments a message, so more go in follow-up messages. If one of those fails,
   // the batch counts as not sent and the app sends it again (the owner may then see the first part twice).
   let msgId = null, postedAny = false;
   try {
     for (let i = 0; i < attach.length; i += 10) {
       const part = attach.slice(i, i + 10);
-      const id = await webhookPost(env, { content: i ? `-# More files for the batch from ${who} (${i + 1}–${i + part.length} of ${attach.length}).` : content }, part);
+      const id = await webhookPost(env, { content: i ? `-# More files for the batch from ${who} (${i + 1}–${i + part.length} of ${attach.length}).` : reviewed ? submissionMessage(url.origin, review) : content }, part);
       if (!id) { msgId = null; break; }
       postedAny = true;
       if (!i) msgId = id;
@@ -909,6 +930,7 @@ async function submission(request, env, url) {
   } catch (e) { msgId = null; console.error("webhook", e); }
   if (!msgId) {
     await env.DB.prepare("DELETE FROM submissions WHERE id = ?").bind(s.id).run();
+    if (reviewed) await env.DB.prepare("DELETE FROM submission_reviews WHERE id = ?").bind(s.id).run().catch((e) => console.error("review", e));
     // Accounts that can't have reached the channel go back to the list; if part of the batch went out,
     // they're kept for this batch, and sending it again posts the same ones.
     if (picks.size) await settleAccounts(env, lic, batch, postedAny, Date.now());
@@ -917,8 +939,67 @@ async function submission(request, env, url) {
   await env.DB.prepare("UPDATE submissions SET webhook_message_id = ? WHERE id = ?").bind(msgId, s.id).run().catch((e) => console.error("record", e));
   if (picks.size) await settleAccounts(env, lic, batch, true, Date.now()).catch((e) => console.error("accounts", e));
   for (const f of files || []) if (f.assigned > 0) await stockCheck(env, f.storeKey, f.store, true).catch((e) => console.error("stock", e));
-  // How many slots got an account per store; buyers never see which.
-  return json(picks.size ? { ok: true, id: s.id, accounts: Object.fromEntries(picks) } : { ok: true, id: s.id });
+  // How many slots got an account per store; buyers never see which. `review`: the batch waits for the owner's approval.
+  return json({ ok: true, id: s.id, ...(reviewed ? { review: "pending" } : {}), ...(picks.size ? { accounts: Object.fromEntries(picks) } : {}) });
+}
+
+// The owner approves each batch from its message (the owner's request, 2026-10-06): app 1.9.91+ shows the buyer
+// Pending approval until then, and Success after (it asks GET /submissions/status). Kept 90 days.
+const SUBMISSION_REVIEW_KEEP_MS = 90 * 86400000;
+// A batch's message as posted, with a last line saying whether the owner has approved it.
+function submissionMessage(origin, r) {
+  return r.status === "approved" ? `${r.content}\n✅ **Approved** <t:${Math.floor(r.decided_at / 1000)}:f>`
+    : `${r.content}\n⏳ **Pending your approval** · [Approve](${origin}/submissions/review/${r.id}?t=${r.review_token})`;
+}
+
+async function submissionReview(request, env, ctx, url, id) {
+  const r = /^[A-Za-z0-9_-]{16,40}$/.test(id) ? await env.DB.prepare(`SELECT r.*, s.name, s.username, s.key_last4, s.slots, s.webhook_message_id
+    FROM submission_reviews r JOIN submissions s ON s.id = r.id WHERE r.id = ?`).bind(id).first() : null;
+  let t = url.searchParams.get("t") || "", action = "";
+  if (request.method === "POST") {
+    const form = await request.formData().catch(() => null);
+    t = form && String(form.get("t") || "") || t;
+    action = form && String(form.get("action") || "");
+  } else if (request.method !== "GET") {
+    return page(405, "Not allowed", "");
+  }
+  if (!r || !(await sameText(t, r.review_token))) return page(404, "Slots not found", "This review link isn't valid.");
+  let done = "";
+  if (r.status === "pending" && action === "approve") {
+    const now = Date.now();
+    // Its message is no longer needed once it's marked approved.
+    const res = await env.DB.prepare("UPDATE submission_reviews SET status = 'approved', decided_at = ?, content = '' WHERE id = ? AND status = 'pending'").bind(now, r.id).run();
+    if (res.meta && res.meta.changes) {
+      if (r.webhook_message_id) ctx.waitUntil(webhookEdit(env, r.webhook_message_id, { content: submissionMessage(url.origin, { ...r, status: "approved", decided_at: now }) }).catch(() => {}));
+      done = "Approved. Their FAFO now shows these slots as Success.";
+    }
+    Object.assign(r, await env.DB.prepare("SELECT status, decided_at FROM submission_reviews WHERE id = ?").bind(r.id).first());
+  }
+  const when = (ms) => new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+  const label = r.status === "approved" ? `Approved ${when(r.decided_at)}. Their FAFO shows these slots as Success.` : "Waiting for you.";
+  const who = [r.name, r.username ? "@" + r.username : "", "license …" + r.key_last4].filter(Boolean).join(" · ");
+  const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  return page(200, "Submitted slots", done || label,
+    `<p class="who">${r.slots} slot${r.slots === 1 ? "" : "s"}${r.name ? ` from ${esc(r.name)}` : ""}</p>
+     ${r.stores ? `<p class="small" style="margin-top:8px">${esc(r.stores)}</p>` : ""}
+     ${r.status === "pending" ? `<p class="small">Approve once you have their files in your channel. Until then their FAFO shows these slots as Pending approval, and after, as Success.</p>` : ""}
+     <p class="small">Sent by ${esc(who)}, ${esc(when(r.created_at))}</p>
+     ${r.status === "pending" ? `<div class="row"><form method="post">${hidden}<button class="ok" type="submit" name="action" value="approve">Approve</button></form></div>` : ""}`);
+}
+
+// The owner's decision on batches this license sent: {batches: {id: {status: "pending" | "approved", at}}}, leaving out
+// ids it didn't send or sent before approvals began. `at` is when it was approved.
+async function submissionStatus(request, env, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  const ids = [...new Set(String(url.searchParams.get("ids") || "").split(",").filter((x) => /^[A-Za-z0-9_-]{16,40}$/.test(x)))].slice(0, 100);
+  const batches = {};
+  if (ids.length) {
+    const { results } = await env.DB.prepare("SELECT id, status, decided_at FROM submission_reviews WHERE key_hash = ? AND id IN (SELECT value FROM json_each(?))")
+      .bind(lic.hash, JSON.stringify(ids)).all();
+    for (const x of results) batches[x.id] = x.status === "approved" ? { status: "approved", at: x.decided_at } : { status: x.status };
+  }
+  return json({ batches }, 200, { "cache-control": "no-store" });
 }
 
 // ---- assigned accounts -------------------------------------------------------------------
@@ -969,7 +1050,8 @@ function parseCsv(text) {
 }
 const csvCell = (v) => { const t = String(v == null ? "" : v); return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
 
-// The owner opens these files in Excel, which reads a run of digits as a number: a card number shows
+// The owner opens CSVs in Excel (since 2026-10-06 only app 1.9.52's single CSV is posted; per-store slots go out
+// as AYCD JSON), which reads a run of digits as a number: a card number shows
 // as 5.55556E+15 and keeps only 15 digits (saving the file turns the 16th into 0), and CVVs, months
 // and zip codes lose a leading 0. So those cells go to the channel as ="…", which Excel and Google
 // Sheets show as the text itself, and Excel saves as the plain value. Any other cell that starts with
@@ -1816,10 +1898,12 @@ async function admin(request, env, path) {
     const origin = new URL(request.url).origin;
     const [keys, subs, pulls] = await env.DB.batch([
       env.DB.prepare("SELECT * FROM submit_keys ORDER BY created_at DESC LIMIT 50"),
-      env.DB.prepare("SELECT id, key_last4, name, username, slots, bytes, key_id, created_at FROM submissions ORDER BY created_at DESC LIMIT 200"),
+      env.DB.prepare(`SELECT s.id, s.key_last4, s.name, s.username, s.slots, s.bytes, s.key_id, s.created_at, r.status AS review, r.decided_at AS approved_at, r.review_token
+        FROM submissions s LEFT JOIN submission_reviews r ON r.id = s.id ORDER BY s.created_at DESC LIMIT 200`),
       env.DB.prepare("SELECT id, key_last4, name, username, slots, key_id, created_at FROM pulls ORDER BY created_at DESC LIMIT 200"),
     ]);
-    return json({ keys: keys.results.map(({ review_token, key_hash, ...k }) => ({ ...k, review_url: `${origin}/submit/review/${k.id}?t=${review_token}` })), submissions: subs.results, pulls: pulls.results });
+    return json({ keys: keys.results.map(({ review_token, key_hash, ...k }) => ({ ...k, review_url: `${origin}/submit/review/${k.id}?t=${review_token}` })),
+      submissions: subs.results.map(({ review_token, ...x }) => review_token ? { ...x, review_url: `${origin}/submissions/review/${x.id}?t=${review_token}` } : x), pulls: pulls.results });
   }
   if (request.method === "GET" && path === "/admin/applications") {
     const { results } = await env.DB.prepare(

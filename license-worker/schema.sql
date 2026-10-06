@@ -105,6 +105,21 @@ CREATE TABLE IF NOT EXISTS submissions (
 );
 CREATE INDEX IF NOT EXISTS submissions_key ON submissions (key_hash, created_at);
 
+-- The owner's approval of each batch posted to the channel (the owner's request, 2026-10-06): its message carries an
+-- Approve link, and app 1.9.91+ shows the buyer Pending approval until the owner approves it, then Success.
+-- One row per batch (its id is the submission's), kept 90 days. Its own table, since db:init can't add columns.
+CREATE TABLE IF NOT EXISTS submission_reviews (
+  id                 TEXT PRIMARY KEY,                  -- the batch id (submissions.id)
+  key_hash           TEXT NOT NULL,                     -- license that sent it
+  status             TEXT NOT NULL DEFAULT 'pending',   -- pending | approved
+  review_token       TEXT NOT NULL,
+  content            TEXT NOT NULL DEFAULT '',          -- its message, without the approval line, until approved
+  stores             TEXT NOT NULL DEFAULT '',          -- its store line, for the review page
+  created_at         INTEGER NOT NULL,
+  decided_at         INTEGER
+);
+CREATE INDEX IF NOT EXISTS submission_reviews_key ON submission_reviews (key_hash, created_at);
+
 -- Slots pulled after being submitted, posted to the channel so the owner can take them off their list.
 CREATE TABLE IF NOT EXISTS pulls (
   id                 TEXT PRIMARY KEY,
