@@ -27,6 +27,8 @@ const USERS = {
   erin:  { id: snowflake(Date.parse("2021-05-01")), username: "erin", guilds: [] },
   frank: { id: snowflake(Date.parse("2021-06-01")), username: "frank", guilds: [] },
   gina:  { id: snowflake(Date.parse("2021-07-01")), username: "gina", guilds: [] },
+  hana:  { id: snowflake(Date.parse("2021-08-01")), username: "hana", guilds: [] },
+  ivan:  { id: snowflake(Date.parse("2021-09-01")), username: "ivan", guilds: [] },
 };
 
 const mirrorHits = [];   // requests the worker made for /mirror
@@ -1268,6 +1270,189 @@ try {
     const link = offerLink(webhookPosts.at(-1).content);
     assert.match(await (await offerPost(link, "refuse")).text(), /Refused\. Nothing was added\./);
     assert.ok(!(await accounts()).stores.some((x) => x.store === "walmart"));
+  });
+  console.log("\nPokémon Center reuses a profile's Target account (2026-10-06)");
+  // Ivan sends the owner's accounts; Hana is a buyer. Slots on Use Assigned Account come with no email of their own.
+  let hanaKey, ivanKey;
+  const offerAdd = async (key, store, storeName, list) => {
+    assert.equal((await slots("/accounts/offer", key, { store, storeName, accounts: list })).status, 200);
+    await new Promise((ok) => setTimeout(ok, 400));
+    const link = offerLink(webhookPosts.at(-1).content); assert.ok(link, webhookPosts.at(-1).content);
+    assert.match(await (await offerPost(link, "add")).text(), /Added \d+ to your list/);
+  };
+  const batchPost = (from) => webhookPosts.slice(from).find((m) => m.content.startsWith("📦"));
+  const pcFile = (names, assigned) => ({ store: "Pokémon Center", storeKey: "pokemoncenter", kind: "profiles", text: slotCsv(names.map((n) => slotRow(n, ""))), assigned: assigned ?? names.length });
+  const tgFile = (names) => ({ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv(names.map((n) => slotRow(n, ""))), assigned: names.length });
+  const namesIn = (text) => text.split("\r\n").slice(1).map((l) => l.split(",")[0]);
+  const given = async () => (await accounts()).given.filter((a) => a.key_last4 === hanaKey.slice(-4));
+  const pcStock = async () => (await accounts()).stores.find((x) => x.store === "pokemoncenter");
+  let tA, tB;
+  await test("setup: a buyer, and the owner's Target and Pokémon Center accounts", async () => {
+    hanaKey = await newKey("hana"); ivanKey = await newKey("ivan");
+    await offerAdd(ivanKey, "target", "Target", [{ email: "tgt1@outlook.com", password: "Tgt-Pw-1!" }, { email: "tgt2@outlook.com", password: "Tgt-Pw-1!" }]);
+    await offerAdd(ivanKey, "pokemoncenter", "Pokémon Center", [1, 2, 3].map((i) => ({ email: `pc${i}@outlook.com`, password: "Pc-Pw-1!" })));
+    assert.deepEqual(await pcStock(), { store: "pokemoncenter", total: 3, free: 3, sent: 0 });
+  });
+  await test("in one batch, a profile's Pokémon Center slot gets the Target account it was given; others get their own", async () => {
+    const before = webhookPosts.length;
+    // The app sends Pokémon Center before Target; Hana C has no Target slot.
+    const files = [pcFile(["Hana A", "Hana C", "Hana B"]), tgFile(["Hana A", "Hana B"])];
+    const r = await (await slots("/submissions", hanaKey, { files, name: "Hana", slots: 5, batch: "pcr1" + rid(),
+      stores: [{ name: "Pokémon Center", n: 3, seller: 3 }, { name: "Target", n: 2, seller: 2 }] })).json();
+    assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 3, got: 3, reused: 2 }, Target: { asked: 2, got: 2 } });
+    const m = batchPost(before);
+    assert.match(m.content, /\nPokémon Center 3 \(3 assigned accounts, 2 reused from Target\) · Target 2 \(2 assigned accounts\)\n/);
+    const [pcCsv, pcLog, tgCsv, tgLog] = plain(m);
+    [tA, tB] = emailsIn(tgCsv.text);
+    assert.ok(/^tgt[12]@outlook\.com$/.test(tA) && /^tgt[12]@outlook\.com$/.test(tB) && tA !== tB, [tA, tB]);
+    assert.equal(tgLog.text, `${tA}:Tgt-Pw-1!\r\n${tB}:Tgt-Pw-1!`);
+    const pc = emailsIn(pcCsv.text);
+    assert.deepEqual(namesIn(pcCsv.text), ["Hana A", "Hana C", "Hana B"], "rows in the order sent");
+    assert.equal(pc[0], tA); assert.equal(pc[2], tB); assert.match(pc[1], /^pc[123]@outlook\.com$/);
+    assert.equal(pcLog.text, `${tA}:Tgt-Pw-1!\r\n${pc[1]}:Pc-Pw-1!\r\n${tB}:Tgt-Pw-1!`, "the Target account's email:password, row for row");
+    assert.deepEqual(aycdOf(m)[0].map((x) => [x.name, x.shippingAddress.email, x.billingAddress.email]), [["Hana A", tA, tA], ["Hana C", pc[1], pc[1]], ["Hana B", tB, tB]]);
+    assert.deepEqual(await pcStock(), { store: "pokemoncenter", total: 3, free: 2, sent: 1 }, "the reused ones aren't on the Pokémon Center list");
+    const g = await given();
+    assert.deepEqual(g.filter((a) => a.store === "pokemoncenter").map((a) => [a.email, a.profile, a.store_name, a.reused]).sort(),
+      [[tA, "Hana A", "Pokémon Center", 1], [tB, "Hana B", "Pokémon Center", 1], [pc[1], "Hana C", "Pokémon Center", 0]].sort());
+  });
+  await test("a later batch reuses a Target account sent before, and pulling the slot finds it at Pokémon Center", async () => {
+    const before = webhookPosts.length;
+    const r = await (await slots("/submissions", hanaKey, { files: [pcFile(["Hana A"])], name: "Hana", slots: 1, batch: "pcr2" + rid(), stores: [{ name: "Pokémon Center", n: 1, seller: 1 }] })).json();
+    assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 1, got: 1, reused: 1 } });
+    const m = batchPost(before);
+    assert.equal(emailsIn(plain(m)[0].text)[0], tA); assert.equal(plain(m)[1].text, `${tA}:Tgt-Pw-1!`);
+    const p0 = webhookPosts.length;
+    await pull(hanaKey, { keyId: "CSV", name: "Hana", slots: [{ store: "Pokémon Center", profile: "Hana A", email: "Assigned account", card: "Visa 4242" }] });
+    assert.ok(webhookPosts[p0].content.includes(`Pokémon Center · Hana A · ${tA} \\(assigned account\\)`), webhookPosts[p0].content);
+    assert.doesNotMatch(webhookPosts[p0].content, /Tgt-Pw-1/);
+  });
+  await test("an email on the Pokémon Center list too is used from there, with its own password", async () => {
+    await offerAdd(ivanKey, "target", "Target", [{ email: "lia.tgt@outlook.com", password: "Tgt-Pw-2!" }]);
+    await offerAdd(ivanKey, "pokemoncenter", "Pokémon Center", [{ email: "LIA.TGT@outlook.com", password: "Inbox-Pw-2!" }]);
+    const before = webhookPosts.length;
+    const r = await (await slots("/submissions", hanaKey, { files: [tgFile(["Lia Moss"]), pcFile(["Lia Moss"])], name: "Hana", slots: 2, batch: "pcr3" + rid(),
+      stores: [{ name: "Target", n: 1, seller: 1 }, { name: "Pokémon Center", n: 1, seller: 1 }] })).json();
+    assert.deepEqual(r.accounts, { Target: { asked: 1, got: 1 }, "Pokémon Center": { asked: 1, got: 1, reused: 1 } });
+    const [tg, tgLog, pc, pcLog] = plain(batchPost(before));
+    assert.equal(emailsIn(tg.text)[0], "lia.tgt@outlook.com"); assert.equal(tgLog.text, "lia.tgt@outlook.com:Tgt-Pw-2!");
+    assert.equal(emailsIn(pc.text)[0], "LIA.TGT@outlook.com"); assert.equal(pcLog.text, "LIA.TGT@outlook.com:Inbox-Pw-2!");
+    assert.deepEqual(await pcStock(), { store: "pokemoncenter", total: 4, free: 2, sent: 2 }, "taken from the list like any other");
+  });
+  await test("a batch that doesn't reach the channel drops its reused accounts; nothing joins the Pokémon Center list", async () => {
+    await offerAdd(ivanKey, "target", "Target", [{ email: "tgt3@outlook.com", password: "Tgt-Pw-1!" }]);
+    const batch = "pcr4" + rid(), stock = await pcStock();
+    webhookFail.push(500);
+    assert.equal((await slots("/submissions", hanaKey, { files: [pcFile(["Hana D"]), tgFile(["Hana D"])], name: "Hana", slots: 2, batch,
+      stores: [{ name: "Pokémon Center", n: 1, seller: 1 }, { name: "Target", n: 1, seller: 1 }] })).status, 502);
+    assert.deepEqual(await pcStock(), stock);
+    assert.ok(!(await accounts()).given.some((a) => a.email === "tgt3@outlook.com"), "neither the Target account nor its reuse is held");
+    const before = webhookPosts.length;
+    const r = await (await slots("/submissions", hanaKey, { files: [pcFile(["Hana D"]), tgFile(["Hana D"])], name: "Hana", slots: 2, batch,
+      stores: [{ name: "Pokémon Center", n: 1, seller: 1 }, { name: "Target", n: 1, seller: 1 }] })).json();
+    assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 1, got: 1, reused: 1 }, Target: { asked: 1, got: 1 } }, "sending again reuses it again");
+    assert.equal(emailsIn(plain(batchPost(before))[0].text)[0], "tgt3@outlook.com");
+    assert.deepEqual(await pcStock(), stock);
+  });
+  await test("with the Pokémon Center list out, a reused account still goes out, and slots left without one come last", async () => {
+    const before = webhookPosts.length;
+    const r = await (await slots("/submissions", hanaKey, { files: [pcFile(["Hana E", "Hana F", "Hana G", "Hana B"])], name: "Hana", slots: 4, batch: "pcr5" + rid(),
+      stores: [{ name: "Pokémon Center", n: 4, seller: 4 }] })).json();
+    assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 4, got: 3, reused: 1 } });
+    const m = batchPost(before), [csvF, logF] = plain(m), em = emailsIn(csvF.text);
+    assert.match(m.content, /\nPokémon Center 4 \(3 assigned accounts, 1 reused from Target, 1 needs an account\)\n/);
+    assert.deepEqual(namesIn(csvF.text), ["Hana E", "Hana F", "Hana B", "Hana G"]);
+    assert.ok(/^pc[123]@outlook\.com$/.test(em[0]) && /^pc[123]@outlook\.com$/.test(em[1]), em); assert.equal(em[2], tB); assert.equal(em[3], "");
+    assert.equal(logF.text, `${em[0]}:Pc-Pw-1!\r\n${em[1]}:Pc-Pw-1!\r\n${tB}:Tgt-Pw-1!`);
+    assert.deepEqual(aycdOf(m)[0].map((x) => [x.name, x.shippingAddress.email]), [["Hana E", em[0]], ["Hana F", em[1]], ["Hana B", tB], ["Hana G", ""]], "the AYCD list in the same order");
+  });
+  await test("sending the owner's list an email given out as a reused account puts it on the list, still with its slot", async () => {
+    await offerAdd(hanaKey, "pokemoncenter", "Pokémon Center", [{ email: tA.toUpperCase(), password: "Inbox-Pw-3!" }]);
+    assert.deepEqual(await pcStock(), { store: "pokemoncenter", total: 5, free: 0, sent: 5 });
+    assert.equal((await given()).find((a) => a.store === "pokemoncenter" && a.email === tA).reused, 0);
+    const before = webhookPosts.length;
+    await slots("/submissions", hanaKey, { files: [pcFile(["Hana A"])], name: "Hana", slots: 1, batch: "pcr6" + rid(), stores: [{ name: "Pokémon Center", n: 1, seller: 1 }] });
+    assert.equal(plain(batchPost(before))[1].text, `${tA}:Inbox-Pw-3!`, "Hana A keeps it, now with the list's password");
+  });
+  await test("freeing a license's accounts drops its reused ones", async () => {
+    assert.equal((await admin("/admin/accounts/free", { key: hanaKey })).status, 200);
+    assert.deepEqual(await given(), []);
+    const d = await accounts();
+    assert.deepEqual(d.stores.find((x) => x.store === "pokemoncenter"), { store: "pokemoncenter", total: 5, free: 5, sent: 0 });
+    assert.ok(!d.given.some((a) => a.reused), "no reused rows left");
+  });
+  console.log("\nTaking accounts off the list from FAFO (app 1.9.90+)");
+  const removalLink = (content) => (content.match(/\((http[^)]+\/accounts\/removal\/[^)]+)\)/) || [])[1];
+  const removalPost = (link, action) => fetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), action }) });
+  const askRemove = async (emails) => {
+    const r = await slots("/accounts/remove", ivanKey, { emails, name: "Owner" });
+    await new Promise((ok) => setTimeout(ok, 400));
+    return { r, status: r.status, body: await r.json(), m: webhookPosts.at(-1) };
+  };
+  const stock = async (store) => (await accounts()).stores.find((x) => x.store === store) || { total: 0, free: 0, sent: 0 };
+  await test("asking to remove needs a license and emails", async () => {
+    assert.equal((await slots("/accounts/remove", null, { emails: ["pc1@outlook.com"] })).status, 401);
+    for (const body of [{}, { emails: [] }, { emails: "pc1@outlook.com" }, { emails: ["nope"] }, { emails: ["pc1@outlook.com", "x:y@outlook.com"] }])
+      assert.equal((await slots("/accounts/remove", ivanKey, body)).status, 400, JSON.stringify(body));
+  });
+  let rmLink, gone, both, gOnTarget;
+  await test("asking posts the count and a review link, never the emails; the page shows where each one is", async () => {
+    // Hana gets a Pokémon Center account, so one of those asked about has been given out.
+    const before = webhookPosts.length;
+    await slots("/submissions", hanaKey, { files: [pcFile(["Hana Z"])], name: "Hana", slots: 1, batch: "rmv1" + rid(), stores: [{ name: "Pokémon Center", n: 1, seller: 1 }] });
+    assert.ok(batchPost(before));
+    const g = (await accounts()).given.find((a) => a.profile === "Hana Z");
+    assert.ok(g && g.store === "pokemoncenter", "Hana Z got one");
+    gone = g.email.toLowerCase();
+    // An email on both the Target and the Pokémon Center list.
+    both = ["lia.tgt@outlook.com", tA.toLowerCase()].find((e) => e !== gone);
+    gOnTarget = ["lia.tgt@outlook.com", tA.toLowerCase()].includes(gone);
+    const { status, body, m } = await askRemove([g.email.toUpperCase(), both, "nobody@example.com", both]);
+    assert.equal(status, 200); assert.deepEqual(body, { status: "pending", count: 3 }, "each email counts once, whatever its case");
+    assert.match(m.content, /^🗑️ \*\*Take 3 accounts off your list for Use Assigned Account\?\*\*\nAsked by \*\*Owner\*\* · @ivan · license …/);
+    assert.ok(![gone, both, "nobody@example.com"].some((e) => m.content.toLowerCase().includes(e)), "no emails in the channel");
+    rmLink = removalLink(m.content); assert.ok(rmLink, m.content);
+    const html = await (await fetch(rmLink)).text();
+    assert.match(html, /3 accounts to take off your list for Use Assigned Account/); assert.match(html, /Only remove these if you asked/);
+    assert.ok(html.includes(`<strong>${gone}</strong>: `) && html.includes(`Pokémon Center: given to license …${hanaKey.slice(-4)} for Hana Z`), "the one given out says to whom");
+    assert.ok(html.includes(`<strong>${both}</strong>: Pokémon Center: free; Target: free`), "one on both lists shows both");
+    assert.ok(html.includes("<strong>nobody@example.com</strong>: not on your list"));
+    assert.match(html, /One given to a buyer's slot stops reporting its orders to them once it's removed\./);
+    assert.doesNotMatch(html, /Pw-|Inbox-Pw|Tgt-Pw/, "never a password");
+    assert.equal((await fetch(rmLink.replace(/t=[^&]+/, "t=wrong"))).status, 404);
+  });
+  await test("Keep removes nothing", async () => {
+    const pc = await stock("pokemoncenter");
+    const { m } = await askRemove(["pc3@outlook.com"]);
+    const link = removalLink(m.content);
+    assert.match(await (await removalPost(link, "keep")).text(), /Kept\. Nothing was removed\./);
+    assert.match(await (await removalPost(link, "remove")).text(), /Kept\. Nothing was removed\./, "decided: stays kept");
+    assert.deepEqual(await stock("pokemoncenter"), pc);
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.match(webhookEdits.at(-1).content, /^↩️ \*\*Kept 1 account\*\* on your list\nAsked by/); assert.doesNotMatch(webhookEdits.at(-1).content, /Review/);
+  });
+  await test("Remove takes each off every store's list it's on, given out or not", async () => {
+    const pc = await stock("pokemoncenter"), tg = await stock("target");
+    assert.match(await (await removalPost(rmLink, "remove")).text(), /Took 2 off your list\. 1 wasn&#39;t on it\./);
+    assert.deepEqual(await stock("pokemoncenter"), { store: "pokemoncenter", total: pc.total - 2, free: pc.free - 1, sent: pc.sent - 1 });
+    assert.equal((await stock("target")).total, tg.total - 1 - (gOnTarget ? 1 : 0));
+    assert.ok(!(await accounts()).given.some((a) => a.profile === "Hana Z"), "Hana Z's is gone");
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.match(webhookEdits.at(-1).content, /^🗑️ \*\*Took 2 accounts off your list\*\* for Use Assigned Account/);
+    const again = await (await fetch(rmLink)).text();
+    assert.match(again, /Took 2 off your list/); assert.doesNotMatch(again, new RegExp(both.replace(/\./g, "\\.")), "once decided, the page no longer lists them");
+    const d = await accounts();
+    assert.deepEqual(d.removals.slice(0, 2).map((x) => [x.status, x.count, x.removed]), [["kept", 1, null], ["removed", 3, 2]]);
+    assert.ok(d.removals.every((x) => /\/accounts\/removal\//.test(x.review_url) && x.emails === undefined), "the admin list has links, never the emails");
+  });
+  await test("an ask nobody decided on expires, and its emails are dropped", async () => {
+    const pc = await stock("pokemoncenter");
+    const { m } = await askRemove(["pc1@outlook.com"]);
+    const link = removalLink(m.content);
+    await new Promise((ok) => setTimeout(ok, 8200));   // ACCOUNT_OFFER_TTL_MS is 8000 here
+    const html = await (await removalPost(link, "remove")).text();
+    assert.match(html, /Expired before you decided/); assert.doesNotMatch(html, /pc1@outlook\.com/);
+    assert.deepEqual(await stock("pokemoncenter"), pc, "nothing removed");
   });
   await test("CSV batches count toward 30 an hour per license", async () => {
     let sent = 0, limited = false;

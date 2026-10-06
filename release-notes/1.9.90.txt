@@ -1,0 +1,1 @@
+Select several profiles, then right-click one (or use Mass edit on the selection bar) to change them all at once, with a preview before anything changes and Undo after. Pokémon Center's icon is now a Poké Ball.

@@ -165,6 +165,25 @@ CREATE TABLE IF NOT EXISTS account_offers (
 );
 CREATE INDEX IF NOT EXISTS account_offers_key ON account_offers (key_hash, created_at);
 
+-- Asks from FAFO (1.9.90+) to take accounts off the list, from every store's; done once the owner confirms
+-- from the review link posted to the channel.
+CREATE TABLE IF NOT EXISTS account_removals (
+  id                 TEXT PRIMARY KEY,
+  emails             TEXT NOT NULL,                     -- JSON [email], emptied once decided or expired
+  count              INTEGER NOT NULL,
+  key_hash           TEXT NOT NULL,
+  key_last4          TEXT NOT NULL,
+  name               TEXT NOT NULL DEFAULT '',
+  username           TEXT,
+  status             TEXT NOT NULL DEFAULT 'pending',   -- pending | removed | kept | expired
+  removed            INTEGER,
+  review_token       TEXT NOT NULL,
+  created_at         INTEGER NOT NULL,
+  decided_at         INTEGER,
+  webhook_message_id TEXT
+);
+CREATE INDEX IF NOT EXISTS account_removals_key ON account_removals (key_hash, created_at);
+
 -- Whether the owner's channel was told a store's list is low (ACCOUNTS_LOW_AT free accounts or fewer)
 -- or has run out. Adding or freeing accounts clears these again.
 CREATE TABLE IF NOT EXISTS account_stock (
