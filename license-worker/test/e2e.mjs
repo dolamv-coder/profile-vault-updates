@@ -912,7 +912,7 @@ try {
     assert.equal(webhookPosts.length, before + 1);
     const m = webhookPosts.at(-1);
     assert.ok(m.content.startsWith(`📦 **2 slots** from **Beta** · @frank · license …${frankKey.slice(-4)}\nTarget 2\n`), m.content);
-    assert.match(m.content, new RegExp(`\\n-# CSV attached\\.\\n⏳ \\*\\*Pending your approval\\*\\* · \\[Approve\\]\\(${BASE}/submissions/review/${csvBatch}\\?t=[A-Za-z0-9_-]{32}\\)$`), m.content);
+    assert.match(m.content, new RegExp(`\\n-# CSV attached\\.\\n⏳ \\*\\*Pending your approval\\*\\* · \\[Approve or decline\\]\\(${BASE}/submissions/review/${csvBatch}\\?t=[A-Za-z0-9_-]{32}\\)$`), m.content);
     assert.equal(m.files.length, 1); assert.deepEqual(asShown(m.files[0].text), csvRows(csv), "the CSV as sent, as Excel shows it");
     assert.equal(m.files[0].text.split("\r\n")[1], 'Kim Lee,Beta,kim@example.com,"=""4242424242424242""","=""123""",kim.target@example.com,"pa,ss""word"', "card number and CVV as Excel text");
     assert.ok(m.files[0].text.endsWith("\r\n"), "ends as it did");
@@ -984,7 +984,7 @@ try {
     assert.equal(webhookPosts.length, before + 1, "one message");
     const m = webhookPosts.at(-1);
     assert.ok(m.content.startsWith(`📦 **3 slots** from **Beta** · @frank · license …${frankKey.slice(-4)}\nTarget 1 · Walmart 1 (1 needs an account) · Pokémon Center 1\n`), m.content);
-    assert.ok(m.content.includes("\n-# Per store: its profiles as AYCD JSON (.json), with its logins (email:password, .txt) in the same order. Profiles that need an account come last.\n⏳ **Pending your approval** · [Approve]("), m.content);
+    assert.ok(m.content.includes("\n-# Per store: its profiles as AYCD JSON (.json), with its logins (email:password, .txt) in the same order. Profiles that need an account come last.\n⏳ **Pending your approval** · [Approve or decline]("), m.content);
     assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")),
       ["Beta-target-aycd.json", "Beta-target-logins.txt", "Beta-walmart-aycd.json", "Beta-pokemon-center-aycd.json"]);
     assert.ok(!m.files.some((f) => /\.csv$/.test(f.name) || /^text\/csv/.test(f.type || "")), "no CSV goes out");
@@ -1086,7 +1086,7 @@ try {
     assert.deepEqual(webhookPosts.slice(before + 1).map((m) => m.files.length), [10, 2], "sent again in full");
   });
   console.log("\nApproving batches (2026-10-06; app 1.9.91+ shows it)");
-  const approveLink = (content) => (content.match(/\[Approve\]\((http[^)]+\/submissions\/review\/[^)]+)\)/) || [])[1];
+  const approveLink = (content) => (content.match(/\[Approve or decline\]\((http[^)]+\/submissions\/review\/[^)]+)\)/) || [])[1];
   const approvePost = (link, action = "approve") => fetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), action }) });
   const statusOf = async (key, ids) => { const r = await slots("/submissions/status?ids=" + ids.join(","), key); return r.ok ? (await r.json()).batches : r.status; };
   let apBatch, apLink, apMsg;
@@ -1096,7 +1096,7 @@ try {
     const r = await (await slots("/submissions", frankKey, { files, name: "Beta <b>", slots: 2, batch: apBatch, stores: [{ name: "Target", n: 1 }, { name: "Walmart", n: 1, seller: 1 }] })).json();
     assert.deepEqual(r, { ok: true, id: apBatch, review: "pending" });
     apMsg = webhookPosts.at(-1); apLink = approveLink(apMsg.content);
-    assert.ok(apLink && apMsg.content.endsWith(`\n⏳ **Pending your approval** · [Approve](${apLink})`), apMsg.content);
+    assert.ok(apLink && apMsg.content.endsWith(`\n⏳ **Pending your approval** · [Approve or decline](${apLink})`), apMsg.content);
     assert.match(apLink, new RegExp(`^${BASE}/submissions/review/${apBatch}\\?t=[A-Za-z0-9_-]{32}$`));
     assert.deepEqual(await statusOf(frankKey, [apBatch]), { [apBatch]: { status: "pending" } });
   });
@@ -1113,7 +1113,7 @@ try {
     assert.equal((await fetch(`${BASE}/submissions/review/nope?t=x`)).status, 404);
     const html = await (await fetch(apLink)).text();
     assert.match(html, /2 slots from Beta &lt;b&gt;/); assert.match(html, /Target 1 · Walmart 1 \(1 needs an account\)/);
-    assert.match(html, /Waiting for you\./); assert.match(html, /Until then their FAFO shows these slots as Pending approval, and after, as Success\./); assert.match(html, /value="approve">Approve</);
+    assert.match(html, /Waiting for you\./); assert.match(html, /Until then their FAFO shows these slots as Pending approval, and after, as Success\./); assert.match(html, /value="approve">Approve</); assert.match(html, /value="decline-ask">Decline</);
     assert.match(html, new RegExp(`Sent by Beta &lt;b&gt; · @frank · license …${frankKey.slice(-4)}, \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d UTC`));
     assert.doesNotMatch(html, /4242424242424242|kim\.target|Kim Lee/, "never the slots themselves");
     assert.deepEqual(await statusOf(frankKey, [apBatch]), { [apBatch]: { status: "pending" } });
@@ -1155,10 +1155,36 @@ try {
     const posts = webhookPosts.slice(before);
     assert.equal(posts.length, 2); assert.ok(approveLink(posts[0].content)); assert.ok(!approveLink(posts[1].content));
   });
+  await test("declining asks first, then marks its message and tells the app; either decision is final", async () => {
+    const batch = "decl" + rid(), before = webhookPosts.length;
+    assert.equal((await slots("/submissions", frankKey, { files: [{ store: "Target", kind: "profiles", text: tgtCsv }], name: "Beta", slots: 1, batch, stores: [{ name: "Target", n: 1 }] })).status, 200);
+    const m = webhookPosts.slice(before).find((x) => x.content.startsWith("📦")), link = approveLink(m.content);
+    const ask = await (await approvePost(link, "decline-ask")).text();
+    assert.match(ask, /<h2>Decline these slots\?<\/h2>/); assert.match(ask, /Their FAFO will show these slots as Declined, and they can send them again\. This can't be undone\./);
+    assert.match(ask, /value="decline">Decline</); assert.match(ask, /<form method="get"><input type="hidden" name="t" value="[A-Za-z0-9_-]{32}"><button[^>]*>Keep it waiting</);
+    assert.doesNotMatch(ask, /value="approve"/, "only Decline or keep it waiting");
+    assert.deepEqual(await statusOf(frankKey, [batch]), { [batch]: { status: "pending" } }, "asking changes nothing");
+    const edits = webhookEdits.length, t0 = Date.now();
+    const html = await (await approvePost(link, "decline")).text();
+    assert.match(html, /Declined\. Their FAFO now shows these slots as Declined\.<\/p>/); assert.doesNotMatch(html, /value="(approve|decline-ask)"/);
+    const st = (await statusOf(frankKey, [batch]))[batch];
+    assert.equal(st.status, "declined"); assert.ok(st.at >= t0 && st.at <= Date.now(), JSON.stringify(st));
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal(webhookEdits.length, edits + 1);
+    assert.equal(webhookEdits.at(-1).content, m.content.replace(/\n⏳ [^\n]*$/, `\n⛔ **Declined** <t:${Math.floor(st.at / 1000)}:f>`));
+    for (const action of ["approve", "decline", "decline-ask"]) assert.match(await (await approvePost(link, action)).text(), /Declined \d{4}-\d\d-\d\d \d\d:\d\d UTC\. Their FAFO shows these slots as Declined\./);
+    assert.match(await (await approvePost(apLink, "decline")).text(), /Approved \d{4}-\d\d-\d\d/, "an approved batch can't be declined");
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal(webhookEdits.length, edits + 1, "nothing edited again");
+    assert.deepEqual((await statusOf(frankKey, [batch, apBatch])), { [batch]: st, [apBatch]: (await statusOf(frankKey, [apBatch]))[apBatch] });
+    assert.equal((await statusOf(frankKey, [apBatch]))[apBatch].status, "approved");
+    const again = await (await slots("/submissions", frankKey, { files: [{ store: "Target", kind: "profiles", text: tgtCsv }], name: "Beta", slots: 1, batch })).json();
+    assert.equal(again.duplicate, true); assert.equal(again.review, "declined");
+  });
   await test("admin lists whether each batch is approved, with its Approve link", async () => {
     const d = await (await admin("/admin/submissions")).json();
     const s = d.submissions.find((x) => x.id === apBatch);
-    assert.equal(s.review, "approved"); assert.ok(s.approved_at > 0); assert.equal(s.review_url, apLink); assert.equal(s.review_token, undefined);
+    assert.equal(s.review, "approved"); assert.ok(s.decided_at > 0); assert.equal(s.review_url, apLink); assert.equal(s.review_token, undefined);
     assert.ok(d.submissions.every((x) => x.review_token === undefined));
   });
   console.log("\nAssigned accounts (app 1.9.58+)");
@@ -1456,6 +1482,23 @@ try {
     const d = await accounts();
     assert.deepEqual(d.stores.find((x) => x.store === "pokemoncenter"), { store: "pokemoncenter", total: 5, free: 5, sent: 0 });
     assert.ok(!d.given.some((a) => a.reused), "no reused rows left");
+  });
+  await test("declining a batch puts the accounts given to its slots back on the list, and drops its reused ones", async () => {
+    const tStock = async () => (await accounts()).stores.find((x) => x.store === "target");
+    const t0 = await tStock(), p0 = await pcStock(), before = webhookPosts.length;
+    const r = await (await slots("/submissions", hanaKey, { files: [tgFile(["Hana Q"]), pcFile(["Hana Q"])], name: "Hana", slots: 2, batch: "dcl" + rid(),
+      stores: [{ name: "Target", n: 1, seller: 1 }, { name: "Pokémon Center", n: 1, seller: 1 }] })).json();
+    assert.deepEqual(r.accounts, { Target: { asked: 1, got: 1 }, "Pokémon Center": { asked: 1, got: 1, reused: 1 } });
+    const g = await given();
+    assert.equal(g.length, 2, "the Target account, and its reuse at Pokémon Center");
+    // Usually 1 of the owner's own: the Pokémon Center one is a reuse, unless that email is on the Pokémon Center list too.
+    const own = g.filter((a) => !a.reused).length, n = `${own} account${own === 1 ? "" : "s"}`;
+    const link = approveLink(batchPost(before).content);
+    assert.match(await (await approvePost(link, "decline-ask")).text(), new RegExp(`The ${n} given to them go${own === 1 ? "es" : ""} back on your list\\.`));
+    assert.match(await (await approvePost(link, "decline")).text(), new RegExp(`Declined\\. Their FAFO now shows these slots as Declined\\. ${n} given to them ${own === 1 ? "is" : "are"} back on your list\\.`));
+    assert.deepEqual(await given(), []);
+    assert.deepEqual(await tStock(), t0); assert.deepEqual(await pcStock(), p0);
+    assert.ok(!(await accounts()).given.some((a) => a.reused), "no reused rows left");
   });
   console.log("\nTaking accounts off the list from FAFO (app 1.9.90+)");
   const removalLink = (content) => (content.match(/\((http[^)]+\/accounts\/removal\/[^)]+)\)/) || [])[1];

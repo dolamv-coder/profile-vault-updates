@@ -231,20 +231,22 @@ see the `="…"`, and FAFO's **Import** (1.9.68+) reads them as the text inside.
 > 📦 **6 slots** from **Kim** · @kim · license …ABCD
 > Target 3 · Walmart 3
 > Per store: its profiles as AYCD JSON (.json), with its logins (email:password, .txt) in the same order.
-> ⏳ **Pending your approval** · Approve
+> ⏳ **Pending your approval** · Approve or decline
 
-### Approving a batch
+### Approving or declining a batch
 
-Since 2026-10-06 (your request) each batch's message ends with **Pending your approval** and an
-**Approve** link (on the first message, when a batch needs more than one). The link opens a page with
-who sent it, how many slots per store and when, and an **Approve** button. Approving edits the message
-to **✅ Approved** with the time. Until you approve, the sender's FAFO (1.9.91 and later) shows those
-slots as **Pending approval**, and after it, as **Success**: FAFO asks this worker about every 30
-seconds while its Submit page is open, and every 5 minutes otherwise (`GET /submissions/status`,
-with the license key, only about that license's batches). Approving can't be undone, and there's no
-decline: a batch you don't approve stays pending. Slots sent before this, or from an older FAFO, show
-Submitted as they did. Each approval is kept 90 days. `/admin/submissions` shows whether each batch is
-approved, with its Approve link.
+Since 2026-10-06 (your requests) each batch's message ends with **Pending your approval** and an
+**Approve or decline** link (on the first message, when a batch needs more than one). The link opens a
+page with who sent it, how many slots per store and when, and **Approve** and **Decline** buttons.
+Approving edits the message to **✅ Approved** with the time. Declining asks once more (**Keep it
+waiting** goes back), then edits it to **⛔ Declined**, and any of your accounts given to that batch's
+slots go back on your list. Until you decide, the sender's FAFO (1.9.91 and later) shows those slots as
+**Pending approval**, then **Success**, or from 1.9.92 **Declined** (they can switch a declined slot off
+and on, and send it again in a new batch). FAFO asks this worker about every 30 seconds while its Submit
+page is open, and every 5 minutes otherwise (`GET /submissions/status`, with the license key, only about
+that license's batches). Neither decision can be undone, and a batch you don't decide on stays pending.
+Slots sent before this, or from an older FAFO, show Submitted as they did. Each decision is kept 90
+days. `/admin/submissions` shows each batch's (`review`, `decided_at`), with its review link.
 
 Slots without a store login come after the ones with logins and have no line in the logins file; one
 on a verified email only (Pokémon Center) has that account's email on its AYCD profile. Slots set to
