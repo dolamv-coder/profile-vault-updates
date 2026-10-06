@@ -1,7 +1,7 @@
 {
   "name": "profile-vault",
   "productName": "FAFO",
-  "version": "1.9.76",
+  "version": "1.9.92",
   "description": "FAFO: encrypted checkout profiles and order tracking",
   "main": "main.js",
   "author": "FAFO",
