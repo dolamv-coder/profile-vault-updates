@@ -499,6 +499,25 @@ which it tests against the sender's name too and hands back whatever the subject
 the app's subject check (`CLEAN_APP_PROTECT`) like relayed mail; the new `CLEAN_RULES_KEY` makes auto-clean look back 30
 days once. `subs` entries gain `declinedAt`, so the paused web version is unaffected.
 
+From 1.9.93 Store logins can be selected as on Cards (the owner's request): a tick on each login in every layout
+(`login-sel`, `loginPick`), Select all, and Shift+click for a range (`selRange`). The selection bar and the right-click
+menu on one of several selected (`loginContextMenu`) then move them to a group, edit them or delete them. Logins have groups:
+chips above the list, the sidebar under Store logins, a Group column in the List once there are groups, and a Group
+field in the login editor. The group menu (`groupKind("login")`, whose `add`/`remove` the other kinds now have too) renames
+or deletes one, with no Duplicate since a store takes each account once. While the web version is paused, groups are the
+shared setting `loginGroups` (`{id: {id, name}}`, merged per group like `genDrafts`), and a login's group is its `groupId`.
+Edit (`openLoginMassEdit`, `lmPlan`, `lmApply`, `lmUndo`) sets the group, name, password or inbox of every selected login,
+shows each as it will be, and has Undo. Delete (`deleteLogins`) takes them off their profiles, also with Undo.
+Clean emails also clears forwarded store newsletters. The desktop app reads the start of a forward whose subject isn't a
+sale, to protect forwarded orders, and Target's Magnolia newsletter came in a version opening "And... Wrangler's new drop
+has arrived", which it kept in the Inbox and in Spam (the owner's screenshots). `CLEAN_STORE_FROM` (a store's newsletter
+address: a marketing subdomain of a store the app knows, so not `orders@oe.target.com`) goes in `surveyFrom`, so the app
+hands that mail back, forwarded or not, and `applyCleanSafety` checks its original subject, with `CLEAN_APP_PROTECT` too.
+"Alert" no longer protects a plain sale (`CLEAN_WEAK`, for KOHL'S DEAL DAYS ALERT). Auto-clean's folders are its own
+setting (`autoClean.folder`, the Folders menu in its box, `AUTO_FOLDERS`). Until 1.9.93 the Folder menu above the scan set
+them too, so a Spam only scan left the owner's Inbox uncleaned. Changing them looks back 30 days on the next run.
+Logins gain `groupId` and settings gain `loginGroups`, so the paused web version is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
