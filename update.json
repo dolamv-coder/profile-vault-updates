@@ -1,10 +1,10 @@
 {
-  "version": "1.9.90",
-  "url": "index-1.9.90.html",
-  "sha256": "5a31f825312dadeee4cc7185f0cb6f5de204f6e5155572a0a50abc560fdc376c",
-  "signature": "gxd8STWMb09pMxK5sU+7TMODt91S7NUnl9Gh1iqXfh/LJelo9ZDqBye/3VAYlrq3cz0a/rnFuoNY10LMBb4hAw==",
+  "version": "1.9.91",
+  "url": "index-1.9.91.html",
+  "sha256": "9bcd4d95f7a201d701f690fdfcfe9ba4bb934c5c1ea82253e5c6eaa89884c249",
+  "signature": "64gDjcXjQfPAGlQab3Kls04jKxiB4hm9kFq5v0bpCPBoy3wTtQErfZBWU9Sq7odtqM5bcJ0aya9X8jeMbFK/Cg==",
   "minAppVersion": "0",
-  "notes": "Select several profiles, then right-click one (or use Mass edit on the selection bar) to change them all at once, with a preview before anything changes and Undo after. Pokémon Center's icon is now a Poké Ball.",
+  "notes": "Slots you submit now reach the seller as AYCD profile files. On the Submit page they show Pending approval until the seller approves them, then Success.",
   "installerUrl": "",
-  "publishedAt": "2026-10-06T06:25:56.579Z"
+  "publishedAt": "2026-10-06T16:37:57.515Z"
 }
