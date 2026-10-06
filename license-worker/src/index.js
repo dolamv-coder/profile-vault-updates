@@ -33,10 +33,11 @@
 //                              may carry `seller`: how many of its slots ask the owner to assign an
 //                              account. App 1.9.52 sends {csv, ...}, one .csv; older apps {code, keyId, ...},
 //                              a code encrypted to the collecting key, posted as a .txt. None is kept here.
-//                              Each batch's message has an Approve link for the owner (2026-10-06), and the
-//                              answer says {review: "pending"}.
-//   GET  /submissions/status?ids=A,B   {batches:{A:{status, at}}}: whether the owner has approved this license's
-//                              batches (pending | approved, and when); app 1.9.91+ shows Pending approval, then Success
+//                              Each batch's message has a link for the owner to approve or decline it (2026-10-06),
+//                              and the answer says {review: "pending"}.
+//   GET  /submissions/status?ids=A,B   {batches:{A:{status, at}}}: whether the owner has decided on this license's
+//                              batches (pending | approved | declined, and when); app 1.9.91+ shows Pending approval,
+//                              then Success (1.9.92+ also Declined)
 //   POST /pull                 {keyId, name, batch, slots}: slots pulled after being sent; posted to
 //                              DISCORD_WEBHOOK_URL as a plain list, only for keys (or "CSV") this license
 //                              sent submissions to
@@ -79,14 +80,14 @@
 //   GET/POST /review/DISCORD_ID?t=TOKEN   approve or deny one request (link posted to the webhook)
 //   GET/POST /slots/review/ID?t=TOKEN     approve (optionally a different number) or deny more slots
 //   GET/POST /submit/review/ID?t=TOKEN    confirm or refuse a collecting key
-//   GET/POST /submissions/review/ID?t=TOKEN  approve a batch of slots (link on its message)
+//   GET/POST /submissions/review/ID?t=TOKEN  approve or decline a batch of slots (link on its message)
 //   GET/POST /accounts/review/ID?t=TOKEN  add or refuse accounts sent for Use Assigned Account
 //   GET/POST /accounts/removal/ID?t=TOKEN remove accounts from the list, or keep them
 //   GET/POST /alerts/review/ID?t=TOKEN    allow or refuse a license sending order alerts to buyers
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/applications   every request and decision
-//   GET  /admin/submissions    collecting keys (with review links), submissions sent (whether approved, with their
-//                              Approve links) and slots pulled
+//   GET  /admin/submissions    collecting keys (with review links), submissions sent (whether approved or declined,
+//                              with their review links) and slots pulled
 //   POST /admin/revoke         {discord_id} or {key}: the app locks on its next check
 //   POST /admin/restore        {discord_id} or {key}
 //   GET  /admin/accounts       the account list: free and given out per store, who got which, offers
@@ -943,13 +944,17 @@ async function submission(request, env, url) {
   return json({ ok: true, id: s.id, ...(reviewed ? { review: "pending" } : {}), ...(picks.size ? { accounts: Object.fromEntries(picks) } : {}) });
 }
 
-// The owner approves each batch from its message (the owner's request, 2026-10-06): app 1.9.91+ shows the buyer
-// Pending approval until then, and Success after (it asks GET /submissions/status). Kept 90 days.
+// The owner approves or declines each batch from its message (the owner's requests, 2026-10-06): app 1.9.91+ shows the
+// buyer Pending approval until then, and Success after (1.9.92+ also Declined); it asks GET /submissions/status.
+// Either decision is final. Declining asks once more first, and puts the accounts given to the batch's slots back on the
+// owner's list. Kept 90 days.
 const SUBMISSION_REVIEW_KEEP_MS = 90 * 86400000;
-// A batch's message as posted, with a last line saying whether the owner has approved it.
+// A batch's message as posted, with a last line saying whether the owner has approved or declined it.
 function submissionMessage(origin, r) {
-  return r.status === "approved" ? `${r.content}\n✅ **Approved** <t:${Math.floor(r.decided_at / 1000)}:f>`
-    : `${r.content}\n⏳ **Pending your approval** · [Approve](${origin}/submissions/review/${r.id}?t=${r.review_token})`;
+  const at = () => `<t:${Math.floor(r.decided_at / 1000)}:f>`;
+  return r.status === "approved" ? `${r.content}\n✅ **Approved** ${at()}`
+    : r.status === "declined" ? `${r.content}\n⛔ **Declined** ${at()}`
+    : `${r.content}\n⏳ **Pending your approval** · [Approve or decline](${origin}/submissions/review/${r.id}?t=${r.review_token})`;
 }
 
 async function submissionReview(request, env, ctx, url, id) {
@@ -964,31 +969,49 @@ async function submissionReview(request, env, ctx, url, id) {
     return page(405, "Not allowed", "");
   }
   if (!r || !(await sameText(t, r.review_token))) return page(404, "Slots not found", "This review link isn't valid.");
-  let done = "";
-  if (r.status === "pending" && action === "approve") {
-    const now = Date.now();
-    // Its message is no longer needed once it's marked approved.
-    const res = await env.DB.prepare("UPDATE submission_reviews SET status = 'approved', decided_at = ?, content = '' WHERE id = ? AND status = 'pending'").bind(now, r.id).run();
+  // Accounts from the owner's list given to this batch's slots (Use Assigned Account), which declining puts back.
+  const given = async () => (await env.DB.prepare(`SELECT store FROM accounts WHERE key_hash = ? AND batch = ? AND ${OWN_ACCOUNT}`).bind(r.key_hash, r.id).all()).results;
+  let done = "", asking = false;
+  if (r.status === "pending" && (action === "approve" || action === "decline")) {
+    const now = Date.now(), status = action === "approve" ? "approved" : "declined";
+    const back = status === "declined" ? await given() : [];
+    // Its message is no longer needed once it's marked.
+    const res = await env.DB.prepare("UPDATE submission_reviews SET status = ?, decided_at = ?, content = '' WHERE id = ? AND status = 'pending'").bind(status, now, r.id).run();
     if (res.meta && res.meta.changes) {
-      if (r.webhook_message_id) ctx.waitUntil(webhookEdit(env, r.webhook_message_id, { content: submissionMessage(url.origin, { ...r, status: "approved", decided_at: now }) }).catch(() => {}));
-      done = "Approved. Their FAFO now shows these slots as Success.";
+      if (r.webhook_message_id) ctx.waitUntil(webhookEdit(env, r.webhook_message_id, { content: submissionMessage(url.origin, { ...r, status, decided_at: now }) }).catch(() => {}));
+      if (status === "declined" && back.length) {
+        await freeAccounts(env, "key_hash = ? AND batch = ?", r.key_hash, r.id);
+        for (const st of new Set(back.map((a) => a.store))) await stockCheck(env, st, accountStoreName(st), false);
+      }
+      done = status === "approved" ? "Approved. Their FAFO now shows these slots as Success."
+        : `Declined. Their FAFO now shows these slots as Declined.${back.length ? ` ${back.length} account${back.length === 1 ? "" : "s"} given to them ${back.length === 1 ? "is" : "are"} back on your list.` : ""}`;
     }
     Object.assign(r, await env.DB.prepare("SELECT status, decided_at FROM submission_reviews WHERE id = ?").bind(r.id).first());
-  }
+  } else if (r.status === "pending" && action === "decline-ask") asking = true;
   const when = (ms) => new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC";
-  const label = r.status === "approved" ? `Approved ${when(r.decided_at)}. Their FAFO shows these slots as Success.` : "Waiting for you.";
+  const label = r.status === "approved" ? `Approved ${when(r.decided_at)}. Their FAFO shows these slots as Success.`
+    : r.status === "declined" ? `Declined ${when(r.decided_at)}. Their FAFO shows these slots as Declined.` : "Waiting for you.";
   const who = [r.name, r.username ? "@" + r.username : "", "license …" + r.key_last4].filter(Boolean).join(" · ");
   const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  const btn = (a, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${a}">${esc(text)}</button></form>`;
+  const n = r.status === "pending" ? (await given()).length : 0;
+  const head = `<p class="who">${r.slots} slot${r.slots === 1 ? "" : "s"}${r.name ? ` from ${esc(r.name)}` : ""}</p>
+     ${r.stores ? `<p class="small" style="margin-top:8px">${esc(r.stores)}</p>` : ""}`;
+  const sent = `<p class="small">Sent by ${esc(who)}, ${esc(when(r.created_at))}</p>`;
+  if (asking) return page(200, "Decline these slots?", "",
+    `${head}
+     <p class="small">Their FAFO will show these slots as Declined, and they can send them again.${n ? ` The ${n} account${n === 1 ? "" : "s"} given to them go${n === 1 ? "es" : ""} back on your list.` : ""} This can't be undone.</p>
+     ${sent}
+     <div class="row">${btn("decline", "Decline", "no")}<form method="get"><input type="hidden" name="t" value="${esc(t)}"><button class="copy" style="width:100%;padding:12px;font-size:16px" type="submit">Keep it waiting</button></form></div>`);
   return page(200, "Submitted slots", done || label,
-    `<p class="who">${r.slots} slot${r.slots === 1 ? "" : "s"}${r.name ? ` from ${esc(r.name)}` : ""}</p>
-     ${r.stores ? `<p class="small" style="margin-top:8px">${esc(r.stores)}</p>` : ""}
-     ${r.status === "pending" ? `<p class="small">Approve once you have their files in your channel. Until then their FAFO shows these slots as Pending approval, and after, as Success.</p>` : ""}
-     <p class="small">Sent by ${esc(who)}, ${esc(when(r.created_at))}</p>
-     ${r.status === "pending" ? `<div class="row"><form method="post">${hidden}<button class="ok" type="submit" name="action" value="approve">Approve</button></form></div>` : ""}`);
+    `${head}
+     ${r.status === "pending" ? `<p class="small">Approve once you have their files in your channel. Until then their FAFO shows these slots as Pending approval, and after, as Success. If you decline, it shows them as Declined.</p>` : ""}
+     ${sent}
+     ${r.status === "pending" ? `<div class="row">${btn("approve", "Approve", "ok")}${btn("decline-ask", "Decline", "no")}</div>` : ""}`);
 }
 
-// The owner's decision on batches this license sent: {batches: {id: {status: "pending" | "approved", at}}}, leaving out
-// ids it didn't send or sent before approvals began. `at` is when it was approved.
+// The owner's decision on batches this license sent: {batches: {id: {status: "pending" | "approved" | "declined", at}}},
+// leaving out ids it didn't send or sent before approvals began. `at` is when it was decided.
 async function submissionStatus(request, env, url) {
   const lic = await slotLicense(request, env);
   if (!lic) return json({ error: "license not recognized" }, 401);
@@ -997,7 +1020,7 @@ async function submissionStatus(request, env, url) {
   if (ids.length) {
     const { results } = await env.DB.prepare("SELECT id, status, decided_at FROM submission_reviews WHERE key_hash = ? AND id IN (SELECT value FROM json_each(?))")
       .bind(lic.hash, JSON.stringify(ids)).all();
-    for (const x of results) batches[x.id] = x.status === "approved" ? { status: "approved", at: x.decided_at } : { status: x.status };
+    for (const x of results) batches[x.id] = x.status === "pending" ? { status: "pending" } : { status: x.status, at: x.decided_at };
   }
   return json({ batches }, 200, { "cache-control": "no-store" });
 }
@@ -1898,7 +1921,7 @@ async function admin(request, env, path) {
     const origin = new URL(request.url).origin;
     const [keys, subs, pulls] = await env.DB.batch([
       env.DB.prepare("SELECT * FROM submit_keys ORDER BY created_at DESC LIMIT 50"),
-      env.DB.prepare(`SELECT s.id, s.key_last4, s.name, s.username, s.slots, s.bytes, s.key_id, s.created_at, r.status AS review, r.decided_at AS approved_at, r.review_token
+      env.DB.prepare(`SELECT s.id, s.key_last4, s.name, s.username, s.slots, s.bytes, s.key_id, s.created_at, r.status AS review, r.decided_at, r.review_token
         FROM submissions s LEFT JOIN submission_reviews r ON r.id = s.id ORDER BY s.created_at DESC LIMIT 200`),
       env.DB.prepare("SELECT id, key_last4, name, username, slots, key_id, created_at FROM pulls ORDER BY created_at DESC LIMIT 200"),
     ]);

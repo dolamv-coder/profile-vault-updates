@@ -1,0 +1,1 @@
+If the seller declines slots you submitted, the Submit page now shows them as Declined: switch one off and on again to send it again. Clean emails also clears Target Circle Deal Days emails that got past it.

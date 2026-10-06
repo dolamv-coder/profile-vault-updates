@@ -62,15 +62,17 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   dropped the CSV: the channel gets each store's AYCD list and its logins file only. The app still sends the CSV,
   which the worker reads to give out accounts and, for apps before 1.9.87, to make the AYCD list, and 1.9.91 says
   "AYCD files" where the app said "CSV files" (the Submit page and window, Send somewhere else, the seller's Discord note).
-  Since 2026-10-06 (the owner's request) the owner approves each batch: its message (the first, when there are
-  several) ends with **Pending your approval · Approve**, a link to `/submissions/review/:id?t=…` (D1
-  `submission_reviews`, kept 90 days; its own table, since `db:init` can't add columns), whose Approve button edits
-  the message to **✅ Approved** with the time. There's no decline and no undo. `/submissions` answers
-  `review: "pending"`, and app 1.9.91+ keeps the batch id on each slot it sent that way (`S.subs[key].batch`), shows
-  **Pending approval** until `GET /submissions/status?ids=` (license Bearer, that license's batches only) says
-  approved, then **Success** (`okAt`) with a message (`refreshApprovals`: about every 30 seconds with Submit in front,
-  otherwise every 5 minutes). Slots sent before, through a worker that doesn't answer `review`, or as a code show
-  Submitted as before.
+  Since 2026-10-06 (the owner's requests) the owner approves or declines each batch: its message (the first, when there
+  are several) ends with **Pending your approval · Approve or decline**, a link to `/submissions/review/:id?t=…` (D1
+  `submission_reviews`, kept 90 days; its own table, since `db:init` can't add columns). Approve edits the message to
+  **✅ Approved** with the time; Decline asks once more (`decline-ask`, with Keep it waiting), then edits it to
+  **⛔ Declined** and puts the accounts given to that batch's slots back on the list (`freeAccounts` by batch, which
+  drops its reused ones). Either decision is final. `/submissions` answers `review: "pending"`, and app 1.9.91+ keeps
+  the batch id on each slot it sent that way (`S.subs[key].batch`), shows **Pending approval** until
+  `GET /submissions/status?ids=` (license Bearer, that license's batches only) says approved, then **Success** (`okAt`)
+  with a message (`refreshApprovals`: about every 30 seconds with Submit in front, otherwise every 5 minutes); 1.9.92+
+  also shows **Declined** (`declinedAt`). 1.9.91 keeps a declined batch at Pending approval. Slots sent before, through a
+  worker that doesn't answer `review`, or as a code show Submitted as before.
   The owner opened these in Excel (since the change above, only 1.9.52's single CSV is still posted), which shows a 16-digit card number as 5.55556E+15 (keeping only 15
   digits) and drops leading zeros. So since 2026-10-02 the worker writes each slots CSV's phone, card
   number, expiry month, CVV and zip code cells as `="…"` Excel text (`excelSafe`), and does the same
@@ -485,6 +487,17 @@ From 1.9.91 Submit shows whether the seller has approved each batch sent to thei
 **Pending approval** with a clock (`.pill-wait`), then **Success** with a check, also counted in the store's chips and
 the Submitted stat (`subState`). The channel gets each store's AYCD list and logins only, and the app says "AYCD files".
 Submitted slots (`subs` entries) gain `batch` and `okAt`, which the paused web version keeps and shows as Submitted.
+
+From 1.9.92 a batch the seller declines (the worker section above) shows **Declined** with an x (`.pill-no`, `declinedAt`,
+`subState` "no"), counted in the store's chips and the Submitted stat, with a note in the store and a message. Switching a
+declined slot off (or Deselect all, or swapping it out at the cap) clears it without asking and without a `/pull`
+(`clearDeclined`; `pullSlots` never tells the seller about one), and switched on again it goes out in a new batch. Clean
+emails also catches mail from senders named for a sale event (`CLEAN_SALE_FROM`: "Deal Days", "Circle Week"), the owner's
+screenshot of a dozen "Target Circle Deal Days is here 🔥" at once: copies from ordinary-looking addresses with no
+newsletter headers reached the Inbox unfound (Spam already cleared them). It goes to the desktop app in `surveyFrom`,
+which it tests against the sender's name too and hands back whatever the subject says, so `applyCleanSafety` gives those
+the app's subject check (`CLEAN_APP_PROTECT`) like relayed mail; the new `CLEAN_RULES_KEY` makes auto-clean look back 30
+days once. `subs` entries gain `declinedAt`, so the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
