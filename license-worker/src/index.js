@@ -39,6 +39,8 @@
 //   POST /accounts/offer       {store, storeName, name, accounts:[{email, password}]}: accounts sent from
 //                              the owner's Orbit, added to the list once the owner approves them in Discord.
 //                              A batch in /submissions then gets one per such slot (see assignAccounts).
+//   POST /accounts/remove      {emails, name} (app 1.9.90+): emails to take off the list, from every store's,
+//                              once the owner confirms it from the review link posted to Discord
 // Order alerts (app 1.9.69+): buyers hear about orders placed on the accounts they were given.
 //   GET  /alerts/sender        {status}: none | pending | allowed | refused, for this license
 //   POST /alerts/sender        {name}: ask to send order alerts; the owner allows it from the review link
@@ -73,6 +75,7 @@
 //   GET/POST /slots/review/ID?t=TOKEN     approve (optionally a different number) or deny more slots
 //   GET/POST /submit/review/ID?t=TOKEN    confirm or refuse a collecting key
 //   GET/POST /accounts/review/ID?t=TOKEN  add or refuse accounts sent for Use Assigned Account
+//   GET/POST /accounts/removal/ID?t=TOKEN remove accounts from the list, or keep them
 //   GET/POST /alerts/review/ID?t=TOKEN    allow or refuse a license sending order alerts to buyers
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/applications   every request and decision
@@ -133,6 +136,8 @@ export default {
       if (path === "/pull" && request.method === "POST") return await pull(request, env, ctx);
       if (path === "/accounts/offer" && request.method === "POST") return await accountOffer(request, env, ctx, url);
       if (path.startsWith("/accounts/review/")) return await accountReview(request, env, ctx, url, path.slice("/accounts/review/".length));
+      if (path === "/accounts/remove" && request.method === "POST") return await accountRemove(request, env, ctx, url);
+      if (path.startsWith("/accounts/removal/")) return await accountRemovalReview(request, env, ctx, url, path.slice("/accounts/removal/".length));
       if (path === "/alerts/sender" && request.method === "GET") return await alertSenderGet(request, env);
       if (path === "/alerts/sender" && request.method === "POST") return await alertSenderPost(request, env, ctx, url);
       if (path.startsWith("/alerts/review/")) return await alertSenderReview(request, env, ctx, url, path.slice("/alerts/review/".length));
@@ -1226,6 +1231,111 @@ async function accountReview(request, env, ctx, url, id) {
      ${cur.status === "pending" ? `<div class="row">${btn("add", "Add to my list", "ok")}${btn("refuse", "Refuse", "no")}</div>` : ""}`);
 }
 
+// Accounts come off the list the same way (app 1.9.90+, the owner's request): FAFO sends the emails, the channel
+// gets the count and a review link (never the emails), and the owner removes them there, from every store's list
+// they're on. One already given to a buyer's slot goes too, so order alerts on it stop reaching them; the review
+// page says where each one is first. Asking is limited like offers, and an ask nobody decided on expires.
+const ACCOUNT_REMOVALS_PER_DAY = 5;
+const expireRemovals = (env, now) => env.DB.prepare("UPDATE account_removals SET status = 'expired', emails = '[]', decided_at = ? WHERE status = 'pending' AND created_at < ?")
+  .bind(now, now - offerTtlMs(env)).run();
+const ACCOUNT_STORE_NAMES = { target: "Target", walmart: "Walmart", bestbuy: "Best Buy", amazon: "Amazon", gamestop: "GameStop", pokemoncenter: "Pokémon Center", costco: "Costco", samsclub: "Sam's Club", nike: "Nike" };
+const accountStoreName = (k) => ACCOUNT_STORE_NAMES[k] || String(k).replace(/^other:/, "");
+
+async function accountRemove(request, env, ctx, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  if (!env.DISCORD_WEBHOOK_URL) return json({ error: "the Discord channel isn't set up" }, 503);
+  const text = await request.text();
+  if (text.length > 200_000) return json({ error: "too large" }, 413);
+  let b; try { b = JSON.parse(text) || {}; } catch { b = {}; }
+  const emails = [...new Set((Array.isArray(b.emails) ? b.emails : []).map((e) => String(e || "").trim().toLowerCase()))];
+  if (!emails.length || emails.length > ACCOUNT_OFFER_MAX || emails.some((e) => e.length > 120 || !/^[^\s@:]+@[^\s@:]+\.[^\s@:]+$/.test(e))) return json({ error: "emails" }, 400);
+  const now = Date.now();
+  ctx.waitUntil(expireRemovals(env, now).catch((e) => console.error("removals", e)));
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM account_removals WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 86400000).first();
+  if (recent && recent.n >= ACCOUNT_REMOVALS_PER_DAY) return json({ error: "too many tries today" }, 429);
+  const o = {
+    id: randomId(12), count: emails.length, key_hash: lic.hash, key_last4: lic.last4,
+    name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60), username: lic.username,
+    status: "pending", review_token: randomId(24), created_at: now,
+  };
+  await env.DB.prepare(
+    `INSERT INTO account_removals (id, emails, count, key_hash, key_last4, name, username, status, review_token, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+  ).bind(o.id, JSON.stringify(emails), o.count, o.key_hash, o.key_last4, o.name, o.username, o.review_token, o.created_at).run();
+  ctx.waitUntil((async () => {
+    const id = await webhookPost(env, { content: removalMessage(url.origin, o) });
+    if (id) await env.DB.prepare("UPDATE account_removals SET webhook_message_id = ? WHERE id = ?").bind(id, o.id).run();
+  })().catch((e) => console.error("webhook", e)));
+  return json({ status: "pending", count: o.count });
+}
+
+// As with offers, only the count goes to the channel; the emails are on the review page.
+function removalMessage(origin, o) {
+  const who = [o.name ? `**${md(o.name)}**` : "", o.username ? `@${md(o.username)}` : "", `license …${o.key_last4}`].filter(Boolean).join(" · ");
+  const link = `${origin}/accounts/removal/${o.id}?t=${o.review_token}`;
+  const n = (k) => `${k} account${k === 1 ? "" : "s"}`;
+  const head = o.status === "removed" ? `🗑️ **Took ${n(o.removed || 0)} off your list** for Use Assigned Account`
+    : o.status === "kept" ? `↩️ **Kept ${n(o.count)}** on your list` : o.status === "expired" ? `⌛ **Removing ${n(o.count)} expired** before you decided`
+    : `🗑️ **Take ${n(o.count)} off your list for Use Assigned Account?**`;
+  return `${head}\nAsked by ${who}${o.status === "pending" ? `\n[Review: remove or keep](${link})` : ""}`;
+}
+
+async function accountRemovalReview(request, env, ctx, url, id) {
+  const o = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM account_removals WHERE id = ?").bind(id).first() : null;
+  let t = url.searchParams.get("t") || "", action = "";
+  if (request.method === "POST") {
+    const form = await request.formData().catch(() => null);
+    t = form && String(form.get("t") || "") || t;
+    action = form && String(form.get("action") || "");
+  } else if (request.method !== "GET") {
+    return page(405, "Not allowed", "");
+  }
+  if (!o || !(await sameText(t, o.review_token))) return page(404, "Not found", "This review link isn't valid.");
+  let done = "";
+  const now = Date.now();
+  if (o.status === "pending" && o.created_at < now - offerTtlMs(env)) { await expireRemovals(env, now); o.status = "expired"; }
+  const list = o.status === "pending" ? JSON.parse(o.emails || "[]") : [];
+  // Where each email is on the list now (a store's list each), to show before deciding.
+  const where = new Map();
+  for (let i = 0; i < list.length; i += 100) {
+    const res = await env.DB.batch(list.slice(i, i + 100).map((e) => env.DB.prepare("SELECT store, key_hash, key_last4, profile, sent_at FROM accounts WHERE email_norm = ? ORDER BY store").bind(e)));
+    res.forEach((r, k) => where.set(list[i + k], r.results || []));
+  }
+  if (o.status === "pending" && action === "remove") {
+    let removed = 0;
+    const stores = new Set();
+    for (let i = 0; i < list.length; i += 100) {
+      const res = await env.DB.batch(list.slice(i, i + 100).map((e) => env.DB.prepare("DELETE FROM accounts WHERE email_norm = ?").bind(e)));
+      res.forEach((r, k) => { if (r.meta && r.meta.changes) { removed++; (where.get(list[i + k]) || []).forEach((a) => stores.add(a.store)); } });
+    }
+    await env.DB.prepare("UPDATE account_removals SET status = 'removed', removed = ?, emails = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(removed, now, o.id).run();
+    for (const st of stores) await stockCheck(env, st, accountStoreName(st), false);
+    const left = list.length - removed;
+    done = `Took ${removed} off your list.${left ? ` ${left} ${left === 1 ? "wasn't" : "weren't"} on it.` : ""}`;
+  } else if (o.status === "pending" && action === "keep") {
+    await env.DB.prepare("UPDATE account_removals SET status = 'kept', emails = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(now, o.id).run();
+    done = "Kept. Nothing was removed.";
+  }
+  const cur = await env.DB.prepare("SELECT * FROM account_removals WHERE id = ?").bind(o.id).first();
+  if (done && cur.webhook_message_id) ctx.waitUntil(webhookEdit(env, cur.webhook_message_id, { content: removalMessage(url.origin, cur) }).catch(() => {}));
+  const label = { pending: "Waiting for you", removed: `Took ${cur.removed} off your list`, kept: "Kept. Nothing was removed.", expired: "Expired before you decided. Ask again from FAFO." }[cur.status] || cur.status;
+  const who = [cur.name, cur.username ? "@" + cur.username : "", "license …" + cur.key_last4].filter(Boolean).join(" · ");
+  const pending = cur.status === "pending";
+  const spot = (a) => `${esc(accountStoreName(a.store))}: ${!a.key_hash ? "free" : `given to license …${esc(a.key_last4 || "")}${a.profile ? ` for ${esc(a.profile)}` : ""}${a.sent_at ? "" : ", in a batch being sent"}`}`;
+  const line = (e) => { const rows = where.get(e) || []; return `<strong>${esc(e)}</strong>: ${rows.length ? rows.map(spot).join("; ") : "not on your list"}`; };
+  const given = pending && list.some((e) => (where.get(e) || []).some((a) => a.key_hash));
+  const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  const btn = (a, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${a}">${esc(text)}</button></form>`;
+  return page(200, "Remove accounts", done || label,
+    `<p class="who">${cur.count} account${cur.count === 1 ? "" : "s"} to take off your list for Use Assigned Account</p>
+     ${pending ? `<p class="small"><strong>Only remove these if you asked</strong> from your own FAFO (Settings → Accounts to assign). Each comes off every store's list it's on, and no more slots get it.</p>
+       <p class="small">${list.slice(0, 50).map(line).join("<br>")}${list.length > 50 ? `<br>and ${list.length - 50} more` : ""}</p>` : ""}
+     ${given ? `<p class="small">One given to a buyer's slot stops reporting its orders to them once it's removed.</p>` : ""}
+     <p class="small">Asked by ${esc(who)}, ${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC</p>
+     ${pending ? `<div class="row">${btn("remove", "Remove from my list", "no")}${btn("keep", "Keep them", "ok")}</div>` : ""}`);
+}
+
 // ---- order alerts ----------------------------------------------------------------------
 //
 // Buyers hear about orders placed on the accounts they were given (app 1.9.69+). The owner's Orbit
@@ -1719,14 +1829,16 @@ async function admin(request, env, path) {
   }
   if (request.method === "GET" && path === "/admin/accounts") {
     const origin = new URL(request.url).origin;
-    const [stores, given, offers] = await env.DB.batch([
+    const [stores, given, offers, removals] = await env.DB.batch([
       env.DB.prepare(`SELECT store, COUNT(*) AS total, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free,
         SUM(CASE WHEN sent_at IS NOT NULL THEN 1 ELSE 0 END) AS sent FROM accounts WHERE ${OWN_ACCOUNT} GROUP BY store ORDER BY store`),
       env.DB.prepare(`SELECT store, email, key_last4, store_name, profile, assigned_at, sent_at, NOT (${OWN_ACCOUNT}) AS reused FROM accounts WHERE key_hash IS NOT NULL ORDER BY assigned_at DESC LIMIT 500`),
       env.DB.prepare("SELECT id, store, store_name, count, key_last4, name, username, status, added, created_at, decided_at, review_token FROM account_offers ORDER BY created_at DESC LIMIT 50"),
+      env.DB.prepare("SELECT id, count, key_last4, name, username, status, removed, created_at, decided_at, review_token FROM account_removals ORDER BY created_at DESC LIMIT 50"),
     ]);
     return json({ limit: assignLimit(env), stores: stores.results, given: given.results,
-      offers: offers.results.map(({ review_token, ...o }) => ({ ...o, review_url: `${origin}/accounts/review/${o.id}?t=${review_token}` })) });
+      offers: offers.results.map(({ review_token, ...o }) => ({ ...o, review_url: `${origin}/accounts/review/${o.id}?t=${review_token}` })),
+      removals: removals.results.map(({ review_token, ...o }) => ({ ...o, review_url: `${origin}/accounts/removal/${o.id}?t=${review_token}` })) });
   }
   // {email} (with {store} if it's on more than one store's list), or free: {key} for every account a license has.
   if (request.method === "POST" && (path === "/admin/accounts/free" || path === "/admin/accounts/remove")) {

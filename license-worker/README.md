@@ -343,6 +343,14 @@ list you keep here:
   `ASSIGNED_LIMIT` or join your Pokémon Center list (`/admin/accounts` shows it with `reused: 1`). If
   that email is on your Pokémon Center list too, the account from the list is used, with its own
   password, unless another buyer has it; then the slot gets a free account as usual.
+- **Taking accounts off the list** (FAFO 1.9.90+): in your FAFO, **Settings → Accounts to assign →
+  Remove accounts**, paste the emails (one per line; `email:password` lines work too, and only the
+  email is sent) and choose **Ask to remove**. Your channel gets the count and a review link, never
+  the emails; the review page shows where each one is (free, or given to which license and profile)
+  and **Remove from my list** takes each off every store's list it's on. One already given to a
+  buyer's slot goes too, so order alerts on it stop reaching them. **Keep them** removes nothing, and
+  an ask nobody decided on expires after a week. Anyone with a license can ask, but only you can
+  confirm, so only remove ones you asked for. The `/admin/accounts/remove` command below still works.
 - **Each license can be given `ASSIGNED_LIMIT` accounts in all** (10; change it in `[vars]` in
   `wrangler.toml`). Slots past that, or past the end of the list, come last with no login line, and
   the store line says "(1 needs an account)" so you can assign those by hand.
@@ -352,8 +360,8 @@ list you keep here:
   number in `[vars]` in `wrangler.toml`.
 - **Pulling** such a slot names the account it had: "Target · Kim Lee · acct7@example.com (assigned
   account)".
-- The list, the waiting offers and those alerts are in the `accounts`, `account_offers` and
-  `account_stock` tables, which
+- The list, the waiting offers, asks to remove and those alerts are in the `accounts`, `account_offers`,
+  `account_removals` and `account_stock` tables, which
   `npm run db:init` (and the deploy Action) adds. With `ADMIN_TOKEN` set:
 
 ```

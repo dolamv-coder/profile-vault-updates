@@ -8138,6 +8138,42 @@ function openAssignAccounts(){
     }
   });
 }
+// Taking accounts off the list (1.9.90+, the owner's request): the emails go to the license worker, which posts a link
+// to the seller's Discord channel, as for adding; they come off every store's list once the seller confirms there.
+function openRemoveAccounts(){
+  openLayer({
+    title:"Remove accounts", dismiss:false,
+    body:`<p style="margin:0 0 16px;color:var(--ink-2)">Takes accounts off your list for <strong style="color:var(--ink)">Use Assigned Account</strong>, from every store's list they're on, so no more slots get them. Your Discord channel gets a link to confirm it, as when you add them. One already given to a buyer's slot stops reporting its orders to them.</p>
+    <div class="form-grid">
+      <div class="field c6" data-field="ra_lines"><label for="ra-lines">Emails</label><textarea id="ra-lines" spellcheck="false" autocomplete="off" style="min-height:150px" placeholder="One email per line. email:password lines work too; only the email is sent."></textarea><span class="err"></span></div>
+    </div>
+    <div id="ra-sum"></div>`,
+    foot:`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="ra-go" disabled>Ask to remove</button>`,
+    mount:(panel, close) => {
+      const ta = $("#ra-lines", panel), go = $("#ra-go", panel), sum = $("#ra-sum", panel), MAX = 1000;
+      let list = [];
+      const read = () => {
+        const em = genEmails(ta.value.replace(/"/g, " ")), over = em.list.length > MAX;   // the first word of each line
+        list = over ? [] : em.list;
+        sum.innerHTML = em.list.length || em.bad.length ? `<div class="note ${em.bad.length || over ? "note-warn" : ""}" style="margin-top:14px"><strong style="color:var(--ink)">${em.list.length ? `${plural(em.list.length, "email")} to remove` : "No emails yet"}</strong>
+          ${em.bad.length || em.dup || over ? `<ul class="summary-list">${over ? `<li style="color:var(--ink)">Send up to ${MAX.toLocaleString()} at a time</li>` : ""}${em.bad.length ? `<li style="color:var(--ink)">${plural(em.bad.length, "line")} ${em.bad.length === 1 ? "isn't an email and won't" : "aren't emails and won't"} be sent</li>` : ""}${em.dup ? `<li>${plural(em.dup, "repeated email")} sent once</li>` : ""}</ul>` : ""}</div>` : "";
+        go.disabled = !list.length;
+        go.textContent = list.length ? `Ask to remove ${plural(list.length, "account")}` : "Ask to remove";
+      };
+      ta.addEventListener("input", read); read();
+      go.addEventListener("click", async () => {
+        if (!list.length) return;
+        go.disabled = true; go.textContent = "Sending…";
+        let r, j = {};
+        try { r = await fetch(LICENSE_RELAY + "/accounts/remove", {method:"POST", headers:{authorization:"Bearer " + (licRead() || {}).key, "content-type":"application/json"}, body:JSON.stringify({name:S.submitName || "", emails:list})}); j = await r.json().catch(() => ({})); }
+        catch(e){ read(); toast("Couldn't reach the license server. Check your connection and try again.", "err"); return; }
+        if (!r.ok){ read(); toast(r.status === 503 ? "The Discord channel isn't set up on the license server yet." : r.status === 429 ? "Too many tries today. Try again tomorrow." : r.status === 401 ? "Your license wasn't recognized." : r.status === 404 ? "The license server can't do this yet. Try again later." : "The license server didn't accept these emails.", "err"); return; }
+        close();
+        toast(`Asked to remove ${plural(j.count || list.length, "account")}. Confirm it from the link in your Discord channel.`);
+      });
+    }
+  });
+}
 
 /* ================= SETTINGS / BACKUP ================= */
 function openSettings(){
@@ -12208,7 +12244,7 @@ function renderSettingsView(){
           <div class="set-eyebrow">Selling</div>
           <h2 class="set-title">Accounts to assign</h2>
           <p class="set-lead">Slots set to Use Assigned Account get one of your own store accounts when they reach your Discord channel: its email in the slot's row and email:password in the logins file. Buyers never see which, and each account goes to one slot only.</p>
-          <div class="set-actions"><button class="btn" data-act="assign-accounts">${ic("plus")}Send accounts</button></div>
+          <div class="set-actions"><button class="btn" data-act="assign-accounts">${ic("plus")}Send accounts</button><button class="btn" data-act="remove-accounts">${ic("trash")}Remove accounts</button></div>
         </section>` : ""}
         ${licRead() && DESK ? `<section id="s-oalerts" class="set-sec">${orderAlertsSectionHTML()}</section>` : ""}
         ${CAN_UPDATE ? `<section id="s-updates" class="set-sec">${updatesSectionHTML()}</section>` : ""}
@@ -13411,6 +13447,7 @@ document.addEventListener("click", async (e) => {
     case "settings": UI.view = "settings-view"; UI.q = ""; { const q = $("#q"); if (q) q.value = ""; } render(); window.scrollTo(0, 0); break;
     case "settings-more": openSettings(); break;
     case "assign-accounts": openAssignAccounts(); break;
+    case "remove-accounts": openRemoveAccounts(); break;
     case "oa-on": turnOnOrderAlerts(); break;
     case "oa-check": refreshAlertSender().then(st => { if (st === "allowed"){ OALERT.accounts = null; reportOrderAlerts(); } }); break;
     case "oa-off": S.settings.orderAlerts = Object.assign({}, S.settings.orderAlerts, {on:false}); persist(); { const sec = $("#s-oalerts"); if (sec) sec.innerHTML = orderAlertsSectionHTML(); } toast("Order alerts for buyers are off"); break;

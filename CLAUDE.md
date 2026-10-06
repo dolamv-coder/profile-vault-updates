@@ -96,6 +96,10 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   Pokémon Center row with `offer_id` `reuse:target`, which `freeAccounts` deletes where others are freed and
   `OWN_ACCOUNT` leaves out of stock counts and the limit; an offered account with that email takes it over. If the
   email is on the Pokémon Center list too, that account is used (with its password) unless another license has it.
+  From 1.9.90 the owner can take accounts off the list from FAFO (Settings → Accounts to assign → Remove accounts,
+  `openRemoveAccounts`): `POST /accounts/remove {emails, name}` posts the count and a review link (never the emails,
+  D1 `account_removals`), and `/accounts/removal/:id` shows where each email is and removes it from every store's
+  list (given ones too) or keeps them; asks expire like offers.
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
   once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.
   Never put the accounts or their password in this repo or a page: it's public.
@@ -462,7 +466,8 @@ Email: the email follows the stores (`pmEmail`, as `emailToSave`). A card in the
 (`capsLike`) when every profile using it goes the same way, and a billing address of its own in that name does too.
 Addresses go through `resolveAddr`, so one shared with unselected profiles gets a copy. Pokémon Center's mark is a
 Pokéball (`pokeballSVG`, `isPokemonCenter`; `drawPokeball` in the share image), in its pills and lists and its store
-filter chip; the relay's phone page still shows PC. Profiles gain no fields, so the paused web version is unaffected.
+filter chip; the relay's phone page still shows PC. Settings → Accounts to assign gains Remove accounts (the worker
+section above). Profiles gain no fields, so the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
