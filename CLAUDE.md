@@ -435,6 +435,11 @@ store's CSV, `slotAycd` per row): the account the slot checks out with (`slotEma
 the state and country written out (`aycdCountry`, `aycdState`, which Export → AYCD JSON shares), the card's own name,
 and `matchNameOnCardAndAddress` true when that's the billing name. The worker posts it as `…-<store>-aycd.json`.
 
+From 1.9.88 Ungrouped (in the Profiles and Cards sidebars, and Cards' chip) has the group menu too, with only Rename
+(`nameUngrouped`, the owner's request): the name becomes a real group holding every profile or card that had none
+(their `groupId`), shown in its place, with Undo. A name already in use, or Ungrouped itself, is refused, and ones
+added later without a group show under Ungrouped again. `promptDialog` takes a `hint` and clears its error as you type.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
