@@ -199,8 +199,17 @@ curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit
 
 Every batch people submit from a licensed FAFO is posted to the same Discord channel as files you
 can open directly in Excel or Google Sheets. There's nothing to set up; it uses the same
-`DISCORD_WEBHOOK_URL`. From Orbit 1.9.53 each store gets its own two files:
+`DISCORD_WEBHOOK_URL`. Each store gets its own files:
 
+- `orbit-slots-…-target-aycd.json` (since 2026-10-06): that store's slots as an AYCD profile list,
+  one profile each, in the same order as the CSV's rows and laid out as AYCD exports it: `name`,
+  `notes`, `billingAddress` and `shippingAddress` (`name, email, phone, line1, line2, line3, postCode,
+  city, country, state`, with the state and country written out), `paymentDetails` (`nameOnCard,
+  cardType, cardNumber, cardExpMonth, cardExpYear, cardCvv`), `sameBillingAndShippingAddress`,
+  `onlyCheckoutOnce` and `matchNameOnCardAndAddress`. Each profile's email is the account its slot
+  checks out with, as in the CSV. FAFO 1.9.87 and later write it, with the card's own name and Only
+  one checkout; for older versions this worker makes it from the CSV, with the billing name as the
+  name on card.
 - `orbit-slots-…-target.csv`: that store's slots, one row each, in these columns: `profile_name,
   first_name, last_name, email, phone_num, cc_number, cc_exp_month, cc_exp_year, cc_cvv,
   shipping_street, shipping_street_2, shipping_city, shipping_state, shipping_zip_code,
@@ -218,14 +227,14 @@ see the `="…"`, and FAFO's **Import** (1.9.68+) reads them as the text inside.
 
 > 📦 **6 slots** from **Kim** · @kim · license …ABCD
 > Target 3 · Walmart 3
-> One profiles file (.csv) per store, with its logins (email:password, .txt) in the same order.
+> Per store: its profiles as AYCD JSON (.json) and CSV (.csv), with its logins (email:password, .txt) in the same order.
 
 Slots without a store login come after the ones with logins and have no line in the logins file; one
 on a verified email only (Pokémon Center) has that account's email in the `email` column. Slots set to
 **Use Assigned Account** (Orbit 1.9.57+; 1.9.53 called it "Assign me an account") come last: the
 buyer added no login because you provide one, and the store line says so, e.g. "Target 3 (2 need an
-account)". Discord takes 10 files a message, so a batch with more stores continues in a follow-up
-message.
+account)". An account given out for a slot (see below) goes in both its CSV row and its AYCD profile.
+Discord takes 10 files a message, so a batch with more stores continues in a follow-up message.
 
 To load a store into your own FAFO (1.9.68 or later, which reads the `="…"` cells), **Import** its
 CSV and pick that store under Retailers, then on
