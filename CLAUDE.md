@@ -440,6 +440,11 @@ From 1.9.88 Ungrouped (in the Profiles and Cards sidebars, and Cards' chip) has 
 (their `groupId`), shown in its place, with Undo. A name already in use, or Ungrouped itself, is refused, and ones
 added later without a group show under Ungrouped again. `promptDialog` takes a `hint` and clears its error as you type.
 
+From 1.9.89 right-clicking a store login (any layout; or touch and hold it, or Shift+F10 on one of its buttons) opens its
+menu (`data-lmenu`, `loginContextMenu`, the owner's request): Rename (its label, the name under the store; empty removes
+it, `renameLogin`), Copy password, Edit and Delete (`deleteLogin`, which its Delete button uses too). Any scroll closes a
+menu, so tests that right-click scroll the item into view and let it settle first.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

@@ -1,0 +1,1 @@
+Right-click a store login to rename it, copy its password, edit it or delete it.
