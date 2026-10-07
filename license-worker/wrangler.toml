@@ -32,3 +32,5 @@ ACCOUNTS_LOW_AT = "15"
 #   LICENSE_SIGNING_KEY    private JWK from scripts/gen-key.mjs
 #   DISCORD_WEBHOOK_URL    channel webhook for key requests (required when REQUIRE_APPROVAL is "true")
 #   ADMIN_TOKEN            optional: enables /admin/* (list, revoke, restore)
+#   NOTIFY_USER_ID         optional: your Discord user ID, which each new post in the channel @mentions
+#                          (README: "Getting pinged for each post")

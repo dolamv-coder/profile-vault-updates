@@ -30,6 +30,7 @@ const USERS = {
   hana:  { id: snowflake(Date.parse("2021-08-01")), username: "hana", guilds: [] },
   ivan:  { id: snowflake(Date.parse("2021-09-01")), username: "ivan", guilds: [] },
 };
+const OWNER = snowflake(Date.parse("2017-02-01"));   // NOTIFY_USER_ID in approval mode
 
 const mirrorHits = [];   // requests the worker made for /mirror
 const MIRROR_UPDATE = { version: "1.9.99", url: "index-1.9.99.html", sha256: "ab".repeat(32), signature: "c2ln", notes: "Sample" };
@@ -269,6 +270,8 @@ try {
     assert.equal(webhookPosts.length, 1);
     assert.match(webhookPosts[0].content, /@alice/);
     assert.ok(!webhookPosts[0].content.includes(aliceKey));
+    assert.ok(!webhookPosts[0].content.includes("<@"), "no NOTIFY_USER_ID, no ping");
+    assert.deepEqual(webhookPosts[0].allowed_mentions, { parse: [] });
   });
   await test("the same Discord account gets the same key again", async () => {
     const r = rid();
@@ -362,7 +365,7 @@ try {
   });
 
   console.log("\nApproval mode");
-  await startWorker("approval", APPROVAL_PORT, ["REQUIRE_APPROVAL=true", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0"]);
+  await startWorker("approval", APPROVAL_PORT, ["REQUIRE_APPROVAL=true", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", `NOTIFY_USER_ID=${OWNER}, not-an-id, ${OWNER}`]);
   webhookPosts.length = 0;
   let carolR, carolLink, carolKey;
   const reviewPost = (link, action, t) => fetch(link.split("?")[0], { method: "POST", redirect: "manual",
@@ -386,6 +389,8 @@ try {
     assert.match(m.content, /New FAFO key request/);
     assert.match(m.content, /@carol\\_x/, "username markdown is escaped");
     assert.match(m.content, new RegExp("Discord ID " + USERS.carol.id));
+    assert.ok(m.content.startsWith(`<@${OWNER}> 📝`), "NOTIFY_USER_ID is pinged first: " + m.content);
+    assert.deepEqual(m.allowed_mentions, { parse: [], users: [OWNER] }, "and nobody else can be");
     carolLink = linkIn(m.content);
     assert.ok(carolLink.startsWith(BASE + "/review/" + USERS.carol.id + "?t="));
   });
@@ -427,6 +432,8 @@ try {
     assert.match(webhookEdits[0].content, /Approved/);
     assert.equal(linkIn(webhookEdits[0].content), carolLink, "link still there to change the decision");
     assert.equal(webhookPosts.length, 1, "no separate 'key issued' notice");
+    assert.ok(!webhookEdits[0].content.includes("<@"), "a decision doesn't ping again");
+    assert.deepEqual(webhookEdits[0].allowed_mentions, { parse: [] });
   });
   await test("once approved, signing in gives the key straight away", async () => {
     const r = rid(); await signIn(r, "carol");
