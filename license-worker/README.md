@@ -237,7 +237,9 @@ any more, at your request):
   one checkout; for older versions this worker makes it from the CSV the app sends, with the billing
   name as the name on card.
 - `orbit-slots-…-target-logins.txt`: that store's logins, one `email:password` per line, in the same
-  order as the first profiles of the AYCD list. AYCD's profile format has no place for them.
+  order as the first profiles of the AYCD list. AYCD's profile format has no place for them. Pokémon
+  Center gets none (since 2026-10-07, at your request): it checks out with just an email, which is on
+  each of its AYCD profiles, so a Pokémon Center batch is its AYCD list only.
 
 The app still sends each store's slots as a CSV too (`profile_name, first_name, last_name, email,
 phone_num, cc_number, cc_exp_month, cc_exp_year, cc_cvv, shipping_street, shipping_street_2,
@@ -373,7 +375,8 @@ list you keep here:
    emails, never the passwords.
 3. When a batch with slots on Use Assigned Account reaches your channel, each of those slots gets a
    random free account from the list for its store: its email goes in the slot's row (the `email`
-   column) and `email:password` goes in that store's logins file, on the line that matches the row.
+   column, and on both addresses of its AYCD profile) and `email:password` goes in that store's logins
+   file, on the line that matches the row (Pokémon Center has no logins file: just the email).
    The store line says how many: "Target 3 (2 assigned accounts)".
 
 - **Buyers never see the accounts.** They go only to your channel. The app is told how many slots
@@ -383,8 +386,8 @@ list you keep here:
   and sending the batch again posts the same ones.
 - **A Pokémon Center slot gets its profile's Target account again** (from 2026-10-06): when the same
   profile (by its name) already has a Target account from you, in that batch or one sent before, its
-  Pokémon Center slot gets that account, with its email in the row and the same `email:password` in
-  the logins file, so the profile checks out with one email at both stores. The store line says so:
+  Pokémon Center slot gets that account, with its email on the slot's AYCD profile, so the profile
+  checks out with one email at both stores. The store line says so:
   "Pokémon Center 3 (3 assigned accounts, 2 reused from Target)". It doesn't count toward
   `ASSIGNED_LIMIT` or join your Pokémon Center list (`/admin/accounts` shows it with `reused: 1`). If
   that email is on your Pokémon Center list too, the account from the list is used, with its own
@@ -430,7 +433,8 @@ curl.exe -X POST -H "Authorization: Bearer YOUR_ADMIN_TOKEN" -d "{\"email\":\"so
 ```
 
 The passwords are kept in your D1 database so they can go in the logins files, and they're in your
-channel with each batch, like every other login there. Keep the channel private.
+channel with each batch (Target's; Pokémon Center's aren't posted), like every other login there. Keep
+the channel private.
 
 ## Order alerts for buyers
 

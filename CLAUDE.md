@@ -59,7 +59,10 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   written out). App 1.9.87+ sends it (`kind: "aycd"`, `slotAycd`), with the card's own name and Only one
   checkout; for older apps the worker makes it from the CSV (`aycdFromCsv`), with the billing name as
   the name on card. A list that doesn't have one profile for each CSV row is refused. Later on 2026-10-06 the owner
-  dropped the CSV: the channel gets each store's AYCD list and its logins file only. The app still sends the CSV,
+  dropped the CSV: the channel gets each store's AYCD list and its logins file only. Since 2026-10-07 (the owner's
+  request: "a login:password is not required") Pokémon Center gets no logins file (`isPokemonCenterFile`, by the profiles
+  file's `storeKey` or the store's name): its slots check out with the email on each AYCD profile. The file is still made,
+  since `assignAccounts` counts its lines to find the assigned rows. The app still sends the CSV,
   which the worker reads to give out accounts and, for apps before 1.9.87, to make the AYCD list, and 1.9.91 says
   "AYCD files" where the app said "CSV files" (the Submit page and window, Send somewhere else, the seller's Discord note).
   Since 2026-10-06 (the owner's requests) the owner approves or declines each batch: its message (the first, when there

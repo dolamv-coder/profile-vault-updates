@@ -993,13 +993,35 @@ try {
     assert.equal(webhookPosts.length, before + 1, "one message");
     const m = webhookPosts.at(-1);
     assert.ok(m.content.startsWith(`📦 **3 slots** from **Beta** · @frank · license …${frankKey.slice(-4)}\nTarget 1 · Walmart 1 (1 needs an account) · Pokémon Center 1\n`), m.content);
-    assert.ok(m.content.includes("\n-# Per store: its profiles as AYCD JSON (.json), with its logins (email:password, .txt) in the same order. Profiles that need an account come last.\n⏳ **Pending your approval** · [Approve or decline]("), m.content);
+    assert.ok(m.content.includes("\n-# Per store: its profiles as AYCD JSON (.json), with its logins (email:password, .txt) in the same order (none for Pokémon Center). Profiles that need an account come last.\n⏳ **Pending your approval** · [Approve or decline]("), m.content);
     assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")),
       ["Beta-target-aycd.json", "Beta-target-logins.txt", "Beta-walmart-aycd.json", "Beta-pokemon-center-aycd.json"]);
     assert.ok(!m.files.some((f) => /\.csv$/.test(f.name) || /^text\/csv/.test(f.type || "")), "no CSV goes out");
     assert.deepEqual(aycdOf(m).map((l) => l.map((x) => x.name)), [["Kim Lee"], ["Sam Park"], ["Kim Lee"]], "each store's rows as AYCD profiles");
     assert.deepEqual(plain(m).map((f) => f.text), [files[1].text], "the logins file exactly as sent");
     assert.match(plain(m)[0].type, /^text\/plain/); assert.match(m.files[0].type, /^application\/json/);
+  });
+  await test("Pokémon Center's slots go out as their AYCD list only, never a logins file (2026-10-07)", async () => {
+    // An older app (no storeKey) or older data can still send one; the email is on each AYCD profile.
+    for (const pc of [{ store: "Pokémon Center", storeKey: "pokemoncenter" }, { store: "Pokemon Center" }]) {
+      const before = webhookPosts.length;
+      const files = [
+        { store: "Target", kind: "profiles", text: tgtCsv }, { store: "Target", kind: "logins", text: "kim.target@example.com:pa:ss" },
+        { ...pc, kind: "profiles", text: wmCsv }, { store: pc.store, kind: "logins", text: "sam.pc@example.com:Inbox-Pw-9!" }];
+      assert.equal((await slots("/submissions", frankKey, { files, name: "Beta", slots: 2, batch: "pcl" + rid(), stores: [{ name: "Target", n: 1 }, { name: pc.store, n: 1 }] })).status, 200);
+      const m = webhookPosts.slice(before).find((x) => x.content.startsWith("📦"));
+      assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")),
+        ["Beta-target-aycd.json", "Beta-target-logins.txt", "Beta-pokemon-center-aycd.json"], pc.store);
+      assert.ok(!m.files.some((f) => /Inbox-Pw-9/.test(f.text)), "its password goes nowhere");
+      assert.ok(m.content.includes("with its logins (email:password, .txt) in the same order (none for Pokémon Center)."), m.content);
+    }
+    // A batch of only Pokémon Center: no logins file, and the message doesn't mention one.
+    const before = webhookPosts.length;
+    assert.equal((await slots("/submissions", frankKey, { files: [{ store: "Pokémon Center", storeKey: "pokemoncenter", kind: "profiles", text: wmCsv },
+      { store: "Pokémon Center", kind: "logins", text: "sam.pc@example.com:Inbox-Pw-9!" }], name: "Beta", slots: 1, batch: "pcl" + rid(), stores: [{ name: "Pokémon Center", n: 1 }] })).status, 200);
+    const m = webhookPosts.slice(before).find((x) => x.content.startsWith("📦"));
+    assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")), ["Beta-pokemon-center-aycd.json"]);
+    assert.ok(m.content.includes("\n-# Per store: its profiles as AYCD JSON (.json).\n"), m.content);
   });
   const slotHead = tgtCsv.split("\r\n")[0];
   await test("number cells in a posted CSV (app 1.9.52's) go out as Excel text, so the full card number and leading zeros show", async () => {
@@ -1413,14 +1435,14 @@ try {
     assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 3, got: 3, reused: 2 }, Target: { asked: 2, got: 2 } });
     const m = batchPost(before);
     assert.match(m.content, /\nPokémon Center 3 \(3 assigned accounts, 2 reused from Target\) · Target 2 \(2 assigned accounts\)\n/);
-    const [pcLog, tgLog] = plain(m), [pcA, tgA] = aycdOf(m);
+    const [tgLog, ...more] = plain(m), [pcA, tgA] = aycdOf(m);
+    assert.equal(more.length, 0, "only Target's logins file: Pokémon Center's email is on its AYCD profiles");
     [tA, tB] = emailsOf(tgA);
     assert.ok(/^tgt[12]@outlook\.com$/.test(tA) && /^tgt[12]@outlook\.com$/.test(tB) && tA !== tB, [tA, tB]);
     assert.equal(tgLog.text, `${tA}:Tgt-Pw-1!\r\n${tB}:Tgt-Pw-1!`);
     const pc = emailsOf(pcA);
     assert.deepEqual(pcA.map((x) => x.name), ["Hana A", "Hana C", "Hana B"], "rows in the order sent");
     assert.equal(pc[0], tA); assert.equal(pc[2], tB); assert.match(pc[1], /^pc[123]@outlook\.com$/);
-    assert.equal(pcLog.text, `${tA}:Tgt-Pw-1!\r\n${pc[1]}:Pc-Pw-1!\r\n${tB}:Tgt-Pw-1!`, "the Target account's email:password, row for row");
     assert.deepEqual(aycdOf(m)[0].map((x) => [x.name, x.shippingAddress.email, x.billingAddress.email]), [["Hana A", tA, tA], ["Hana C", pc[1], pc[1]], ["Hana B", tB, tB]]);
     assert.deepEqual(await pcStock(), { store: "pokemoncenter", total: 3, free: 2, sent: 1 }, "the reused ones aren't on the Pokémon Center list");
     const g = await given();
@@ -1432,22 +1454,23 @@ try {
     const r = await (await slots("/submissions", hanaKey, { files: [pcFile(["Hana A"])], name: "Hana", slots: 1, batch: "pcr2" + rid(), stores: [{ name: "Pokémon Center", n: 1, seller: 1 }] })).json();
     assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 1, got: 1, reused: 1 } });
     const m = batchPost(before);
-    assert.equal(emailsOf(aycdOf(m)[0])[0], tA); assert.equal(plain(m)[0].text, `${tA}:Tgt-Pw-1!`);
+    assert.equal(emailsOf(aycdOf(m)[0])[0], tA); assert.deepEqual(plain(m), [], "its AYCD list only");
     const p0 = webhookPosts.length;
     await pull(hanaKey, { keyId: "CSV", name: "Hana", slots: [{ store: "Pokémon Center", profile: "Hana A", email: "Assigned account", card: "Visa 4242" }] });
     assert.ok(webhookPosts[p0].content.includes(`Pokémon Center · Hana A · ${tA} \\(assigned account\\)`), webhookPosts[p0].content);
     assert.doesNotMatch(webhookPosts[p0].content, /Tgt-Pw-1/);
   });
-  await test("an email on the Pokémon Center list too is used from there, with its own password", async () => {
+  await test("an email on the Pokémon Center list too is used from there", async () => {
     await offerAdd(ivanKey, "target", "Target", [{ email: "lia.tgt@outlook.com", password: "Tgt-Pw-2!" }]);
     await offerAdd(ivanKey, "pokemoncenter", "Pokémon Center", [{ email: "LIA.TGT@outlook.com", password: "Inbox-Pw-2!" }]);
     const before = webhookPosts.length;
     const r = await (await slots("/submissions", hanaKey, { files: [tgFile(["Lia Moss"]), pcFile(["Lia Moss"])], name: "Hana", slots: 2, batch: "pcr3" + rid(),
       stores: [{ name: "Target", n: 1, seller: 1 }, { name: "Pokémon Center", n: 1, seller: 1 }] })).json();
     assert.deepEqual(r.accounts, { Target: { asked: 1, got: 1 }, "Pokémon Center": { asked: 1, got: 1, reused: 1 } });
-    const [tgLog, pcLog] = plain(batchPost(before)), [tg, pc] = aycdOf(batchPost(before));
+    const [tgLog, ...more] = plain(batchPost(before)), [tg, pc] = aycdOf(batchPost(before));
+    assert.equal(more.length, 0);
     assert.equal(emailsOf(tg)[0], "lia.tgt@outlook.com"); assert.equal(tgLog.text, "lia.tgt@outlook.com:Tgt-Pw-2!");
-    assert.equal(emailsOf(pc)[0], "LIA.TGT@outlook.com"); assert.equal(pcLog.text, "LIA.TGT@outlook.com:Inbox-Pw-2!");
+    assert.equal(emailsOf(pc)[0], "LIA.TGT@outlook.com", "the list's own row (its spelling)");
     assert.deepEqual(await pcStock(), { store: "pokemoncenter", total: 4, free: 2, sent: 2 }, "taken from the list like any other");
   });
   await test("a batch that doesn't reach the channel drops its reused accounts; nothing joins the Pokémon Center list", async () => {
@@ -1470,11 +1493,11 @@ try {
     const r = await (await slots("/submissions", hanaKey, { files: [pcFile(["Hana E", "Hana F", "Hana G", "Hana B"])], name: "Hana", slots: 4, batch: "pcr5" + rid(),
       stores: [{ name: "Pokémon Center", n: 4, seller: 4 }] })).json();
     assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 4, got: 3, reused: 1 } });
-    const m = batchPost(before), [logF] = plain(m), list = aycdOf(m)[0], em = emailsOf(list);
+    const m = batchPost(before), list = aycdOf(m)[0], em = emailsOf(list);
+    assert.deepEqual(plain(m), [], "its AYCD list only");
     assert.match(m.content, /\nPokémon Center 4 \(3 assigned accounts, 1 reused from Target, 1 needs an account\)\n/);
     assert.deepEqual(list.map((x) => x.name), ["Hana E", "Hana F", "Hana B", "Hana G"]);
     assert.ok(/^pc[123]@outlook\.com$/.test(em[0]) && /^pc[123]@outlook\.com$/.test(em[1]), em); assert.equal(em[2], tB); assert.equal(em[3], "");
-    assert.equal(logF.text, `${em[0]}:Pc-Pw-1!\r\n${em[1]}:Pc-Pw-1!\r\n${tB}:Tgt-Pw-1!`);
     assert.deepEqual(aycdOf(m)[0].map((x) => [x.name, x.shippingAddress.email]), [["Hana E", em[0]], ["Hana F", em[1]], ["Hana B", tB], ["Hana G", ""]], "the AYCD list in the same order");
   });
   await test("sending the owner's list an email given out as a reused account puts it on the list, still with its slot", async () => {
@@ -1483,7 +1506,8 @@ try {
     assert.equal((await given()).find((a) => a.store === "pokemoncenter" && a.email === tA).reused, 0);
     const before = webhookPosts.length;
     await slots("/submissions", hanaKey, { files: [pcFile(["Hana A"])], name: "Hana", slots: 1, batch: "pcr6" + rid(), stores: [{ name: "Pokémon Center", n: 1, seller: 1 }] });
-    assert.equal(plain(batchPost(before))[0].text, `${tA}:Inbox-Pw-3!`, "Hana A keeps it, now with the list's password");
+    const m = batchPost(before);
+    assert.equal(emailsOf(aycdOf(m)[0])[0], tA, "Hana A keeps it"); assert.deepEqual(plain(m), []);
   });
   await test("freeing a license's accounts drops its reused ones", async () => {
     assert.equal((await admin("/admin/accounts/free", { key: hanaKey })).status, 200);

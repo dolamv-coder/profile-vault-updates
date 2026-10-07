@@ -28,7 +28,8 @@
 //   POST /submissions          {files, name, slots, stores, batch} (app 1.9.53+): posted to DISCORD_WEBHOOK_URL
 //                              in plain text, with full card numbers, CVVs and passwords (the owner chose
 //                              this over encryption): per store, its profiles as AYCD JSON and its logins
-//                              (email:password) as a .txt. Each store's profiles also come as a .csv in the
+//                              (email:password) as a .txt, except Pokémon Center's, which checks out with just
+//                              the email on each profile (2026-10-07). Each store's profiles also come as a .csv in the
 //                              owner's columns, read here but no longer posted (the owner's choice, 2026-10-06).
 //                              App 1.9.87+ sends the AYCD list (kind "aycd"); for older apps it's made from the CSV.
 //                              Each store in `stores`
@@ -790,6 +791,16 @@ async function submitKeyReview(request, env, ctx, url, id) {
      <div class="row">${cur.status !== "active" ? btn("confirm", cur.status === "pending" ? "Confirm" : "Use this key", "ok") : ""}${cur.status !== "denied" ? btn("deny", cur.status === "active" ? "Stop using it" : "Refuse", "no") : ""}</div>`);
 }
 
+// Pokémon Center checks out with just an email, which each of its slots' AYCD profiles carries, so its logins file isn't
+// posted (the owner's request, 2026-10-07: "a login:password is not required"). It's still made here: assignAccounts
+// counts its lines to find where the assigned rows start. A file is the store's by the key its profiles file came with
+// (app 1.9.58+), or by the store's name.
+const isPokemonCenterFile = (f, files) => {
+  const key = f.storeKey || (files.find((x) => x.kind === "profiles" && x.store === f.store) || {}).storeKey || "";
+  const plain = (x) => String(x).normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+  return [key.replace(/^other:/, ""), f.store].some((x) => /^pokemon ?cent(er|re)$/.test(plain(x)));
+};
+
 async function submission(request, env, url) {
   const lic = await slotLicense(request, env);
   if (!lic) return json({ error: "license not recognized" }, 401);
@@ -879,7 +890,7 @@ async function submission(request, env, url) {
   };
   // Recorded before any account is picked or anything is posted, so a retry that arrives meanwhile
   // isn't handled twice.
-  const bytes = files !== null ? files.reduce((n, f) => n + (f.kind === "aycd" ? aycdText(f.list) : f.kind === "profiles" ? "" : f.text).length, 0) : (csv !== null ? csv : code).length;
+  const bytes = files !== null ? files.reduce((n, f) => n + (f.kind === "aycd" ? aycdText(f.list) : f.kind === "profiles" || isPokemonCenterFile(f, files) ? "" : f.text).length, 0) : (csv !== null ? csv : code).length;
   const ins = await env.DB.prepare(
     `INSERT OR IGNORE INTO submissions (id, key_hash, key_last4, name, username, slots, bytes, key_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -896,6 +907,9 @@ async function submission(request, env, url) {
     await env.DB.prepare("DELETE FROM submissions WHERE id = ?").bind(batch).run().catch((x) => console.error("record", x));
     throw e;
   }
+  // What goes to the channel: each store's AYCD list and logins file, with no logins file for Pokémon Center.
+  const posted = files !== null ? files.filter((f) => f.kind !== "profiles" && !(f.kind === "logins" && isPokemonCenterFile(f, files))) : [];
+  const pokemonCenter = files !== null && files.some((f) => f.kind === "profiles" && isPokemonCenterFile(f, files));
   const stamp = new Date(now).toISOString().slice(0, 16).replace("T", "-").replace(":", "");
   const slug = s.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
   const who = [s.name ? `**${md(s.name)}**` : "", s.username ? `@${md(s.username)}` : "", `license …${s.key_last4}`].filter(Boolean).join(" · ");
@@ -911,21 +925,21 @@ async function submission(request, env, url) {
   const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
   const plainStores = stores.map((x) => `${x.name} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
   const tail = files !== null
-    ? `-# Per store: its profiles as AYCD JSON (.json)${files.some((f) => f.kind === "logins") ? ", with its logins (email:password, .txt) in the same order" : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
+    ? `-# Per store: its profiles as AYCD JSON (.json)${posted.some((f) => f.kind === "logins") ? `, with its logins (email:password, .txt) in the same order${pokemonCenter ? " (none for Pokémon Center)" : ""}` : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
     : csv !== null ? "-# CSV attached." : `-# Encrypted for key ${keyId}. To open: download the file, then in FAFO choose **Import** and drop it in.`;
   const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n${tail}`;
   const base = `orbit-slots-${stamp}${slug ? "-" + slug : ""}`;
   let attach;
   if (files !== null) {
     // Each store's files carry its name: orbit-slots-…-target-aycd.json and …-target-logins.txt. Its .csv isn't
-    // posted (AYCD only, the owner's choice, 2026-10-06).
+    // posted (AYCD only, the owner's choice, 2026-10-06), nor Pokémon Center's logins (2026-10-07).
     const used = new Map();
     const label = (store) => {
       const x = store.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "store";
       if (!used.has(store)) { let y = x, i = 2; while ([...used.values()].includes(y)) y = `${x}-${i++}`; used.set(store, y); }
       return used.get(store);
     };
-    attach = files.filter((f) => f.kind !== "profiles").map((f) => f.kind === "aycd"
+    attach = posted.map((f) => f.kind === "aycd"
       ? { name: `${base}-${label(f.store)}-aycd.json`, text: aycdText(f.list), type: "application/json" }
       : { name: `${base}-${label(f.store)}-logins.txt`, text: f.text });
   } else attach = [csv !== null ? { name: base + ".csv", text: excelSafe(csv), type: "text/csv" } : { name: base + ".txt", text: code }];
@@ -1057,7 +1071,8 @@ async function submissionStatus(request, env, url) {
 // The owner's own store accounts, for slots set to Use Assigned Account (app 1.9.58+). The owner sends
 // them from Orbit and adds them from the review link posted to their channel. When a batch comes in,
 // each such slot gets a random free account for its store: its email goes in the slot's row (the
-// `email` column) and email:password is added to that store's logins file, so line N still goes with
+// `email` column, and on its AYCD profile) and email:password is added to that store's logins file (posted for every
+// store but Pokémon Center), so line N still goes with
 // row N. An account goes to one slot only; the buyer never sees it. A license gets ASSIGNED_LIMIT at
 // most in all, and an account picked for a batch that never reached the channel goes back to the list.
 
@@ -1236,7 +1251,7 @@ const aycdText = (list) => JSON.stringify(list, null, 2);
 
 // A Pokémon Center slot on Use Assigned Account whose profile already has a Target account (given out in this batch,
 // or sent before) gets that account again (the owner's request, 2026-10-06), so the profile checks out with one email
-// at both stores: its email in the row, and the same email:password in the logins file. It's kept as a Pokémon Center
+// at both stores: its email in the row and on its AYCD profile. It's kept as a Pokémon Center
 // row (pulls and order alerts find it there). If the email is on the owner's Pokémon Center list too, that account is
 // used, with its own password, while it's free or already this profile's; if another buyer has it, the slot gets a
 // free account as usual. Nothing counts toward the license's limit.
@@ -1446,7 +1461,7 @@ async function accountReview(request, env, ctx, url, id) {
   const btn = (a, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${a}">${esc(text)}</button></form>`;
   return page(200, `${cur.store_name} accounts`, done || label,
     `<p class="who">${cur.count} account${cur.count === 1 ? "" : "s"} for Use Assigned Account</p>
-     <p class="small">Each slot on Use Assigned Account gets one of your free accounts when its batch reaches your channel, with the email in its row and email:password in the logins file. Buyers never see them, and each one goes to one slot only.</p>
+     <p class="small">Each slot on Use Assigned Account gets one of your free accounts when its batch reaches your channel, with the email on its AYCD profile${cur.store === "pokemoncenter" ? "" : " and email:password in the logins file"}. Buyers never see them, and each one goes to one slot only.</p>
      ${cur.status === "pending" ? `<p class="small"><strong>Only add these if you sent them</strong> from your own FAFO (Settings → Accounts to assign).</p>` : ""}
      ${emails.length ? `<p class="small">${emails.slice(0, 12).map(esc).join("<br>")}${emails.length > 12 ? `<br>and ${emails.length - 12} more` : ""}</p>` : ""}
      <p class="small">Your ${esc(cur.store_name)} list: ${stats.n || 0} account${stats.n === 1 ? "" : "s"}, ${stats.free || 0} free.<br>Sent by ${esc(who)}, ${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC</p>
