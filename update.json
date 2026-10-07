@@ -1,10 +1,10 @@
 {
-  "version": "1.9.94",
-  "url": "index-1.9.94.html",
-  "sha256": "4a76eebf794f2d9dc0d8704436b804f79653068eadd44542f0148769d72dcdfd",
-  "signature": "cBwUu458SIxid2r5deA/0+VNn6/YCoJatli2sfrfsA7d72byzBJAKmBBRiUeFb2fdc3+7ckFdWT8+Dr1t763Cw==",
+  "version": "1.9.95",
+  "url": "index-1.9.95.html",
+  "sha256": "2c34e0f49e5b8cbf6634fe73e3e86a8c90738869ec2c120f59da22316de260fa",
+  "signature": "mtKiKPX2eVD0+ze16Arm0Yny4F9SXrHKY8LMvYUbVbMgOX2JsMVK762HgWnYYskwU8XiqeYfviIHYEqe1JafAQ==",
   "minAppVersion": "0",
-  "notes": "The store choices are now just Pokémon Center and Target, and Target's mark is its red bullseye. Anything you already saved at another store keeps it, and stays shown wherever it's used.",
+  "notes": "Store logins can now be copied: select some, then right-click or use Copy in the selection bar to copy their emails, or email:password lines, one per line in the order shown. A single login's menu has Copy email and Copy email:password too.",
   "installerUrl": "",
-  "publishedAt": "2026-10-06T23:23:21.507Z"
+  "publishedAt": "2026-10-07T07:19:17.651Z"
 }
