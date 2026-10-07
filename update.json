@@ -1,10 +1,10 @@
 {
-  "version": "1.9.97",
-  "url": "index-1.9.97.html",
-  "sha256": "a287d74ec5418fbfc4071de61fc519f695672fc262069fe61b7130bddc66221d",
-  "signature": "gFdCIn0/3yDnpZXQSwPucQYqLrn7bGr7KQ/hYPpxvn6WyVgTZQHYHdcgbcluTeOWSz0aJyjPtEAQjHL+wr1uDA==",
+  "version": "1.9.98",
+  "url": "index-1.9.98.html",
+  "sha256": "aae792ad96d212b48f18e515c39e96b9483608c7660fd337625bff660537a663",
+  "signature": "eY5X2mfSBjvNuZSnJ6OSBRgDnSsCa/MQKTDhN/FaOK5yVe4U3Z4c8QuRqvy60fp9LTu5x6c4jOZwm2r7x8vCCw==",
   "minAppVersion": "0",
-  "notes": "On Profiles, the store buttons above your profiles now count only the group you're looking at (and your search), so they match the list. A store with no profiles in a group now says so instead of calling the group empty.",
+  "notes": "Slots you sent before FAFO could show the seller's approval now show it too: Pending approval until the seller approves or declines them, then Success or Declined.",
   "installerUrl": "",
-  "publishedAt": "2026-10-07T12:36:10.777Z"
+  "publishedAt": "2026-10-07T16:25:30.537Z"
 }
