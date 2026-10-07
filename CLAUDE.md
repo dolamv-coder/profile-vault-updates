@@ -584,6 +584,12 @@ devices that split the same vault agree, and a second run changes nothing. The f
 and there's no new list, so the paused web version is unaffected; it can still put two stores on a profile or link an
 address, which the next 1.9.96 sync puts right (sent in the same round, and then nothing more to send).
 
+From 1.9.97 the store chips on Profiles count the profiles shown before a store is picked: those in the group picked that
+match the search (`profilesInView`, which `visibleProfiles` narrows to the store; the owner's request: a group's Pokémon
+Center chip counted every group's profiles there). Each store any profile is on keeps its chip, at 0 where the group has
+none, and picking one there says which stores the group's profiles are on, with Show all stores, where it said the group
+was empty. Nothing gains a field, so the paused web version is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
