@@ -990,12 +990,11 @@ async function submissionReview(request, env, ctx, url, id) {
     const res = await env.DB.prepare("UPDATE submission_reviews SET status = ?, decided_at = ?, content = '' WHERE id = ? AND status = 'pending'").bind(status, now, r.id).run();
     if (res.meta && res.meta.changes) {
       if (r.webhook_message_id) ctx.waitUntil(webhookEdit(env, r.webhook_message_id, { content: submissionMessage(url.origin, { ...r, status, decided_at: now }) }).catch(() => {}));
-      if (status === "declined" && back.length) {
-        await freeAccounts(env, "key_hash = ? AND batch = ?", r.key_hash, r.id);
-        for (const st of new Set(back.map((a) => a.store))) await stockCheck(env, st, accountStoreName(st), false);
-      }
+      // Every decline, so a batch whose only accounts are reuses drops them too.
+      const kept = status === "declined" ? await freeBatch(env, r.key_hash, r.id) : 0, freed = back.length - kept;
+      if (status === "declined") for (const st of new Set(back.map((a) => a.store))) await stockCheck(env, st, accountStoreName(st), false);
       done = status === "approved" ? "Approved. Their FAFO now shows these slots as Success."
-        : `Declined. Their FAFO now shows these slots as Declined.${back.length ? ` ${back.length} account${back.length === 1 ? "" : "s"} given to them ${back.length === 1 ? "is" : "are"} back on your list.` : ""}`;
+        : `Declined. Their FAFO now shows these slots as Declined.${freed ? ` ${freed} account${freed === 1 ? "" : "s"} given to them ${freed === 1 ? "is" : "are"} back on your list.` : ""}${keptNote(kept)}`;
     }
     Object.assign(r, await env.DB.prepare("SELECT status, decided_at FROM submission_reviews WHERE id = ?").bind(r.id).first());
   } else if (r.status === "pending" && action === "decline-ask") asking = true;
@@ -1005,13 +1004,13 @@ async function submissionReview(request, env, ctx, url, id) {
   const who = [r.name, r.username ? "@" + r.username : "", "license …" + r.key_last4].filter(Boolean).join(" · ");
   const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
   const btn = (a, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${a}">${esc(text)}</button></form>`;
-  const n = r.status === "pending" ? (await given()).length : 0;
+  const kept = asking ? await keptForReuse(env, r.key_hash, r.id) : 0, n = r.status === "pending" ? (await given()).length - kept : 0;
   const head = `<p class="who">${r.slots} slot${r.slots === 1 ? "" : "s"}${r.name ? ` from ${esc(r.name)}` : ""}</p>
      ${r.stores ? `<p class="small" style="margin-top:8px">${esc(r.stores)}</p>` : ""}`;
   const sent = `<p class="small">Sent by ${esc(who)}, ${esc(when(r.created_at))}</p>`;
   if (asking) return page(200, "Decline these slots?", "",
     `${head}
-     <p class="small">Their FAFO will show these slots as Declined, and they can send them again.${n ? ` The ${n} account${n === 1 ? "" : "s"} given to them go${n === 1 ? "es" : ""} back on your list.` : ""} This can't be undone.</p>
+     <p class="small">Their FAFO will show these slots as Declined, and they can send them again.${n ? ` The ${n} account${n === 1 ? "" : "s"} given to them go${n === 1 ? "es" : ""} back on your list.` : ""}${keptNote(kept)} This can't be undone.</p>
      ${sent}
      <div class="row">${btn("decline", "Decline", "no")}<form method="get"><input type="hidden" name="t" value="${esc(t)}"><button class="copy" style="width:100%;padding:12px;font-size:16px" type="submit">Keep it waiting</button></form></div>`);
   return page(200, "Submitted slots", done || label,
@@ -1060,11 +1059,47 @@ const FREE_ACCOUNT = "key_hash = NULL, key_last4 = NULL, batch = NULL, store_nam
 // Pokémon Center row marked offer_id "reuse:target", which isn't on the owner's list: it's deleted where others are
 // freed, and doesn't count in a store's stock or toward a license's limit (OWN_ACCOUNT).
 const OWN_ACCOUNT = "COALESCE(offer_id, '') NOT LIKE 'reuse:%'";
+// A reuse goes with the account it reuses: one whose Target account is freed (by /admin/accounts/free, say) is deleted
+// too, so the Pokémon Center slot doesn't keep an email the list may give another buyer. (`where` names the freed
+// accounts' own columns, which inside the subquery are s's.)
 async function freeAccounts(env, where, ...binds) {
-  const [, r] = await env.DB.batch([
+  const [, , r] = await env.DB.batch([
+    env.DB.prepare(`DELETE FROM accounts WHERE NOT (${OWN_ACCOUNT}) AND EXISTS (SELECT 1 FROM accounts s WHERE s.store = substr(accounts.offer_id, 7)
+      AND s.key_hash = accounts.key_hash AND s.email_norm = accounts.email_norm AND (${where}))`).bind(...binds),
     env.DB.prepare(`DELETE FROM accounts WHERE NOT (${OWN_ACCOUNT}) AND (${where})`).bind(...binds),
     env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE ${where}`).bind(...binds)]);
   return r;
+}
+// Declining a batch puts back the accounts given to its slots, except a Target account that the same buyer's Pokémon
+// Center slot in another batch still checks out with (a reuse, or the same email from the Pokémon Center list): it moves
+// to that batch instead, and goes back when that one is declined. Otherwise the list could give the email to another
+// buyer's Target slot while this one's Pokémon Center slot uses it (2026-10-07, the owner's request). A slot sent again
+// takes its account along (reuseAccount), so the batch it's in is the one still using it.
+const STILL_USED = "r.store = ? AND r.key_hash = accounts.key_hash AND r.email_norm = accounts.email_norm AND r.profile = accounts.profile AND r.batch IS NOT NULL AND r.batch <> accounts.batch";
+async function keptForReuse(env, keyHash, batch) {
+  let n = 0;
+  for (const [to, from] of Object.entries(REUSE_FROM)) {
+    const c = await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ? AND batch = ? AND store = ? AND EXISTS (SELECT 1 FROM accounts r WHERE ${STILL_USED})`)
+      .bind(keyHash, batch, from, to).first();
+    n += c ? c.n : 0;
+  }
+  return n;
+}
+// What the decline page says about those (one pair of stores so far: REUSE_FROM).
+const keptNote = (k) => {
+  if (!k) return "";
+  const [[to, from]] = Object.entries(REUSE_FROM), one = k === 1;
+  return ` ${k} ${accountStoreName(from)} account${one ? " stays" : "s stay"} with them: their ${accountStoreName(to)} slot${one ? " in another batch uses it" : "s in other batches use them"} too.`;
+};
+async function freeBatch(env, keyHash, batch) {
+  let kept = 0;
+  for (const [to, from] of Object.entries(REUSE_FROM)) {
+    const { results } = await env.DB.prepare(`UPDATE accounts SET batch = (SELECT r.batch FROM accounts r WHERE ${STILL_USED} ORDER BY r.assigned_at DESC LIMIT 1)
+      WHERE key_hash = ? AND batch = ? AND store = ? AND EXISTS (SELECT 1 FROM accounts r WHERE ${STILL_USED}) RETURNING store`).bind(to, keyHash, batch, from, to).all();
+    kept += results.length;
+  }
+  await freeAccounts(env, "key_hash = ? AND batch = ?", keyHash, batch);
+  return kept;
 }
 
 // The slots CSV as the app writes it: comma-separated, quoted when a cell has a comma, quote or line break.
@@ -1154,8 +1189,13 @@ async function reuseAccount(env, lic, batch, f, profile, at) {
   const t = await env.DB.prepare(`SELECT email, email_norm, password FROM accounts WHERE key_hash = ? AND store = ? AND profile = ? AND (sent_at IS NOT NULL OR batch = ?)
     ORDER BY batch = ? DESC, sent_at DESC, assigned_at DESC LIMIT 1`).bind(lic.hash, from, profile, batch, batch).first();
   if (!t) return null;
-  const cur = await env.DB.prepare("SELECT key_hash, profile, email, password FROM accounts WHERE store = ? AND email_norm = ?").bind(f.storeKey, t.email_norm).first();
-  if (cur && cur.key_hash) return cur.key_hash === lic.hash && cur.profile === profile ? { email: cur.email, password: cur.password } : null;
+  const cur = await env.DB.prepare("SELECT key_hash, profile, email, password, batch FROM accounts WHERE store = ? AND email_norm = ?").bind(f.storeKey, t.email_norm).first();
+  if (cur && cur.key_hash) {
+    if (cur.key_hash !== lic.hash || cur.profile !== profile) return null;
+    // The slot sent again (after a pull) takes it along, so declining the batch it was in before doesn't free it.
+    if (cur.batch !== batch) await env.DB.prepare("UPDATE accounts SET batch = ?, store_name = ? WHERE store = ? AND email_norm = ? AND key_hash = ?").bind(batch, f.store, f.storeKey, t.email_norm, lic.hash).run();
+    return { email: cur.email, password: cur.password };
+  }
   if (cur) return env.DB.prepare(`UPDATE accounts SET key_hash = ?, key_last4 = ?, batch = ?, store_name = ?, profile = ?, assigned_at = ?, sent_at = NULL
     WHERE store = ? AND email_norm = ? AND key_hash IS NULL RETURNING email, password`).bind(lic.hash, lic.last4, batch, f.store, profile, at, f.storeKey, t.email_norm).first();
   return env.DB.prepare(`INSERT OR IGNORE INTO accounts (store, email, email_norm, password, added_at, offer_id, key_hash, key_last4, batch, store_name, profile, assigned_at)
@@ -1950,7 +1990,7 @@ async function admin(request, env, path) {
     const [stores, given, offers, removals] = await env.DB.batch([
       env.DB.prepare(`SELECT store, COUNT(*) AS total, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free,
         SUM(CASE WHEN sent_at IS NOT NULL THEN 1 ELSE 0 END) AS sent FROM accounts WHERE ${OWN_ACCOUNT} GROUP BY store ORDER BY store`),
-      env.DB.prepare(`SELECT store, email, key_last4, store_name, profile, assigned_at, sent_at, NOT (${OWN_ACCOUNT}) AS reused FROM accounts WHERE key_hash IS NOT NULL ORDER BY assigned_at DESC LIMIT 500`),
+      env.DB.prepare(`SELECT store, email, key_last4, store_name, profile, batch, assigned_at, sent_at, NOT (${OWN_ACCOUNT}) AS reused FROM accounts WHERE key_hash IS NOT NULL ORDER BY assigned_at DESC LIMIT 500`),
       env.DB.prepare("SELECT id, store, store_name, count, key_last4, name, username, status, added, created_at, decided_at, review_token FROM account_offers ORDER BY created_at DESC LIMIT 50"),
       env.DB.prepare("SELECT id, count, key_last4, name, username, status, removed, created_at, decided_at, review_token FROM account_removals ORDER BY created_at DESC LIMIT 50"),
     ]);
