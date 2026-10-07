@@ -1,0 +1,1 @@
+Slots you sent before FAFO could show the seller's approval now show it too: Pending approval until the seller approves or declines them, then Success or Declined.

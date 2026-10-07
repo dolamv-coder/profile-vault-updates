@@ -275,8 +275,10 @@ slot again, it gets that same account back. Until you decide, the sender's FAFO 
 and on, and send it again in a new batch). FAFO asks this worker about every 30 seconds while its Submit
 page is open, and every 5 minutes otherwise (`GET /submissions/status`, with the license key, only about
 that license's batches). Neither decision can be undone, and a batch you don't decide on stays pending.
-Slots sent before this, or from an older FAFO, show Submitted as they did. Each decision is kept 90
-days. `/admin/submissions` shows each batch's (`review`, `decided_at`), with its review link.
+Slots sent before this show Submitted as they did. An older FAFO kept no batch id for what it sent, so its
+slots showed Submitted too; FAFO 1.9.98 and later find each of those sends' batch (`GET
+/submissions/batches`: that license's batches, with when each arrived, its size and the sender's name) and
+show it like any other. Each decision is kept 90 days. `/admin/submissions` shows each batch's (`review`, `decided_at`), with its review link.
 
 Slots without a store login come after the ones with logins and have no line in the logins file; one
 on a verified email only (Pokémon Center) has that account's email on its AYCD profile. Slots set to

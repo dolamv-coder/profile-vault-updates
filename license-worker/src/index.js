@@ -41,6 +41,9 @@
 //   GET  /submissions/status?ids=A,B   {batches:{A:{status, at}}}: whether the owner has decided on this license's
 //                              batches (pending | approved | declined, and when); app 1.9.91+ shows Pending approval,
 //                              then Success (1.9.92+ also Declined)
+//   GET  /submissions/batches?since=MS&until=MS   {now, batches:[{id, at, slots, name, status, decided}]}: this
+//                              license's batches since approvals began, oldest first. Apps before 1.9.91 kept no
+//                              batch id, so app 1.9.98+ finds the batch of each slot they sent by when it went out
 //   POST /pull                 {keyId, name, batch, slots}: slots pulled after being sent; posted to
 //                              DISCORD_WEBHOOK_URL as a plain list, only for keys (or "CSV") this license
 //                              sent submissions to
@@ -145,6 +148,7 @@ export default {
       if (path.startsWith("/submit/review/")) return await submitKeyReview(request, env, ctx, url, path.slice("/submit/review/".length));
       if (path === "/submissions" && request.method === "POST") return await submission(request, env, url);
       if (path === "/submissions/status" && request.method === "GET") return await submissionStatus(request, env, url);
+      if (path === "/submissions/batches" && request.method === "GET") return await submissionBatches(request, env, url);
       if (path.startsWith("/submissions/review/")) return await submissionReview(request, env, ctx, url, path.slice("/submissions/review/".length));
       if (path === "/pull" && request.method === "POST") return await pull(request, env, ctx);
       if (path === "/accounts/offer" && request.method === "POST") return await accountOffer(request, env, ctx, url);
@@ -1064,6 +1068,23 @@ async function submissionStatus(request, env, url) {
     for (const x of results) batches[x.id] = x.status === "pending" ? { status: "pending" } : { status: x.status, at: x.decided_at };
   }
   return json({ batches }, 200, { "cache-control": "no-store" });
+}
+
+// This license's batches that have an approval, oldest first: {now, batches:[{id, at, slots, name, status, decided}]},
+// `at` when each arrived, `name` the sender's, `decided` when the owner approved or declined it. Apps before 1.9.91 kept
+// no batch id for what they sent (the owner's report, 2026-10-07: those slots showed Submitted while their batch waited
+// for approval), so app 1.9.98+ matches each of those sends to its batch by name, size and time (`now` sets the
+// computer's clock against this one's), then asks /submissions/status like any other.
+async function submissionBatches(request, env, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  const since = Math.max(0, Math.floor(Number(url.searchParams.get("since"))) || 0);
+  const until = Math.floor(Number(url.searchParams.get("until"))) || Date.now() + 86400000;
+  const { results } = await env.DB.prepare(`SELECT r.id, r.status, r.created_at, r.decided_at, s.slots, s.name FROM submission_reviews r
+    JOIN submissions s ON s.id = r.id WHERE r.key_hash = ? AND r.created_at >= ? AND r.created_at <= ? ORDER BY r.created_at LIMIT 2000`)
+    .bind(lic.hash, since, until).all();
+  const batches = results.map((x) => ({ id: x.id, at: x.created_at, slots: x.slots, name: x.name || "", status: x.status, ...(x.decided_at ? { decided: x.decided_at } : {}) }));
+  return json({ now: Date.now(), batches }, 200, { "cache-control": "no-store" });
 }
 
 // ---- assigned accounts -------------------------------------------------------------------
