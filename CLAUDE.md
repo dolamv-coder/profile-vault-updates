@@ -559,18 +559,28 @@ returns false), the login editor lists only the profiles on its store, and Impor
 profile on another store. Imports make one profile per store: one in a file on several stores becomes one for each
 (`planImport(flat, picked)`, which also takes the stores picked for rows that name none, and skips one already here by name,
 store, address and card), a submitted slot keeps only its store (`slotFlat`, codes and the inbox), and Generate's Import
-makes one profile per draft per store picked. Put in profiles gives a pair the same card. Every profile has addresses of its
+makes one profile per draft per store picked. Put in profiles gives a pair the same card, and Duplicate on a group gives a
+pair's copies one new name between them. Every profile has addresses of its
 own: `resolveAddr` never takes another profile's address (no match by content any more), Fill copies one, and Duplicate and
 imports make copies. A vault from before, and whatever an older device or the paused web version syncs in, is put right by
 `oneStorePass` (between `ONE-STORE-START` and `ONE-STORE-END`; `.github/scripts/one-store.test.mjs` tests it on pull
-requests), run at unlock (`oneStoreRun`, right after `syncStart`, so a change made elsewhere still merges field by field)
-and after every merge: a profile on several stores keeps the first of Target, Pokémon Center and the rest, and each other
-store goes to a copy with the id `<id>.<store>` (`.o` + a hash for a typed store, then `.2`… if taken), taking that store's
-switched-on slot, `subs` mark, last batch, pulls and checkouts with it; a store a copy already has goes back to it; and an
-address two profiles use goes, for every one but the lowest profile id, to a copy with the id `a` + `syncHash(address id +
-"|" + profile id)`. Every id comes from the data, so devices that split the same vault agree, and a second run changes
-nothing. The first split is noted in the shared setting `storeSplit` (`{at, n, addrs}`) for a note on Profiles until Got it
-(`_storeSplitSeen`, kept per device). The store's mark shows by each profile's name (`slipStoreHTML`). Profiles gain no fields
+requests), run after every merge with the online copy and once after unlocking: at unlock with sync off, and with sync on
+after the first sync round (`SYNC.oneStoreDue`), so the device catches up first. Split before that, its out-of-date copy
+would count as its own edits, made then, and undo what other devices changed or deleted meanwhile.
+If that round can't merge (offline, an error), or nothing has after 10 seconds, it splits the copy it has (`oneStoreLate`),
+as it does before a profile on several stores is edited, duplicated or mass edited (`splitNow`); a device that updates
+while offline can then still undo another device's change to a profile it split. The pass works on a person's profiles,
+those with the same name: each keeps a store (a copy the pass made the one its id names, a profile on one store that one,
+the rest the first of Target, Pokémon Center and the others that no other keeps), and each other store goes back to the one
+that keeps it, filling in only a missing login or checkout email, unless both have that slot switched on (two slots need two
+profiles), or else to a copy with the id `<id>.<store>` (`.o` + a hash for a typed store, then `.2`… if taken), taking that
+store's switched-on slot, `subs` mark, last batch, pulls and checkouts with it. A slot left under a profile's old store goes
+to the same person's profile on it. An address two profiles use goes, for every one but the lowest profile id, to a copy
+with the id `a` + `syncHash(address id + "|" + profile id)`, numbered when a profile uses that one (an unused one from
+before gets the address as it is now). `syncAdopt` no longer drops a submitted mark whose slot isn't on: `syncTrim` does,
+after the pass has moved any a 1.9.95 device submitted under a profile's old store. Every id comes from the data, so
+devices that split the same vault agree, and a second run changes nothing. The first split is noted in the shared setting
+`storeSplit` (`{at, n, addrs}`) for a note on Profiles until Got it (`_storeSplitSeen`, kept per device). The store's mark shows by each profile's name (`slipStoreHTML`). Profiles gain no fields
 and there's no new list, so the paused web version is unaffected; it can still put two stores on a profile or link an
 address, which the next 1.9.96 sync puts right (sent in the same round, and then nothing more to send).
 

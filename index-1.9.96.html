@@ -3808,7 +3808,12 @@ function startApp(){
   licRefresh();
   refreshSlotAllow(true);
   syncStart();
-  oneStoreRun("unlock");
+  SYNC.oneStoreDue = false;
+  if (syncOn() && S && S._local && S._local.vid){
+    SYNC.oneStoreDue = true;
+    const vault = S;
+    setTimeout(() => { if (S === vault && SYNC.oneStoreDue && !SYNC.busy && !SYNC.waiting) oneStoreLate(); }, 10000);
+  } else oneStoreRun("unlock");
   // One-time cleanup: early builds added a sample of orders to new vaults. Remove it.
   if (S && Array.isArray(S.orders) && !S.settings._sampleRemoved){
     const fp = (t) => { let h = 0x811c9dc5; for (const b of new TextEncoder().encode(t)){ h ^= b; h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, "0"); };
@@ -4701,13 +4706,13 @@ function openAssignCards(){
         // A person's profiles on different stores (the same name, 1.9.96+) get the same card: one set each.
         const sets = [], byNm = new Map();
         targets.forEach(p => {
-          const k = profileStoreKey(p) || "", list = byNm.get(p.name) || [], g = list.find(x => !x.keys.has(k));
+          const k = profileStoreKey(p) || "", list = byNm.get(p.name) || [], g = k && list.find(x => !x.keys.has(k) && !x.keys.has(""));
           if (g){ g.list.push(p); g.keys.add(k); } else { const x = {name:p.name, keys:new Set([k]), list:[p]}; list.push(x); byNm.set(p.name, list); sets.push(x); }
         });
         const n = Math.min(sets.length, usable.length);
         return {targets, sets, n, who, got:sets.slice(0, n).flatMap(x => x.list)};
       };
-      const setName = (x) => x.list.length > 1 ? `${x.name} (${x.list.map(p => storeLabel(profileStores(p)[0])).join(" and ")})` : x.name;
+      const setName = (x) => x.list.length > 1 ? `${x.name} (${x.list.map(p => profileStores(p)[0] ? storeLabel(profileStores(p)[0]) : "no store").join(" and ")})` : x.name;
       const draw = () => {
         const r = plan();
         const pk = r.who === "pick";
@@ -5141,7 +5146,8 @@ function addrBlock(pfx, a, ship){
   const f = (o) => { const h = fieldHTML(Object.assign({}, o, {name:pfx + o.name, ac: ship && o.ac ? "shipping " + o.ac : "off"}));
     return ship && ["line1", "line2", "city", "zip"].includes(o.name) ? jigLink(h, o.name, "data-pe-jig")
       : ship && ["first", "last"].includes(o.name) ? jigLink(h, o.name, "data-pe-jig", "pkc-only") : h; };
-  const saved = S.addresses.slice().sort((x,y) => natural(addrTitle(x), addrTitle(y)));
+  // Each address once (1.9.96+: profiles have copies of their own, with the same lines).
+  const seen = new Set(), saved = S.addresses.slice().sort((x,y) => natural(addrTitle(x), addrTitle(y))).filter(x => { const k = addrKey(x); if (seen.has(k)) return false; seen.add(k); return true; });
   return `<div class="form-grid">
     ${saved.length ? `<div class="field c6"><label class="sr" for="${pfx}fill">Fill from a saved address</label><select id="${pfx}fill" data-fill="${pfx}">${opt(saved.map(x => [x.id, addrTitle(x) + " — " + addrOneLine(x)]), "", "Fill from a saved address…")}</select></div>` : ""}
     ${f({name:"first", label:"First name", value:a.first, cls:"c3", required:true, placeholder:"First", ac:"given-name"})}
@@ -5192,6 +5198,7 @@ function resolveCard(fields, linkedId, selfId){
 }
 
 function openProfileEditor(existing){
+  if (existing) splitNow([existing]);
   const p = existing ? Object.assign({}, existing) : { name:nextProfileName(), groupId:(UI.group !== "all" && UI.group !== "none") ? UI.group : null, billSame:true };
   const ship0 = addrById(p.shipId), bill0 = p.billSame ? null : addrById(p.billId), card0 = cardById(p.cardId);
   const sa = ship0 ? Object.assign({}, ship0) : {country:"US"};
@@ -5660,14 +5667,19 @@ async function nameUngrouped(kind){
 // addresses of their own (1.9.96+), and a name no other profile has, so the Submit page and bot
 // exports can tell them apart.
 function duplicateGroup(kind, id){
+  if (kind === "profile") splitNow(S.profiles.filter(p => p.groupId === id));
   const K = groupKind(kind), g = K.groups().find(x => x.id === id); if (!g) return;
   const taken = new Set(K.groups().map(x => norm(x.name)));
   let name = g.name + " copy";
   for (let i = 2; taken.has(norm(name)); i++) name = `${g.name} copy ${i}`;
   const copy = Object.assign({}, g, {id:uid(), name}), names = new Set(S.profiles.map(x => norm(x.name)));
+  // A person's profiles on different stores (the same name) get one new name between them, so they stay paired.
+  const pairs = new Map();
   const items = K.items().filter(x => x.groupId === id).map(x => {
     if (kind !== "profile") return Object.assign({}, x, {id:uid(), createdAt:Date.now(), updatedAt:Date.now(), groupId:copy.id});
-    const r = copyProfile(x, profileStoreKey(x), names);
+    const k = profileStoreKey(x), was = k ? pairs.get(x.name) : null, again = was && !was.stores.has(k) ? was.name : null;
+    const r = copyProfile(x, k, names, again);
+    if (again) was.stores.add(k); else if (k) pairs.set(x.name, {name:r.copy.name, stores:new Set([k])});
     S.addresses.push(...r.addrs);
     return Object.assign(r.copy, {groupId:copy.id});
   });
@@ -5769,7 +5781,7 @@ const profileStoreKey = (p) => { const e = profileStores(p)[0]; return e ? store
 const nameOnStore = (k, name, skip) => S.profiles.some(q => q !== skip && profileStoreKey(q) === k && norm(q.name) === norm(name));
 // The same person's profiles on other stores: the same name exactly. The license worker pairs them by name, so a
 // Pokémon Center slot on Use Assigned Account gets the account its Target profile got.
-const twinsOf = (p) => S.profiles.filter(q => q !== p && q.name === p.name && profileStoreKey(q) !== profileStoreKey(p));
+const twinsOf = (p) => { const k = profileStoreKey(p); return k ? S.profiles.filter(q => q !== p && q.name === p.name && profileStoreKey(q) && profileStoreKey(q) !== k) : []; };
 // A store entry for profile p on store k: Use Assigned Account stays; otherwise Pokémon Center checks out with the
 // profile's email, and another store with the saved login that has the profile's email (or waits for one).
 function storeEntryFor(k, p){
@@ -5784,18 +5796,19 @@ function storeEntryFor(k, p){
 // For another store it keeps p's name exactly, so the two stay paired, unless a profile on that store has the name; on
 // the same store, or then, it gets a name no profile has (copyName; names: the taken ones, normalized). Returns
 // {copy, addrs: its new addresses, kept: whether it kept the name}.
-function copyProfile(p, k, names){
-  const same = k === profileStoreKey(p), kept = !same && !nameOnStore(k, p.name, null), now = Date.now(), addrs = [];
+function copyProfile(p, k, names, name){
+  const same = k === profileStoreKey(p), kept = !name && !same && !nameOnStore(k, p.name, null), now = Date.now(), addrs = [];
   const dupAddr = (id) => { const a = addrById(id); if (!a) return null; const c = Object.assign({}, a, {id:uid(), createdAt:now}); addrs.push(c); return c.id; };
   const shipId = dupAddr(p.shipId), billId = p.billSame ? null : p.billId && p.billId === p.shipId ? shipId : dupAddr(p.billId);
   const stores = same ? profileStores(p).map(e => Object.assign({}, e)) : [storeEntryFor(k, p)];
-  const copy = Object.assign({}, p, {id:uid(), name:kept ? p.name : copyName(p.name, names), stores, shipId, billId, createdAt:now, updatedAt:now});
+  const copy = Object.assign({}, p, {id:uid(), name:name || (kept ? p.name : copyName(p.name, names)), stores, shipId, billId, createdAt:now, updatedAt:now});
   copy.email = pmEmail(copy);
   if (kept) names.add(norm(p.name));
   return {copy, addrs, kept};
 }
 // Duplicate for Target / Duplicate for Pokémon Center (1.9.96+): the copy goes right after p, with Undo.
 function duplicateProfile(p, k){
+  splitNow([p]);
   k = k || profileStoreKey(p) || "target";
   const vault = S, r = copyProfile(p, k, new Set(S.profiles.map(x => norm(x.name)))), other = k !== profileStoreKey(p);
   const store = storeLabel(r.copy.stores[0] || {store:k});
@@ -5927,6 +5940,8 @@ function planImport(flat, picked){
   // Profiles already here, so importing the same file again skips them; and the names on each store.
   const sigOf = (name, k, ship, card) => [norm(name), k || "", ship ? aKey(ship) : "", card ? cKey(card) : ""].join("|");
   const existing = new Set(S.profiles.map(p => sigOf(p.name, profileStoreKey(p), addrById(p.shipId), cardById(p.cardId))));
+  // A row that names no store, with none picked, is already here when a profile on any store matches it.
+  const anyStore = new Set(S.profiles.map(p => sigOf(p.name, "", addrById(p.shipId), cardById(p.cardId))));
   const namesOn = new Map(), named = (k) => { if (!namesOn.has(k)) namesOn.set(k, new Set()); return namesOn.get(k); };
   S.profiles.forEach(p => named(profileStoreKey(p) || "").add(norm(p.name)));
   // The email a profile made from f checks out with on its store, as the editor saves it (pmEmail).
@@ -5988,7 +6003,7 @@ function planImport(flat, picked){
     let first = null;
     (stores.length ? stores : [null]).forEach(e => {
       const k = e ? storeKeyOf(e) : null, sig = sigOf(name, k, ship, card);
-      if (existing.has(sig)){ plan.skipped++; return; }
+      if (existing.has(sig) || (!e && anyStore.has(sig))){ plan.skipped++; return; }
       existing.add(sig);
       if (!e) plan.bare++; else if (fromPicked) plan.picked++;
       if (named(k || "").has(norm(name))) plan.sameName++;
@@ -6180,7 +6195,7 @@ function openBulkAccounts(){
           const used = new Set();
           logins.forEach(l => {
             const ps = owners.get(norm(l.email));
-            if (!ps){ unmatched.push(l); if (onOther.has(norm(l.email))) elsewhere.push(l); return; }
+            if (!ps){ if (onOther.has(norm(l.email))) elsewhere.push(l); else unmatched.push(l); return; }
             // A store set to Use Assigned Account keeps that choice.
             const open = ps.filter(p => { const e = storeEntry(p, skey); return e && !loginById(e.loginId) && !asksSeller(e) && !used.has(p); });
             if (!open.length){ taken.push(l); return; }
@@ -6606,7 +6621,8 @@ function deleteDrafts(ids){
 const groupNamesList = (id) => `<datalist id="${id}">${S.groups.slice().sort((a, b) => natural(a.name, b.name)).map(g => `<option value="${esc(g.name)}"></option>`).join("")}</datalist>`;
 
 function openGenerate(){
-  const saved = S.addresses.filter(a => (a.country || "US") === "US" && a.line1).sort((a, b) => natural(addrOneLine(a), addrOneLine(b)));
+  // Each address once (1.9.96+: profiles have copies of their own, with the same lines).
+  const saved = [...new Map(S.addresses.filter(a => (a.country || "US") === "US" && a.line1).map(a => [draftAddrKey(a), a])).values()].sort((a, b) => natural(addrOneLine(a), addrOneLine(b)));
   openLayer({
     title:"Generate profiles", dismiss:false, wide:true,
     body:`<p style="margin:-4px 0 16px;color:var(--ink-2)">Makes drafts at the address you want to use, each with its own random name and phone number and one of your emails. Jig each address on the Generate page, then import them into Profiles.</p>
@@ -8003,6 +8019,7 @@ function pmEmail(a){
 }
 
 function openProfileMassEdit(ids){
+  splitNow(ids.map(id => S.profiles.find(p => p.id === id)));
   const rows0 = profilesInOrder(ids); if (!rows0.length) return;
   const n0 = rows0.length;
   let pmStore = null;   // the store picked under Store (1.9.96+: each profile is on one)
@@ -8825,13 +8842,17 @@ const profileStores = (p) => Array.isArray(p.stores) ? p.stores : [];
 const storeEntry = (p, k) => profileStores(p).find(e => storeKeyOf(e) === k) || null;
 /* ONE-STORE-START: one store per profile (1.9.96, the owner's choice). Reads and changes only the state it's given, so
    .github/scripts/one-store.test.mjs tests it on its own. A profile is for one store, with its own shipping and billing
-   address. A profile on several (from before 1.9.96, a device still on an older version, or the paused web version)
-   becomes one profile per store: it keeps the first by rank (Target, then Pokémon Center, then the rest), and each other
-   store goes to a copy with the id `<id>.<store>`, the same name (the license worker pairs a buyer's Target and Pokémon
-   Center profiles by name), card, group and addresses, taking that store's switched-on and submitted slots, last batch,
-   pulls and checkouts with it. A store a copy already has goes back to it instead. Then no address is shared by two
-   profiles: each other profile gets a copy of it (`a` + a hash of the address and profile ids). Every id comes from the
-   data, so devices that split the same vault make the same profiles, and running it again changes nothing. */
+   address, and a person's profiles on different stores share a name (the license worker pairs a buyer's Target and
+   Pokémon Center profiles by name). A profile on several stores (from before 1.9.96, a device still on an older version,
+   or the paused web version) becomes one profile per store. Among the profiles with its name, each keeps a store: a copy
+   made here the store its id names (`<id>.<store>`), a profile on one store that store, and the rest the first by rank
+   (Target, then Pokémon Center, then the others) that no other one keeps. Each other store goes back to the profile with
+   that name that keeps it, filling in only a login or checkout email it lacks, unless both have that slot switched on
+   (two slots need two profiles); with none, it goes to a copy with the id `<id>.<store>` (`.2`… if taken) and the same
+   name, card, group and addresses. That store's switched-on and submitted slot, last batch, pulls and checkouts go with
+   it. Then no address is shared by two profiles: each other profile gets a copy of it (`a` + a hash of the address and
+   profile ids, numbered when that one is in use). Every id comes from the data, so devices that split the same vault
+   make the same profiles, and running it again changes nothing. */
 const osRoot = (id) => String(id).split(".")[0];
 const osSlug = (k) => /^[a-z0-9]+$/.test(k) ? k : "o" + syncHash(k);
 const osRank = (k) => (k === "target" ? "0" : k === "pokemoncenter" ? "1" : "2") + k;
@@ -8849,116 +8870,148 @@ function oneStorePass(st){
   st.slots = Array.isArray(st.slots) ? st.slots : []; st.subs = st.subs && typeof st.subs === "object" ? st.subs : {};
   st.lastBatch = Array.isArray(st.lastBatch) ? st.lastBatch : []; st.pulls = Array.isArray(st.pulls) ? st.pulls : [];
   const keyOf = (pid, k) => pid + "@" + k;
+  const hasSub = (key) => Object.prototype.hasOwnProperty.call(st.subs, key);
+  const busy = (key) => st.slots.includes(key) || hasSub(key);
+  const byId = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   // A slot's switched-on mark, submitted mark, last batch and pull go to another profile; one it already has stays.
   const rekey = (from, to) => {
     if (from === to) return;
     const i = st.slots.indexOf(from);
     if (i >= 0){ if (st.slots.includes(to)) st.slots.splice(i, 1); else st.slots[i] = to; out.changed = true; }
-    if (Object.prototype.hasOwnProperty.call(st.subs, from)){ if (!Object.prototype.hasOwnProperty.call(st.subs, to)) st.subs[to] = st.subs[from]; delete st.subs[from]; out.changed = true; }
+    if (hasSub(from)){ if (!hasSub(to)) st.subs[to] = st.subs[from]; delete st.subs[from]; out.changed = true; }
     if (st.lastBatch.includes(from)){ st.lastBatch = st.lastBatch.map(k => k === from ? to : k).filter((k, j, a) => a.indexOf(k) === j); out.changed = true; }
     st.pulls.forEach(x => { if (x && x.key === from){ x.key = to; out.changed = true; } });
   };
   const moveCheckouts = (from, to, k) => (Array.isArray(st.checkouts) ? st.checkouts : []).forEach(c => {
     if (c && c.profileId === from && storeKeyOf(c) === k){ c.profileId = to; out.changed = true; }
   });
+  const ok = (p) => p && typeof p.id === "string" && Array.isArray(p.stores);
   const ids = new Set(profiles.map(p => p && p.id));
-  const family = (root) => profiles.filter(q => q && osRoot(q.id) === root);
-  for (let i = 0; i < profiles.length; i++){
-    const p = profiles[i];
-    if (!p || typeof p.id !== "string" || !Array.isArray(p.stores)) continue;
-    // The same store twice on one profile: the first stays.
+  // The same store twice on one profile: the first stays.
+  profiles.filter(ok).forEach(p => {
     const seen = new Set(), before = p.stores.length;
     p.stores = p.stores.filter(e => { if (!e || typeof e !== "object") return false; const k = storeKeyOf(e); if (seen.has(k)) return false; seen.add(k); return true; });
     if (p.stores.length !== before) out.changed = true;
-    if (p.stores.length < 2) continue;
-    const root = osRoot(p.id), mine = p.id.slice(root.length + 1).split(".")[0];
-    const fam = family(root).filter(q => q !== p);
-    const ownsAlone = (k) => fam.some(q => q.stores.length === 1 && storeKeyOf(q.stores[0]) === k);
-    const ranked = p.stores.slice().sort((a, b) => osRank(storeKeyOf(a)) < osRank(storeKeyOf(b)) ? -1 : 1);
-    const keep = (mine && ranked.find(e => osSlug(storeKeyOf(e)) === mine)) || ranked.find(e => !ownsAlone(storeKeyOf(e))) || ranked[0];
-    const made = [];
-    for (const e of p.stores){
-      if (e === keep) continue;
-      const k = storeKeyOf(e);
-      const q = fam.find(x => x.stores.length === 1 && storeKeyOf(x.stores[0]) === k);
-      if (q){
-        // The store came back onto this profile (another device or the web version): it goes back to its own profile,
-        // filling in only a login or checkout email that one has none of.
-        const d = q.stores[0];
-        if (modeOf(d) === modeOf(e)){
-          if (modeOf(d) === "login" && !d.loginId && e.loginId) d.loginId = e.loginId;
-          if (modeOf(d) === "email" && !emailOk(d.email) && emailOk(e.email)) d.email = e.email;
+  });
+  // A person's profiles: the same name.
+  const people = new Map();
+  profiles.filter(ok).forEach(p => { const n = String(p.name || ""); if (!people.has(n)) people.set(n, []); people.get(n).push(p); });
+  const keeps = new Map();
+  for (const [, group] of [...people.entries()].sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)){
+    if (!group.some(p => p.stores.length > 1)) continue;
+    const ord = group.slice().sort(byId);
+    const slugOf = (p) => { const r = osRoot(p.id); return p.id === r ? "" : p.id.slice(r.length + 1).split(".")[0]; };
+    ord.forEach(p => { const s = slugOf(p), e = s && p.stores.find(x => osSlug(storeKeyOf(x)) === s); if (e) keeps.set(p, storeKeyOf(e)); });
+    ord.forEach(p => { if (!keeps.has(p) && p.stores.length === 1) keeps.set(p, storeKeyOf(p.stores[0])); });
+    ord.forEach(p => {
+      if (keeps.has(p) || !p.stores.length) return;
+      const taken = new Set(ord.filter(q => keeps.has(q)).map(q => keeps.get(q)));
+      const ranked = p.stores.map(storeKeyOf).sort((a, b) => osRank(a) < osRank(b) ? -1 : 1);
+      keeps.set(p, ranked.find(k => !taken.has(k)) || ranked[0]);
+    });
+    for (const p of ord){
+      if (p.stores.length < 2) continue;
+      const keepE = p.stores.find(e => storeKeyOf(e) === keeps.get(p)), made = [];
+      for (const e of p.stores){
+        if (e === keepE) continue;
+        const k = storeKeyOf(e);
+        const q = ord.find(x => x !== p && keeps.get(x) === k && !(busy(keyOf(p.id, k)) && busy(keyOf(x.id, k))));
+        if (q){
+          // The store came back onto this profile (another device or the web version): it goes back to the one that has
+          // it, filling in only a login or checkout email that one has none of.
+          const d = q.stores.find(x => storeKeyOf(x) === k);
+          if (d && modeOf(d) === modeOf(e)){
+            if (modeOf(d) === "login" && !d.loginId && e.loginId) d.loginId = e.loginId;
+            if (modeOf(d) === "email" && !emailOk(d.email) && emailOk(e.email)) d.email = e.email;
+          }
+          rekey(keyOf(p.id, k), keyOf(q.id, k));
+          moveCheckouts(p.id, q.id, k);
+          out.merged++;
+          continue;
         }
-        rekey(keyOf(p.id, k), keyOf(q.id, k));
-        moveCheckouts(p.id, q.id, k);
-        out.merged++;
-        continue;
+        const root = osRoot(p.id);
+        let id = root + "." + osSlug(k);
+        for (let n = 2; ids.has(id); n++) id = root + "." + osSlug(k) + "." + n;
+        ids.add(id);
+        const c = Object.assign({}, p, {id, stores:[e]});
+        made.push(c); ord.push(c); keeps.set(c, k);
+        rekey(keyOf(p.id, k), keyOf(id, k));
+        moveCheckouts(p.id, id, k);
       }
-      let id = root + "." + osSlug(k);
-      for (let n = 2; ids.has(id); n++) id = root + "." + osSlug(k) + "." + n;
-      ids.add(id);
-      const c = Object.assign({}, p, {id, stores:[e]});
-      made.push(c);
-      rekey(keyOf(p.id, k), keyOf(id, k));
-      moveCheckouts(p.id, id, k);
+      p.stores = [keepE];
+      p.email = osEmail(p, logins);
+      made.forEach(c => { c.email = osEmail(c, logins); });
+      profiles.splice(profiles.indexOf(p) + 1, 0, ...made);
+      out.split++; out.changed = true;
     }
-    p.stores = [keep];
-    p.email = osEmail(p, logins);
-    made.forEach(c => { c.email = osEmail(c, logins); });
-    profiles.splice(i + 1, 0, ...made);
-    i += made.length;
-    out.split++; out.changed = true;
   }
-  // A slot kept under a profile that isn't on its store any more goes to the one in its family that is.
-  const owner = new Map();
-  profiles.forEach(p => { if (p && typeof p.id === "string" && Array.isArray(p.stores) && p.stores.length === 1){ const k = keyOf(osRoot(p.id), storeKeyOf(p.stores[0])); if (!owner.has(k)) owner.set(k, p.id); } });
-  const byId = new Map(profiles.filter(p => p && typeof p.id === "string").map(p => [p.id, p]));
+  // A slot kept under a profile that isn't on its store any more goes to the same person's profile that is (unless
+  // that one has the slot switched on too).
+  const named = new Map();
+  profiles.filter(ok).sort(byId).forEach(p => { if (p.stores.length === 1){ const k = String(p.name || "") + "\u0000" + storeKeyOf(p.stores[0]); if (!named.has(k)) named.set(k, p); } });
+  const pById = new Map(profiles.filter(ok).map(p => [p.id, p]));
   const allKeys = [...new Set([...st.slots, ...Object.keys(st.subs), ...st.lastBatch, ...st.pulls.map(x => x && x.key).filter(Boolean)])];
   for (const key of allKeys){
     const at = key.lastIndexOf("@"); if (at < 0) continue;
-    const pid = key.slice(0, at), k = key.slice(at + 1), p = byId.get(pid);
+    const pid = key.slice(0, at), k = key.slice(at + 1), p = pById.get(pid);
     if (!p || profileStores(p).some(e => storeKeyOf(e) === k)) continue;
-    const to = owner.get(keyOf(osRoot(pid), k));
-    if (to && to !== pid) rekey(key, keyOf(to, k));
+    const q = named.get(String(p.name || "") + "\u0000" + k);
+    if (q && q !== p && !(busy(key) && busy(keyOf(q.id, k)))) rekey(key, keyOf(q.id, k));
   }
   // No address shared by two profiles (a profile's own shipping and billing may be one address).
   const addrs = Array.isArray(st.addresses) ? st.addresses : [];
   const aById = new Map(addrs.filter(a => a && typeof a.id === "string").map(a => [a.id, a]));
   const users = new Map();
-  profiles.forEach(p => {
-    if (!p || typeof p.id !== "string") return;
+  profiles.filter(ok).forEach(p => {
     new Set([p.shipId, p.billSame ? null : p.billId].filter(Boolean)).forEach(a => { if (!users.has(a)) users.set(a, []); users.get(a).push(p); });
   });
+  const inUse = (id) => profiles.some(p => ok(p) && (p.shipId === id || (!p.billSame && p.billId === id)));
   for (const [aid, us] of users){
     const src = aById.get(aid);
     if (!src || us.length < 2) continue;
-    us.slice().sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0).slice(1).forEach(q => {
-      const cid = "a" + syncHash(aid + "|" + q.id);
-      if (!aById.has(cid)){ const c = Object.assign({}, src, {id:cid}); addrs.push(c); aById.set(cid, c); out.addrs++; }
+    us.slice().sort(byId).slice(1).forEach(q => {
+      // Its copy: `a` + a hash of the two ids, numbered when a profile uses that one. One left from before, that no
+      // profile uses, gets the address as it is now.
+      let cid = "a" + syncHash(aid + "|" + q.id);
+      for (let n = 2; aById.has(cid) && inUse(cid); n++) cid = "a" + syncHash(aid + "|" + q.id + "|" + n);
+      const fresh = Object.assign({}, src, {id:cid}), have = aById.get(cid);
+      if (!have){ addrs.push(fresh); aById.set(cid, fresh); out.addrs++; }
+      else if (syncCanon(have) !== syncCanon(fresh)){ Object.keys(have).forEach(f => { delete have[f]; }); Object.assign(have, fresh); }
       if (q.shipId === aid) q.shipId = cid;
-      if (q.billId === aid) q.billId = cid;
+      if (!q.billSame && q.billId === aid) q.billId = cid;
       out.changed = true;
     });
   }
   return out;
 }
 /* ONE-STORE-END */
-// Runs oneStorePass on this vault: at unlock (in startApp, right after syncStart, so the units from before stay the
-// starting point and a change made elsewhere to the same profile still merges field by field), and after every merge with
-// the online copy, since a device on an older version, or the paused web version, can put a second store back on a profile
-// or link two profiles to one address. The first split is noted in the shared setting storeSplit, for the note on Profiles.
+// Runs oneStorePass on this vault after every merge with the online copy, since a device on an older version, or the
+// paused web version, can put a second store back on a profile or link two profiles to one address; and once after
+// unlocking. With sync off that's at unlock ("unlock", in startApp). With sync on it waits for the first sync round
+// (SYNC.oneStoreDue, "first"), which brings this device up to date first: split before that, its own out-of-date copy
+// would count as its edits, made now, and win over what other devices changed or deleted meanwhile. If that round can't
+// merge (offline, an error), or nothing has after 10 seconds, it splits the copy it has (oneStoreLate), as it does at once
+// before a profile on several stores is edited, duplicated or mass edited (splitNow). The first split is noted in the
+// shared setting storeSplit, for the note on Profiles.
 function oneStoreRun(why){
   if (!S || MODE !== "vault") return {changed:false};
   const r = oneStorePass(S);
   if (!r.changed) return r;
   SYNC.gen++;
-  if (why === "unlock"){
+  if (why !== "merge"){
     if (r.split && !S.settings.storeSplit) S.settings.storeSplit = {at:Date.now(), n:r.split, addrs:r.addrs};
-    persist();
-    if (r.split) setTimeout(() => toast(`${plural(r.split, "profile")} on more than one store ${r.split === 1 ? "is" : "are"} now one profile for each store`), 600);
+    if (why === "unlock") persist();
+    if (r.split) setTimeout(() => toast(`${plural(r.split, "profile")} on more than one store ${r.split === 1 ? "is" : "are"} now one profile for each store`), why === "unlock" ? 600 : 0);
   } else if (r.split) toast(`${plural(r.split, "profile")} got another store on another device, so each store went back to a profile of its own`);
   return r;
 }
+function oneStoreLate(){
+  if (!SYNC.oneStoreDue) return;
+  SYNC.oneStoreDue = false;
+  if (oneStoreRun("unlock").changed) render();
+}
+// Before a profile on several stores is changed by hand: split it now if the first sync round hasn't yet.
+const splitNow = (list) => { if (SYNC.oneStoreDue && list.some(p => p && profileStores(p).length > 1)) oneStoreLate(); };
 function storeSplitNoteHTML(){
   const x = S.settings.storeSplit;
   if (!x || typeof x !== "object" || S.settings._storeSplitSeen) return "";
@@ -11849,10 +11902,13 @@ function syncAdopt(m){
   }
   for (const n of SYNC_SETS) S[n] = m.state[n];
   for (const n of SYNC_VALUES) S[n] = m.state[n];
-  // As at unlock (sanitizeState): a submitted mark or last batch only for slots that are on.
+  SYNC.gen++;
+}
+// As at unlock (sanitizeState): a submitted mark or last batch only for slots that are on. After a merge, once
+// oneStoreRun has moved any kept under a profile's old store (a device still on 1.9.95 can submit one there).
+function syncTrim(){
   S.subs = Object.fromEntries(Object.entries(S.subs || {}).filter(([k]) => S.slots.includes(k)));
   S.lastBatch = (S.lastBatch || []).filter(k => S.slots.includes(k));
-  SYNC.gen++;
 }
 // After a merge: what this device still has to send (seen), the starting version of each such unit
 // (the online copy's), and the online copy's units as the new starting point.
@@ -11916,12 +11972,16 @@ async function syncCycle(opts){
         syncAdopt(m);
         L.rev = got.data.rev; L.vid = got.data.created; L.base = m.remote; L.mt = syncPruneMt(m.mt);
         syncAfterMerge(L, m, R);
-        if (oneStoreRun("merge").changed) changed = true;
+        if (oneStoreRun(SYNC.oneStoreDue ? "first" : "merge").changed) changed = true;
+        SYNC.oneStoreDue = false;
+        syncTrim();
         L.from = got.data.device || ""; L.fromAt = got.data.updatedAt || 0;
         if (m.toLocal) changed = true;
         syncNote();
         syncPersist();
       }
+      // Up to date with the online copy (nothing new there): the first round after unlocking splits now.
+      if (SYNC.oneStoreDue){ SYNC.oneStoreDue = false; if (oneStoreRun("first").changed){ changed = true; syncNote(); syncPersist(); } }
       if (!S._local.pending && !mustSend){ S._local.okAt = Date.now(); syncPersist(); SYNC.fails = 0; syncShow("ok"); return "ok"; }
       syncShow("syncing");
       const sent = await syncPush(key, auth, lic, opts.rekey);
@@ -11935,6 +11995,9 @@ async function syncCycle(opts){
     return syncShow("error", "Sync stopped unexpectedly. FAFO tries again on its own.");
   } finally {
     if (changed && S) syncRender();
+    // The first round couldn't merge (offline, an error): split the copy this device has. Waiting for a window or email
+    // sync, it merges first once that's done.
+    if (S && SYNC.oneStoreDue && !SYNC.waiting) setTimeout(() => { if (S && !SYNC.busy) oneStoreLate(); }, 0);
   }
 }
 async function syncPush(key, auth, lic, rekey){
@@ -12135,7 +12198,9 @@ function syncMergeIn(lic, info, o){
   VAULT = Object.assign({}, VAULT, {salt:info.salt, iter:info.iter || ITER});
   S._local = {on:true, lic, rev:o.got.data.rev, vid:o.got.data.created, base:m.remote, mt:syncPruneMt(m.mt), okAt:Date.now(), from:o.got.data.device || "", fromAt:o.got.data.updatedAt || 0};
   syncAfterMerge(S._local, m, R);
-  oneStoreRun("merge");
+  oneStoreRun(SYNC.oneStoreDue ? "first" : "merge");
+  SYNC.oneStoreDue = false;
+  syncTrim();
   syncHintWrite({lic, dirty:true});
   syncNote(); syncPersist();
   return m;

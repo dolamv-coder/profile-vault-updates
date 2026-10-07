@@ -97,6 +97,7 @@ test("two devices that each split the same vault merge with nothing to settle", 
 test("Pokémon Center put back on the Target profile (an older device): it returns to its own profile, slot and all", () => {
   const s = legacy(); oneStorePass(s);
   const t = s.profiles[0];
+  s.slots = s.slots.filter((k) => k !== "p1.pokemoncenter@pokemoncenter"); delete s.subs["p1.pokemoncenter@pokemoncenter"];
   t.stores.push(pkc({ email: "other@example.com" }));   // the web version adds the store again
   t.shipId = s.profiles[1].shipId;                        // and links the copy's address
   s.slots.push("p1@pokemoncenter");
@@ -106,6 +107,66 @@ test("Pokémon Center put back on the Target profile (an older device): it retur
   assert.equal(s.profiles[1].stores[0].email, "ann.pc@example.com", "its own checkout email stays");
   assert.ok(s.slots.includes("p1.pokemoncenter@pokemoncenter") && !s.slots.includes("p1@pokemoncenter"));
   assert.notEqual(s.profiles[0].shipId, s.profiles[1].shipId, "and the address is unshared again");
+  assert.equal(oneStorePass(clone(s)).changed, false);
+});
+
+test("both with that slot switched on: two slots need two profiles, so the store gets a copy of its own", () => {
+  const s = legacy(); oneStorePass(s);
+  s.profiles[0].stores.push(pkc({ email: "ann.pc@example.com" }));
+  s.slots.push("p1@pokemoncenter"); s.subs["p1@pokemoncenter"] = { at: 9, batch: "B9" };
+  const r = oneStorePass(s);
+  assert.equal(r.merged, 0);
+  assert.deepEqual(s.profiles.map((p) => [p.id, p.name, p.stores.map((e) => e.store)]).slice(0, 3), [["p1", "Ann", ["target"]], ["p1.pokemoncenter.2", "Ann", ["pokemoncenter"]], ["p1.pokemoncenter", "Ann", ["pokemoncenter"]]]);
+  assert.equal(s.subs["p1.pokemoncenter.2@pokemoncenter"].batch, "B9", "its own submission stays its own");
+  assert.equal(s.subs["p1.pokemoncenter@pokemoncenter"].batch, "B1");
+});
+
+test("a store put back on someone whose copy was renamed goes to a new copy, not to the renamed one", () => {
+  const s = legacy(); oneStorePass(s);
+  s.profiles[1].name = "Zed";                              // "Only this one"
+  s.profiles[0].stores.push(pkc({ email: "ann.web@example.com" }));
+  oneStorePass(s);
+  const zed = s.profiles.find((p) => p.name === "Zed"), ann = s.profiles.filter((p) => p.name === "Ann");
+  assert.equal(zed.stores[0].email, "ann.pc@example.com", "Zed's profile is as it was");
+  assert.deepEqual(ann.map((p) => [p.id, p.stores[0].store, p.stores[0].email || ""]), [["p1", "target", ""], ["p1.pokemoncenter.2", "pokemoncenter", "ann.web@example.com"]]);
+});
+
+test("a pair that both got the other store (Mass edit on 1.9.95, or the web version) stays one profile per store", () => {
+  for (const flip of [false, true]){
+    const s = legacy(); oneStorePass(s);
+    s.profiles[0].stores.push(pkc());
+    s.profiles[1].stores.push(tgt({ loginId: "l1" }));
+    if (flip) s.profiles.reverse();
+    oneStorePass(s);
+    const ann = s.profiles.filter((p) => p.name === "Ann").map((p) => [p.id, p.stores.map((e) => e.store)]).sort();
+    assert.deepEqual(ann, [["p1", ["target"]], ["p1.pokemoncenter", ["pokemoncenter"]]], "list order " + (flip ? "reversed" : "as it was"));
+  }
+});
+
+test("a profile with the same name made elsewhere (Duplicate, an import) counts as the same person's", () => {
+  const s = legacy(); oneStorePass(s);
+  s.profiles = s.profiles.filter((p) => p.id !== "p1.pokemoncenter");
+  s.slots = s.slots.filter((k) => !k.startsWith("p1.pokemoncenter@")); delete s.subs["p1.pokemoncenter@pokemoncenter"];
+  s.lastBatch = s.lastBatch.filter((k) => !k.startsWith("p1.pokemoncenter@"));
+  s.profiles.push({ id: "dup1", name: "Ann", email: "ann.pc@example.com", shipId: "a9", billSame: true, stores: [pkc({ email: "ann.pc@example.com" })] });
+  s.profiles[0].stores.push(pkc({ email: "ann.t@example.com" }));
+  oneStorePass(s);
+  assert.deepEqual(s.profiles.filter((p) => p.name === "Ann").map((p) => [p.id, p.stores[0].store]), [["p1", "target"], ["dup1", "pokemoncenter"]]);
+});
+
+test("an address copy left from before isn't reused while another profile uses it, and one nobody uses gets the address as it is now", () => {
+  const s = legacy(); oneStorePass(s);
+  const bo = s.profiles.find((p) => p.id === "p2"), cid = bo.shipId;
+  s.addresses.find((a) => a.id === cid).line1 = "9 Elm St";   // Bo moved, on 1.9.96
+  bo.shipId = "a1";                                          // then the web version linked him to Ann's again
+  oneStorePass(s);
+  assert.equal(bo.shipId, cid, "his old copy, nobody's now, is his again");
+  assert.equal(s.addresses.find((a) => a.id === cid).line1, "1 Main St", "with the address he chose");
+  const eve = { id: "p9", name: "Eve", stores: [tgt()], shipId: cid, billSame: true };
+  s.profiles.push(eve); bo.shipId = "a1";                    // someone else uses that copy now
+  oneStorePass(s);
+  assert.notEqual(bo.shipId, cid); assert.notEqual(bo.shipId, "a1"); assert.equal(eve.shipId, cid);
+  assert.equal(s.addresses.find((a) => a.id === bo.shipId).line1, "1 Main St");
   assert.equal(oneStorePass(clone(s)).changed, false);
 });
 
@@ -135,6 +196,35 @@ test("a typed store gets a hashed slug; Use Assigned Account stays on each copy"
   assert.equal(s.profiles[0].email, "", "Use Assigned Account has no email");
   assert.match(s.profiles[1].id, /^r\.o[0-9a-z]+$/);
   assert.equal(s.profiles[1].email, "di@example.com");
+});
+
+test("random vaults: one store per profile, no address shared, the same ids in any list order, and nothing left for a second run", () => {
+  let seed = 7;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  const STORES = [() => tgt({ loginId: rnd(2) ? "l1" : null }), () => pkc({ email: rnd(2) ? "x@example.com" : "" }), () => ({ store: "walmart", storeName: "", mode: "login" }), () => tgt({ mode: "seller" })];
+  for (let round = 0; round < 300; round++){
+    const s = blank();
+    for (let i = 0; i < 6; i++) s.addresses.push(addr("a" + i, i + " Main St"));
+    const n = 2 + rnd(7);
+    for (let i = 0; i < n; i++){
+      const id = rnd(4) ? "q" + rnd(5) : "q" + rnd(5) + "." + ["target", "pokemoncenter", "walmart"][rnd(3)] + (rnd(3) ? "" : ".2");
+      if (s.profiles.some((p) => p.id === id)) continue;
+      const stores = []; for (let j = rnd(4); j > 0; j--) stores.push(STORES[rnd(4)]());
+      s.profiles.push({ id, name: ["Ann", "Bo", "Cy"][rnd(3)], email: "", shipId: "a" + rnd(6), billSame: !!rnd(2), billId: "a" + rnd(6), stores });
+      if (stores.length && rnd(2)) s.slots.push(id + "@" + storeKeyOf(stores[rnd(stores.length)]));
+    }
+    s.subs = Object.fromEntries(s.slots.filter(() => rnd(2)).map((k) => [k, { at: 1, batch: "B" + rnd(3) }]));
+    const back = clone(s); back.profiles.reverse();
+    oneStorePass(s); oneStorePass(back);
+    for (const p of s.profiles) assert.ok(p.stores.length <= 1, "one store: " + JSON.stringify(p));
+    const users = {}; s.profiles.forEach((p) => new Set([p.shipId, p.billSame ? null : p.billId].filter(Boolean)).forEach((a) => { users[a] = (users[a] || 0) + 1; }));
+    assert.ok(Object.values(users).every((x) => x === 1), "no address shared");
+    const byId = (st) => JSON.stringify(st.profiles.slice().sort((a, b) => a.id < b.id ? -1 : 1));
+    assert.equal(byId(back), byId(s), "the same profiles whatever the list order");
+    assert.deepEqual([...back.slots].sort(), [...s.slots].sort());
+    assert.deepEqual(back.subs, s.subs);
+    assert.equal(oneStorePass(clone(s)).changed, false, "nothing left for a second run");
+  }
 });
 
 console.log(`\n${passed} passed`);
