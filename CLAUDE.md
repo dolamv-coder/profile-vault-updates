@@ -84,7 +84,8 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   `GET /submissions/status?ids=` (license Bearer, that license's batches only) says approved, then **Success** (`okAt`)
   with a message (`refreshApprovals`: about every 30 seconds with Submit in front, otherwise every 5 minutes); 1.9.92+
   also shows **Declined** (`declinedAt`). 1.9.91 keeps a declined batch at Pending approval. Slots sent before, through a
-  worker that doesn't answer `review`, or as a code show Submitted as before.
+  worker that doesn't answer `review`, or as a code show Submitted as before; from 1.9.98 those an older app sent through
+  the worker after approvals began (it kept no batch id) find their batch with `GET /submissions/batches` (1.9.98 below).
   The owner opened these in Excel (since the change above, only 1.9.52's single CSV is still posted), which shows a 16-digit card number as 5.55556E+15 (keeping only 15
   digits) and drops leading zeros. So since 2026-10-02 the worker writes each slots CSV's phone, card
   number, expiry month, CVV and zip code cells as `="…"` Excel text (`excelSafe`), and does the same
@@ -589,6 +590,16 @@ match the search (`profilesInView`, which `visibleProfiles` narrows to the store
 Center chip counted every group's profiles there). Each store any profile is on keeps its chip, at 0 where the group has
 none, and picking one there says which stores the group's profiles are on, with Show all stores, where it said the group
 was empty. Nothing gains a field, so the paused web version is unaffected.
+
+From 1.9.98 slots that an app before 1.9.91 sent through the worker after approvals began show the seller's decision too
+(the owner's report: a buyer's slots said Submitted while their batch waited for approval). Those apps didn't keep the
+batch id they sent, so `adoptBatches` (run by `refreshApprovals`) asks `GET /submissions/batches?since=&until=` (license
+Bearer: that license's batches, each with `at`, `slots`, the sender's `name`, `status` and `decided`, and the worker's
+`now`) and gives each such send (its `subs` entries share `at`; `to` `"CSV"`, from `APPROVALS_FROM` on) the batch sent
+under its `from` name, with room for its slots, nearest in time once the computer's clock is set against `now`, and later
+than the batch the send before it got, never one a `subs` entry already has. It then shows Pending approval, Success or
+Declined like any other. A send with none is marked `noBatch` (Submitted, with a tooltip saying why) and isn't asked
+about again. `subs` entries gain `noBatch`, so the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

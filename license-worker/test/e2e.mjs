@@ -1170,6 +1170,24 @@ try {
     const again = await (await slots("/submissions", frankKey, { files: [{ store: "Target", kind: "profiles", text: tgtCsv }], name: "Beta", slots: 2, batch: apBatch })).json();
     assert.equal(again.duplicate, true); assert.equal(again.review, "approved");
   });
+  await test("a license lists its own batches (for apps before 1.9.91, which kept no batch id): when, how many, whose, decided", async () => {
+    const list = async (key, q = "") => { const r = await slots("/submissions/batches" + q, key); return r.ok ? await r.json() : r.status; };
+    assert.equal(await list(null), 401);
+    assert.equal(await list("PVLT-NOPE-NOPE-NOPE-NOPE"), 401);
+    const t0 = Date.now(), d = await list(frankKey);
+    assert.ok(Math.abs(d.now - t0) < 60000, "the worker's clock, to set the app's against");
+    const b = d.batches.find((x) => x.id === apBatch);
+    assert.ok(b, "the approved batch is listed");
+    assert.equal(b.slots, 2); assert.equal(b.name, "Beta <b>"); assert.equal(b.status, "approved");
+    assert.ok(b.at > 0 && b.at <= b.decided && b.decided <= t0, JSON.stringify(b));
+    assert.deepEqual(Object.keys(b).sort(), ["at", "decided", "id", "name", "slots", "status"], "nothing else: never the slots");
+    assert.ok(d.batches.every((x, i) => !i || d.batches[i - 1].at <= x.at), "oldest first");
+    assert.ok(d.batches.every((x) => x.status !== "pending" || !("decided" in x)), "a pending batch has no decided time");
+    assert.ok(!(await list(GH_KEY)).batches.some((x) => x.id === apBatch), "another license never sees it");
+    assert.ok(!(await list(frankKey, `?since=${b.at + 1}`)).batches.some((x) => x.id === apBatch), "since leaves out older ones");
+    assert.ok(!(await list(frankKey, `?until=${b.at - 1}`)).batches.some((x) => x.id === apBatch), "until leaves out newer ones");
+    assert.ok((await list(frankKey, `?since=${b.at}&until=${b.at}`)).batches.some((x) => x.id === apBatch), "both ends included");
+  });
   await test("a batch that never reached the channel has nothing to approve; sending it again posts a new link", async () => {
     const batch = "apfail" + rid(), files = [{ store: "Target", kind: "profiles", text: tgtCsv }];
     webhookFail.push(500);
