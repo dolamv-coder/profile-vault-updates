@@ -1,10 +1,10 @@
 {
-  "version": "1.9.99",
-  "url": "index-1.9.99.html",
-  "sha256": "aa2ac27444ecf1047210fc669a977c44c47fb26f647fa9423e9f4c5975168e3a",
-  "signature": "InsZJiTWnQowwKpV4HScwX417SgLZBY8Sd5i1w1eybo09tnTqpkolgV/goXI8CRoYAAq1jzmnFA7tlw3s106Dw==",
+  "version": "1.9.100",
+  "url": "index-1.9.100.html",
+  "sha256": "5627c18b9812efee2b7492fc31499d48c3fb7fd6e7521ff858cd1c64efa19bbc",
+  "signature": "xRr5wKM/B8viwQMUKuXHp12+h6bJb/tl1nsXOWBKaRsy1ivWRlCuygdSDWRCs/MVexk7Ud32lPyfxbve7VQEBQ==",
   "minAppVersion": "0",
-  "notes": "A slot on Use Assigned Account that you switch off and send again now keeps the account the seller gave it, instead of needing a new one.",
+  "notes": "FAFO now installs updates on its own: when a new version is ready, it restarts into it while it's locked and you're away from the computer, never in the middle of something, and you unlock it as usual. You can turn this off in Settings → Updates.",
   "installerUrl": "",
-  "publishedAt": "2026-10-07T17:51:53.807Z"
+  "publishedAt": "2026-10-07T21:21:19.266Z"
 }
