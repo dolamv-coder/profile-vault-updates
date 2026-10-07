@@ -1,0 +1,1 @@
+Store logins can now be copied: select some, then right-click or use Copy in the selection bar to copy their emails, or email:password lines, one per line in the order shown. A single login's menu has Copy email and Copy email:password too.

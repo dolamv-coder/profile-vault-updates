@@ -886,7 +886,7 @@ async function submission(request, env, url) {
   ).bind(s.id, s.key_hash, s.key_last4, s.name, s.username, slots, bytes, s.key_id, now).run();
   if (!ins.meta || !ins.meta.changes) return json({ error: "still sending" }, 425);
   // Slots on Use Assigned Account get accounts from the owner's list: {store name: {asked, got}}.
-  const picks = files !== null ? await assignAccounts(env, lic, batch, files, now) : new Map();
+  const moves = [], picks = files !== null ? await assignAccounts(env, lic, batch, files, now, moves) : new Map();
   const stamp = new Date(now).toISOString().slice(0, 16).replace("T", "-").replace(":", "");
   const slug = s.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
   const who = [s.name ? `**${md(s.name)}**` : "", s.username ? `@${md(s.username)}` : "", `license …${s.key_last4}`].filter(Boolean).join(" · ");
@@ -943,8 +943,9 @@ async function submission(request, env, url) {
   if (!msgId) {
     await env.DB.prepare("DELETE FROM submissions WHERE id = ?").bind(s.id).run();
     if (reviewed) await env.DB.prepare("DELETE FROM submission_reviews WHERE id = ?").bind(s.id).run().catch((e) => console.error("review", e));
-    // Accounts that can't have reached the channel go back to the list; if part of the batch went out,
-    // they're kept for this batch, and sending it again posts the same ones.
+    // Accounts that can't have reached the channel go back to the list (or to the batch they came from); if part of the
+    // batch went out, they're kept for this batch, and sending it again posts the same ones.
+    if (!postedAny) await undoMoves(env, lic, batch, moves).catch((e) => console.error("accounts", e));
     if (picks.size) await settleAccounts(env, lic, batch, postedAny, Date.now());
     return json({ error: "couldn't post to the channel" }, 502);
   }
@@ -986,16 +987,21 @@ async function submissionReview(request, env, ctx, url, id) {
   if (r.status === "pending" && (action === "approve" || action === "decline")) {
     const now = Date.now(), status = action === "approve" ? "approved" : "declined";
     const back = status === "declined" ? await given() : [];
+    // Worked out before the batch is marked: accounts that stay for a Pokémon Center slot elsewhere, and parked ones
+    // whose last slot is in this batch.
+    const eff = status === "declined" ? await declineEffect(env, r.key_hash, r.id) : { kept: 0, released: 0 };
     // Its message is no longer needed once it's marked.
     const res = await env.DB.prepare("UPDATE submission_reviews SET status = ?, decided_at = ?, content = '' WHERE id = ? AND status = 'pending'").bind(status, now, r.id).run();
     if (res.meta && res.meta.changes) {
       if (r.webhook_message_id) ctx.waitUntil(webhookEdit(env, r.webhook_message_id, { content: submissionMessage(url.origin, { ...r, status, decided_at: now }) }).catch(() => {}));
-      if (status === "declined" && back.length) {
-        await freeAccounts(env, "key_hash = ? AND batch = ?", r.key_hash, r.id);
-        for (const st of new Set(back.map((a) => a.store))) await stockCheck(env, st, accountStoreName(st), false);
+      // Every decline, so a batch whose only accounts are reuses drops them too.
+      if (status === "declined") {
+        await freeBatch(env, r.key_hash, r.id);
+        for (const st of new Set([...back.map((a) => a.store), ...Object.values(REUSE_FROM)])) await stockCheck(env, st, accountStoreName(st), false);
       }
+      const kept = eff.kept, freed = back.length - eff.kept + eff.released;
       done = status === "approved" ? "Approved. Their FAFO now shows these slots as Success."
-        : `Declined. Their FAFO now shows these slots as Declined.${back.length ? ` ${back.length} account${back.length === 1 ? "" : "s"} given to them ${back.length === 1 ? "is" : "are"} back on your list.` : ""}`;
+        : `Declined. Their FAFO now shows these slots as Declined.${freed ? ` ${freed} account${freed === 1 ? "" : "s"} given to them ${freed === 1 ? "is" : "are"} back on your list.` : ""}${keptNote(kept)}`;
     }
     Object.assign(r, await env.DB.prepare("SELECT status, decided_at FROM submission_reviews WHERE id = ?").bind(r.id).first());
   } else if (r.status === "pending" && action === "decline-ask") asking = true;
@@ -1005,13 +1011,14 @@ async function submissionReview(request, env, ctx, url, id) {
   const who = [r.name, r.username ? "@" + r.username : "", "license …" + r.key_last4].filter(Boolean).join(" · ");
   const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
   const btn = (a, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${a}">${esc(text)}</button></form>`;
-  const n = r.status === "pending" ? (await given()).length : 0;
+  const eff = asking ? await declineEffect(env, r.key_hash, r.id) : { kept: 0, released: 0 }, kept = eff.kept;
+  const n = r.status === "pending" ? (await given()).length - eff.kept + eff.released : 0;
   const head = `<p class="who">${r.slots} slot${r.slots === 1 ? "" : "s"}${r.name ? ` from ${esc(r.name)}` : ""}</p>
      ${r.stores ? `<p class="small" style="margin-top:8px">${esc(r.stores)}</p>` : ""}`;
   const sent = `<p class="small">Sent by ${esc(who)}, ${esc(when(r.created_at))}</p>`;
   if (asking) return page(200, "Decline these slots?", "",
     `${head}
-     <p class="small">Their FAFO will show these slots as Declined, and they can send them again.${n ? ` The ${n} account${n === 1 ? "" : "s"} given to them go${n === 1 ? "es" : ""} back on your list.` : ""} This can't be undone.</p>
+     <p class="small">Their FAFO will show these slots as Declined, and they can send them again.${n ? ` The ${n} account${n === 1 ? "" : "s"} given to them go${n === 1 ? "es" : ""} back on your list.` : ""}${keptNote(kept)} This can't be undone.</p>
      ${sent}
      <div class="row">${btn("decline", "Decline", "no")}<form method="get"><input type="hidden" name="t" value="${esc(t)}"><button class="copy" style="width:100%;padding:12px;font-size:16px" type="submit">Keep it waiting</button></form></div>`);
   return page(200, "Submitted slots", done || label,
@@ -1060,11 +1067,89 @@ const FREE_ACCOUNT = "key_hash = NULL, key_last4 = NULL, batch = NULL, store_nam
 // Pokémon Center row marked offer_id "reuse:target", which isn't on the owner's list: it's deleted where others are
 // freed, and doesn't count in a store's stock or toward a license's limit (OWN_ACCOUNT).
 const OWN_ACCOUNT = "COALESCE(offer_id, '') NOT LIKE 'reuse:%'";
+// A reuse goes with the account it reuses: one whose Target account is freed (by /admin/accounts/free, say) is deleted
+// too, so the Pokémon Center slot doesn't keep an email the list may give another buyer. (`where` names the freed
+// accounts' own columns, which inside the subquery are s's.) Then a parked account whose last slot this freed goes back.
 async function freeAccounts(env, where, ...binds) {
-  const [, r] = await env.DB.batch([
+  const [, , r] = await env.DB.batch([
+    env.DB.prepare(`DELETE FROM accounts WHERE NOT (${OWN_ACCOUNT}) AND EXISTS (SELECT 1 FROM accounts s WHERE s.store = substr(accounts.offer_id, 7)
+      AND s.key_hash = accounts.key_hash AND s.email_norm = accounts.email_norm AND (${where}))`).bind(...binds),
     env.DB.prepare(`DELETE FROM accounts WHERE NOT (${OWN_ACCOUNT}) AND (${where})`).bind(...binds),
     env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE ${where}`).bind(...binds)]);
+  await sweepParked(env);
   return r;
+}
+// Declining a batch puts back the accounts given to its slots, except a Target account that the same buyer's Pokémon
+// Center slot (same profile) in another batch still checks out with: a reuse, or the same email from the Pokémon Center
+// list. That one stays with the buyer, parked (its batch becomes "parked:" + the declined batch), until no such slot is
+// left (sweepParked); otherwise the list could give the email to a second buyer (2026-10-07, the owner's request).
+// Declining a Pokémon Center batch always frees or drops its rows, so a held Pokémon Center row is in a batch that
+// isn't declined. A slot sent again takes its account to the new batch before the batch is posted, and back if nothing
+// was posted (takeAccount, undoMoves), so a decline meanwhile never frees an account a posted slot uses; a declined
+// Target slot sent again gets its parked account back (assignAccounts).
+const PARKED = "parked:";
+const DECLINED = "SELECT id FROM submission_reviews WHERE status = 'declined'";
+// A row r at the reusing store (the first bind) with the same buyer, profile and email as `accounts`; `batchCond`
+// narrows r.batch. (Rows in declined batches are left out; only reuses older workers left behind can be there.)
+const usedBy = (batchCond) => `EXISTS (SELECT 1 FROM accounts r WHERE r.store = ? AND r.key_hash = accounts.key_hash AND r.email_norm = accounts.email_norm
+  AND r.profile = accounts.profile AND r.batch IS NOT NULL AND r.batch NOT LIKE '${PARKED}%' AND r.batch NOT IN (${DECLINED}) AND ${batchCond})`;
+const PAIRS = () => Object.entries(REUSE_FROM);   // [[reusing store, store it reuses from]]
+// How many of a batch's accounts declining it would leave with the buyer, and how many parked ones it would put back
+// (their only slot left is in this batch).
+async function declineEffect(env, keyHash, batch) {
+  let kept = 0, released = 0;
+  for (const [to, from] of PAIRS()) {
+    const k = await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ? AND batch = ? AND store = ? AND ${usedBy("r.batch <> accounts.batch")}`)
+      .bind(keyHash, batch, from, to).first();
+    const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ? AND store = ? AND batch LIKE '${PARKED}%'
+      AND ${usedBy("r.batch = ?")} AND NOT ${usedBy("r.batch <> ?")}`).bind(keyHash, from, to, batch, to, batch).first();
+    kept += k ? k.n : 0; released += r ? r.n : 0;
+  }
+  return { kept, released };
+}
+// What the decline page says about the ones that stay (one pair of stores so far: REUSE_FROM).
+const keptNote = (k) => {
+  if (!k) return "";
+  const [[to, from]] = PAIRS(), one = k === 1;
+  return ` ${k} ${accountStoreName(from)} account${one ? " stays" : "s stay"} with them: their ${accountStoreName(to)} slot${one ? " in another batch uses it" : "s in other batches use them"} too.`;
+};
+// Run once the batch is marked declined (and again by undoMoves for a batch declined while a move was out).
+async function freeBatch(env, keyHash, batch) {
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM accounts WHERE key_hash = ? AND batch = ? AND NOT (${OWN_ACCOUNT})`).bind(keyHash, batch),
+    ...PAIRS().map(([to, from]) => env.DB.prepare(`UPDATE accounts SET batch = '${PARKED}' || batch WHERE key_hash = ? AND batch = ? AND store = ?
+      AND ${usedBy("r.batch <> accounts.batch")}`).bind(keyHash, batch, from, to)),
+    env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE key_hash = ? AND batch = ?`).bind(keyHash, batch),
+  ]);
+  await sweepParked(env);
+}
+// A parked account no slot uses any more goes back on the list, and reuses older workers left in declined batches go.
+async function sweepParked(env) {
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM accounts WHERE NOT (${OWN_ACCOUNT}) AND key_hash IS NOT NULL AND batch IN (${DECLINED})`),
+    ...PAIRS().map(([to, from]) => env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE store = ? AND batch LIKE '${PARKED}%' AND NOT ${usedBy("1")}`).bind(from, to)),
+  ]);
+}
+// Moves an account this buyer holds from batch `from` to the batch being sent, if it's still there; the move is noted
+// so undoMoves can put it back. False if it moved meanwhile (a decline, say).
+async function takeAccount(env, lic, batch, store, emailNorm, from, storeName, moves) {
+  const r = await env.DB.prepare("UPDATE accounts SET batch = ?, store_name = ? WHERE store = ? AND email_norm = ? AND key_hash = ? AND batch = ?")
+    .bind(batch, storeName, store, emailNorm, lic.hash, from).run();
+  if (!(r.meta && r.meta.changes)) return false;
+  moves.push({ store, emailNorm, from, storeName: storeName });
+  return true;
+}
+// Nothing of the batch reached the channel: the accounts go back to the batches they came from, and one whose batch was
+// declined meanwhile gets what that decline would have done.
+async function undoMoves(env, lic, batch, moves) {
+  if (!moves.length) return;
+  await env.DB.batch(moves.map((m) => env.DB.prepare("UPDATE accounts SET batch = ? WHERE store = ? AND email_norm = ? AND key_hash = ? AND batch = ?")
+    .bind(m.from, m.store, m.emailNorm, lic.hash, batch)));
+  const froms = [...new Set(moves.map((m) => m.from).filter((b) => !b.startsWith(PARKED)))];
+  const { results } = froms.length ? await env.DB.prepare(`SELECT id FROM submission_reviews WHERE status = 'declined' AND id IN (SELECT value FROM json_each(?))`)
+    .bind(JSON.stringify(froms)).all() : { results: [] };
+  for (const x of results) await freeBatch(env, lic.hash, x.id);
+  await sweepParked(env);
 }
 
 // The slots CSV as the app writes it: comma-separated, quoted when a cell has a comma, quote or line break.
@@ -1148,14 +1233,19 @@ const aycdText = (list) => JSON.stringify(list, null, 2);
 // used, with its own password, while it's free or already this profile's; if another buyer has it, the slot gets a
 // free account as usual. Nothing counts toward the license's limit.
 const REUSE_FROM = { pokemoncenter: "target" };
-async function reuseAccount(env, lic, batch, f, profile, at) {
+async function reuseAccount(env, lic, batch, f, profile, at, moves) {
   const from = REUSE_FROM[f.storeKey];
   if (!from || !profile) return null;
   const t = await env.DB.prepare(`SELECT email, email_norm, password FROM accounts WHERE key_hash = ? AND store = ? AND profile = ? AND (sent_at IS NOT NULL OR batch = ?)
     ORDER BY batch = ? DESC, sent_at DESC, assigned_at DESC LIMIT 1`).bind(lic.hash, from, profile, batch, batch).first();
   if (!t) return null;
-  const cur = await env.DB.prepare("SELECT key_hash, profile, email, password FROM accounts WHERE store = ? AND email_norm = ?").bind(f.storeKey, t.email_norm).first();
-  if (cur && cur.key_hash) return cur.key_hash === lic.hash && cur.profile === profile ? { email: cur.email, password: cur.password } : null;
+  const cur = await env.DB.prepare("SELECT key_hash, profile, email, password, batch FROM accounts WHERE store = ? AND email_norm = ?").bind(f.storeKey, t.email_norm).first();
+  if (cur && cur.key_hash) {
+    if (cur.key_hash !== lic.hash || cur.profile !== profile) return null;
+    // The slot sent again (after a pull) takes it along, so declining the batch it was in before doesn't free it.
+    if (cur.batch !== batch && !(await takeAccount(env, lic, batch, f.storeKey, t.email_norm, cur.batch, f.store, moves))) return null;
+    return { email: cur.email, password: cur.password };
+  }
   if (cur) return env.DB.prepare(`UPDATE accounts SET key_hash = ?, key_last4 = ?, batch = ?, store_name = ?, profile = ?, assigned_at = ?, sent_at = NULL
     WHERE store = ? AND email_norm = ? AND key_hash IS NULL RETURNING email, password`).bind(lic.hash, lic.last4, batch, f.store, profile, at, f.storeKey, t.email_norm).first();
   return env.DB.prepare(`INSERT OR IGNORE INTO accounts (store, email, email_norm, password, added_at, offer_id, key_hash, key_last4, batch, store_name, profile, assigned_at)
@@ -1163,7 +1253,7 @@ async function reuseAccount(env, lic, batch, f, profile, at) {
     .bind(f.storeKey, t.email, t.email_norm, t.password, at, "reuse:" + from, lic.hash, lic.last4, batch, f.store, profile, at).first();
 }
 
-async function assignAccounts(env, lic, batch, files, now) {
+async function assignAccounts(env, lic, batch, files, now, moves) {
   const picks = new Map();
   // Pokémon Center after Target, so it can reuse the Target accounts given out in the same batch.
   const want = files.filter((f) => f.kind === "profiles" && f.assigned > 0).sort((a, b) => (REUSE_FROM[a.storeKey] ? 1 : 0) - (REUSE_FROM[b.storeKey] ? 1 : 0));
@@ -1184,10 +1274,16 @@ async function assignAccounts(env, lic, batch, files, now) {
     let reused = 0, more = true;
     for (let i = 0; i < asked; i++) {
       const profile = String(rows[start + i][0] || "").slice(0, 80);
-      const r = await reuseAccount(env, lic, batch, f, profile, now + i);
+      const r = await reuseAccount(env, lic, batch, f, profile, now + i, moves);
       if (r) { res[i] = r; reused++; continue; }
       const h = had.findIndex((a) => a.profile === profile);
       if (h >= 0) { res[i] = had.splice(h, 1)[0]; continue; }
+      // A declined slot sent again gets the account it had back, if it was kept for the profile's Pokémon Center slot.
+      if (Object.values(REUSE_FROM).includes(f.storeKey)) {
+        const k = await env.DB.prepare(`SELECT email, email_norm, password, batch FROM accounts WHERE key_hash = ? AND store = ? AND profile = ? AND batch LIKE '${PARKED}%'
+          ORDER BY assigned_at DESC LIMIT 1`).bind(lic.hash, f.storeKey, profile).first();
+        if (k && await takeAccount(env, lic, batch, f.storeKey, k.email_norm, k.batch, f.store, moves)) { res[i] = k; continue; }
+      }
       if (!more) continue;
       const held = await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ? AND ${OWN_ACCOUNT}`).bind(lic.hash).first();
       const a = (held ? held.n : 0) < limit ? await env.DB.prepare(
@@ -1950,7 +2046,7 @@ async function admin(request, env, path) {
     const [stores, given, offers, removals] = await env.DB.batch([
       env.DB.prepare(`SELECT store, COUNT(*) AS total, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free,
         SUM(CASE WHEN sent_at IS NOT NULL THEN 1 ELSE 0 END) AS sent FROM accounts WHERE ${OWN_ACCOUNT} GROUP BY store ORDER BY store`),
-      env.DB.prepare(`SELECT store, email, key_last4, store_name, profile, assigned_at, sent_at, NOT (${OWN_ACCOUNT}) AS reused FROM accounts WHERE key_hash IS NOT NULL ORDER BY assigned_at DESC LIMIT 500`),
+      env.DB.prepare(`SELECT store, email, key_last4, store_name, profile, batch, assigned_at, sent_at, NOT (${OWN_ACCOUNT}) AS reused FROM accounts WHERE key_hash IS NOT NULL ORDER BY assigned_at DESC LIMIT 500`),
       env.DB.prepare("SELECT id, store, store_name, count, key_last4, name, username, status, added, created_at, decided_at, review_token FROM account_offers ORDER BY created_at DESC LIMIT 50"),
       env.DB.prepare("SELECT id, count, key_last4, name, username, status, removed, created_at, decided_at, review_token FROM account_removals ORDER BY created_at DESC LIMIT 50"),
     ]);
@@ -1966,6 +2062,7 @@ async function admin(request, env, path) {
       : email ? (b.store ? ["email_norm = ? AND store = ?", email, String(b.store)] : ["email_norm = ?", email]) : null;
     if (!where) return json({ error: free ? "send {email} or {key}" : "send {email}" }, 400);
     const r = free ? await freeAccounts(env, where[0], ...where.slice(1)) : await env.DB.prepare(`DELETE FROM accounts WHERE ${where[0]}`).bind(...where.slice(1)).run();
+    await sweepParked(env);   // a Target account parked for a Pokémon Center slot freed here goes back too
     const { results: stores } = await env.DB.prepare("SELECT DISTINCT store FROM accounts").all();
     for (const x of stores) await stockCheck(env, x.store, x.store, false);
     return json({ ok: true, changed: r.meta ? r.meta.changes : 0 });

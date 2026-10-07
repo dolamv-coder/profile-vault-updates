@@ -66,8 +66,15 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   are several) ends with **Pending your approval · Approve or decline**, a link to `/submissions/review/:id?t=…` (D1
   `submission_reviews`, kept 90 days; its own table, since `db:init` can't add columns). Approve edits the message to
   **✅ Approved** with the time; Decline asks once more (`decline-ask`, with Keep it waiting), then edits it to
-  **⛔ Declined** and puts the accounts given to that batch's slots back on the list (`freeAccounts` by batch, which
-  drops its reused ones). Either decision is final. `/submissions` answers `review: "pending"`, and app 1.9.91+ keeps
+  **⛔ Declined** and puts the accounts given to that batch's slots back on the list (`freeBatch`, which drops the batch's
+  reuses and frees its other accounts), except, since 2026-10-07 (the owner's request), a Target account the same
+  profile's Pokémon Center slot in another batch still uses: it stays held, parked (its `batch` becomes `parked:` + the
+  declined batch, so it doesn't depend on `submission_reviews`, which is purged after 90 days), until no such slot is left
+  (`sweepParked`, run by `freeBatch`, `freeAccounts` and both `/admin/accounts/free` and `/remove`; `declineEffect` gives
+  the page's counts), so the list can't give it to a second buyer, and the declined Target slot sent again gets it back.
+  A slot sent again takes its account to the new batch before posting and back if nothing posted (`takeAccount`,
+  `undoMoves`), so a decline meanwhile can't free it, and `freeAccounts` drops the reuses of a Target account it frees.
+  Either decision is final. `/submissions` answers `review: "pending"`, and app 1.9.91+ keeps
   the batch id on each slot it sent that way (`S.subs[key].batch`), shows **Pending approval** until
   `GET /submissions/status?ids=` (license Bearer, that license's batches only) says approved, then **Success** (`okAt`)
   with a message (`refreshApprovals`: about every 30 seconds with Submit in front, otherwise every 5 minutes); 1.9.92+
@@ -526,6 +533,12 @@ stores the selected profiles have, Put in profiles' Limit to a store the stores 
 Orders and Submit list every store the data uses (`allStoreOptions`). Target's mark is its red bullseye (`bullseyeSVG`,
 `isTarget`; `drawBullseye` in the share image), as Pokémon Center's is a Pokéball: the owner's request, where it was a red
 tile with a T. The relay's phone page still shows T. Nothing gains a field, so the paused web version is unaffected.
+
+From 1.9.95 selected store logins can be copied (the owner's request): the right-click menu on one of several selected
+and the selection bar's Copy (`logins-copy`) offer Copy N emails and Copy N email:password (`loginCopyItems`,
+`copyLogins`), one per line (CRLF) in the order the list shows them, then any selected that the search or group hides
+(`loginsInOrder`); the toast counts any without a password. One login's menu has Copy email and, when it has a
+password, Copy email:password. Nothing gains a field, so the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
