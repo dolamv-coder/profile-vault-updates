@@ -73,7 +73,9 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   (`sweepParked`, run by `freeBatch`, `freeAccounts` and both `/admin/accounts/free` and `/remove`; `declineEffect` gives
   the page's counts), so the list can't give it to a second buyer, and the declined Target slot sent again gets it back.
   A slot sent again takes its account to the new batch before posting and back if nothing posted (`takeAccount`,
-  `undoMoves`), so a decline meanwhile can't free it, and `freeAccounts` drops the reuses of a Target account it frees.
+  `undoMoves`, also when assigning throws), so a decline meanwhile can't free it, and `freeAccounts` drops the reuses of a
+  Target account it frees. A reuse is only written while its Target account is still that buyer's, and reuses the worker
+  before 2026-10-07 left in declined batches (a slot sent again may still use one) count as in use until freed by hand.
   Either decision is final. `/submissions` answers `review: "pending"`, and app 1.9.91+ keeps
   the batch id on each slot it sent that way (`S.subs[key].batch`), shows **Pending approval** until
   `GET /submissions/status?ids=` (license Bearer, that license's batches only) says approved, then **Success** (`okAt`)
