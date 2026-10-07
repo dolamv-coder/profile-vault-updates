@@ -1,0 +1,1 @@
+A slot on Use Assigned Account that you switch off and send again now keeps the account the seller gave it, instead of needing a new one.

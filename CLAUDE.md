@@ -116,8 +116,14 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   Assigned Account), and `/submissions` gives each such row a random free account: its email in the
   row's `email` column (and on both addresses of its AYCD profile) and `email:password` on the matching
   line of the logins file. Buyers never
-  see them; each account goes to one slot; a license gets `ASSIGNED_LIMIT` (10) in all; an account
-  picked for a batch that never reached the channel goes back. Rows left without one come last.
+  see them; each account goes to one slot; a license gets `ASSIGNED_LIMIT` (20 since 2026-10-07, when it was 10) in
+  all; an account picked for a batch that never reached the channel goes back. Rows left without one come last, and
+  since 2026-10-07 the store line says why ("N need an account: this license is at its limit of N", or "your list has
+  none"; the owner couldn't tell what happened to a batch's Target logins). Also since 2026-10-07 (the owner's request)
+  a profile sent again whose slot isn't out any more gets back the account it had, while it's still that license's,
+  rather than a new one: app 1.9.99+ sends which of its slots are still out on each store (`active`: {storeKey:
+  [profile names]}), and `assignAccounts` moves the account into the new batch (`takeAccount`; `undoMoves` if nothing
+  posts), counted on the line as "N they had before". Pulls don't free an account; older apps get new ones as before.
   Since 2026-10-06 (the owner's request) a Pokémon Center row whose profile (by name, same license) already has a
   Target account, in that batch or one sent before, gets that account again (`reuseAccount`, `REUSE_FROM`): kept as a
   Pokémon Center row with `offer_id` `reuse:target`, which `freeAccounts` deletes where others are freed and
@@ -600,6 +606,12 @@ under its `from` name, with room for its slots, nearest in time once the compute
 than the batch the send before it got, never one a `subs` entry already has. It then shows Pending approval, Success or
 Declined like any other. A send with none is marked `noBatch` (Submitted, with a tooltip saying why) and isn't asked
 about again. `subs` entries gain `noBatch`, so the paused web version is unaffected.
+
+From 1.9.99 Submit tells the license worker which of the buyer's slots are still out on each store it asks accounts for
+(`slotsOut`: `active` {storeKey: [profile names]} with `/submissions`, leaving out declined ones), so a slot on Use
+Assigned Account that was switched off and sent again gets back the account it had (the worker section above; the
+owner's report: a buyer's re-sent Target slots got no accounts, and so no logins file, once the license reached its
+limit). Nothing gains a field, so the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

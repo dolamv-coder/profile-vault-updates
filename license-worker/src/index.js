@@ -37,7 +37,9 @@
 //                              account. App 1.9.52 sends {csv, ...}, one .csv; older apps {code, keyId, ...},
 //                              a code encrypted to the collecting key, posted as a .txt. None is kept here.
 //                              Each batch's message has a link for the owner to approve or decline it (2026-10-06),
-//                              and the answer says {review: "pending"}.
+//                              and the answer says {review: "pending"}. `active` (app 1.9.99+): {storeKey: [profile
+//                              names]} of the app's slots still out, so a profile sent again with none out gets back
+//                              the account it had (2026-10-07).
 //   GET  /submissions/status?ids=A,B   {batches:{A:{status, at}}}: whether the owner has decided on this license's
 //                              batches (pending | approved | declined, and when); app 1.9.91+ shows Pending approval,
 //                              then Success (1.9.92+ also Declined)
@@ -903,7 +905,12 @@ async function submission(request, env, url) {
   // Slots on Use Assigned Account get accounts from the owner's list: {store name: {asked, got}}.
   const moves = [];
   let picks;
-  try { picks = files !== null ? await assignAccounts(env, lic, batch, files, now, moves) : new Map(); }
+  // Which of the app's slots on each store are still out (app 1.9.99+): a profile sent again that has none out there gets
+  // back the account it had (assignAccounts). Older apps don't say, and their profiles get new accounts as before.
+  const active = b.active && typeof b.active === "object" && !Array.isArray(b.active) ? new Map(Object.entries(b.active).slice(0, 40)
+    .filter(([k, v]) => /^([a-z0-9]{2,24}|other:[^\r\n]{1,40})$/.test(k) && Array.isArray(v))
+    .map(([k, v]) => [k, new Set(v.slice(0, SLOT_MAX * 4).map((x) => String(x == null ? "" : x).slice(0, 80)))])) : null;
+  try { picks = files !== null ? await assignAccounts(env, lic, batch, files, now, moves, active) : new Map(); }
   catch (e) {
     // Nothing was posted: the accounts taken go back, and the batch can be sent again.
     await undoMoves(env, lic, batch, moves).catch((x) => console.error("accounts", x));
@@ -919,11 +926,13 @@ async function submission(request, env, url) {
   const who = [s.name ? `**${md(s.name)}**` : "", s.username ? `@${md(s.username)}` : "", `license …${s.key_last4}`].filter(Boolean).join(" · ");
   // `seller` slots that got an account from the list, and ones still waiting for the owner to assign one.
   const short = (x) => Math.max(0, x.seller - ((picks.get(x.name) || {}).got || 0));
+  const limit = assignLimit(env);
   const accts = (x) => {
     const p = picks.get(x.name) || {}, got = p.got || 0, need = short(x);
-    // Pokémon Center slots given their profile's Target account again (reuseAccount) say so.
-    const parts = [got ? `${got} assigned account${got === 1 ? "" : "s"}${p.reused ? `, ${p.reused} reused from Target` : ""}` : "",
-      need ? `${need} need${need === 1 ? "s" : ""} an account` : ""].filter(Boolean);
+    // Pokémon Center slots given their profile's Target account again (reuseAccount) say so, as do slots given back the
+    // account they had, and why the rest got none (2026-10-07: the owner couldn't tell).
+    const parts = [got ? `${got} assigned account${got === 1 ? "" : "s"}${p.reused ? `, ${p.reused} reused from Target` : ""}${p.back ? `, ${p.back} they had before` : ""}` : "",
+      need ? `${need} need${need === 1 ? "s" : ""} an account${p.why === "limit" ? `: this license is at its limit of ${limit}` : p.why === "empty" ? ": your list has none" : ""}` : ""].filter(Boolean);
     return parts.length ? ` (${parts.join(", ")})` : "";
   };
   const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
@@ -980,7 +989,8 @@ async function submission(request, env, url) {
   if (picks.size) await settleAccounts(env, lic, batch, true, Date.now()).catch((e) => console.error("accounts", e));
   for (const f of files || []) if (f.assigned > 0) await stockCheck(env, f.storeKey, f.store, true).catch((e) => console.error("stock", e));
   // How many slots got an account per store; buyers never see which. `review`: the batch waits for the owner's approval.
-  return json({ ok: true, id: s.id, ...(reviewed ? { review: "pending" } : {}), ...(picks.size ? { accounts: Object.fromEntries(picks) } : {}) });
+  return json({ ok: true, id: s.id, ...(reviewed ? { review: "pending" } : {}),
+    ...(picks.size ? { accounts: Object.fromEntries([...picks].map(([k, p]) => [k, { asked: p.asked, got: p.got, ...(p.reused ? { reused: p.reused } : {}) }])) } : {}) });
 }
 
 // The owner approves or declines each batch from its message (the owner's requests, 2026-10-06): app 1.9.91+ shows the
@@ -1299,7 +1309,7 @@ async function reuseAccount(env, lic, batch, f, profile, at, moves) {
     .bind(f.storeKey, t.email, t.email_norm, t.password, at, "reuse:" + from, lic.hash, lic.last4, batch, f.store, profile, at, ...own).first();
 }
 
-async function assignAccounts(env, lic, batch, files, now, moves) {
+async function assignAccounts(env, lic, batch, files, now, moves, active) {
   const picks = new Map();
   // Pokémon Center after Target, so it can reuse the Target accounts given out in the same batch.
   const want = files.filter((f) => f.kind === "profiles" && f.assigned > 0).sort((a, b) => (REUSE_FROM[a.storeKey] ? 1 : 0) - (REUSE_FROM[b.storeKey] ? 1 : 0));
@@ -1317,7 +1327,7 @@ async function assignAccounts(env, lic, batch, files, now, moves) {
     const { results: had } = await env.DB.prepare("SELECT email, password, profile FROM accounts WHERE key_hash = ? AND batch = ? AND store = ? ORDER BY assigned_at, rowid")
       .bind(lic.hash, batch, f.storeKey).all();
     const res = [];
-    let reused = 0, more = true;
+    let reused = 0, back = 0, more = true, why = "";
     for (let i = 0; i < asked; i++) {
       const profile = String(rows[start + i][0] || "").slice(0, 80);
       const r = await reuseAccount(env, lic, batch, f, profile, now + i, moves);
@@ -1330,13 +1340,24 @@ async function assignAccounts(env, lic, batch, files, now, moves) {
           ORDER BY assigned_at DESC LIMIT 1`).bind(lic.hash, f.storeKey, profile).first();
         if (k && await takeAccount(env, lic, batch, f.storeKey, k.email_norm, k.batch, f.store, moves)) { res[i] = k; continue; }
       }
+      // A profile sent again whose slot here isn't out any more (switched off, or cleared after a decline; the app says
+      // which still are, 1.9.99+) gets back the account it had, while that's still this license's, instead of a new one
+      // that counts toward its limit (the owner's request, 2026-10-07). Moved back if the batch never posts (undoMoves).
+      const out = active && active.get(f.storeKey);
+      if (out && profile && !out.has(profile)) {
+        const k = await env.DB.prepare(`SELECT email, email_norm, password, batch FROM accounts WHERE key_hash = ? AND store = ? AND profile = ?
+          AND sent_at IS NOT NULL AND batch IS NOT NULL AND batch != ? AND batch NOT LIKE '${PARKED}%' AND ${OWN_ACCOUNT}
+          ORDER BY sent_at DESC, assigned_at DESC LIMIT 1`).bind(lic.hash, f.storeKey, profile, batch).first();
+        if (k && await takeAccount(env, lic, batch, f.storeKey, k.email_norm, k.batch, f.store, moves)) { res[i] = k; back++; continue; }
+      }
       if (!more) continue;
       const held = await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ? AND ${OWN_ACCOUNT}`).bind(lic.hash).first();
-      const a = (held ? held.n : 0) < limit ? await env.DB.prepare(
+      const atLimit = (held ? held.n : 0) >= limit;
+      const a = !atLimit ? await env.DB.prepare(
         `UPDATE accounts SET key_hash = ?, key_last4 = ?, batch = ?, store_name = ?, profile = ?, assigned_at = ?, sent_at = NULL
          WHERE rowid = (SELECT rowid FROM accounts WHERE store = ? AND key_hash IS NULL ORDER BY random() LIMIT 1) RETURNING email, password`
       ).bind(lic.hash, lic.last4, batch, f.store, profile, now + i, f.storeKey).first() : null;
-      if (a) res[i] = a; else more = false;   // the limit, or none left for this store: only reuse from here on
+      if (a) res[i] = a; else { more = false; why = atLimit ? "limit" : "empty"; }   // only reuse from here on
     }
     // Rows left without an account go last, so line N of the logins file still goes with row N.
     const order = [...Array(asked).keys()].sort((x, y) => (res[x] ? 0 : 1) - (res[y] ? 0 : 1) || x - y);
@@ -1355,7 +1376,7 @@ async function assignAccounts(env, lic, batch, files, now, moves) {
       if (logins) logins.text = logins.text.replace(/[\r\n]+$/, "") + (lines.length ? eol : "") + add.join(eol);
       else files.splice(files.indexOf(f) + 1, 0, { store: f.store, kind: "logins", text: add.join(eol), storeKey: f.storeKey, assigned: 0 });
     }
-    picks.set(f.store, reused ? { asked: f.assigned, got: got.length, reused } : { asked: f.assigned, got: got.length });
+    picks.set(f.store, { asked: f.assigned, got: got.length, ...(reused ? { reused } : {}), ...(back ? { back } : {}), ...(why && got.length < asked ? { why } : {}) });
   }
   return picks;
 }
