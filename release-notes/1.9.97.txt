@@ -1,0 +1,1 @@
+On Profiles, the store buttons above your profiles now count only the group you're looking at (and your search), so they match the list. A store with no profiles in a group now says so instead of calling the group empty.
