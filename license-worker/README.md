@@ -406,15 +406,27 @@ list you keep here:
   buyer's slot goes too, so order alerts on it stop reaching them. **Keep them** removes nothing, and
   an ask nobody decided on expires after a week. Anyone with a license can ask, but only you can
   confirm, so only remove ones you asked for. The `/admin/accounts/remove` command below still works.
-- **Each license can be given `ASSIGNED_LIMIT` accounts in all** (10; change it in `[vars]` in
-  `wrangler.toml`). Slots past that, or past the end of the list, come last with no login line, and
-  the store line says "(1 needs an account)" so you can assign those by hand.
+- **A slot sent again gets back the account it had** (FAFO 1.9.99+, from 2026-10-07): when a buyer
+  switches a slot off and sends it again, or sends it again after you declined it, its profile gets the
+  account it went out with before, while that's still theirs, instead of a new one. FAFO says which of
+  its slots are still out, so a profile whose slot is still out (or another with the same name) never
+  gets that account. The store line says so: "Target 9 (9 assigned accounts, 7 they had before)". If the
+  new batch doesn't reach your channel, the account goes back to the batch it came from, and declining
+  the batch it came from leaves it with the new one. Older FAFOs don't say which slots are out, so
+  theirs get new accounts as before.
+- **Each license can be given `ASSIGNED_LIMIT` accounts in all** (20 from 2026-10-07, when it was 10;
+  change it in `[vars]` in `wrangler.toml`). An account given back (above) isn't a new one. Slots past
+  that, or past the end of the list, come last with no login line, and the store line says how many
+  and why, so you can assign those by hand: "(1 needs an account: this license is at its limit of 20)"
+  or "(1 needs an account: your list has none)". With no login for any of a store's slots, there's no
+  logins file for that store.
 - **When the list runs low**, your channel is told: once when a store is down to `ACCOUNTS_LOW_AT` free
   accounts (15), "⚠️ Only 15 Target accounts left…", and once more when it runs out, "🚫 No Target
   accounts left…". Sending more and adding them, or freeing some, sets these up again. Change the
   number in `[vars]` in `wrangler.toml`.
 - **Pulling** such a slot names the account it had: "Target · Kim Lee · acct7@example.com (assigned
-  account)".
+  account)". The account stays with that buyer (it isn't put back on your list), so the slot gets it
+  again if it's sent again; free it by hand to give it to someone else.
 - The list, the waiting offers, asks to remove and those alerts are in the `accounts`, `account_offers`,
   `account_removals` and `account_stock` tables, which
   `npm run db:init` (and the deploy Action) adds. With `ADMIN_TOKEN` set:

@@ -19,9 +19,9 @@ REQUIRED_GUILD_ID = ""
 MIN_ACCOUNT_AGE_DAYS = "0"
 # How many slots a license can have switched on at once until you approve more.
 DEFAULT_SLOT_LIMIT = "20"
-# How many of your accounts (Use Assigned Account) one license can be given in all. Freeing one
-# (see README) gives it back.
-ASSIGNED_LIMIT = "10"
+# How many of your accounts (Use Assigned Account) one license can be given in all (20 from 2026-10-07; it was 10).
+# Freeing one (see README) gives it back, and a profile sent again gets back the one it had (app 1.9.99+).
+ASSIGNED_LIMIT = "20"
 # Your channel is told when a store's list of accounts is down to this many free ones, and again when
 # it runs out.
 ACCOUNTS_LOW_AT = "15"

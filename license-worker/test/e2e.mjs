@@ -116,6 +116,7 @@ const common = [
   `PULL_STALE_MS=3000`,
   `ACCOUNT_OFFER_TTL_MS=8000`,
   `ACCOUNTS_LOW_AT=3`,
+  `ASSIGNED_LIMIT=10`,
   `ALERT_WEBHOOK_TEST_PREFIX=http://127.0.0.1:${DISCORD_PORT}/buyerhook/`,
   `GH_LICENSE_PUB=${JSON.stringify({ kty: "EC", crv: "P-256", x: pubJwk.x, y: pubJwk.y })}`,
 ];
@@ -1275,7 +1276,7 @@ try {
     const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 1, batch: "asg0" + rid(), stores: [{ name: "Target", n: 1, seller: 1 }] })).json();
     assert.deepEqual(r.accounts, { Target: { asked: 1, got: 0 } });
     const m = webhookPosts.at(-1);
-    assert.match(m.content, /\nTarget 1 \(1 needs an account\)\n/); assert.match(m.content, /Profiles that need an account come last\.\n⏳ /);
+    assert.match(m.content, /\nTarget 1 \(1 needs an account: your list has none\)\n/, "and why"); assert.match(m.content, /Profiles that need an account come last\.\n⏳ /);
     assert.deepEqual(plain(m), [], "no logins file"); assert.deepEqual(emailsOf(aycdOf(m)[0]), ["ann@example.com"], "the email as sent");
   });
   await test("adding them from the review link puts them on the list", async () => {
@@ -1301,7 +1302,7 @@ try {
       stores: [{ name: "Target", n: 4, seller: 2 }, { name: "Walmart", n: 1, seller: 1 }] })).json();
     assert.deepEqual(r.accounts, { Target: { asked: 2, got: 2 }, Walmart: { asked: 1, got: 0 } });
     const m = webhookPosts.at(-1);
-    assert.match(m.content, /\nTarget 4 \(2 assigned accounts\) · Walmart 1 \(1 needs an account\)\n/);
+    assert.match(m.content, /\nTarget 4 \(2 assigned accounts\) · Walmart 1 \(1 needs an account: your list has none\)\n/);
     const [logF] = plain(m), [tA, wA] = aycdOf(m), em = emailsOf(tA);
     assert.deepEqual(plain(m).map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")), ["Gina-target-logins.txt"], "Walmart has no logins file");
     assert.equal(em[0], "kim@example.com"); assert.equal(em[3], "cy@example.com", "other rows as sent");
@@ -1355,10 +1356,22 @@ try {
     assert.deepEqual(r.accounts, { Target: { asked: 6, got: 5 } });
     const m = webhookPosts.at(-2), em = emailsOf(aycdOf(m)[0]);
     assert.match(webhookPosts.at(-1).content, /^⚠️ \*\*Only 3 Target accounts left\*\* on your list for Use Assigned Account\. Send more from FAFO/, "down to ACCOUNTS_LOW_AT (3 here): the owner is told");
-    assert.match(m.content, /\nTarget 6 \(5 assigned accounts, 1 needs an account\)\n/);
+    assert.match(m.content, /\nTarget 6 \(5 assigned accounts, 1 needs an account: this license is at its limit of 10\)\n/, "and why");
     assert.equal(em[5], "hal5@example.com", "the last one keeps its own email");
     assert.equal(plain(m)[0].text.split("\r\n").length, 5, "five login lines, for the first five rows");
     assert.deepEqual(plain(m)[0].text.split("\r\n").map((l) => l.split(":")[0]), em.slice(0, 5), "the logins file has the same emails, row for row");
+  });
+  await test("at its limit, a profile sent again with its slot switched off still gets back the account it had (app 1.9.99+)", async () => {
+    const mine = (await accounts()).given.filter((a) => a.key_last4 === ginaKey.slice(-4)), free = (await accounts()).stores[0].free;
+    assert.equal(mine.length, 10);
+    const hal = mine.find((a) => a.profile === "Hal H0"), before = webhookPosts.length;
+    const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Hal H0", "hal0@example.com"), slotRow("Hal H9", "hal9@example.com")]), assigned: 2 }];
+    const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 2, batch: "asg5b" + rid(), stores: [{ name: "Target", n: 2, seller: 2 }], active: { target: ["Hal H1"] } })).json();
+    assert.deepEqual(r.accounts, { Target: { asked: 2, got: 1 } });
+    const m = webhookPosts.slice(before).find((x) => x.content.startsWith("📦"));
+    assert.match(m.content, /\nTarget 2 \(1 assigned account, 1 they had before, 1 needs an account: this license is at its limit of 10\)\n/);
+    assert.deepEqual(emailsOf(aycdOf(m)[0]), [hal.email, "hal9@example.com"]); assert.deepEqual(plain(m)[0].text.split("\r\n").map((l) => l.split(":")[0]), [hal.email]);
+    assert.equal((await accounts()).given.filter((a) => a.key_last4 === ginaKey.slice(-4)).length, 10, "still 10"); assert.equal((await accounts()).stores[0].free, free);
   });
   await test("the list running out: the rest wait for an account", async () => {
     assert.equal((await accounts()).stores[0].free, 3);
@@ -1513,7 +1526,7 @@ try {
     assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 4, got: 3, reused: 1 } });
     const m = batchPost(before), list = aycdOf(m)[0], em = emailsOf(list);
     assert.deepEqual(plain(m), [], "its AYCD list only");
-    assert.match(m.content, /\nPokémon Center 4 \(3 assigned accounts, 1 reused from Target, 1 needs an account\)\n/);
+    assert.match(m.content, /\nPokémon Center 4 \(3 assigned accounts, 1 reused from Target, 1 needs an account: your list has none\)\n/);
     assert.deepEqual(list.map((x) => x.name), ["Hana E", "Hana F", "Hana B", "Hana G"]);
     assert.ok(/^pc[123]@outlook\.com$/.test(em[0]) && /^pc[123]@outlook\.com$/.test(em[1]), em); assert.equal(em[2], tB); assert.equal(em[3], "");
     assert.deepEqual(aycdOf(m)[0].map((x) => [x.name, x.shippingAddress.email]), [["Hana E", em[0]], ["Hana F", em[1]], ["Hana B", tB], ["Hana G", ""]], "the AYCD list in the same order");
@@ -1752,6 +1765,76 @@ try {
     assert.equal((await admin("/admin/accounts/remove", { email: "both1@outlook.com" })).status, 200);
     // Owen's go back for the tests after these.
     assert.match(await (await approvePost(fillLink, "decline")).text(), /back on your list\./);
+  });
+  console.log("\nA profile sent again gets back the account it had (app 1.9.99+, 2026-10-07)");
+  // Ivan is the buyer here (sign-ins are rate limited), with the owner's accounts for a store of their own (Kohl's), so
+  // the counts are exact. The app says which of its slots are still out on each store (`active`).
+  let ritaKey, rA, rB, rC, b1, b2, b1Link;
+  const kFile = (names) => ({ store: "Kohl's", storeKey: "kohls", kind: "profiles", text: slotCsv(names.map((n) => slotRow(n, ""))), assigned: names.length });
+  const ritaSend = async (names, active, batch = "back" + rid()) => {
+    const before = webhookPosts.length;
+    const r = await slots("/submissions", ritaKey, { files: [kFile(names)], name: "Rita", slots: names.length, batch,
+      stores: [{ name: "Kohl's", n: names.length, seller: names.length }], ...(active ? { active } : {}) });
+    const d = await r.json(), m = r.ok ? batchPost(before) : null;
+    return { status: r.status, d, m, batch, emails: m ? emailsOf(aycdOf(m)[0]) : [], logins: m && plain(m)[0] ? plain(m)[0].text.split("\r\n") : [] };
+  };
+  const ritaHeld = async () => (await accounts()).given.filter((a) => a.key_last4 === ritaKey.slice(-4) && a.store === "kohls").map((a) => [a.email, a.profile, a.batch]).sort();
+  const kStock = async () => (await accounts()).stores.find((x) => x.store === "kohls");
+  await test("setup: three of the owner's Kohl's accounts", async () => {
+    ritaKey = ivanKey;
+    assert.deepEqual(await ritaHeld(), []);
+    // Offered from Hana's license (offers are limited per license a day, and Ivan has sent his).
+    await offerAdd(hanaKey, "kohls", "Kohl's", [1, 2, 3].map((i) => ({ email: `kohls${i}@outlook.com`, password: "Kohls-Pw-1!" })));
+    assert.ok((await accounts()).given.filter((a) => a.key_last4 === ritaKey.slice(-4)).length <= 7, "room under the limit for these");
+    assert.deepEqual(await kStock(), { store: "kohls", total: 3, free: 3, sent: 0 });
+  });
+  await test("the first time, each slot gets an account", async () => {
+    const s = await ritaSend(["Rita A", "Rita B"], { kohls: [] });
+    assert.deepEqual(s.d.accounts, { "Kohl's": { asked: 2, got: 2 } });
+    assert.match(s.m.content, /\nKohl's 2 \(2 assigned accounts\)\n/);
+    [rA, rB] = s.emails; b1 = s.batch; b1Link = approveLink(s.m.content);
+    assert.ok(/^kohls[123]@outlook\.com$/.test(rA) && /^kohls[123]@outlook\.com$/.test(rB) && rA !== rB, s.emails);
+    assert.deepEqual(await ritaHeld(), [[rA, "Rita A", b1], [rB, "Rita B", b1]].sort());
+  });
+  await test("sent again after its slot was switched off, a profile gets back the account it had, and the line says so", async () => {
+    const s = await ritaSend(["Rita A"], { kohls: ["Rita B"] });
+    assert.deepEqual(s.d.accounts, { "Kohl's": { asked: 1, got: 1 } }, "what the app hears is as before");
+    assert.equal(s.emails[0], rA); assert.deepEqual(s.logins, [`${rA}:Kohls-Pw-1!`], "in its logins file too");
+    assert.match(s.m.content, /\nKohl's 1 \(1 assigned account, 1 they had before\)\n/);
+    b2 = s.batch;
+    assert.deepEqual(await ritaHeld(), [[rA, "Rita A", b2], [rB, "Rita B", b1]].sort(), "moved to the new batch: no new account");
+    assert.deepEqual(await kStock(), { store: "kohls", total: 3, free: 1, sent: 2 });
+  });
+  await test("a profile whose slot is still out (or another with its name) gets a new account, never that one", async () => {
+    const s = await ritaSend(["Rita B"], { kohls: ["Rita A", "Rita B"] });
+    rC = s.emails[0];
+    assert.ok(/^kohls[123]@outlook\.com$/.test(rC) && rC !== rA && rC !== rB, s.emails);
+    assert.match(s.m.content, /\nKohl's 1 \(1 assigned account\)\n/);
+    assert.deepEqual(await kStock(), { store: "kohls", total: 3, free: 0, sent: 3 });
+  });
+  await test("an app before 1.9.99 doesn't say which slots are out: a new account, as before (none left here, and the line says so)", async () => {
+    const s = await ritaSend(["Rita A"], null);
+    assert.deepEqual(s.d.accounts, { "Kohl's": { asked: 1, got: 0 } });
+    assert.match(s.m.content, /\nKohl's 1 \(1 needs an account: your list has none\)\n/);
+    assert.equal(s.emails[0], ""); assert.deepEqual(s.logins, []);
+    assert.deepEqual((await ritaHeld()).map((x) => x[0]).sort(), [rA, rB, rC].sort(), "rA stays where it was");
+  });
+  await test("a given-back account goes back to the batch it came from if the new one never posts", async () => {
+    const batch = "back" + rid();
+    webhookFail.push(500);
+    assert.equal((await ritaSend(["Rita A"], { kohls: [] }, batch)).status, 502);
+    assert.deepEqual((await ritaHeld()).find((x) => x[0] === rA), [rA, "Rita A", b2], "back in the batch it came from");
+    const s = await ritaSend(["Rita A"], { kohls: [] }, batch);
+    assert.equal(s.status, 200); assert.equal(s.emails[0], rA);
+    assert.deepEqual((await ritaHeld()).find((x) => x[0] === rA), [rA, "Rita A", batch]);
+  });
+  await test("declining the batch an account was given back from leaves it with the batch that has it now", async () => {
+    assert.match(await (await approvePost(b1Link, "decline")).text(), /1 account given to them is back on your list\./);
+    assert.deepEqual((await ritaHeld()).map((x) => x[0]).sort(), [rA, rC].sort(), "Rita B's goes back; Rita A's, given back since, stays");
+    assert.deepEqual(await kStock(), { store: "kohls", total: 3, free: 1, sent: 2 });
+    // Off the list again, as the tests after these expect it.
+    for (const i of [1, 2, 3]) assert.equal((await admin("/admin/accounts/remove", { email: `kohls${i}@outlook.com` })).status, 200);
+    assert.equal(await kStock(), undefined);
   });
   console.log("\nTaking accounts off the list from FAFO (app 1.9.90+)");
   const removalLink = (content) => (content.match(/\((http[^)]+\/accounts\/removal\/[^)]+)\)/) || [])[1];
