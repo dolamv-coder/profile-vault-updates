@@ -1,10 +1,10 @@
 {
-  "version": "1.9.96",
-  "url": "index-1.9.96.html",
-  "sha256": "b34d9d2438edaae2d60b113b4868033f72d2fcb5f008462d0a816af799f8ca20",
-  "signature": "vEZlPsPOSRRSRWZ9fYHL+av7BnZWY3X9aC/R9TnBUO6vS9a4CblUeKSo+Wtdq00+PfK+q8I25oGlEyP+ZZZVCA==",
+  "version": "1.9.97",
+  "url": "index-1.9.97.html",
+  "sha256": "a287d74ec5418fbfc4071de61fc519f695672fc262069fe61b7130bddc66221d",
+  "signature": "gFdCIn0/3yDnpZXQSwPucQYqLrn7bGr7KQ/hYPpxvn6WyVgTZQHYHdcgbcluTeOWSz0aJyjPtEAQjHL+wr1uDA==",
   "minAppVersion": "0",
-  "notes": "Each profile is now for one store, Target or Pokémon Center, with its own shipping and billing address. Profiles that were on both were split into two with the same name, and their slots moved with them. Use Duplicate to make a profile for the other store.",
+  "notes": "On Profiles, the store buttons above your profiles now count only the group you're looking at (and your search), so they match the list. A store with no profiles in a group now says so instead of calling the group empty.",
   "installerUrl": "",
-  "publishedAt": "2026-10-07T12:09:07.087Z"
+  "publishedAt": "2026-10-07T12:36:10.777Z"
 }
