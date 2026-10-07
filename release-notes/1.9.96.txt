@@ -1,0 +1,1 @@
+Each profile is now for one store, Target or Pokémon Center, with its own shipping and billing address. Profiles that were on both were split into two with the same name, and their slots moved with them. Use Duplicate to make a profile for the other store.
