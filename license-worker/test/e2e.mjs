@@ -1670,6 +1670,24 @@ try {
     await approvePost(t2.link, "decline");
     assert.deepEqual(await held(tu), []);
   });
+  await test("a reuse the worker before 2026-10-07 left in a declined batch still counts as in use", async () => {
+    // That worker skipped declines of batches holding only reuses, and a slot sent again kept using the reuse where it
+    // was. Made here by marking the Pokémon Center batch declined in the database (this worker would drop its reuse).
+    const sql = (cmd) => execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", cmd], { cwd: root, env, stdio: "pipe" });
+    const t = await sendBatch([tgFile(["Quinn L"])], TG1);
+    const [[tl]] = t.emails;
+    const p = await sendBatch([pcFile(["Quinn L"])], PC1);
+    sql(`UPDATE submission_reviews SET status = 'declined', decided_at = 1 WHERE id = '${p.batch}'`);
+    assert.equal((await admin("/admin/accounts/free", { email: "nobody@example.com" })).status, 200);   // sweeps
+    assert.deepEqual(await held(tl), [["pokemoncenter", p.batch, 1], ["target", t.batch, 0]], "the reuse is kept");
+    const t0 = await tStock();
+    assert.match(await (await approvePost(t.link, "decline")).text(), /1 Target account stays with them/);
+    assert.deepEqual(await tStock(), t0, "the Target account isn't put back");
+    // The owner frees them by hand.
+    assert.equal((await admin("/admin/accounts/free", { email: tl })).status, 200);
+    assert.deepEqual(await held(tl), []);
+    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
+  });
   await test("the same email on the Pokémon Center list: declining the Target batch keeps it, declining the other puts both back", async () => {
     // Quinn holds keep1 and keep2, so the Target slot below gets both1, the one free Target account.
     const hold = await sendBatch([tgFile(["Quinn X1", "Quinn X2"])], [{ name: "Target", n: 2, seller: 2 }]);
