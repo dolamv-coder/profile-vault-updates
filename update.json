@@ -1,10 +1,10 @@
 {
-  "version": "1.9.98",
-  "url": "index-1.9.98.html",
-  "sha256": "aae792ad96d212b48f18e515c39e96b9483608c7660fd337625bff660537a663",
-  "signature": "eY5X2mfSBjvNuZSnJ6OSBRgDnSsCa/MQKTDhN/FaOK5yVe4U3Z4c8QuRqvy60fp9LTu5x6c4jOZwm2r7x8vCCw==",
+  "version": "1.9.99",
+  "url": "index-1.9.99.html",
+  "sha256": "aa2ac27444ecf1047210fc669a977c44c47fb26f647fa9423e9f4c5975168e3a",
+  "signature": "InsZJiTWnQowwKpV4HScwX417SgLZBY8Sd5i1w1eybo09tnTqpkolgV/goXI8CRoYAAq1jzmnFA7tlw3s106Dw==",
   "minAppVersion": "0",
-  "notes": "Slots you sent before FAFO could show the seller's approval now show it too: Pending approval until the seller approves or declines them, then Success or Declined.",
+  "notes": "A slot on Use Assigned Account that you switch off and send again now keeps the account the seller gave it, instead of needing a new one.",
   "installerUrl": "",
-  "publishedAt": "2026-10-07T16:25:30.537Z"
+  "publishedAt": "2026-10-07T17:51:53.807Z"
 }
