@@ -389,7 +389,7 @@ list you keep here:
   `ASSIGNED_LIMIT` or join your Pokémon Center list (`/admin/accounts` shows it with `reused: 1`). If
   that email is on your Pokémon Center list too, the account from the list is used, with its own
   password, unless another buyer has it; then the slot gets a free account as usual. The slot keeps
-  that account if it's sent again in a new batch (once that batch reaches your channel), and declining
+  that account if it's sent again in a new batch (and gets it back if that batch doesn't reach your channel), and declining
   the Target batch doesn't put the account back on your Target list while the Pokémon Center slot still
   uses it (see Approving or declining a batch), so it never goes to two buyers. Freeing the Target
   account by hand (below) frees its reuse too.

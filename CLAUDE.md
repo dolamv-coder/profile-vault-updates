@@ -66,13 +66,15 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   are several) ends with **Pending your approval · Approve or decline**, a link to `/submissions/review/:id?t=…` (D1
   `submission_reviews`, kept 90 days; its own table, since `db:init` can't add columns). Approve edits the message to
   **✅ Approved** with the time; Decline asks once more (`decline-ask`, with Keep it waiting), then edits it to
-  **⛔ Declined** and puts the accounts given to that batch's slots back on the list (`freeBatch`: `freeAccounts` by batch,
-  which drops its reused ones), except, since 2026-10-07 (the owner's request), a Target account the same profile's
-  Pokémon Center slot in a batch not declined still uses: it stays held, parked in the declined batch, until no such
-  slot is left (`sweepParked`, also after `/admin/accounts/free`; `declineEffect` gives the page's counts), so the
-  list can't give it to a second buyer, and the declined Target slot sent again gets it back. A slot sent again takes
-  its account to the new batch only once that batch reaches the channel (`moveAccounts`), and `freeAccounts` drops
-  the reuses of a Target account it frees. Either decision is final. `/submissions` answers `review: "pending"`, and app 1.9.91+ keeps
+  **⛔ Declined** and puts the accounts given to that batch's slots back on the list (`freeBatch`, which drops the batch's
+  reuses and frees its other accounts), except, since 2026-10-07 (the owner's request), a Target account the same
+  profile's Pokémon Center slot in another batch still uses: it stays held, parked (its `batch` becomes `parked:` + the
+  declined batch, so it doesn't depend on `submission_reviews`, which is purged after 90 days), until no such slot is left
+  (`sweepParked`, run by `freeBatch`, `freeAccounts` and both `/admin/accounts/free` and `/remove`; `declineEffect` gives
+  the page's counts), so the list can't give it to a second buyer, and the declined Target slot sent again gets it back.
+  A slot sent again takes its account to the new batch before posting and back if nothing posted (`takeAccount`,
+  `undoMoves`), so a decline meanwhile can't free it, and `freeAccounts` drops the reuses of a Target account it frees.
+  Either decision is final. `/submissions` answers `review: "pending"`, and app 1.9.91+ keeps
   the batch id on each slot it sent that way (`S.subs[key].batch`), shows **Pending approval** until
   `GET /submissions/status?ids=` (license Bearer, that license's batches only) says approved, then **Success** (`okAt`)
   with a message (`refreshApprovals`: about every 30 seconds with Submit in front, otherwise every 5 minutes); 1.9.92+
