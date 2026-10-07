@@ -532,6 +532,12 @@ Orders and Submit list every store the data uses (`allStoreOptions`). Target's m
 `isTarget`; `drawBullseye` in the share image), as Pokémon Center's is a Pokéball: the owner's request, where it was a red
 tile with a T. The relay's phone page still shows T. Nothing gains a field, so the paused web version is unaffected.
 
+From 1.9.95 selected store logins can be copied (the owner's request): the right-click menu on one of several selected
+and the selection bar's Copy (`logins-copy`) offer Copy N emails and Copy N email:password (`loginCopyItems`,
+`copyLogins`), one per line (CRLF) in the order the list shows them, then any selected that the search or group hides
+(`loginsInOrder`); the toast counts any without a password. One login's menu has Copy email and, when it has a
+password, Copy email:password. Nothing gains a field, so the paused web version is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
