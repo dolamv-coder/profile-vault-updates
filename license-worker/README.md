@@ -267,7 +267,8 @@ Approving edits the message to **✅ Approved** with the time. Declining asks on
 waiting** goes back), then edits it to **⛔ Declined**, and any of your accounts given to that batch's
 slots go back on your list, except a Target account that the same profile's Pokémon Center slot in another
 batch still checks out with (since 2026-10-07): it stays with that buyer, the page says so, and it goes back
-when you decline the batch that slot is in. Until you decide, the sender's FAFO (1.9.91 and later) shows those slots as
+once you decline the batch that slot was last sent in (or free it by hand). If they send the declined Target
+slot again, it gets that same account back. Until you decide, the sender's FAFO (1.9.91 and later) shows those slots as
 **Pending approval**, then **Success**, or from 1.9.92 **Declined** (they can switch a declined slot off
 and on, and send it again in a new batch). FAFO asks this worker about every 30 seconds while its Submit
 page is open, and every 5 minutes otherwise (`GET /submissions/status`, with the license key, only about
@@ -388,9 +389,10 @@ list you keep here:
   `ASSIGNED_LIMIT` or join your Pokémon Center list (`/admin/accounts` shows it with `reused: 1`). If
   that email is on your Pokémon Center list too, the account from the list is used, with its own
   password, unless another buyer has it; then the slot gets a free account as usual. The slot keeps
-  that account if it's sent again in a new batch, and declining the Target batch doesn't put the account
-  back on your Target list while the Pokémon Center slot still uses it (see Approving or declining a
-  batch), so it never goes to two buyers. Freeing the Target account by hand (below) frees its reuse too.
+  that account if it's sent again in a new batch (once that batch reaches your channel), and declining
+  the Target batch doesn't put the account back on your Target list while the Pokémon Center slot still
+  uses it (see Approving or declining a batch), so it never goes to two buyers. Freeing the Target
+  account by hand (below) frees its reuse too.
 - **Taking accounts off the list** (FAFO 1.9.90+): in your FAFO, **Settings → Accounts to assign →
   Remove accounts**, paste the emails (one per line; `email:password` lines work too, and only the
   email is sent) and choose **Ask to remove**. Your channel gets the count and a review link, never

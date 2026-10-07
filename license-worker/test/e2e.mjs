@@ -1512,6 +1512,7 @@ try {
   // out with doesn't go back on the list, where another buyer's Target slot could get it.
   const tStock = async () => (await accounts()).stores.find((x) => x.store === "target");
   const held = async (email) => (await given()).filter((a) => a.email === email).map((a) => [a.store, a.batch, a.reused]).sort();
+  const pcPull = (batch, profile) => pull(hanaKey, { keyId: "CSV", name: "Hana", batch, slots: [{ store: "Pokémon Center", profile, email: "Assigned account", card: "Visa 4242" }] });
   let owenKey, fillLink;
   const sendBatch = async (files, stores) => {
     const batch = "kp" + rid(), before = webhookPosts.length;
@@ -1519,18 +1520,19 @@ try {
     const m = batchPost(before);
     return { batch, r, m, link: approveLink(m.content), emails: aycdOf(m).map(emailsOf) };
   };
+  const TG1 = [{ name: "Target", n: 1, seller: 1 }], PC1 = [{ name: "Pokémon Center", n: 1, seller: 1 }];
   await test("declining a Target batch keeps its account while the profile's Pokémon Center slot in another batch uses it", async () => {
-    // Owen holds every free Target account until the last of these tests, so Hana's come from keep1–3, none of which is on
-    // the Pokémon Center list too (that case uses the list's own account: tested above).
+    // Owen holds every free Target account until the last of these tests, so Hana's come from keep1 and keep2 (each test
+    // gives its own back), neither of which is on the Pokémon Center list too.
     owenKey = await newKey("owen");
     const free = (await tStock()).free, names = Array.from({ length: free }, (_, i) => `Owen ${i + 1}`), before = webhookPosts.length;
     const f = await (await slots("/submissions", owenKey, { files: [tgFile(names)], name: "Owen", slots: free, batch: "fill" + rid(), stores: [{ name: "Target", n: free, seller: free }] })).json();
     assert.deepEqual(f.accounts, { Target: { asked: free, got: free } }, "Owen holds them all");
     fillLink = approveLink(batchPost(before).content);
     await offerAdd(owenKey, "target", "Target", [{ email: "keep1@outlook.com", password: "Tgt-Pw-4!" }, { email: "keep2@outlook.com", password: "Tgt-Pw-4!" }]);
-    const t = await sendBatch([tgFile(["Hana K"])], [{ name: "Target", n: 1, seller: 1 }]);
+    const t = await sendBatch([tgFile(["Hana K"])], TG1);
     const [[tk]] = t.emails;
-    const p = await sendBatch([pcFile(["Hana K"])], [{ name: "Pokémon Center", n: 1, seller: 1 }]);
+    const p = await sendBatch([pcFile(["Hana K"])], PC1);
     assert.deepEqual(p.r.accounts, { "Pokémon Center": { asked: 1, got: 1, reused: 1 } });
     assert.equal(p.emails[0][0], tk, "the Pokémon Center slot checks out with the Target account");
     const t0 = await tStock(), p0 = await pcStock();
@@ -1540,8 +1542,8 @@ try {
     const done = await (await approvePost(t.link, "decline")).text();
     assert.match(done, /Declined\. Their FAFO now shows these slots as Declined\. 1 Target account stays with them: their Pokémon Center slot in another batch uses it too\./, done);
     assert.deepEqual(await tStock(), t0, "not back on the Target list");
-    assert.deepEqual(await held(tk), [["pokemoncenter", p.batch, 1], ["target", p.batch, 0]], "held, now with the batch that uses it");
-    // Declining that one puts it back, and drops the reuse.
+    assert.deepEqual(await held(tk), [["pokemoncenter", p.batch, 1], ["target", t.batch, 0]], "held by the buyer, still in the declined batch");
+    // Declining the batch that uses it puts it back, and drops the reuse.
     const ask2 = await (await approvePost(p.link, "decline-ask")).text();
     assert.match(ask2, /The 1 account given to them goes back on your list\./, ask2);
     assert.doesNotMatch(ask2, /stays with them/);
@@ -1551,11 +1553,11 @@ try {
     assert.deepEqual(await held(tk), []);
   });
   await test("a Pokémon Center slot sent again takes its account along; declining a batch of only reuses drops them", async () => {
-    const t = await sendBatch([tgFile(["Hana M"])], [{ name: "Target", n: 1, seller: 1 }]);
+    const t = await sendBatch([tgFile(["Hana M"])], TG1);
     const [[tm]] = t.emails;
-    const p1 = await sendBatch([pcFile(["Hana M"])], [{ name: "Pokémon Center", n: 1, seller: 1 }]);
-    await pull(hanaKey, { keyId: "CSV", name: "Hana", batch: p1.batch, slots: [{ store: "Pokémon Center", profile: "Hana M", email: "Assigned account", card: "Visa 4242" }] });
-    const p2 = await sendBatch([pcFile(["Hana M"])], [{ name: "Pokémon Center", n: 1, seller: 1 }]);
+    const p1 = await sendBatch([pcFile(["Hana M"])], PC1);
+    await pcPull(p1.batch, "Hana M");
+    const p2 = await sendBatch([pcFile(["Hana M"])], PC1);
     assert.equal(p2.emails[0][0], tm, "the same account again");
     assert.deepEqual(await held(tm), [["pokemoncenter", p2.batch, 1], ["target", t.batch, 0]], "the reuse moved to the batch it's in now");
     const t0 = await tStock();
@@ -1573,13 +1575,79 @@ try {
     assert.deepEqual(await held(tm), []);
     assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
   });
+  await test("a slot sent again whose batch doesn't reach the channel leaves its account where it was", async () => {
+    const t = await sendBatch([tgFile(["Hana N"])], TG1);
+    const [[tn]] = t.emails;
+    const p1 = await sendBatch([pcFile(["Hana N"])], PC1);
+    await pcPull(p1.batch, "Hana N");
+    webhookFail.push(500);
+    assert.equal((await slots("/submissions", hanaKey, { files: [pcFile(["Hana N"])], name: "Hana", slots: 1, batch: "kpf" + rid(), stores: PC1 })).status, 502);
+    assert.deepEqual(await held(tn), [["pokemoncenter", p1.batch, 1], ["target", t.batch, 0]], "still in the batch that reached the channel");
+    const t0 = await tStock();
+    // So declining the Target batch keeps it (that batch's slot uses it), and declining that one puts it back.
+    assert.match(await (await approvePost(t.link, "decline")).text(), /1 Target account stays with them/);
+    assert.match(await (await approvePost(p1.link, "decline")).text(), /1 account given to them is back on your list\./);
+    assert.deepEqual(await held(tn), []);
+    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
+  });
+  await test("a declined Target slot sent again gets back the account its Pokémon Center slot kept", async () => {
+    const t = await sendBatch([tgFile(["Hana R"])], TG1);
+    const [[tr]] = t.emails;
+    const p = await sendBatch([pcFile(["Hana R"])], PC1);
+    await approvePost(t.link, "decline");
+    const t0 = await tStock();
+    const t2 = await sendBatch([tgFile(["Hana R"])], TG1);
+    assert.deepEqual(t2.r.accounts, { Target: { asked: 1, got: 1 } });
+    assert.equal(t2.emails[0][0], tr, "the same email at both stores again");
+    assert.deepEqual(await tStock(), t0, "no second account taken from the list");
+    assert.deepEqual(await held(tr), [["pokemoncenter", p.batch, 1], ["target", t2.batch, 0]]);
+    await approvePost(p.link, "decline");
+    assert.deepEqual(await held(tr), [["target", t2.batch, 0]], "the Target slot sent again keeps it");
+    await approvePost(t2.link, "decline");
+    assert.deepEqual(await held(tr), []);
+    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
+  });
+  await test("approved, pulled and sent again: declining the new batch puts back the Target account kept for it", async () => {
+    const t = await sendBatch([tgFile(["Hana S"])], TG1);
+    const [[ts]] = t.emails;
+    const p = await sendBatch([pcFile(["Hana S"])], PC1);
+    await approvePost(t.link, "decline");
+    await approvePost(p.link, "approve");
+    await pcPull(p.batch, "Hana S");
+    const p3 = await sendBatch([pcFile(["Hana S"])], PC1);
+    assert.deepEqual(await held(ts), [["pokemoncenter", p3.batch, 1], ["target", t.batch, 0]]);
+    const t0 = await tStock();
+    assert.match(await (await approvePost(p3.link, "decline-ask")).text(), /The 1 account given to them goes back on your list\./);
+    assert.match(await (await approvePost(p3.link, "decline")).text(), /1 account given to them is back on your list\./);
+    assert.deepEqual(await held(ts), []);
+    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
+  });
   await test("freeing a Target account by hand drops its reuse at Pokémon Center too", async () => {
-    const t = await sendBatch([tgFile(["Hana P"]), pcFile(["Hana P"])], [{ name: "Target", n: 1, seller: 1 }, { name: "Pokémon Center", n: 1, seller: 1 }]);
+    const t = await sendBatch([tgFile(["Hana P"]), pcFile(["Hana P"])], [...TG1, ...PC1]);
     const [[tp], [pp]] = t.emails;
     assert.equal(pp, tp);
     assert.equal((await held(tp)).length, 2);
     assert.equal((await admin("/admin/accounts/free", { email: tp, store: "target" })).status, 200);
     assert.deepEqual(await held(tp), [], "neither is held");
+  });
+  await test("the same email on the Pokémon Center list: declining the Target batch keeps it, declining the other puts both back", async () => {
+    // Hana holds keep1 and keep2, so the Target slot below gets both1, the one free Target account.
+    const hold = await sendBatch([tgFile(["Hana X1", "Hana X2"])], [{ name: "Target", n: 2, seller: 2 }]);
+    await offerAdd(owenKey, "target", "Target", [{ email: "both1@outlook.com", password: "Tgt-Pw-5!" }]);
+    await offerAdd(owenKey, "pokemoncenter", "Pokémon Center", [{ email: "both1@outlook.com", password: "Inbox-Pw-5!" }]);
+    const t = await sendBatch([tgFile(["Hana W"])], TG1);
+    assert.equal(t.emails[0][0], "both1@outlook.com");
+    const p = await sendBatch([pcFile(["Hana W"])], PC1);
+    assert.equal(p.emails[0][0], "both1@outlook.com");
+    assert.deepEqual(await held("both1@outlook.com"), [["pokemoncenter", p.batch, 0], ["target", t.batch, 0]], "the Pokémon Center list's own account");
+    const t0 = await tStock(), p0 = await pcStock();
+    assert.match(await (await approvePost(t.link, "decline")).text(), /1 Target account stays with them/);
+    assert.deepEqual(await tStock(), t0);
+    assert.match(await (await approvePost(p.link, "decline")).text(), /2 accounts given to them are back on your list\./);
+    assert.deepEqual(await held("both1@outlook.com"), []);
+    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
+    assert.deepEqual(await pcStock(), { ...p0, free: p0.free + 1, sent: p0.sent - 1 });
+    assert.match(await (await approvePost(hold.link, "decline")).text(), /2 accounts given to them are back on your list\./);
     // Owen's go back for the tests after these.
     assert.match(await (await approvePost(fillLink, "decline")).text(), /back on your list\./);
   });
