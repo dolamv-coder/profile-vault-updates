@@ -545,6 +545,45 @@ and the selection bar's Copy (`logins-copy`) offer Copy N emails and Copy N emai
 (`loginsInOrder`); the toast counts any without a password. One login's menu has Copy email and, when it has a
 password, Copy email:password. Nothing gains a field, so the paused web version is unaffected.
 
+From 1.9.96 each profile is for **one store**, Target or Pokémon Center, with its own shipping and billing address (the
+owner's choice: "each retailer should have its own billing and shipping"). For the other store there's **Duplicate**: its
+button, the ⋯ menu and right-click offer Duplicate for Target and Duplicate for Pokémon Center (`dupMenuItems`, with the
+store marks `openMenu` now takes as `mark`; `copyProfile(p, k, names)`, `duplicateProfile` with Undo). A copy for the other
+store keeps the name exactly unless a profile on that store has it, since the license worker pairs a buyer's Target and
+Pokémon Center profiles by name (`reuseAccount`): a Pokémon Center slot on Use Assigned Account gets the account its Target
+slot got. Names are unique store by store (`nameOnStore`); renaming one of a pair (`twinsOf`) asks whether to rename both
+(`confirmDialog` now resolves `false` for its cancel button and `null` when closed), and Mass edit numbers a pair together.
+The editor's Store pills pick one store (`setStore`, no ×), and a profile can't move off a store while its slot there is on
+or submitted (in Mass edit too, whose Add and Remove became one Store row). Store logins never add a store (`linkLogin`
+returns false), the login editor lists only the profiles on its store, and Import accounts says which accounts only match a
+profile on another store. Imports make one profile per store: one in a file on several stores becomes one for each
+(`planImport(flat, picked)`, which also takes the stores picked for rows that name none, and skips one already here by name,
+store, address and card), a submitted slot keeps only its store (`slotFlat`, codes and the inbox), and Generate's Import
+makes one profile per draft per store picked. Put in profiles gives a pair the same card, and Duplicate on a group gives a
+pair's copies one new name between them. Every profile has addresses of its
+own: `resolveAddr` never takes another profile's address (no match by content any more), Fill copies one, and Duplicate and
+imports make copies. A vault from before, and whatever an older device or the paused web version syncs in, is put right by
+`oneStorePass` (between `ONE-STORE-START` and `ONE-STORE-END`; `.github/scripts/one-store.test.mjs` tests it on pull
+requests), run after every merge with the online copy and once after unlocking: at unlock with sync off, and with sync on
+after the first sync round (`SYNC.oneStoreDue`), so the device catches up first. Split before that, its out-of-date copy
+would count as its own edits, made then, and undo what other devices changed or deleted meanwhile.
+If that round can't merge (offline, an error), or nothing has after 10 seconds, it splits the copy it has (`oneStoreLate`),
+as it does before a profile on several stores is edited, duplicated or mass edited (`splitNow`); a device that updates
+while offline can then still undo another device's change to a profile it split. The pass works on a person's profiles,
+those with the same name: each keeps a store (a copy the pass made the one its id names, a profile on one store that one,
+the rest the first of Target, Pokémon Center and the others that no other keeps), and each other store goes back to the one
+that keeps it, filling in only a missing login or checkout email, unless both have that slot switched on (two slots need two
+profiles), or else to a copy with the id `<id>.<store>` (`.o` + a hash for a typed store, then `.2`… if taken), taking that
+store's switched-on slot, `subs` mark, last batch, pulls and checkouts with it. A slot left under a profile's old store goes
+to the same person's profile on it. An address two profiles use goes, for every one but the lowest profile id, to a copy
+with the id `a` + `syncHash(address id + "|" + profile id)`, numbered when a profile uses that one (an unused one from
+before gets the address as it is now). `syncAdopt` no longer drops a submitted mark whose slot isn't on: `syncTrim` does,
+after the pass has moved any a 1.9.95 device submitted under a profile's old store. Every id comes from the data, so
+devices that split the same vault agree, and a second run changes nothing. The first split is noted in the shared setting
+`storeSplit` (`{at, n, addrs}`) for a note on Profiles until Got it (`_storeSplitSeen`, kept per device). The store's mark shows by each profile's name (`slipStoreHTML`). Profiles gain no fields
+and there's no new list, so the paused web version is unaffected; it can still put two stores on a profile or link an
+address, which the next 1.9.96 sync puts right (sent in the same round, and then nothing more to send).
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
