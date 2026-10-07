@@ -1,10 +1,10 @@
 {
-  "version": "1.9.95",
-  "url": "index-1.9.95.html",
-  "sha256": "2c34e0f49e5b8cbf6634fe73e3e86a8c90738869ec2c120f59da22316de260fa",
-  "signature": "mtKiKPX2eVD0+ze16Arm0Yny4F9SXrHKY8LMvYUbVbMgOX2JsMVK762HgWnYYskwU8XiqeYfviIHYEqe1JafAQ==",
+  "version": "1.9.96",
+  "url": "index-1.9.96.html",
+  "sha256": "b34d9d2438edaae2d60b113b4868033f72d2fcb5f008462d0a816af799f8ca20",
+  "signature": "vEZlPsPOSRRSRWZ9fYHL+av7BnZWY3X9aC/R9TnBUO6vS9a4CblUeKSo+Wtdq00+PfK+q8I25oGlEyP+ZZZVCA==",
   "minAppVersion": "0",
-  "notes": "Store logins can now be copied: select some, then right-click or use Copy in the selection bar to copy their emails, or email:password lines, one per line in the order shown. A single login's menu has Copy email and Copy email:password too.",
+  "notes": "Each profile is now for one store, Target or Pokémon Center, with its own shipping and billing address. Profiles that were on both were split into two with the same name, and their slots moved with them. Use Duplicate to make a profile for the other store.",
   "installerUrl": "",
-  "publishedAt": "2026-10-07T07:19:17.651Z"
+  "publishedAt": "2026-10-07T12:09:07.087Z"
 }
