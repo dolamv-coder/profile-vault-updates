@@ -5,6 +5,8 @@
 //   automatic (default)       every Discord account that passes the checks gets a key at once
 //   REQUIRE_APPROVAL = "true" each sign-in becomes a request posted to DISCORD_WEBHOOK_URL with a
 //                             private review link; the owner approves or denies it there
+// NOTIFY_USER_ID (optional secret): the Discord user ID (or several, comma-separated) that each new post
+//                             to DISCORD_WEBHOOK_URL @mentions, so the owner gets a ping and a red badge
 //
 // The app (index-*.html) talks to it through LICENSE_RELAY:
 //   GET  /discord/ready        {ready} – the app only shows the Discord button when true
@@ -421,13 +423,22 @@ async function decide(env, ctx, app, action, origin) {
 
 // ---- owner's Discord channel ---------------------------------------------------------
 
+// The owner's Discord user IDs from NOTIFY_USER_ID, the only people a post ever pings.
+const notifyIds = (env) => [...new Set(String(env.NOTIFY_USER_ID || "").split(/[\s,]+/).filter((id) => /^\d{15,22}$/.test(id)))];
+
 // `file` ({name, text, type}) is sent as an attachment on the message (type defaults to text/plain).
 // `file` is one attachment or a list of them (Discord takes up to 10 per message).
+// Each new post starts by @mentioning NOTIFY_USER_ID, if set. Edits (webhookEdit) mention no one, so a
+// decision doesn't ping again, and a message already at Discord's 2000 characters goes without it.
 async function webhookPost(env, payload, file) {
   if (!env.DISCORD_WEBHOOK_URL) return null;
   const u = new URL(env.DISCORD_WEBHOOK_URL);
   u.searchParams.set("wait", "true");
-  const body = JSON.stringify({ ...payload, flags: SUPPRESS_EMBEDS, allowed_mentions: { parse: [] } });
+  const ids = notifyIds(env), content = String(payload.content || "");
+  const ping = ids.map((id) => `<@${id}>`).join(" ") + " ";
+  const notify = ids.length > 0 && ping.length + content.length <= 2000;
+  const body = JSON.stringify({ ...payload, ...(notify && { content: ping + content }), flags: SUPPRESS_EMBEDS,
+    allowed_mentions: notify ? { parse: [], users: ids } : { parse: [] } });
   const files = !file ? [] : Array.isArray(file) ? file : [file];
   const send = () => {
     if (!files.length) return fetch(u, { method: "POST", headers: { "content-type": "application/json" }, body });

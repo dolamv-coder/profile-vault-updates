@@ -120,6 +120,9 @@ Actions**:
 The worker's own secrets (Discord, signing key, webhook) stay in Cloudflare and are kept
 across deploys.
 
+Optional: a **secret `NOTIFY_USER_ID`** there is copied to the worker on each deploy (see
+[Getting pinged for each post](#getting-pinged-for-each-post)).
+
 ## Approving each key yourself
 
 With `REQUIRE_APPROVAL = "true"`, each new Discord account that signs in is posted to a
@@ -169,6 +172,28 @@ the `/admin/applications` list below.
 
 To go back to handing keys out straight away, set `REQUIRE_APPROVAL = ""` in
 `wrangler.toml` and run `npm run deploy`. People you denied stay denied.
+
+## Getting pinged for each post
+
+Discord only shows a red badge for messages that @mention you, even on a channel set to All
+Messages. So each new post in your channel (key and slot requests, batches, pulled slots,
+accounts, and the rest) can start with an @mention of you:
+
+> @you 📝 **New FAFO key request** from **@name** · …
+
+Nobody else is ever pinged, and edits don't ping again (a request changing to ✅ Approved, for
+example). A message that's already at Discord's 2,000 characters goes out without it.
+
+To turn it on, get your Discord user ID (Developer Mode on, then right-click your name and
+**Copy User ID**; several IDs can be separated with commas) and either:
+
+- add it in the GitHub repo as the **secret `NOTIFY_USER_ID`** (**Settings → Secrets and
+  variables → Actions**). The deploy Action copies it to the worker each time it runs, and you
+  can start that run from the **Actions** tab; or
+- run `npx wrangler secret put NOTIFY_USER_ID` in this folder.
+
+Don't put it in `wrangler.toml`: this repo is public. To turn it off, delete the GitHub secret and
+run `npx wrangler secret delete NOTIFY_USER_ID`.
 
 ## Slot limits
 
