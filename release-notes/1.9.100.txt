@@ -1,0 +1,1 @@
+FAFO now installs updates on its own: when a new version is ready, it restarts into it while it's locked and you're away from the computer, never in the middle of something, and you unlock it as usual. You can turn this off in Settings → Updates.

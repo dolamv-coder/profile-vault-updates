@@ -88,7 +88,8 @@ console.log(`Publishing ${NEW} over ${BASE} (live update.json is ${liveVersion})
 const originSha = () => sh("git", ["--git-dir", ORIGIN, "rev-parse", "main"]).trim();
 const originJSON = () => JSON.parse(sh("git", ["--git-dir", ORIGIN, "show", "main:update.json"]));
 const originHead = () => sh("git", ["--git-dir", ORIGIN, "log", "-1", "--format=%s%n%an <%ae>", "main"]).trim();
-const blob = (v, ref = "main") => execFileSync("git", ["--git-dir", ORIGIN, "show", `${ref}:index-${v}.html`]);
+// Pages are over a megabyte from 1.9.100, past execFileSync's default buffer; the publisher allows 64 MB too.
+const blob = (v, ref = "main") => execFileSync("git", ["--git-dir", ORIGIN, "show", `${ref}:index-${v}.html`], { maxBuffer: 64 * 1024 * 1024 });
 let n = 0;
 // Runs the step as the runner would: an empty workspace, bash -eo pipefail, the step's env.
 function runStep(env = {}, sha = originSha()) {

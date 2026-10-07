@@ -190,7 +190,9 @@ One commit per release, titled `Release X.Y.Z`, updates `update.json`. The
    page with the `UPDATE_SIGNING_KEY` secret, checks the signature against the
    key built into the app, commits it as `Release X.Y.Z`, and waits until
    raw.githubusercontent.com serves it. Apps check at startup and every 6
-   hours, and install it on their next restart. It first waits for the newest
+   hours (the page every 30 minutes too), and install it when they restart,
+   which from 1.9.100 FAFO does by itself once it's locked and no one is at the
+   computer (1.9.100 below). It first waits for the newest
    "Deploy license worker" run on `main` and doesn't publish unless that
    succeeded, since a page may need a worker change merged with it or before it.
 
@@ -612,6 +614,25 @@ From 1.9.99 Submit tells the license worker which of the buyer's slots are still
 Assigned Account that was switched off and sent again gets back the account it had (the worker section above; the
 owner's report: a buyer's re-sent Target slots got no accounts, and so no logins file, once the license reached its
 limit). Nothing gains a field, so the paused web version is unaffected.
+
+From 1.9.100 FAFO restarts into a downloaded update by itself (the owner's request: an update only installs on a restart,
+so buyers kept sending slots from FAFOs several versions old). It does so on the lock screen with no password typed and no
+click or key in FAFO for 2 minutes (so also once auto-lock has locked it), or, with auto-lock off (Never), unlocked after
+15 minutes without one, unless that FAFO sends order alerts for buyers, which needs it unlocked. Either way never while a
+window is open, something typed outside one is unsaved (`typedUnsaved`), email syncs or cleans, the vault syncs or a
+request is under way (`NET_OPEN`: the desktop page counts its `fetch`es, ignoring any over 2 minutes old), and only once
+the computer has been idle that long too, or its screen is locked (`IdleDetector`, which Electron allows without asking;
+where it can't be read, FAFO's own idle time decides). `autoUpdateTick` (every 30 seconds) asks the desktop app
+(`updateInfo`) whether a newer version is ready, checks `autoUpdBlock` (which names what's holding it back), lets a save
+under way finish, writes `pv-upd-auto-last` ({v, from, at, notes, locked}), gives it 1.5 seconds to reach the disk (and
+backs out if someone came back meanwhile), then calls `restartToUpdate`. That record allows each version one try, and one
+try every 30 minutes, so an update that doesn't load (the desktop app then starts its own page, which still calls it
+ready) can't restart FAFO over and over; and the lock screen after the restart says "Updated to version X while FAFO
+wasn't in use" with its notes (`#lock-done`, `paintAutoUpdated`) until it's unlocked (`seen`). Settings → Updates has
+Install updates on their own, per computer (`pv-upd-auto` in localStorage, which the lock screen can read). It was tested
+in the desktop app itself (Electron 33 under Xvfb, a signed test update from a local server): the restart, the record
+surviving `app.exit`, and no loop when a damaged download falls back. The vault doesn't change, so the paused web version
+is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
