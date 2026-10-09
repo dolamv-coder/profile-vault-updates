@@ -194,9 +194,11 @@ function csvRows(text) {
 const EXCEL_STRINGS = /^=(?:"(?:[^"]|"")*")(?:&"(?:[^"]|"")*")*$/;
 const shown = (v) => EXCEL_STRINGS.test(v) ? [...v.slice(1).matchAll(/"((?:[^"]|"")*)"/g)].map((m) => m[1].replace(/""/g, '"')).join("") : v;
 const asShown = (text) => csvRows(text).map((r) => r.map(shown));
-// A batch's files other than the AYCD lists (2026-10-06+), and those lists, parsed.
-const plain = (m) => m.files.filter((f) => !f.name.endsWith("-aycd.json"));
+// A batch's files other than the AYCD lists (2026-10-06+) and Shikari CSVs (2026-10-09+), those lists parsed, and the
+// Shikari files.
+const plain = (m) => m.files.filter((f) => !f.name.endsWith("-aycd.json") && !f.name.endsWith("-shikari.csv"));
 const aycdOf = (m) => m.files.filter((f) => f.name.endsWith("-aycd.json")).map((f) => JSON.parse(f.text));
+const shikariOf = (m) => m.files.filter((f) => f.name.endsWith("-shikari.csv"));
 const cellT = (v) => /[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 
 try {
@@ -983,7 +985,9 @@ try {
   const tgtCsv = "profile_name,first_name,last_name,email,phone_num,cc_number,cc_exp_month,cc_exp_year,cc_cvv,shipping_street,shipping_street_2,shipping_city,shipping_state,shipping_zip_code,shipping_country,billing_first_name,billing_last_name,billing_street,billing_street_2,billing_city,billing_state,billing_zip_code,billing_country\r\n" +
     "Kim Lee,Kim,Lee,kim@example.com,5550100,4242424242424242,07,2029,123,1 Main St,,Austin,TX,78701,US,Kim,Lee,1 Main St,,Austin,TX,78701,US";
   const wmCsv = tgtCsv.replace("Kim Lee,Kim,Lee", "Sam Park,Sam,Park");
-  await test("a batch comes as one AYCD list per store, with its logins in a .txt, named by store, never a CSV (2026-10-06)", async () => {
+  // The same row as Shikari writes it: the month without its leading 0, CRLF after every line (2026-10-09).
+  const kimShikari = tgtCsv.split("\r\n")[0] + "\r\nKim Lee,Kim,Lee,kim@example.com,5550100,4242424242424242,7,2029,123,1 Main St,,Austin,TX,78701,US,Kim,Lee,1 Main St,,Austin,TX,78701,US\r\n";
+  await test("a batch comes as an AYCD list and a Shikari CSV per store, with its logins in a .txt, named by buyer and store (2026-10-09)", async () => {
     const before = webhookPosts.length;
     const files = [
       { store: "Target", kind: "profiles", text: tgtCsv }, { store: "Target", kind: "logins", text: "kim.target@example.com:pa:ss" },
@@ -994,10 +998,11 @@ try {
     assert.equal(webhookPosts.length, before + 1, "one message");
     const m = webhookPosts.at(-1);
     assert.ok(m.content.startsWith(`📦 **3 slots** from **Beta** · @frank · license …${frankKey.slice(-4)}\nTarget 1 · Walmart 1 (1 needs an account) · Pokémon Center 1\n`), m.content);
-    assert.ok(m.content.includes("\n-# Per store: its profiles as AYCD JSON (.json), with its logins (email:password, .txt) in the same order (none for Pokémon Center). Profiles that need an account come last.\n⏳ **Pending your approval** · [Approve or decline]("), m.content);
-    assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")),
-      ["Beta-target-aycd.json", "Beta-target-logins.txt", "Beta-walmart-aycd.json", "Beta-pokemon-center-aycd.json"]);
-    assert.ok(!m.files.some((f) => /\.csv$/.test(f.name) || /^text\/csv/.test(f.type || "")), "no CSV goes out");
+    assert.ok(m.content.includes("\n-# Per store: its profiles for AYCD (.json) and Shikari (.csv), with its logins (email:password, .txt) in the same order (none for Pokémon Center). Profiles that need an account come last.\n⏳ **Pending your approval** · [Approve or decline]("), m.content);
+    assert.deepEqual(m.files.map((f) => f.name), ["Beta-target-aycd.json", "Beta-target-shikari.csv", "Beta-target-logins.txt",
+      "Beta-walmart-aycd.json", "Beta-walmart-shikari.csv", "Beta-pokemon-center-aycd.json", "Beta-pokemon-center-shikari.csv"]);
+    assert.deepEqual(shikariOf(m).map((f) => f.text), [kimShikari, kimShikari.replace("Kim Lee,Kim,Lee", "Sam Park,Sam,Park"), kimShikari], "each store's rows as Shikari writes them");
+    assert.ok(shikariOf(m).every((f) => /^text\/csv/.test(f.type)), "as CSV files");
     assert.deepEqual(aycdOf(m).map((l) => l.map((x) => x.name)), [["Kim Lee"], ["Sam Park"], ["Kim Lee"]], "each store's rows as AYCD profiles");
     assert.deepEqual(plain(m).map((f) => f.text), [files[1].text], "the logins file exactly as sent");
     assert.match(plain(m)[0].type, /^text\/plain/); assert.match(m.files[0].type, /^application\/json/);
@@ -1011,8 +1016,8 @@ try {
         { ...pc, kind: "profiles", text: wmCsv }, { store: pc.store, kind: "logins", text: "sam.pc@example.com:Inbox-Pw-9!" }];
       assert.equal((await slots("/submissions", frankKey, { files, name: "Beta", slots: 2, batch: "pcl" + rid(), stores: [{ name: "Target", n: 1 }, { name: pc.store, n: 1 }] })).status, 200);
       const m = webhookPosts.slice(before).find((x) => x.content.startsWith("📦"));
-      assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")),
-        ["Beta-target-aycd.json", "Beta-target-logins.txt", "Beta-pokemon-center-aycd.json"], pc.store);
+      assert.deepEqual(m.files.map((f) => f.name),
+        ["Beta-target-aycd.json", "Beta-target-shikari.csv", "Beta-target-logins.txt", "Beta-pokemon-center-aycd.json", "Beta-pokemon-center-shikari.csv"], pc.store);
       assert.ok(!m.files.some((f) => /Inbox-Pw-9/.test(f.text)), "its password goes nowhere");
       assert.ok(m.content.includes("with its logins (email:password, .txt) in the same order (none for Pokémon Center)."), m.content);
     }
@@ -1021,10 +1026,33 @@ try {
     assert.equal((await slots("/submissions", frankKey, { files: [{ store: "Pokémon Center", storeKey: "pokemoncenter", kind: "profiles", text: wmCsv },
       { store: "Pokémon Center", kind: "logins", text: "sam.pc@example.com:Inbox-Pw-9!" }], name: "Beta", slots: 1, batch: "pcl" + rid(), stores: [{ name: "Pokémon Center", n: 1 }] })).status, 200);
     const m = webhookPosts.slice(before).find((x) => x.content.startsWith("📦"));
-    assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")), ["Beta-pokemon-center-aycd.json"]);
-    assert.ok(m.content.includes("\n-# Per store: its profiles as AYCD JSON (.json).\n"), m.content);
+    assert.deepEqual(m.files.map((f) => f.name), ["Beta-pokemon-center-aycd.json", "Beta-pokemon-center-shikari.csv"]);
+    assert.ok(m.content.includes("\n-# Per store: its profiles for AYCD (.json) and Shikari (.csv).\n"), m.content);
   });
   const slotHead = tgtCsv.split("\r\n")[0];
+  await test("the Shikari CSV is written as Shikari writes it: plain values, codes, the phone's 10 digits, CRLF (2026-10-09)", async () => {
+    const rows = [
+      ["Lâm #1", "Lâm", "Nguyễn", "lam@example.com", "+1 (555) 010-0199", "4242 4242 4242 4242", "09", "31", "053", "12 Oak St, Apt 4", "", "St. Louis", "Missouri", "63101", "United States",
+        "Lâm", "Nguyễn", "12 Oak St, Apt 4", "", "St. Louis", "mo", "63101", "usa"],
+      ["Lou Ng", "Lou", "Ng", "lou@example.com", "555-010-0101", "5555555555554444", "1", "2030", "321", "9 Elm St", "Apt 2", "Toronto", "ON", "M5V 2T6", "CA",
+        "Lou", "Ng", "1 Bay St", "", "Toronto", "Ontario", "M5J 2N8", "Canada"],
+      ['=HYPERLINK("http://evil.example/")', "Ann", "One", "ann@example.com", "5550100", "4111111111111111", "12", "2029", "007", "-1 Main St", "", "@Austin", "TX", "78701", "",
+        "Ann", "One", "+1 Main St", "", "Austin", "TX", "78701", "US"],
+    ];
+    const text = slotHead + "\r\n" + rows.map((r) => r.map(cellT).join(",")).join("\r\n");
+    assert.equal((await slots("/submissions", frankKey, { files: [{ store: "Target", storeKey: "target", kind: "profiles", text }], name: "Lâm Nguyễn", slots: 3, batch: "sk" + rid() })).status, 200);
+    const m = webhookPosts.at(-1);
+    assert.deepEqual(m.files.map((f) => f.name), ["Lam-Nguyen-target-aycd.json", "Lam-Nguyen-target-shikari.csv"], "named after the buyer, with the accents taken off");
+    assert.equal(shikariOf(m)[0].text, [slotHead,
+      'Lâm #1,Lâm,Nguyễn,lam@example.com,5550100199,4242424242424242,9,2031,053,"12 Oak St, Apt 4",,St. Louis,MO,63101,US,Lâm,Nguyễn,"12 Oak St, Apt 4",,St. Louis,MO,63101,US',
+      "Lou Ng,Lou,Ng,lou@example.com,5550100101,5555555555554444,1,2030,321,9 Elm St,Apt 2,Toronto,ON,M5V 2T6,CA,Lou,Ng,1 Bay St,,Toronto,ON,M5J 2N8,CA",
+      '"HYPERLINK(""http://evil.example/"")",Ann,One,ann@example.com,5550100,4111111111111111,12,2029,007,1 Main St,,Austin,TX,78701,US,Ann,One,1 Main St,,Austin,TX,78701,US',
+    ].join("\r\n") + "\r\n");
+    for (const v of csvRows(shikariOf(m)[0].text).flat()) assert.ok(!/^[=+\-@]/.test(v), "nothing a spreadsheet would run: " + v);
+    // No name sent: the buyer's Discord name.
+    assert.equal((await slots("/submissions", frankKey, { files: [{ store: "Target", kind: "profiles", text: tgtCsv }], slots: 1, batch: "sk" + rid() })).status, 200);
+    assert.deepEqual(webhookPosts.at(-1).files.map((f) => f.name), ["frank-target-aycd.json", "frank-target-shikari.csv"]);
+  });
   await test("number cells in a posted CSV (app 1.9.52's) go out as Excel text, so the full card number and leading zeros show", async () => {
     const sent = slotHead + "\r\nAnn One,Ann,One,ann@example.com,+15550100,5555555555554444,09,2031,053,1 Main St,,Boston,MA,02139,US,Ann,One,1 Main St,,Boston,MA,02139,US";
     const r = await slots("/submissions", frankKey, { csv: sent, name: "Beta", slots: 1, batch: "xl" + rid() });
@@ -1074,7 +1102,7 @@ try {
       { store: "Target", storeKey: "target", kind: "logins", text: "kim.target@example.com:pw" }];
     assert.equal((await slots("/submissions", frankKey, { files, name: "Beta", slots: 1, batch: "ay" + rid() })).status, 200);
     const m = webhookPosts.at(-1);
-    assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")), ["Beta-target-aycd.json", "Beta-target-logins.txt"]);
+    assert.deepEqual(m.files.map((f) => f.name), ["Beta-target-aycd.json", "Beta-target-shikari.csv", "Beta-target-logins.txt"]);
     assert.equal(m.files[0].text, JSON.stringify(mine, null, 2));
   });
   await test("an AYCD list has to go with its store's CSV, one profile for each row", async () => {
@@ -1101,9 +1129,9 @@ try {
     const r = await slots("/submissions", frankKey, { files, name: "Beta", slots: 12, batch: "many" + rid() });
     assert.equal(r.status, 200);
     const posts = webhookPosts.slice(before);
-    assert.deepEqual(posts.map((m) => m.files.length), [10, 10, 4], "two files a store: its AYCD list and its logins");
+    assert.deepEqual(posts.map((m) => m.files.length), [10, 10, 10, 6], "three files a store: its AYCD list, its Shikari CSV and its logins");
     assert.ok(posts[0].content.startsWith("📦 **12 slots** from **Beta**"), posts[0].content);
-    assert.equal(posts[1].content, `-# More files for the batch from **Beta** · @frank · license …${frankKey.slice(-4)} (11–20 of 24).`);
+    assert.equal(posts[1].content, `-# More files for the batch from **Beta** · @frank · license …${frankKey.slice(-4)} (11–20 of 36).`);
     assert.deepEqual(posts.flatMap((m) => plain(m).map((f) => f.text)), files.filter((f) => f.kind === "logins").map((f) => f.text), "every logins file, in order");
     assert.equal(posts.flatMap((m) => aycdOf(m)).length, 12, "and every store's AYCD list");
   });
@@ -1115,7 +1143,7 @@ try {
     assert.equal((await slots("/submissions", frankKey, { files, name: "Beta", slots: 6, batch })).status, 502);
     assert.equal(webhookPosts.length, before + 1, "the first part went out");
     assert.equal((await slots("/submissions", frankKey, { files, name: "Beta", slots: 6, batch })).status, 200);
-    assert.deepEqual(webhookPosts.slice(before + 1).map((m) => m.files.length), [10, 2], "sent again in full");
+    assert.deepEqual(webhookPosts.slice(before + 1).map((m) => m.files.length), [10, 8], "sent again in full");
   });
   console.log("\nApproving batches (2026-10-06; app 1.9.91+ shows it)");
   const approveLink = (content) => (content.match(/\[Approve or decline\]\((http[^)]+\/submissions\/review\/[^)]+)\)/) || [])[1];
@@ -1304,7 +1332,7 @@ try {
     const m = webhookPosts.at(-1);
     assert.match(m.content, /\nTarget 4 \(2 assigned accounts\) · Walmart 1 \(1 needs an account: your list has none\)\n/);
     const [logF] = plain(m), [tA, wA] = aycdOf(m), em = emailsOf(tA);
-    assert.deepEqual(plain(m).map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")), ["Gina-target-logins.txt"], "Walmart has no logins file");
+    assert.deepEqual(plain(m).map((f) => f.name), ["Gina-target-logins.txt"], "Walmart has no logins file");
     assert.equal(em[0], "kim@example.com"); assert.equal(em[3], "cy@example.com", "other rows as sent");
     assert.ok(/^pool\d+@outlook\.com$/.test(em[1]) && /^pool\d+@outlook\.com$/.test(em[2]) && em[1] !== em[2], em);
     assert.equal(logF.text, `kim.target@example.com:pa:ss\r\n${em[1]}:Test-Pw-1!\r\n${em[2]}:Test-Pw-1!`);
@@ -1322,7 +1350,8 @@ try {
     const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 1, batch: "asg2" + rid(), stores: [{ name: "Target", n: 1, seller: 1 }] })).json();
     assert.deepEqual(r.accounts, { Target: { asked: 1, got: 1 } });
     const m = webhookPosts.at(-1), e = emailsOf(aycdOf(m)[0])[0];
-    assert.deepEqual(m.files.map((f) => f.name.replace(/^orbit-slots-\d{4}-\d\d-\d\d-\d{4}-/, "")), ["Gina-target-aycd.json", "Gina-target-logins.txt"]);
+    assert.deepEqual(m.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt"]);
+    assert.equal(csvRows(shikariOf(m)[0].text)[1][3], e, "the Shikari CSV has it in the row's email column");
     assert.equal(plain(m)[0].text, `${e}:Test-Pw-1!`); assert.ok(!first.includes(e), "never one given out before");
     assert.ok(/^pool\d+@outlook\.com$/.test(e) && aycdOf(m)[0][0].billingAddress.email === e, "the AYCD profile made from the CSV has it, on both addresses");
     assert.doesNotMatch(m.content, /need an account/);

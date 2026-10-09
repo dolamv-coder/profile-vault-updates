@@ -1,0 +1,1 @@
+When you send slots to the seller, they now get them as Shikari files too, alongside the AYCD files.
