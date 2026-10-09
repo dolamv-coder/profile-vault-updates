@@ -1007,7 +1007,7 @@ try {
     assert.deepEqual(plain(m).map((f) => f.text), [files[1].text], "the logins file exactly as sent");
     assert.match(plain(m)[0].type, /^text\/plain/); assert.match(m.files[0].type, /^application\/json/);
   });
-  await test("Pokémon Center's slots go out as their AYCD list only, never a logins file (2026-10-07)", async () => {
+  await test("Pokémon Center's slots go out as their AYCD list and Shikari CSV, never a logins file (2026-10-07)", async () => {
     // An older app (no storeKey) or older data can still send one; the email is on each AYCD profile.
     for (const pc of [{ store: "Pokémon Center", storeKey: "pokemoncenter" }, { store: "Pokemon Center" }]) {
       const before = webhookPosts.length;
@@ -1514,7 +1514,7 @@ try {
     const r = await (await slots("/submissions", hanaKey, { files: [pcFile(["Hana A"])], name: "Hana", slots: 1, batch: "pcr2" + rid(), stores: [{ name: "Pokémon Center", n: 1, seller: 1 }] })).json();
     assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 1, got: 1, reused: 1 } });
     const m = batchPost(before);
-    assert.equal(emailsOf(aycdOf(m)[0])[0], tA); assert.deepEqual(plain(m), [], "its AYCD list only");
+    assert.equal(emailsOf(aycdOf(m)[0])[0], tA); assert.deepEqual(plain(m), [], "no logins file");
     const p0 = webhookPosts.length;
     await pull(hanaKey, { keyId: "CSV", name: "Hana", slots: [{ store: "Pokémon Center", profile: "Hana A", email: "Assigned account", card: "Visa 4242" }] });
     assert.ok(webhookPosts[p0].content.includes(`Pokémon Center · Hana A · ${tA} \\(assigned account\\)`), webhookPosts[p0].content);
@@ -1554,7 +1554,7 @@ try {
       stores: [{ name: "Pokémon Center", n: 4, seller: 4 }] })).json();
     assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 4, got: 3, reused: 1 } });
     const m = batchPost(before), list = aycdOf(m)[0], em = emailsOf(list);
-    assert.deepEqual(plain(m), [], "its AYCD list only");
+    assert.deepEqual(plain(m), [], "no logins file");
     assert.match(m.content, /\nPokémon Center 4 \(3 assigned accounts, 1 reused from Target, 1 needs an account: your list has none\)\n/);
     assert.deepEqual(list.map((x) => x.name), ["Hana E", "Hana F", "Hana B", "Hana G"]);
     assert.ok(/^pc[123]@outlook\.com$/.test(em[0]) && /^pc[123]@outlook\.com$/.test(em[1]), em); assert.equal(em[2], tB); assert.equal(em[3], "");

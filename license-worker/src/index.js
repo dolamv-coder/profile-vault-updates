@@ -659,9 +659,10 @@ async function slotReview(request, env, ctx, url, id) {
 // From app 1.9.52 the Submit page sends each batch in plain text, posted to the owner's channel as
 // files they open directly: from 1.9.53 one profiles .csv per store (the owner's columns) and that
 // store's logins as email:password lines in a .txt; 1.9.52 sends one .csv in Orbit's Export → CSV
-// columns. Since 2026-10-06 each store's profiles go out as AYCD JSON only (the owner's choice): its
-// .csv is still read here, to give out accounts and make the AYCD list for apps before 1.9.87, but
-// not posted. Full card numbers, CVVs, and store and email passwords pass through here and sit in the
+// columns. Since 2026-10-06 each store's profiles go out as AYCD JSON (the owner's choice), and since 2026-10-09
+// also as a Shikari CSV made from its .csv once accounts are assigned (shikariCsv); the .csv itself, read here to
+// give out accounts and make the AYCD list for apps before 1.9.87, isn't posted. Full card numbers, CVVs, and store
+// and email passwords pass through here and sit in the
 // channel. The owner chose this. Nothing is kept here but who sent how many slots.
 //
 // Older apps seal each batch with the owner's collecting key from Orbit (Settings → Password and

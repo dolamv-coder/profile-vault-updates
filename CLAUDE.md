@@ -94,11 +94,12 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   also shows **Declined** (`declinedAt`). 1.9.91 keeps a declined batch at Pending approval. Slots sent before, through a
   worker that doesn't answer `review`, or as a code show Submitted as before; from 1.9.98 those an older app sent through
   the worker after approvals began (it kept no batch id) find their batch with `GET /submissions/batches` (1.9.98 below).
-  The owner opened these in Excel (since the change above, only 1.9.52's single CSV is still posted), which shows a 16-digit card number as 5.55556E+15 (keeping only 15
-  digits) and drops leading zeros. So since 2026-10-02 the worker writes each slots CSV's phone, card
+  The owner opened slot CSVs in Excel, which shows a 16-digit card number as 5.55556E+15 (keeping only 15
+  digits) and drops leading zeros. So since 2026-10-02 the worker writes a posted slots CSV's phone, card
   number, expiry month, CVV and zip code cells as `="…"` Excel text (`excelSafe`), and does the same
-  to any cell that starts with `= + - @`, so nothing a buyer typed runs as a formula. This works for
-  files from every app version. Orbit's CSV import reads `="…"` cells as their text from 1.9.68
+  to any cell that starts with `= + - @`, so nothing a buyer typed runs as a formula. Since 2026-10-06 that's
+  only 1.9.52's single CSV: each store's Shikari CSV (2026-10-09) has plain values for the bot, so it's for loading
+  into Shikari, not for saving from Excel. Orbit's CSV import reads `="…"` cells as their text from 1.9.68
   (`xlUnwrap` in `parseCSV`).
   How each store on a profile checks out (`stores[].mode`, from 1.9.57): Pokémon Center on the
   buyer's own email, as a guest with no login (`"email"`; from 1.9.62 nothing asks for or shows whether it's
