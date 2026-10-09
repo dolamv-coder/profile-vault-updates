@@ -65,6 +65,14 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   since `assignAccounts` counts its lines to find the assigned rows. The app still sends the CSV,
   which the worker reads to give out accounts and, for apps before 1.9.87, to make the AYCD list, and 1.9.91 says
   "AYCD files" where the app said "CSV files" (the Submit page and window, Send somewhere else, the seller's Discord note).
+  Since 2026-10-09 (the owner's request, with a file Shikari made) each store's slots also go out as a Shikari profile
+  CSV, made by the worker from that CSV once the accounts are in it (`shikariCsv`), so it comes from every app since 1.9.53:
+  the same 23 columns (`SHIKARI_COLS`, `SLOT_COLS`), with the values as Shikari writes them (the month without a leading 0,
+  a 4-digit year, the phone's 10 digits, the card number's digits, state and country codes, CRLF after every line), no
+  `="…"` Excel text, and a cell that would start with `= + - @` losing those characters. The owner's Shikari file comes
+  out of it byte for byte. And the files are named after the buyer (the name sent with the batch, else their Discord
+  name, accents taken off) and the store: `<buyer>-<store>-aycd.json`, `-shikari.csv` and `-logins.txt`, in that order
+  per store, where they were `orbit-slots-<time>-<name>-<store>-…`; 1.9.101 says "AYCD and Shikari files".
   Since 2026-10-06 (the owner's requests) the owner approves or declines each batch: its message (the first, when there
   are several) ends with **Pending your approval · Approve or decline**, a link to `/submissions/review/:id?t=…` (D1
   `submission_reviews`, kept 90 days; its own table, since `db:init` can't add columns). Approve edits the message to
@@ -86,11 +94,12 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   also shows **Declined** (`declinedAt`). 1.9.91 keeps a declined batch at Pending approval. Slots sent before, through a
   worker that doesn't answer `review`, or as a code show Submitted as before; from 1.9.98 those an older app sent through
   the worker after approvals began (it kept no batch id) find their batch with `GET /submissions/batches` (1.9.98 below).
-  The owner opened these in Excel (since the change above, only 1.9.52's single CSV is still posted), which shows a 16-digit card number as 5.55556E+15 (keeping only 15
-  digits) and drops leading zeros. So since 2026-10-02 the worker writes each slots CSV's phone, card
+  The owner opened slot CSVs in Excel, which shows a 16-digit card number as 5.55556E+15 (keeping only 15
+  digits) and drops leading zeros. So since 2026-10-02 the worker writes a posted slots CSV's phone, card
   number, expiry month, CVV and zip code cells as `="…"` Excel text (`excelSafe`), and does the same
-  to any cell that starts with `= + - @`, so nothing a buyer typed runs as a formula. This works for
-  files from every app version. Orbit's CSV import reads `="…"` cells as their text from 1.9.68
+  to any cell that starts with `= + - @`, so nothing a buyer typed runs as a formula. Since 2026-10-06 that's
+  only 1.9.52's single CSV: each store's Shikari CSV (2026-10-09) has plain values for the bot, so it's for loading
+  into Shikari, not for saving from Excel. Orbit's CSV import reads `="…"` cells as their text from 1.9.68
   (`xlUnwrap` in `parseCSV`).
   How each store on a profile checks out (`stores[].mode`, from 1.9.57): Pokémon Center on the
   buyer's own email, as a guest with no login (`"email"`; from 1.9.62 nothing asks for or shows whether it's
@@ -633,6 +642,11 @@ Install updates on their own, per computer (`pv-upd-auto` in localStorage, which
 in the desktop app itself (Electron 33 under Xvfb, a signed test update from a local server): the restart, the record
 surviving `app.exit`, and no loop when a damaged download falls back. The vault doesn't change, so the paused web version
 is unaffected.
+
+From 1.9.101 the app says the seller's channel gets **AYCD and Shikari files** (the worker section above: a Shikari CSV
+per store since 2026-10-09), on the Submit page and window, in Send somewhere else, in the seller's Discord note and on the
+assigned accounts' notes (their email goes in the slot's Shikari row too); the Send accounts window says one person gets
+20 at most (`ASSIGNED_LIMIT` since 2026-10-07; it said 10). Nothing gains a field, so the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

@@ -223,11 +223,12 @@ curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit
 ## Slots sent to your Discord
 
 Every batch people submit from a licensed FAFO is posted to the same Discord channel as files you
-can load directly into AYCD. There's nothing to set up; it uses the same `DISCORD_WEBHOOK_URL`.
-Each store gets its own files (since 2026-10-06 only these two; the CSV described below isn't posted
-any more, at your request):
+can load directly into AYCD or Shikari. There's nothing to set up; it uses the same `DISCORD_WEBHOOK_URL`.
+Each store gets its own files, named after the person who sent them (the name they typed when sending, or
+their Discord name) and the store, for example `Kim-target-aycd.json` (since 2026-10-09, at your
+request; before, `orbit-slots-<date>-<time>-Kim-target-aycd.json`):
 
-- `orbit-slots-…-target-aycd.json`: that store's slots as an AYCD profile list,
+- `Kim-target-aycd.json`: that store's slots as an AYCD profile list,
   one profile each, in the order the app sent them and laid out as AYCD exports it: `name`,
   `notes`, `billingAddress` and `shippingAddress` (`name, email, phone, line1, line2, line3, postCode,
   city, country, state`, with the state and country written out), `paymentDetails` (`nameOnCard,
@@ -236,19 +237,29 @@ any more, at your request):
   checks out with. FAFO 1.9.87 and later write it, with the card's own name and Only
   one checkout; for older versions this worker makes it from the CSV the app sends, with the billing
   name as the name on card.
-- `orbit-slots-…-target-logins.txt`: that store's logins, one `email:password` per line, in the same
-  order as the first profiles of the AYCD list. AYCD's profile format has no place for them. Pokémon
-  Center gets none (since 2026-10-07, at your request): it checks out with just an email, which is on
-  each of its AYCD profiles, so a Pokémon Center batch is its AYCD list only.
+- `Kim-target-shikari.csv` (since 2026-10-09, at your request): the same slots, in the same order, as a
+  Shikari profile CSV, laid out as Shikari writes one: `profile_name, first_name, last_name, email,
+  phone_num, cc_number, cc_exp_month, cc_exp_year, cc_cvv, shipping_street, shipping_street_2,
+  shipping_city, shipping_state, shipping_zip_code, shipping_country, billing_first_name,
+  billing_last_name, billing_street, billing_street_2, billing_city, billing_state, billing_zip_code,
+  billing_country`, with the values as Shikari has them: the month without a leading 0 (`9`), a 4-digit
+  year, the phone's 10 digits, the card number's digits, state and country codes (`FL`, `US`), and a CRLF
+  after every line. The email is the account its slot checks out with, as on the AYCD profile. A file
+  Shikari made comes out of this unchanged. It's made here from the CSV every FAFO since 1.9.53 sends
+  (the same columns), so it comes from every version. It's for loading into the bot, so its cells aren't
+  Excel text (below); a cell that would start with `=`, `+`, `-` or `@` loses those characters instead,
+  so nothing a buyer typed runs as a formula if you open it in Excel. (Excel shows a long card number
+  rounded, so load the file into Shikari rather than saving it from Excel.)
+- `Kim-target-logins.txt`: that store's logins, one `email:password` per line, in the same
+  order as the first profiles of the AYCD list and the Shikari CSV. AYCD's profile format has no place
+  for them. Pokémon Center gets none (since 2026-10-07, at your request): it checks out with just an
+  email, which is on each of its profiles, so a Pokémon Center batch is its AYCD list and Shikari CSV.
 
-The app still sends each store's slots as a CSV too (`profile_name, first_name, last_name, email,
-phone_num, cc_number, cc_exp_month, cc_exp_year, cc_cvv, shipping_street, shipping_street_2,
-shipping_city, shipping_state, shipping_zip_code, shipping_country, billing_first_name,
-billing_last_name, billing_street, billing_street_2, billing_city, billing_state, billing_zip_code,
-billing_country`): this worker reads it to give out accounts and, for apps before 1.9.87, to make the
-AYCD list, but doesn't post it. Until 2026-10-06 it was posted as `orbit-slots-…-target.csv`.
+The app sends each store's slots as that CSV: this worker reads it to give out accounts and, for apps
+before 1.9.87, to make the AYCD list, and posts it as the Shikari CSV. From 2026-10-06 to 2026-10-09 it
+wasn't posted; until 2026-10-06 it went out as it came, as `orbit-slots-…-target.csv`.
 
-In a CSV that's posted (only FAFO 1.9.52's single file now), the phone, card number, expiry month, CVV and zip code cells are written as `="…"`, for
+In a CSV posted for Excel (only FAFO 1.9.52's single file now), the phone, card number, expiry month, CVV and zip code cells are written as `="…"`, for
 example `="5555555555554444"`, so Excel shows the full card number and keeps leading zeros. Without
 it, Excel turns them into numbers: 5.55556E+15, with the last digit lost if the file is saved. Any
 other cell that starts with `=`, `+`, `-` or `@` is written the same way, so nothing a buyer typed
@@ -257,7 +268,7 @@ see the `="…"`, and FAFO's **Import** (1.9.68+) reads them as the text inside.
 
 > 📦 **6 slots** from **Kim** · @kim · license …ABCD
 > Target 3 · Walmart 3
-> Per store: its profiles as AYCD JSON (.json), with its logins (email:password, .txt) in the same order.
+> Per store: its profiles for AYCD (.json) and Shikari (.csv), with its logins (email:password, .txt) in the same order.
 > ⏳ **Pending your approval** · Approve or decline
 
 ### Approving or declining a batch
@@ -284,7 +295,8 @@ Slots without a store login come after the ones with logins and have no line in 
 on a verified email only (Pokémon Center) has that account's email on its AYCD profile. Slots set to
 **Use Assigned Account** (Orbit 1.9.57+; 1.9.53 called it "Assign me an account") come last: the
 buyer added no login because you provide one, and the store line says so, e.g. "Target 3 (2 need an
-account)". An account given out for a slot (see below) goes on its AYCD profile, on both addresses.
+account)". An account given out for a slot (see below) goes on its AYCD profile, on both addresses, and in
+its Shikari row's `email`.
 Discord takes 10 files a message, so a batch with more stores continues in a follow-up message.
 
 To load a store into your own FAFO, **Import** its AYCD file and pick that store under Retailers, then on

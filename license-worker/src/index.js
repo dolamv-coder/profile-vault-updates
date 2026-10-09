@@ -27,11 +27,13 @@
 //   POST /submit/key           {pub, name}: offer a collecting key; the owner confirms it in Discord
 //   POST /submissions          {files, name, slots, stores, batch} (app 1.9.53+): posted to DISCORD_WEBHOOK_URL
 //                              in plain text, with full card numbers, CVVs and passwords (the owner chose
-//                              this over encryption): per store, its profiles as AYCD JSON and its logins
-//                              (email:password) as a .txt, except Pokémon Center's, which checks out with just
-//                              the email on each profile (2026-10-07). Each store's profiles also come as a .csv in the
-//                              owner's columns, read here but no longer posted (the owner's choice, 2026-10-06).
-//                              App 1.9.87+ sends the AYCD list (kind "aycd"); for older apps it's made from the CSV.
+//                              this over encryption): per store, its profiles as AYCD JSON and as a Shikari CSV
+//                              (2026-10-09), and its logins (email:password) as a .txt, except Pokémon Center's,
+//                              which checks out with just the email on each profile (2026-10-07), each file named
+//                              <buyer>-<store>-aycd.json, -shikari.csv or -logins.txt. Each store's profiles come as a
+//                              .csv in the owner's columns, which the Shikari CSV is made from (2026-10-06 to -09 it
+//                              wasn't posted). App 1.9.87+ sends the AYCD list (kind "aycd"); for older apps it's made
+//                              from the CSV.
 //                              Each store in `stores`
 //                              may carry `seller`: how many of its slots ask the owner to assign an
 //                              account. App 1.9.52 sends {csv, ...}, one .csv; older apps {code, keyId, ...},
@@ -657,9 +659,10 @@ async function slotReview(request, env, ctx, url, id) {
 // From app 1.9.52 the Submit page sends each batch in plain text, posted to the owner's channel as
 // files they open directly: from 1.9.53 one profiles .csv per store (the owner's columns) and that
 // store's logins as email:password lines in a .txt; 1.9.52 sends one .csv in Orbit's Export → CSV
-// columns. Since 2026-10-06 each store's profiles go out as AYCD JSON only (the owner's choice): its
-// .csv is still read here, to give out accounts and make the AYCD list for apps before 1.9.87, but
-// not posted. Full card numbers, CVVs, and store and email passwords pass through here and sit in the
+// columns. Since 2026-10-06 each store's profiles go out as AYCD JSON (the owner's choice), and since 2026-10-09
+// also as a Shikari CSV made from its .csv once accounts are assigned (shikariCsv); the .csv itself, read here to
+// give out accounts and make the AYCD list for apps before 1.9.87, isn't posted. Full card numbers, CVVs, and store
+// and email passwords pass through here and sit in the
 // channel. The owner chose this. Nothing is kept here but who sent how many slots.
 //
 // Older apps seal each batch with the owner's collecting key from Orbit (Settings → Password and
@@ -896,7 +899,7 @@ async function submission(request, env, url) {
   };
   // Recorded before any account is picked or anything is posted, so a retry that arrives meanwhile
   // isn't handled twice.
-  const bytes = files !== null ? files.reduce((n, f) => n + (f.kind === "aycd" ? aycdText(f.list) : f.kind === "profiles" || isPokemonCenterFile(f, files) ? "" : f.text).length, 0) : (csv !== null ? csv : code).length;
+  const bytes = files !== null ? files.reduce((n, f) => n + (f.kind === "aycd" ? aycdText(f.list) : f.kind === "logins" && isPokemonCenterFile(f, files) ? "" : f.text).length, 0) : (csv !== null ? csv : code).length;
   const ins = await env.DB.prepare(
     `INSERT OR IGNORE INTO submissions (id, key_hash, key_last4, name, username, slots, bytes, key_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -918,8 +921,9 @@ async function submission(request, env, url) {
     await env.DB.prepare("DELETE FROM submissions WHERE id = ?").bind(batch).run().catch((x) => console.error("record", x));
     throw e;
   }
-  // What goes to the channel: each store's AYCD list and logins file, with no logins file for Pokémon Center.
-  const posted = files !== null ? files.filter((f) => f.kind !== "profiles" && !(f.kind === "logins" && isPokemonCenterFile(f, files))) : [];
+  // What goes to the channel: each store's AYCD list, its Shikari CSV (made from its slots CSV) and its logins file, with
+  // no logins file for Pokémon Center.
+  const posted = files !== null ? files.filter((f) => !(f.kind === "logins" && isPokemonCenterFile(f, files))) : [];
   const pokemonCenter = files !== null && files.some((f) => f.kind === "profiles" && isPokemonCenterFile(f, files));
   const stamp = new Date(now).toISOString().slice(0, 16).replace("T", "-").replace(":", "");
   const slug = s.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
@@ -938,23 +942,28 @@ async function submission(request, env, url) {
   const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
   const plainStores = stores.map((x) => `${x.name} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
   const tail = files !== null
-    ? `-# Per store: its profiles as AYCD JSON (.json)${posted.some((f) => f.kind === "logins") ? `, with its logins (email:password, .txt) in the same order${pokemonCenter ? " (none for Pokémon Center)" : ""}` : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
+    ? `-# Per store: its profiles for AYCD (.json) and Shikari (.csv)${posted.some((f) => f.kind === "logins") ? `, with its logins (email:password, .txt) in the same order${pokemonCenter ? " (none for Pokémon Center)" : ""}` : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
     : csv !== null ? "-# CSV attached." : `-# Encrypted for key ${keyId}. To open: download the file, then in FAFO choose **Import** and drop it in.`;
   const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n${tail}`;
   const base = `orbit-slots-${stamp}${slug ? "-" + slug : ""}`;
   let attach;
   if (files !== null) {
-    // Each store's files carry its name: orbit-slots-…-target-aycd.json and …-target-logins.txt. Its .csv isn't
-    // posted (AYCD only, the owner's choice, 2026-10-06), nor Pokémon Center's logins (2026-10-07).
+    // Each file is labeled with the buyer and the store (the owner's request, 2026-10-09): Kim-target-aycd.json,
+    // Kim-target-shikari.csv and Kim-target-logins.txt; the name they sent with, or their Discord name. No logins
+    // for Pokémon Center (2026-10-07). The slots CSV itself goes out only as Shikari's.
+    const ascii = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const buyer = ascii(s.name).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30)
+      || ascii(s.username).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || `license-${s.key_last4}`;
     const used = new Map();
     const label = (store) => {
-      const x = store.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "store";
+      const x = ascii(store).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "store";
       if (!used.has(store)) { let y = x, i = 2; while ([...used.values()].includes(y)) y = `${x}-${i++}`; used.set(store, y); }
       return used.get(store);
     };
     attach = posted.map((f) => f.kind === "aycd"
-      ? { name: `${base}-${label(f.store)}-aycd.json`, text: aycdText(f.list), type: "application/json" }
-      : { name: `${base}-${label(f.store)}-logins.txt`, text: f.text });
+      ? { name: `${buyer}-${label(f.store)}-aycd.json`, text: aycdText(f.list), type: "application/json" }
+      : f.kind === "profiles" ? { name: `${buyer}-${label(f.store)}-shikari.csv`, text: shikariCsv(f.text), type: "text/csv" }
+      : { name: `${buyer}-${label(f.store)}-logins.txt`, text: f.text });
   } else attach = [csv !== null ? { name: base + ".csv", text: excelSafe(csv), type: "text/csv" } : { name: base + ".txt", text: code }];
   // The owner approves the batch from its message (submissionReview), and the app shows the buyer whether they have.
   // If that can't be recorded, the batch still goes out, without an Approve link.
@@ -1223,8 +1232,9 @@ function parseCsv(text) {
 }
 const csvCell = (v) => { const t = String(v == null ? "" : v); return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
 
-// The owner opens CSVs in Excel (since 2026-10-06 only app 1.9.52's single CSV is posted; per-store slots go out
-// as AYCD JSON), which reads a run of digits as a number: a card number shows
+// The owner opens CSVs in Excel (since 2026-10-06 only app 1.9.52's single CSV is posted this way; per-store slots go
+// out as AYCD JSON, and from 2026-10-09 as Shikari CSVs in plain values, for the bot), which reads a run of digits as a
+// number: a card number shows
 // as 5.55556E+15 and keeps only 15 digits (saving the file turns the 16th into 0), and CVVs, months
 // and zip codes lose a leading 0. So those cells go to the channel as ="…", which Excel and Google
 // Sheets show as the text itself, and Excel saves as the plain value. Any other cell that starts with
@@ -1279,6 +1289,36 @@ function aycdEmails(list, from, emails) {
   emails.forEach((e, i) => { const x = list[from + i]; if (x) for (const k of ["billingAddress", "shippingAddress"]) if (x[k] && typeof x[k] === "object") x[k].email = e; });
 }
 const aycdText = (list) => JSON.stringify(list, null, 2);
+
+// Shikari's profile CSV (the owner's request, 2026-10-09, from a file Shikari made): each store's slots go to the
+// channel this way too, made here from the slots CSV every app since 1.9.53 sends, after the accounts are filled in,
+// so in the same order as the AYCD list. Its columns are the slots CSV's, but the values as Shikari writes them: the
+// month without a leading 0 (9, not 09), a 4-digit year, the phone's 10 digits, state and country codes, CRLF lines.
+// It's for loading into the bot, so no ="…" Excel text; a cell that would start with = + - or @ loses those instead.
+const SHIKARI_COLS = ["profile_name", "first_name", "last_name", "email", "phone_num", "cc_number", "cc_exp_month", "cc_exp_year", "cc_cvv",
+  "shipping_street", "shipping_street_2", "shipping_city", "shipping_state", "shipping_zip_code", "shipping_country",
+  "billing_first_name", "billing_last_name", "billing_street", "billing_street_2", "billing_city", "billing_state", "billing_zip_code", "billing_country"];
+const placeCode = (list, v) => { const t = v.toLowerCase(); return (list.find((x) => x[1].toLowerCase() === t) || [])[0] || ""; };
+const COUNTRY_ALIASES = { usa: "US", "u.s.": "US", "u.s.a.": "US", "united states of america": "US", uk: "GB", "great britain": "GB" };
+function shikariCsv(text) {
+  const rows = parseCsv(text), head = (rows[0] || []).map((h) => h.replace(/^﻿/, "").trim().toLowerCase());
+  const clean = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().replace(/^[=+\-@\s]+/, "");
+  const digits = (v) => String(v || "").replace(/\D/g, "");
+  const country = (v) => { v = clean(v); return !v ? "US" : /^[A-Za-z]{2}$/.test(v) ? v.toUpperCase() : COUNTRY_ALIASES[v.toLowerCase()] || placeCode(COUNTRIES, v) || v; };
+  const state = (v, c) => { v = clean(v); return /^[A-Za-z]{2}$/.test(v) ? v.toUpperCase() : (c === "US" ? placeCode(US_STATES, v) : c === "CA" ? placeCode(CA_PROVINCES, v) : "") || v; };
+  const out = rows.slice(1).filter((r) => r.some((x) => String(x).trim())).map((r) => {
+    const raw = (k) => { const i = head.indexOf(k); return i < 0 ? "" : r[i]; };
+    const v = Object.fromEntries(SHIKARI_COLS.map((k) => [k, clean(raw(k))]));
+    let phone = digits(v.phone_num);
+    if (phone.length === 11 && phone[0] === "1") phone = phone.slice(1);
+    const m = digits(v.cc_exp_month), y = digits(v.cc_exp_year);
+    const shipC = country(v.shipping_country), billC = country(v.billing_country);
+    return { ...v, phone_num: phone, cc_number: digits(v.cc_number), cc_exp_month: m ? String(Number(m)) : "", cc_exp_year: y.length === 2 ? "20" + y : y,
+      cc_cvv: digits(v.cc_cvv), shipping_country: shipC, billing_country: billC,
+      shipping_state: state(v.shipping_state, shipC), billing_state: state(v.billing_state, billC) };
+  });
+  return [SHIKARI_COLS.join(","), ...out.map((o) => SHIKARI_COLS.map((k) => csvCell(o[k])).join(","))].join("\r\n") + "\r\n";
+}
 
 // A Pokémon Center slot on Use Assigned Account whose profile already has a Target account (given out in this batch,
 // or sent before) gets that account again (the owner's request, 2026-10-06), so the profile checks out with one email
