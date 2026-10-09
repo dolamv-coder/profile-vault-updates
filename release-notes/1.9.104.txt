@@ -1,0 +1,1 @@
+Pre-orders no longer show Target's gray shopping bag as the product picture, and another product's photo is no longer taken for an order's: those orders show the store's mark until a real picture comes, from the shipping email or one you set with Picture, and then every order of the item gets it.
