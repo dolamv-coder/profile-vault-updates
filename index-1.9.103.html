@@ -4320,6 +4320,7 @@ function openLayer(o){
     const i = stack.indexOf(entry); if (i === -1) return;
     stack.splice(i, 1);
     el.classList.remove("is-open");
+    el.inert = true;   // fading out: no second click on its buttons
     setTimeout(() => el.remove(), 200);
     if (entry.prev && entry.prev.focus && document.contains(entry.prev)) entry.prev.focus();
     if (entry.onClose) entry.onClose(val);
@@ -9884,8 +9885,9 @@ function openOrderEditor(existing){
         if (!d.item){ setErr(panel,"item","What did you order?"); bad = true; } else setErr(panel,"item","");
         if (!d.at){ setErr(panel,"at","Pick a date."); bad = true; } else setErr(panel,"at","");
         if (kept || !link) setErr(panel,"image","");
+        else if (DATA_PIC.test(link)){ setErr(panel,"image","That's a picture, not a link: select the order on the Orders page and choose Picture to add it."); bad = true; }
         else if (!/^https:\/\//i.test(link)){ setErr(panel,"image","Paste a link that starts with https://"); bad = true; }
-        else if (link && !goodPicLink(link)){ setErr(panel,"image","That's two links in one: clear the box and paste just one."); bad = true; }
+        else if (link && !goodPicLink(link, shown)){ setErr(panel,"image","That's two links in one: clear the box and paste just one."); bad = true; }
         else setErr(panel,"image","");
         if (bad) return;
         const picAll = $("#o-pic-all", panel), cleared = existing && existing.image && !d.image;
@@ -10892,8 +10894,14 @@ function tidyOrders(){
   let n = 0;
   S.orders.forEach(o => {
     let ch = false;
+    const k0 = orderKey(o);
     ORDER_TEXT_FIELDS.forEach(k => { if (typeof o[k] === "string" && HTML_ENT.test(o[k])){ const v = decodeHtml(o[k]); if (v !== o[k]){ o[k] = v; ch = true; } } });
-    if (ch){ o.updatedAt = Date.now(); n++; }
+    if (ch){
+      o.updatedAt = Date.now(); n++;
+      // An order with no number is known by its name: the old one counts as deleted, so a device before 1.9.103, whose email
+      // sync still reads the name with codes, doesn't add it again (and a merge drops one it did).
+      if (orderKey(o) !== k0){ S.deletedOrders = S.deletedOrders || {}; if (!S.deletedOrders[k0]) S.deletedOrders[k0] = Date.now(); }
+    }
   });
   // Pictures added: one nothing points at is noted as unused from then (so Undo, or another device that still uses it, has
   // 30 days), and goes after 30 days of that.
@@ -10968,8 +10976,11 @@ function pictureFinds(o){
   out.push(["Search pictures", `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(orderStoreLabel(o) + " " + item)}`]);
   return out;
 }
-// A picture's link: https, one address (a second pasted onto the first isn't one; ?url=https://… inside one is fine).
-const goodPicLink = (v) => /^https:\/\/\S+$/i.test(v) && !/[^=]https?:\/\//i.test(v.slice(8));
+// A picture's link: https, one address. Two pasted together: a picture's address running straight into another, or onto the
+// one that was in the box (an address inside one, as image services write them, is fine).
+const twoLinks = (v, was) => /\.(png|jpe?g|webp|gif|avif|bmp)(\?\S*?)?https?:\/\//i.test(v) || !!(was && v.length > was.length && v.startsWith(was) && /^https?:\/\//i.test(v.slice(was.length)));
+const goodPicLink = (v, was) => /^https:\/\/\S+$/i.test(v) && !twoLinks(v, was);
+const DATA_PIC = /^data:image\/[a-z+.-]+;base64,/i;
 const pictureFindsHTML = (o) => pictureFinds(o).map(([t, u]) => `<a class="btn btn-sm" href="${esc(u)}" target="_blank" rel="noopener">${ic("search")}${esc(t)}</a>`).join("");
 // Picture for the orders picked (1.9.103, the owner's request: "find and update products pictures"): a picture pasted,
 // dropped or chosen as a file (kept in itemPics), or a link to the product's photo, which goes on them and, ticked to
@@ -10992,13 +11003,17 @@ function openOrderPicture(ids){
           <span class="hint">Right-click the product's picture and choose Copy image address, then paste it here.</span><span class="err"></span></div>
         <div class="c6 pic-find">${pictureFindsHTML(items[0])}</div>
         <div class="c6 pic-prev" id="pic-prev" hidden><span class="othumb"><img id="pic-img" alt="" referrerpolicy="no-referrer"></span><span class="item-sub" id="pic-state"></span></div>
-        ${several ? `<p class="c6 item-sub" style="margin:0">These are ${keys.size} different items: the picture goes on all ${plural(picked.length, "order")} picked.</p>` : ""}
+        ${several ? `<p class="c6 item-sub" style="margin:0">These are ${keys.size} different items: the picture goes on ${picked.length === 2 ? "both orders" : "all " + plural(picked.length, "order")} picked.</p>` : ""}
         ${others.length ? `<label class="c6 check"><input type="checkbox" id="pic-all"${several ? "" : " checked"}> Also the ${plural(others.length, "other order")} of ${several ? "these items" : "the same item"}</label>` : ""}
       </div>`,
     foot:`${picked.some(o => o.image) ? `<button class="btn btn-quiet btn-danger" id="pic-clear">${ic("trash")}Remove picture</button><span class="spacer"></span>` : ""}<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="pic-save">Save</button>`,
     mount:(panel, close) => {
       const url = $("#pic-url", panel), prev = $("#pic-prev", panel), img = $("#pic-img", panel), state = $("#pic-state", panel), drop = $("#pic-drop", panel);
-      let chosen = "", reading = null;   // a picture pasted, dropped or chosen, as a small data link; one still being read
+      // A picture pasted, dropped or chosen, as a small data link; one still being read; one that couldn't be read (Save
+      // stops on that until another picture or a link is given).
+      let chosen = "", reading = null, done = false, unreadable = false;
+      const was = url.value.trim();   // the link the box opened with
+      const open = () => !done && !!panel.closest(".is-open");
       const preview = (src, loading, done) => {
         prev.hidden = !src;
         if (!src) return;
@@ -11015,39 +11030,56 @@ function openOrderPicture(ids){
       const usePicture = (file) => {
         setErr(panel, "pic_url", "");
         if (!file || !/^image\//.test(file.type || "")){ setErr(panel, "pic_url", "That isn't a picture: paste or drop an image."); return; }
+        unreadable = false;
         state.textContent = "Reading the picture…"; prev.hidden = false;
-        const r = reading = pictureFromBlob(file).then(d => { if (reading === r){ chosen = d; url.value = ""; show(); } },
-          () => { if (reading === r){ setErr(panel, "pic_url", "FAFO couldn't read that picture. Try another, or paste its link."); show(); } })
+        // Resolves true when it's read, false when it can't be (Save then stops with that message).
+        const r = reading = pictureFromBlob(file).then(d => { if (reading === r){ chosen = d; url.value = ""; show(); } return true; },
+          () => { if (reading === r){ unreadable = true; chosen = ""; setErr(panel, "pic_url", UNREADABLE); show(); } return false; })
           .finally(() => { if (reading === r) reading = null; });
       };
-      url.addEventListener("input", () => { setErr(panel, "pic_url", ""); if (url.value.trim()){ chosen = ""; reading = null; } show(); });
+      // A picture's data as its address (Google Images' thumbnails copy that way): read as a picture.
+      const UNREADABLE = "FAFO couldn't read that picture. Try another, or paste its link.";
+      const dataPicture = (v) => fetch(v).then(r => r.blob()).then(b => usePicture(new File([b], "picture", {type:b.type})), () => { unreadable = true; setErr(panel, "pic_url", UNREADABLE); });
+      url.addEventListener("input", () => {
+        setErr(panel, "pic_url", "");
+        const v = url.value.trim();
+        if (DATA_PIC.test(v)){ url.value = ""; chosen = ""; dataPicture(v); return; }
+        if (v){ chosen = ""; reading = null; }
+        unreadable = false;
+        show();
+      });
       url.addEventListener("focus", () => url.select(), {once:true});   // selected, so a link pasted replaces the one there
-      // A picture pasted while this window is open (Ctrl+V), wherever the focus is. Text pastes into the link box as usual, even
-      // with a picture beside it (a spreadsheet copies a picture of the cell too); a link pasted elsewhere goes in the box.
+      // A picture pasted while this window is open (Ctrl+V), wherever the focus is. A copied picture comes as an image, maybe
+      // with its address as text and an <img> as HTML (Firefox adds both); a spreadsheet cell comes as its text, a table and a
+      // picture of the cell, and pastes as text. A link pasted outside the box goes in it.
       const onPaste = (e) => {
         if (!panel.isConnected) return document.removeEventListener("paste", onPaste, true);
-        const cd = e.clipboardData, text = ((cd && cd.getData("text/plain")) || "").trim();
-        if (text){
-          if (e.target === url || /^(input|textarea)$/i.test(e.target && e.target.tagName || "") || !/^https:\/\/\S+$/i.test(text)) return;
-          e.preventDefault(); chosen = ""; reading = null; url.value = text; setErr(panel, "pic_url", ""); show(); return;
-        }
+        const cd = e.clipboardData, text = ((cd && cd.getData("text/plain")) || "").trim(), html = (cd && cd.getData("text/html")) || "";
         const it = [...((cd && cd.items) || [])].find(i => i.kind === "file" && /^image\//.test(i.type));
-        if (it){ e.preventDefault(); e.stopPropagation(); usePicture(it.getAsFile()); }
+        const copiedPicture = it && !/<table\b/i.test(html) && (!text || /^(https?:|blob:|data:)\S*$/i.test(text) || /<img\b/i.test(html));
+        if (copiedPicture){ e.preventDefault(); e.stopPropagation(); usePicture(it.getAsFile()); return; }
+        if (!text) return;
+        if (DATA_PIC.test(text)){ e.preventDefault(); e.stopPropagation(); url.value = ""; chosen = ""; dataPicture(text); return; }
+        if (e.target === url || /^(input|textarea)$/i.test(e.target && e.target.tagName || "") || !/^https:\/\/\S+$/i.test(text)) return;
+        e.preventDefault(); chosen = ""; reading = null; url.value = text; setErr(panel, "pic_url", ""); show();
       };
       document.addEventListener("paste", onPaste, true);
-      drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("is-over"); });
-      drop.addEventListener("dragleave", () => drop.classList.remove("is-over"));
-      drop.addEventListener("drop", (e) => {
+      // Dropped anywhere in the window (the dashed box lights up).
+      panel.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("is-over"); });
+      panel.addEventListener("dragleave", (e) => { if (!panel.contains(e.relatedTarget)) drop.classList.remove("is-over"); });
+      panel.addEventListener("drop", (e) => {
         e.preventDefault(); drop.classList.remove("is-over");
         const f = [...((e.dataTransfer && e.dataTransfer.files) || [])][0];
         if (f) return usePicture(f);
         const link = ((e.dataTransfer && e.dataTransfer.getData("text/uri-list")) || "").split(/\r?\n/).find(l => /^https:\/\//i.test(l));
-        if (link){ chosen = ""; reading = null; url.value = link; show(); }
+        if (link){ chosen = ""; reading = null; url.value = link; setErr(panel, "pic_url", ""); show(); }
       });
       $("#pic-choose", panel).addEventListener("click", () => $("#pic-file", panel).click());
-      $("#pic-file", panel).addEventListener("change", (e) => usePicture(e.target.files && e.target.files[0]));
+      $("#pic-file", panel).addEventListener("change", (e) => { usePicture(e.target.files && e.target.files[0]); e.target.value = ""; });   // the same file again works too
       show();
       const apply = (image) => {
+        if (done) return;   // once only (a double click, or Enter twice)
+        done = true;
         const all = $("#pic-all", panel), list = picked.concat(all && all.checked ? others : []);
         const before = list.map(o => [o, o.image || "", !!o.noPic]);
         // Taken off on purpose, so sharing and emails don't put it back (noPic); a picture set clears that.
@@ -11059,7 +11091,10 @@ function openOrderPicture(ids){
         }});
       };
       const save = async () => {
-        if (reading){ const r = reading; await r.catch(() => {}); if (!panel.isConnected) return; }
+        if (!open()) return;
+        // A picture still being read: wait for it, and stop if it couldn't be read or the window closed meanwhile.
+        if (reading){ const ok = await reading.catch(() => false); if (!open() || ok === false) return; }
+        if (unreadable){ setErr(panel, "pic_url", UNREADABLE); return; }
         if (chosen){
           const id = picHash(chosen), pics = S.settings.itemPics || {};
           if (!pics[id] && picsSize(pics) + chosen.length > PIC_TOTAL){ setErr(panel, "pic_url", "FAFO already keeps as many pictures as it can. Use a link for this one; pictures no order uses go after 30 days."); return; }
@@ -11068,13 +11103,13 @@ function openOrderPicture(ids){
         }
         const v = url.value.trim();
         if (!/^https:\/\/\S+$/i.test(v)){ setErr(panel, "pic_url", "Paste a picture, or a link that starts with https://"); return; }
-        if (!goodPicLink(v)){ setErr(panel, "pic_url", "That's two links in one: clear the box and paste just one."); return; }
+        if (!goodPicLink(v, was)){ setErr(panel, "pic_url", "That's two links in one: clear the box and paste just one."); return; }
         apply(v);
       };
       $("#pic-save", panel).addEventListener("click", save);
       url.addEventListener("keydown", (e) => { if (e.key === "Enter"){ e.preventDefault(); save(); } });
       const clear = $("#pic-clear", panel);
-      if (clear) clear.addEventListener("click", () => apply(""));
+      if (clear) clear.addEventListener("click", () => { if (open()) apply(""); });
     }
   });
 }
@@ -11265,7 +11300,10 @@ async function syncOneInbox(inbox, quiet){
   if (noTo.size) (res.emails || []).forEach(e => { const o = noTo.get(orderNoFrom([e.subject, e.text].join("\n"))), to = o && recipientOf(e.to, inbox.email); if (to) o.sentTo = to; });
   // Product photos for orders that don't have one yet (from confirmations or status emails).
   let pictured = 0;
-  const noImg = new Map((S.orders || []).filter(o => o.orderNo && !hasPicture(o) && !o.noPic).map(o => [String(o.orderNo).toUpperCase(), o]));
+  // Before this device has merged with the online copy (its copy may be out of date), only the orders just added: another
+  // device may have set or taken off the others' pictures. The look again waits for a sync after the merge.
+  const fresh = SYNC.oneStoreDue ? new Set(plan.add.map(o => o.id)) : null;
+  const noImg = new Map((S.orders || []).filter(o => o.orderNo && !hasPicture(o) && !o.noPic && (!fresh || fresh.has(o.id))).map(o => [String(o.orderNo).toUpperCase(), o]));
   if (noImg.size) (res.emails || []).forEach(e => {
     if (!e.images || !e.images.length) return;
     const o = noImg.get(orderNoFrom([e.subject, e.text].join("\n")));
@@ -11273,8 +11311,8 @@ async function syncOneInbox(inbox, quiet){
   });
   // And orders of the same item take a picture one of them has: only the ones just added while this device hasn't merged
   // with the online copy yet (its copy may be out of date; the merge's tidy shares the rest).
-  pictured += shareOrderPictures(SYNC.oneStoreDue ? new Set(plan.add.map(o => o.id)) : null);
-  if (imageEngine){ live.imagesBackfilled = true; live.imagesV103 = true; }
+  pictured += shareOrderPictures(fresh);
+  if (imageEngine && !fresh){ live.imagesBackfilled = true; live.imagesV103 = true; }
   live.lastSync = Date.now(); live.syncError = "";
   if (statusEngine){ live.statusBackfilled = true; live.trackingBackfilled = true; }
   live.lastResult = {scanned:res.scanned, found:rows.length, added:plan.add.length, updated:st.total};
@@ -12009,6 +12047,8 @@ function syncMerge(L, R, base, lmt, rmt, keyOf, orig){
       side = !l ? "r" : !r ? "l" : preferL ? "l" : "r";
       let bv = null;
       if (l && r && typeof orig[k] === "string" && b !== undefined && syncHash(orig[k]) === b){ try { bv = JSON.parse(orig[k]); } catch(e){} }
+      // Pictures added (1.9.103) are named by their content, so with no version to go by each side keeps its own.
+      if (!bv && l && r && k === SYNC_CODE.settings + ":itemPics") bv = {};
       if (bv && syncPlain(bv) && syncPlain(l.v) && syncPlain(r.v)){
         const v = syncFields(bv, l.v, r.v, preferL), c = syncCanon(v);
         u = {v, h:syncHash(c), c};

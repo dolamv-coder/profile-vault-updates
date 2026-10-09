@@ -327,4 +327,23 @@ test("several devices editing and syncing in random order always end up with the
   assert.ok(fieldsChecked > 500 && fieldMerges > 50, `only ${fieldsChecked} fields and ${fieldMerges} field merges checked`);
 });
 
+// 1.9.103+: pictures added from a file are kept once per picture in settings.itemPics, named by their content, so two
+// devices that add pictures before they agree on any version of the list keep both.
+if (html.includes("itemPics")) test("pictures added on two devices before they agree on any keep both", () => {
+  const pic = (x) => ({ data: "data:image/webp;base64," + x, at: 1 });
+  for (const base of [blank(), null]) {   // no list yet when they last agreed, and never synced (Turn on sync)
+    const a = blank(), b = blank();
+    a.settings.itemPics = { aaaaaaaa: pic("AA") }; b.settings.itemPics = { bbbbbbbb: pic("BB") };
+    const k = [...syncUnits(a).map.keys()].find((x) => x.endsWith(":itemPics"));
+    for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+      const r = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, {});
+      assert.deepEqual(Object.keys(r.state.settings.itemPics).sort(), ["aaaaaaaa", "bbbbbbbb"]);
+    }
+  }
+  // Another setting new on both sides still goes to the later change as a whole.
+  const a = blank(), b = blank(); a.settings.someMap = { x: 1, y: 2 }; b.settings.someMap = { z: 3 };
+  const k = [...syncUnits(a).map.keys()].find((x) => x.endsWith(":someMap"));
+  assert.deepEqual(merge(a, b, blank(), { [k]: 1 }, { [k]: 2 }, {}).state.settings.someMap, { z: 3 });
+});
+
 console.log(`\n${passed} passed`);

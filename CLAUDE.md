@@ -685,21 +685,29 @@ without gets the first found), at tidy time and after each sync. Each inbox look
 orders, with Undo, or removes it; its Find links (`pictureFinds`) open the store's search (Target, Pokémon Center) and a
 picture search, where the owner copies the image's address. The order editor has the same Find links and puts a new
 picture on the item's other orders while "Use this picture for the N other orders of the same item too" is ticked. The
-Picture window also takes a picture pasted (Ctrl+V, anywhere while it's open; text, even with a picture beside it as a
-spreadsheet copies, pastes as text), dropped or chosen as a file (the owner sent the products' photos): `pictureFromBlob`
+Picture window also takes a picture pasted (Ctrl+V, anywhere while it's open: a copied picture comes as an image, maybe with
+its address as text and an `<img>` as HTML, as Firefox writes it, while a spreadsheet cell, which comes with a `<table>` and a
+picture of the cell, pastes as its text), dropped anywhere in the window, chosen as a file, or given as a `data:image`
+address (`DATA_PIC`, as Google Images copies its thumbnails) (the owner sent the products' photos): `pictureFromBlob`
 makes a WebP copy at most 160 pixels a side (`PIC_SIDE`; cards show 44, the success image 96), kept once in the shared
 setting `itemPics` (`{id: {data, at, unusedSince}}`, id an FNV hash of it, merged per picture like `genDrafts`, all of them
-under `PIC_TOTAL` characters since the vault is one localStorage record), and the orders get `image` `"pic:<id>"`
+under `PIC_TOTAL` characters since the vault is one localStorage record; `syncMerge` keeps both sides' pictures when two
+devices add some before they agree on any version of the list), and the orders get `image` `"pic:<id>"`
 (`picRef`), so an item's orders carry one copy. Cards show it through one object URL per picture (`picURL`,
 `orderImageSrc`); the success image draws its data; the phone's snapshot leaves it out (links only); and the order editor
 shows an empty link box that keeps it unless a link replaces it. `tidyOrders` notes when nothing points at a picture any
 more (`unusedSince`) and drops it 30 days later (`PIC_KEEP_MS`). A reference to a picture not kept counts as none
 (`hasPicture`). A picture taken off on purpose (Remove picture, or the editor's link cleared) stays off: the order gets
 `noPic`, which sharing and email pictures respect, and setting a picture clears it. Before this device's first merge with
-the online copy (`SYNC.oneStoreDue`) a sync shares pictures only onto the orders it added. Orders picked of different items
-say so, and their other orders start unticked; a link is refused when two were pasted into one (`goodPicLink`), and the
-box starts selected so a paste replaces it. Orders without a number that were deleted, or saved, under a name with codes
-still match the email's row read as text (`keyAsText` in `planOrderImport`). Older pages show an order with a picture
+the online copy (`SYNC.oneStoreDue`) a sync gives pictures, from emails or other orders, only to the orders it added, and
+leaves the look again (`imagesV103`) for a sync after the merge. Orders picked of different items say so, and their other
+orders start unticked; a link is refused when two were pasted into one (`twoLinks`: a picture's address running into
+another, or onto the one that was there; an address inside one, as Cloudinary or Cloudflare write them, is fine), and the
+box starts selected so a paste replaces it. Save applies once, waits for a picture still being read, and stops on one that
+couldn't be read; a closing window takes no more clicks (`el.inert` in `openLayer`'s close, for every window). Orders
+without a number that were deleted, or saved, under a name with codes still match the email's row read as text (`keyAsText`
+in `planOrderImport`), and when `tidyOrders` reads one's name as text its old key goes in `deletedOrders`, so an older
+device's email sync doesn't add it again (and a merge drops one it did). Older pages show an order with a picture
 added without it (and their order editor drops the reference on save). Orders gain `noPic` and settings `itemPics`, so the
 paused web version is unaffected.
 
