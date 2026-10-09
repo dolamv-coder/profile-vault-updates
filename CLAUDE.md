@@ -711,6 +711,16 @@ device's email sync doesn't add it again (and a merge drops one it did). Older p
 added without it (and their order editor drops the reference on save). Orders gain `noPic` and settings `itemPics`, so the
 paused web version is unaffected.
 
+From 1.9.104 a store's stand-in is never a product picture (the owner's screenshot: Delta Reign pre-orders showed a gray
+shopping bag). Target's pre-order confirmations have no photo of the item, only `…/Target/gray-bag` with the item's name as
+its alt, which 1.9.103's `DECOR_IMG` rule took for the photo (two alt words matching) and shared to every order of the item.
+`PLACEHOLDER_IMG` (that, and addresses named no-image, image-not-available, image-coming-soon or placeholder) is never picked,
+and an order showing one counts as having no picture (`hasPicture`): its card and the success image show the store's mark,
+the phone gets none, it isn't shared, and a real photo (Target's shipping email has one, another order of the item, or
+Picture) takes its place on every order of the item. `pickProductImage` also skips a photo whose alt names another product
+(at least two alt words, fewer than half of them in the item's name: Target's "Up next" picks), which would otherwise have
+won with the item's own photo a stand-in. The orders' data doesn't change, so the paused web version is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
