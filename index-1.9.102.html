@@ -8488,7 +8488,8 @@ function openRemoveAccounts(){
 
 // See my list (1.9.102+, the owner's request): the license worker posts a link to the list to the seller's Discord channel,
 // as for adding and removing, so only the seller opens it. The page there shows every store's accounts, free or given and
-// to whom, never a password, each with Remove (it asks first); the link works for 24 hours.
+// to whom, never a password, and edits the list: add accounts, change one's password (or email while it's free), give one
+// back, or remove it (it asks first). The link works for 24 hours.
 async function askAccountList(btn){
   if (btn) btn.disabled = true;
   let r;
@@ -8496,7 +8497,7 @@ async function askAccountList(btn){
   catch(e){ toast("Couldn't reach the license server. Check your connection and try again.", "err"); return; }
   finally { if (btn) btn.disabled = false; }
   if (!r.ok){ toast(r.status === 503 ? "The Discord channel isn't set up on the license server yet." : r.status === 429 ? "That's 10 links today. Use the last one, or ask again tomorrow." : r.status === 401 ? "Your license wasn't recognized." : r.status === 404 ? "The license server can't do this yet. Try again later." : "The license server couldn't send it just now. Try again.", "err"); return; }
-  toast("Sent. Open the link in your Discord channel to see your list. It works for 24 hours.");
+  toast("Sent. Open the link in your Discord channel to see or edit your list. It works for 24 hours.");
 }
 
 /* ================= SETTINGS / BACKUP ================= */
@@ -13158,7 +13159,7 @@ function renderSettingsView(){
           <h2 class="set-title">Accounts to assign</h2>
           <p class="set-lead">Slots set to Use Assigned Account get one of your own store accounts when they reach your Discord channel: its email on the slot's AYCD profile and Shikari row, and email:password in the store's logins file (Pokémon Center has none). Buyers never see which, and each account goes to one slot only.</p>
           <div class="set-actions"><button class="btn" data-act="assign-accounts">${ic("plus")}Send accounts</button><button class="btn" data-act="list-accounts">${ic("ext")}See my list</button><button class="btn" data-act="remove-accounts">${ic("trash")}Remove accounts</button></div>
-          <p class="set-note" style="margin-top:10px">See my list posts a link to your Discord channel: every store's accounts, free or given and to whom (never their passwords), each with Remove. The link works for 24 hours.</p>
+          <p class="set-note" style="margin-top:10px">See my list posts a link to your Discord channel: every store's accounts, free or given and to whom (never their passwords). There you can add accounts, change an account's password or email, give one back to your list, or remove it. The link works for 24 hours.</p>
         </section>` : ""}
         ${licRead() && DESK ? `<section id="s-oalerts" class="set-sec">${orderAlertsSectionHTML()}</section>` : ""}
         ${CAN_UPDATE ? `<section id="s-updates" class="set-sec">${updatesSectionHTML()}</section>` : ""}

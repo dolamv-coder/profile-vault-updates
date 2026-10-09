@@ -125,6 +125,7 @@ const env = { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.
 // Run wrangler's JS entry with this Node, so it works the same on Windows (where .bin/wrangler is a shell script).
 const wrangler = [join(root, "node_modules", "wrangler", "bin", "wrangler.js")];
 const workers = [];
+let workerLog = () => "";   // the running worker's output, shown when a test fails
 // Starts a worker with its own empty database, or on an earlier run's database (`db`).
 // `vars` override wrangler.toml's [vars].
 async function startWorker(name, port, vars, db) {
@@ -134,6 +135,7 @@ async function startWorker(name, port, vars, db) {
   const dev = spawn(process.execPath, [...wrangler, "dev", "--local", "--ip", "127.0.0.1", "--port", String(port), "--persist-to", dir,
     "--env-file", join(tmp, name + ".env"), "--show-interactive-dev-session=false"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
   let log = ""; dev.stdout.on("data", (d) => log += d); dev.stderr.on("data", (d) => log += d);
+  workerLog = () => log;
   workers.push(dev);
   BASE = `http://127.0.0.1:${port}`;
   for (let i = 0; ; i++) {
@@ -153,7 +155,7 @@ await new Promise((r) => discord.listen(DISCORD_PORT, "127.0.0.1", r));
 let passed = 0;
 const test = async (name, fn) => {
   try { await fn(); passed++; console.log("  ok  " + name); }
-  catch (e) { console.log("  FAIL " + name); throw e; }
+  catch (e) { console.log("  FAIL " + name + "\n  worker's last output:\n" + workerLog().slice(-4000)); throw e; }
 };
 const get = (path, opts = {}) => fetch(BASE + path, { redirect: "manual", ...opts });
 const getJson = async (path, opts) => (await get(path, opts)).json();
@@ -1942,9 +1944,23 @@ try {
   console.log("\nSee my list (app 1.9.102+)");
   const dbRows = (cmd) => JSON.parse(execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", cmd, "--json"], { cwd: root, env, stdio: "pipe" }).toString())[0].results;
   const listLink = (content) => (content.match(/\((http[^)]+\/accounts\/list\/[^)]+)\)/) || [])[1];
-  const listPost = (link, body) => fetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), ...body }) });
+  // wrangler dev closes a connection left idle while a test reads the database (dbRows takes a few seconds), and fetch
+  // can reuse it just as it closes: tried once more then, as the request never reached the worker.
+  const fetchOnce = async (url, opts) => { try { return await fetch(url, opts); } catch (e) { if (e.cause && e.cause.code === "UND_ERR_SOCKET") return fetch(url, opts); throw e; } };
+  const listStatus = async (url, opts) => { const r = await fetchOnce(url, opts); await r.text(); return r.status; };
+  const listPost = (link, body) => fetchOnce(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), ...body }) });
   const askList = async (key = ivanKey) => { const r = await slots("/accounts/list", key, { name: "Owner" }); return { status: r.status, body: await r.json(), m: webhookPosts.at(-1) }; };
   const unescape = (h) => h.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  const sqlRun = (cmd) => execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", cmd], { cwd: root, env, stdio: "pipe" });
+  // A buyer's Pokémon Center slot that got their Target account again, as reuseAccount keeps it (made if there's none).
+  const ensureReuse = () => {
+    const rows = dbRows("SELECT store, email_norm, key_hash, batch, offer_id FROM accounts");
+    if (rows.some((x) => x.offer_id === "reuse:target" && x.key_hash && rows.some((t) => t.store === "target" && t.key_hash === x.key_hash && t.email_norm === x.email_norm))) return;
+    const t = rows.find((x) => x.store === "target" && x.key_hash && !x.batch.startsWith("parked:") && !rows.some((p) => p.store === "pokemoncenter" && p.email_norm === x.email_norm));
+    sqlRun(`INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id, key_hash, key_last4, batch, store_name, profile, assigned_at, sent_at)
+      SELECT 'pokemoncenter', email, email_norm, password, added_at, 'reuse:target', key_hash, key_last4, batch, 'Pokémon Center', profile, assigned_at, sent_at
+      FROM accounts WHERE store = 'target' AND email_norm = '${t.email_norm}'`);
+  };
   let lsLink;
   await test("asking for the list needs a license; it posts a link to the channel, never an email", async () => {
     assert.equal((await slots("/accounts/list", null, {})).status, 401);
@@ -1952,14 +1968,15 @@ try {
     const { status, body, m } = await askList();
     assert.equal(status, 200); assert.deepEqual(body, { status: "sent" });
     assert.equal(webhookPosts.length, before + 1);
-    assert.match(m.content, /^📋 \*\*Your list for Use Assigned Account\*\*\nAsked by \*\*Owner\*\* · @ivan · license …\w{4}\n\[See the list\]\(http[^)]+\/accounts\/list\/[A-Za-z0-9_-]+\?t=[A-Za-z0-9_-]+\) · the link works for 24 hours$/, m.content);
+    assert.match(m.content, /^📋 \*\*Your list for Use Assigned Account\*\*\nAsked by \*\*Owner\*\* · @ivan · license …\w{4}\n\[See or edit the list\]\(http[^)]+\/accounts\/list\/[A-Za-z0-9_-]+\?t=[A-Za-z0-9_-]+\) · the link works for 24 hours$/, m.content);
     assert.doesNotMatch(m.content, /@outlook\.com|@example\.com/, "no account in the channel");
     lsLink = listLink(m.content); assert.ok(lsLink);
   });
   await test("the page lists every account on every store's list, free or given and to whom, never a password", async () => {
+    ensureReuse();
     const rows = dbRows("SELECT store, email, key_hash, key_last4, profile, batch, offer_id, sent_at, password FROM accounts");
     assert.ok(rows.length > 5 && rows.some((a) => !a.key_hash) && rows.some((a) => a.key_hash && a.sent_at), "a list with free and given accounts to show");
-    const r = await fetch(lsLink), html = await r.text(), text = unescape(html);
+    const r = await fetchOnce(lsLink), html = await r.text(), text = unescape(html);
     assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store");
     for (const a of rows) assert.ok(text.includes(`<td class="em">${a.email}</td>`), "listed: " + a.email);
     for (const a of rows.filter((x) => x.password)) assert.ok(!text.includes(a.password), "never a password");
@@ -1972,14 +1989,29 @@ try {
     const given = rows.find((a) => a.key_hash && a.sent_at && !String(a.batch || "").startsWith("parked:") && !String(a.offer_id || "").startsWith("reuse:"));
     assert.ok(text.includes(`Given to license …${given.key_last4}${given.profile ? `, ${given.profile}` : ""}, sent `), "a given account says to whom");
     const reused = rows.find((a) => String(a.offer_id || "").startsWith("reuse:") && a.key_hash);
-    if (reused) assert.ok(text.includes(`Reused from Target for license …${reused.key_last4}`), "a reuse says so");
-    assert.equal((await fetch(lsLink.replace(/t=[^&]+/, "t=wrong"))).status, 404, "a wrong token");
-    assert.equal((await fetch(lsLink.replace(/\/accounts\/list\/[^?]+/, "/accounts/list/nope1234"))).status, 404, "a wrong id");
+    assert.ok(text.includes(`Reused from Target for license …${reused.key_last4}${reused.profile ? `, ${reused.profile}` : ""}`), "a reuse says so");
+    // One held for a Pokémon Center slot (parked), and one whose batch is still being sent: shown so, then put back.
+    const [held, sending] = rows.filter((a) => a.store === "target" && a.key_hash && a.sent_at && !String(a.batch).startsWith("parked:") && a.email !== reused.email);
+    assert.ok(held && sending, "two more given Target accounts");
+    const hn = held.email.toLowerCase(), sn = sending.email.toLowerCase();
+    sqlRun(`UPDATE accounts SET batch = 'parked:' || batch WHERE store = 'target' AND email_norm = '${hn}'; UPDATE accounts SET sent_at = NULL WHERE store = 'target' AND email_norm = '${sn}'`);
+    try {
+      const t2 = unescape(await (await fetchOnce(lsLink)).text());
+      assert.ok(t2.includes(`Held for license …${held.key_last4}${held.profile ? `, ${held.profile}` : ""}: its Pokémon Center slot still uses it`), "a held one says so");
+      assert.ok(t2.includes(`Given to license …${sending.key_last4}${sending.profile ? `, ${sending.profile}` : ""}, in a batch being sent`), "one in a batch being sent says so");
+      const ed = unescape(await (await fetchOnce(`${lsLink}&action=edit&store=target&email=${encodeURIComponent(hn)}`)).text());
+      assert.ok(ed.includes("Their Pokémon Center slot still checks out with this email, so another buyer's slot could get it while they use it."), "giving a held one back says what that means");
+    } finally {
+      sqlRun(`UPDATE accounts SET batch = substr(batch, 8) WHERE store = 'target' AND email_norm = '${hn}' AND batch LIKE 'parked:%'; UPDATE accounts SET sent_at = ${sending.sent_at} WHERE store = 'target' AND email_norm = '${sn}'`);
+    }
+    assert.equal((await listStatus(lsLink.replace(/t=[^&]+/, "t=wrong"))), 404, "a wrong token");
+    assert.equal((await listStatus(lsLink.replace(/\/accounts\/list\/[^?]+/, "/accounts/list/nope1234"))), 404, "a wrong id");
   });
   await test("Remove asks first, then takes the email off every store's list, and the page says so", async () => {
     const rows = dbRows("SELECT store, email, email_norm, key_hash FROM accounts");
     const counts = new Map(); rows.forEach((a) => counts.set(a.email_norm, (counts.get(a.email_norm) || 0) + 1));
-    const target = rows.find((a) => counts.get(a.email_norm) > 1) || rows.find((a) => !a.key_hash);
+    const target = rows.find((a) => counts.get(a.email_norm) > 1);
+    assert.ok(target, "an email on two stores' lists");
     const ask = await (await listPost(lsLink, { action: "ask", email: target.email.toUpperCase() })).text();
     assert.match(unescape(ask), /<h2>Remove an account<\/h2>/); assert.ok(unescape(ask).includes(target.email), "names it");
     assert.match(unescape(ask), /It comes off every store's list it's on, so no more slots get it\./);
@@ -1991,14 +2023,128 @@ try {
     assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${target.email_norm}'`)[0].n, 0, "off every store's list");
     const again = unescape(await (await listPost(lsLink, { action: "remove", email: target.email })).text());
     assert.ok(again.includes(`<p>${target.email.toLowerCase()} isn't on your list any more.</p>`), "removing it twice changes nothing");
-    assert.equal((await listPost(lsLink.replace(/t=[^&]+/, "t=wrong"), { action: "remove", email: rows[0].email })).status, 404, "never without the token");
+    const wrong = await listPost(lsLink.replace(/t=[^&]+/, "t=wrong"), { action: "remove", email: rows[0].email });
+    await wrong.text(); assert.equal(wrong.status, 404, "never without the token");
+  });
+  // Each body is read, so the connection is free for the next request.
+  const view = async (link, q) => { const r = await fetchOnce(`${link}&${new URLSearchParams(q)}`); const body = await r.text(); return { status: r.status, text: async () => body }; };
+  const send = async (link, body) => { const r = await listPost(link, body); const text = await r.text(); return { status: r.status, text: async () => text }; };
+  const page2 = async (r) => unescape(await r.text());
+  await test("Edit changes a free account's password, and never shows one", async () => {
+    const rows = dbRows("SELECT store, email, email_norm, password, key_hash, offer_id FROM accounts");
+    const a = rows.find((x) => !x.key_hash && x.store === "target");
+    const ed = await view(lsLink, { action: "edit", store: a.store, email: a.email_norm });
+    const html = await page2(ed);
+    assert.equal(ed.status, 200); assert.match(html, /<h2>Edit an account<\/h2>/);
+    assert.ok(html.includes(`name="new_email" value="${a.email}"`), "its email, to change");
+    assert.doesNotMatch(html, /name="new_email"[^>]*readonly/, "a free one's email can change");
+    assert.doesNotMatch(html, /Give it back/, "nothing to give back");
+    for (const x of rows) assert.ok(!html.includes(x.password), "never a password");
+    const done = await page2(await send(lsLink, { action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: " Fresh-pass-1 " }));
+    assert.ok(done.includes(`<p>Changed the password of ${a.email} on your Target list.</p>`), done.slice(0, 600));
+    assert.ok(!done.includes("Fresh-pass-1"), "and doesn't show it");
+    const b = dbRows(`SELECT email, password, key_hash FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0];
+    assert.equal(b.password, "Fresh-pass-1"); assert.equal(b.email, a.email); assert.equal(b.key_hash, null);
+    const raw = await fetchOnce(lsLink.split("?")[0], { method: "POST", redirect: "manual", body: new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: "" }) });
+    await raw.text();
+    assert.equal(raw.status, 303, "a change goes back to the list by its link, so reloading doesn't send it again");
+    assert.match(raw.headers.get("location"), /^\/accounts\/list\/[^?]+\?t=[^&]+&done=Nothing\+changed\.$/);
+    const same = await page2(await send(lsLink, { action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: "" }));
+    assert.ok(same.includes("<p>Nothing changed.</p>"), "an empty password keeps it");
+    assert.equal(dbRows(`SELECT password FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].password, "Fresh-pass-1");
+    const viaGet = await view(lsLink, { action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: "by-get" });
+    assert.equal(viaGet.status, 200);
+    assert.equal(dbRows(`SELECT password FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].password, "Fresh-pass-1", "a link (GET) never changes anything");
+    assert.equal((await send(lsLink.replace(/t=[^&]+/, "t=wrong"), { action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: "x" })).status, 404);
+  });
+  await test("a free account's email can change; one already on that list, or not an email, is refused", async () => {
+    const rows = dbRows("SELECT store, email, email_norm, key_hash FROM accounts WHERE store = 'target'");
+    const [a, other] = [rows.find((x) => !x.key_hash), rows.find((x) => x.key_hash)];
+    const dup = await page2(await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: other.email.toUpperCase(), password: "" }));
+    assert.ok(dup.includes(`<p class="err">${other.email.toUpperCase()} is already on your Target list.</p>`), dup.slice(0, 600));
+    const bad = await page2(await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: "not an email", password: "" }));
+    assert.ok(bad.includes(`<p class="err">That isn't an email address.</p>`));
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].n, 1, "unchanged");
+    const done = await page2(await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: "Fixed.Name@example.com", password: "new-pw-2" }));
+    assert.ok(done.includes(`<p>Changed ${a.email} to Fixed.Name@example.com, with its new password, on your Target list.</p>`), done.slice(0, 600));
+    assert.ok(done.includes(`<td class="em">Fixed.Name@example.com</td>`) && !done.includes(`<td class="em">${a.email}</td>`), "listed under its new email");
+    const b = dbRows("SELECT email, password, key_hash FROM accounts WHERE store = 'target' AND email_norm = 'fixed.name@example.com'")[0];
+    assert.deepEqual(b, { email: "Fixed.Name@example.com", password: "new-pw-2", key_hash: null });
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${a.email_norm}' AND store = 'target'`)[0].n, 0, "the old email is gone");
+  });
+  await test("a given account keeps its email and gets a new password (its reuse too), and can be given back to the list", async () => {
+    ensureReuse();
+    const rows = dbRows("SELECT store, email, email_norm, password, key_hash, key_last4, batch, offer_id FROM accounts");
+    const reuses = rows.filter((x) => x.offer_id === "reuse:target" && x.key_hash);
+    const a = rows.find((x) => x.store === "target" && x.key_hash && reuses.some((r) => r.email_norm === x.email_norm && r.key_hash === x.key_hash))
+      || rows.find((x) => x.store === "target" && x.key_hash);
+    const reused = reuses.filter((r) => r.email_norm === a.email_norm && r.key_hash === a.key_hash);
+    assert.ok(reused.length, "a Target account whose reuse at Pokémon Center goes with it");
+    const html = await page2(await view(lsLink, { action: "edit", store: "target", email: a.email_norm }));
+    assert.match(html, /name="new_email"[^>]*readonly/, "its email can't change");
+    assert.ok(html.includes("Give it back to my list") && html.includes(`License …${a.key_last4} keeps what was posted to your channel, and stops getting order alerts for it.`), html.slice(0, 900));
+    assert.ok(html.includes("Their Pokémon Center slot that uses it again loses it too."), "says its reuse goes too");
+    const ru = await page2(await view(lsLink, { action: "edit", store: "pokemoncenter", email: a.email_norm }));
+    assert.ok(ru.includes("It's your Target account, used again for this buyer's Pokémon Center slot, so it follows that one: change it on your Target list.") && !ru.includes('name="password"'), "the reuse itself is changed through its Target account");
+    const forgedReuse = await page2(await send(lsLink, { action: "save", store: "pokemoncenter", email: a.email_norm, new_email: a.email, password: "sneaky" }));
+    assert.ok(forgedReuse.includes("It follows your Target account: change that one."));
+    assert.notEqual(dbRows(`SELECT password FROM accounts WHERE store = 'pokemoncenter' AND email_norm = '${a.email_norm}'`)[0].password, "sneaky");
+    const forged = await page2(await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: "someone.else@example.com", password: "" }));
+    assert.ok(forged.includes("<p class=\"err\">It's on a buyer's slot, so its email can't change. Give it back to your list first.</p>"));
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts WHERE email_norm = 'someone.else@example.com'")[0].n, 0);
+    await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: a.email, password: "given-pw-3" });
+    assert.equal(dbRows(`SELECT password FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].password, "given-pw-3");
+    for (const r of reused) assert.equal(dbRows(`SELECT password FROM accounts WHERE store = '${r.store}' AND email_norm = '${r.email_norm}'`)[0].password, "given-pw-3", "its reuse checks out with the new one too");
+    assert.equal(dbRows(`SELECT key_hash FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].key_hash, a.key_hash, "still the buyer's");
+    await view(lsLink, { action: "giveback", store: "target", email: a.email_norm });
+    assert.equal(dbRows(`SELECT key_hash FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].key_hash, a.key_hash, "a link (GET) gives nothing back");
+    const done = await page2(await send(lsLink, { action: "giveback", store: "target", email: a.email_norm }));
+    assert.ok(done.includes(`<p>Gave ${a.email} back to your Target list. It's free for the next slot.</p>`), done.slice(0, 600));
+    const b = dbRows(`SELECT key_hash, batch, profile, password FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0];
+    assert.deepEqual(b, { key_hash: null, batch: null, profile: null, password: "given-pw-3" }, "free, with its password");
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${a.email_norm}' AND offer_id = 'reuse:target'`)[0].n, 0, "its reuse is dropped");
+    const again = await page2(await send(lsLink, { action: "giveback", store: "target", email: a.email_norm }));
+    assert.ok(again.includes(`<p>${a.email} is already free on your Target list.</p>`));
+    {
+      const r = await page2(await view(lsLink, { action: "edit", store: reused[0].store, email: reused[0].email_norm }));
+      assert.ok(r.includes(`isn't on your Pokémon Center list any more.`), "the reuse's own link says it's gone");
+    }
+  });
+  await test("Add puts accounts on a store's list, says which lines it couldn't read, and never changes one already there", async () => {
+    const pc = dbRows("SELECT email, email_norm, password FROM accounts WHERE store = 'pokemoncenter' AND COALESCE(offer_id, '') NOT LIKE 'reuse:%'")[0];
+    const before = dbRows("SELECT COUNT(*) AS n FROM accounts")[0].n;
+    const lines = ["added.one@example.com:pw-one", "added.two@example.com,pw-two", "broken line", "added.three@example.com",
+      `${pc.email}:other-pw`, "added.one@example.com:dup", "added.four@example.com:acct-pw:added.four.inbox@example.com:inbox-pw"].join("\n");
+    const html = await page2(await send(lsLink, { action: "add", store: "pokemoncenter", accounts: lines, password: "" }));
+    assert.ok(html.includes("<p>Added 3 to your Pokémon Center list. 1 was already on it, and kept its password (Edit changes one).</p>"), html.slice(0, 900));
+    assert.ok(html.includes(`<p class="err">Line 3 couldn't be read: write each account as email:password. Line 4 only has an email: fill in the password for those.</p>`));
+    for (const pw of ["pw-one", "pw-two", "acct-pw", "inbox-pw", "other-pw"]) assert.ok(!html.includes(pw), "no password on the page: " + pw);
+    const got = dbRows("SELECT email, password, key_hash, offer_id FROM accounts WHERE store = 'pokemoncenter' AND email_norm LIKE 'added.%' ORDER BY email_norm");
+    const id = lsLink.match(/\/accounts\/list\/([^?]+)/)[1];
+    assert.deepEqual(got, [
+      { email: "added.four@example.com", password: "acct-pw", key_hash: null, offer_id: "list:" + id },
+      { email: "added.one@example.com", password: "pw-one", key_hash: null, offer_id: "list:" + id },
+      { email: "added.two@example.com", password: "pw-two", key_hash: null, offer_id: "list:" + id }]);
+    assert.equal(dbRows(`SELECT password FROM accounts WHERE store = 'pokemoncenter' AND email_norm = '${pc.email_norm}'`)[0].password, pc.password, "one already there keeps its password");
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts")[0].n, before + 3);
+    const shared = await page2(await send(lsLink, { action: "add", store: "target", accounts: "added.three@example.com\n", password: "shared-pw" }));
+    assert.ok(shared.includes("<p>Added 1 to your Target list.</p>"), "an email alone takes the password box's");
+    assert.equal(dbRows("SELECT password FROM accounts WHERE store = 'target' AND email_norm = 'added.three@example.com'")[0].password, "shared-pw");
+    assert.ok(shared.includes('<option value="target" selected>Target</option>'), "the store stays picked");
+    const nowhere = await page2(await send(lsLink, { action: "add", store: "nowhere", accounts: "added.five@example.com:pw" }));
+    assert.ok(nowhere.includes(`<p class="err">Pick a store to add them to.</p>`));
+    const empty = await page2(await send(lsLink, { action: "add", store: "target", accounts: "  \n" }));
+    assert.ok(empty.includes(`<p class="err">Paste the accounts to add, one per line.</p>`));
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts WHERE email_norm = 'added.five@example.com'")[0].n, 0);
   });
   await test("the link stops working after 24 hours, and asks are limited to 10 a day per license", async () => {
     const id = lsLink.match(/\/accounts\/list\/([^?]+)/)[1];
     execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", `UPDATE account_lists SET created_at = created_at - 86400001 WHERE id = '${id}'`], { cwd: root, env, stdio: "pipe" });
-    const r = await fetch(lsLink), html = await r.text();
+    const r = await fetchOnce(lsLink), html = await r.text();
     assert.equal(r.status, 410); assert.match(html, /This link has expired\. Ask again from FAFO: Settings → Accounts to assign → See my list\./);
     assert.doesNotMatch(html, /@outlook\.com/, "and lists nothing");
+    assert.equal((await send(lsLink, { action: "add", store: "target", accounts: "too.late@example.com:pw" })).status, 410, "and changes nothing");
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts WHERE email_norm = 'too.late@example.com'")[0].n, 0);
     let n = dbRows(`SELECT COUNT(*) AS n FROM account_lists WHERE key_hash = (SELECT key_hash FROM account_lists WHERE id = '${id}') AND created_at > ${Date.now() - 86400000}`)[0].n;
     while (n < 10) { assert.equal((await askList()).status, 200); n++; }
     const before = webhookPosts.length;
