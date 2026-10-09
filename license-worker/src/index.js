@@ -1672,6 +1672,9 @@ async function accountRemovalReview(request, env, ctx, url, id) {
 // The link works for 24 hours.
 const ACCOUNT_LISTS_PER_DAY = 10;
 const LIST_PICK_MAX = 5000;   // accounts ticked on the list that one Copy or Remove takes
+// What the list's search compares: lowercase, accents taken off (so "pokemon" finds Pokémon Center), as LIST_SCRIPT does to
+// what's typed.
+const searchText = (x) => String(x).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const ACCOUNT_LIST_TTL_MS = 24 * 3600 * 1000;
 async function accountListAsk(request, env, ctx, url) {
   const lic = await slotLicense(request, env);
@@ -1791,12 +1794,16 @@ const LIST_SCRIPT = `<script>
     all.disabled = !v.length;
   };
   const filter = () => {
-    const words = find.value.toLowerCase().split(/\\s+/).filter(Boolean);
+    const words = find.value.toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").split(/\\s+/).filter(Boolean);
     let n = 0, total = 0;
     document.querySelectorAll("section.store").forEach((sec) => {
       let k = 0;
-      sec.querySelectorAll("tbody tr").forEach((tr) => { const on = words.every((w) => tr.dataset.q.includes(w)); tr.hidden = !on; total++; if (on) k++; });
-      sec.hidden = !k; n += k;
+      // Counted as the page counts accounts: a reuse of a Target account isn't one of the owner's own.
+      sec.querySelectorAll("tbody tr").forEach((tr) => {
+        const on = words.every((w) => tr.dataset.q.includes(w)), mine = !tr.hasAttribute("data-reuse");
+        tr.hidden = !on; k += on; if (mine) { total++; n += on; }
+      });
+      sec.hidden = !k;
     });
     document.getElementById("shown").textContent = words.length ? n + " of " + total + " shown" : "";
     document.getElementById("none-match").hidden = !words.length || !!n;
@@ -1861,8 +1868,11 @@ const LIST_SCRIPT = `<script>
     if (e.key === "Escape" && e.target === find && find.value) { find.value = ""; filter(); }
   });
   find.addEventListener("input", filter);
-  let q0 = new URLSearchParams(location.search).get("q");
-  if (q0 === null) { try { q0 = sessionStorage.getItem(KEY); } catch (e) {} }
+  // A ?q= in the link sets the search once; it then leaves the address, so a reload keeps what's typed since.
+  const qs = new URLSearchParams(location.search);
+  let q0 = qs.get("q");
+  if (q0 !== null) { qs.delete("q"); try { history.replaceState(null, "", location.pathname + "?" + qs); } catch (e) {} }
+  else { try { q0 = sessionStorage.getItem(KEY); } catch (e) {} }
   if (q0) find.value = q0;
   filter();
   addEventListener("pageshow", filter);   // ticks and a search the browser puts back on Back come after the first paint
@@ -2090,9 +2100,9 @@ async function accountListPage(request, env, url, id) {
   const own = (a) => !isReuse(a);
   const sections = [...byStore].map(([st, rows]) => {
     const mine = rows.filter(own), free = mine.filter((a) => !a.key_hash).length;
-    // Each row carries what the search box looks in: its email, its store and its status, in lowercase.
+    // Each row carries what the search box looks in: its email, its store and its status, in lowercase without accents.
     return `<section class="store" data-store="${esc(st)}"><h3><input type="checkbox" class="all js" hidden data-store="${esc(st)}" aria-label="Tick every ${esc(accountStoreName(st))} account"> ${esc(accountStoreName(st))} <span class="count">${free} free of ${mine.length}</span></h3>
-      <table><thead><tr><th class="pick"></th><th>Account</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((a) => `<tr${a.key_hash ? "" : ' class="free"'} data-q="${esc(`${a.email} ${accountStoreName(st)} ${statusText(a)}`.toLowerCase())}">
+      <table><thead><tr><th class="pick"></th><th>Account</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((a) => `<tr${a.key_hash ? "" : ' class="free"'}${own(a) ? "" : " data-reuse"} data-q="${esc(searchText(`${a.email} ${accountStoreName(st)} ${statusText(a)}`))}">
         <td class="pick"><input type="checkbox" name="pick" form="bulk" value="${esc(a.store + " " + a.email_norm)}" data-store="${esc(a.store)}" data-email="${esc(a.email)}" aria-label="Tick ${esc(a.email)}"></td>
         <td class="em">${esc(a.email)}</td><td>${status(a)}</td>
         <td class="act"><form method="get" action="${esc(url.pathname)}">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="ed" type="submit" name="action" value="edit">Edit</button></form><form method="get" action="${esc(url.pathname)}">${hidden}${keep("email", a.email_norm)}<button class="rm" type="submit" name="action" value="ask">Remove</button></form></td></tr>`).join("")}</tbody></table></section>`;
