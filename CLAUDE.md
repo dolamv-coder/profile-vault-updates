@@ -671,6 +671,46 @@ never their passwords, where the owner can also add accounts, change one's passw
 it (the owner's request: "make it to where I can edit the list"). Nothing gains a field, so the paused web version is
 unaffected.
 
+From 1.9.103 order names read as text and orders get pictures more often (the owner's screenshot: Target orders named
+"Pok&#233;mon Trading C…" with the store's mark where the product's picture goes). The desktop app turns an HTML-only
+email into text decoding only `&amp;` and `&nbsp;`, so the page now reads the rest (`decodeHtml`, through a textarea) in
+what each sync hands it (subject, text and the images' alts) before parsing, and `tidyOrders` puts right saved orders'
+`item`, `buyer`, `shipTo` and `shipAddr`; it runs inside `oneStoreRun`, so at the same moments as the one-store pass (at
+unlock, or after the first sync round, and after merges). `pickProductImage` matches words without codes or accents
+(`nameWords`, `plainText`), and takes an image that looks decorative (`DECOR_IMG`, e.g. Target's `fmt=png-alpha`) when its
+alt names the item (2+ words). Orders of one item at one store share a picture (`pictureKey`, `shareOrderPictures`: one
+without gets the first found), at tidy time and after each sync. Each inbox looks again once for pictures
+(`imagesV103`, a per-device inbox field in `SYNC_DEVICE_FIELDS`). **Picture** on the Orders selection bar
+(`openOrderPicture`) sets a link (https only, with a preview) on the orders picked and, ticked to start with, the item's other
+orders, with Undo, or removes it; its Find links (`pictureFinds`) open the store's search (Target, Pokémon Center) and a
+picture search, where the owner copies the image's address. The order editor has the same Find links and puts a new
+picture on the item's other orders while "Use this picture for the N other orders of the same item too" is ticked. The
+Picture window also takes a picture pasted (Ctrl+V, anywhere while it's open: a copied picture comes as an image, maybe with
+its address as text and an `<img>` as HTML, as Firefox writes it, while a spreadsheet cell, which comes with a `<table>` and a
+picture of the cell, pastes as its text), dropped anywhere in the window, chosen as a file, or given as a `data:image`
+address (`DATA_PIC`, as Google Images copies its thumbnails) (the owner sent the products' photos): `pictureFromBlob`
+makes a WebP copy at most 160 pixels a side (`PIC_SIDE`; cards show 44, the success image 96), kept once in the shared
+setting `itemPics` (`{id: {data, at, unusedSince}}`, id an FNV hash of it, merged per picture like `genDrafts`, all of them
+under `PIC_TOTAL` characters since the vault is one localStorage record; `syncMerge` keeps both sides' pictures when two
+devices add some before they agree on any version of the list), and the orders get `image` `"pic:<id>"`
+(`picRef`), so an item's orders carry one copy. Cards show it through one object URL per picture (`picURL`,
+`orderImageSrc`); the success image draws its data; the phone's snapshot leaves it out (links only); and the order editor
+shows an empty link box that keeps it unless a link replaces it. `tidyOrders` notes when nothing points at a picture any
+more (`unusedSince`) and drops it 30 days later (`PIC_KEEP_MS`). A reference to a picture not kept counts as none
+(`hasPicture`). A picture taken off on purpose (Remove picture, or the editor's link cleared) stays off: the order gets
+`noPic`, which sharing and email pictures respect, and setting a picture clears it. Before this device's first merge with
+the online copy (`SYNC.oneStoreDue`) a sync gives pictures, from emails or other orders, only to the orders it added, and
+leaves the look again (`imagesV103`) for a sync after the merge. Orders picked of different items say so, and their other
+orders start unticked; a link is refused when two were pasted into one (`twoLinks`: a picture's address running into
+another, or onto the one that was there; an address inside one, as Cloudinary or Cloudflare write them, is fine), and the
+box starts selected so a paste replaces it. Save applies once, waits for a picture still being read, and stops on one that
+couldn't be read; a closing window takes no more clicks (`el.inert` in `openLayer`'s close, for every window). Orders
+without a number that were deleted, or saved, under a name with codes still match the email's row read as text (`keyAsText`
+in `planOrderImport`), and when `tidyOrders` reads one's name as text its old key goes in `deletedOrders`, so an older
+device's email sync doesn't add it again (and a merge drops one it did). Older pages show an order with a picture
+added without it (and their order editor drops the reference on save). Orders gain `noPic` and settings `itemPics`, so the
+paused web version is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
