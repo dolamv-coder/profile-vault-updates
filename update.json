@@ -1,10 +1,10 @@
 {
-  "version": "1.9.102",
-  "url": "index-1.9.102.html",
-  "sha256": "f91e707b0d27e0697013f02f3cdfb51d3492ad9056c88816dea429dc984ddc90",
-  "signature": "vOTH7UMYh7LMuntBvkaQkZF3nIiZNON6vgEa4BNR4ngrByDcfMd/0yRx9XvCkHfI2ZDva2FiVx8MZDNsz3h+Bg==",
+  "version": "1.9.103",
+  "url": "index-1.9.103.html",
+  "sha256": "19b80a5ac0de5ac2801ddfdf01b3fd22af03d17f99da23ceef359707bfe1e29a",
+  "signature": "gnAUM58CQ8esONSDNso742OyCMlfxiA9cHZIJJDriSWv/Wch2SBimJieVSnzbSnj7SyZWSB9ugNt+rjENC0OCw==",
   "minAppVersion": "0",
-  "notes": "Sellers: Settings → Accounts to assign has See my list, which sends you a link to your whole list: every account, free or given and to whom. There you can add accounts, change an account's password (or its email while it's free), give one back to your list, or remove it.",
+  "notes": "Order names show Pokémon and other special characters properly, and orders of the same item share its product picture. To set a picture yourself, select orders and choose Picture, then paste a picture (Ctrl+V), drop one, choose a file, or paste a link; Find it searches Target or Pokémon Center for the product. FAFO also looks again for pictures in your order emails the next time it checks them.",
   "installerUrl": "",
-  "publishedAt": "2026-10-09T04:53:16.787Z"
+  "publishedAt": "2026-10-09T10:14:03.849Z"
 }
