@@ -1,10 +1,10 @@
 {
-  "version": "1.9.100",
-  "url": "index-1.9.100.html",
-  "sha256": "5627c18b9812efee2b7492fc31499d48c3fb7fd6e7521ff858cd1c64efa19bbc",
-  "signature": "xRr5wKM/B8viwQMUKuXHp12+h6bJb/tl1nsXOWBKaRsy1ivWRlCuygdSDWRCs/MVexk7Ud32lPyfxbve7VQEBQ==",
+  "version": "1.9.101",
+  "url": "index-1.9.101.html",
+  "sha256": "0d67fa6f928d2ef3ea7a9bead924776ec6bc1dcdab6a18d1f7035cc8b451b365",
+  "signature": "g8Dvr18N2wHqo2eeSexcjSo5j7VapJoEWiJBy+yxLoHNbx5OiktO3AG7wv3eCl5qEIEB+sanl4Dxyecx/8tzDg==",
   "minAppVersion": "0",
-  "notes": "FAFO now installs updates on its own: when a new version is ready, it restarts into it while it's locked and you're away from the computer, never in the middle of something, and you unlock it as usual. You can turn this off in Settings → Updates.",
+  "notes": "When you send slots to the seller, they now get them as Shikari files too, alongside the AYCD files.",
   "installerUrl": "",
-  "publishedAt": "2026-10-07T21:21:19.266Z"
+  "publishedAt": "2026-10-09T02:15:24.680Z"
 }
