@@ -1938,6 +1938,74 @@ try {
     assert.match(html, /Expired before you decided/); assert.doesNotMatch(html, /pc1@outlook\.com/);
     assert.deepEqual(await stock("pokemoncenter"), pc, "nothing removed");
   });
+
+  console.log("\nSee my list (app 1.9.102+)");
+  const dbRows = (cmd) => JSON.parse(execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", cmd, "--json"], { cwd: root, env, stdio: "pipe" }).toString())[0].results;
+  const listLink = (content) => (content.match(/\((http[^)]+\/accounts\/list\/[^)]+)\)/) || [])[1];
+  const listPost = (link, body) => fetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), ...body }) });
+  const askList = async (key = ivanKey) => { const r = await slots("/accounts/list", key, { name: "Owner" }); return { status: r.status, body: await r.json(), m: webhookPosts.at(-1) }; };
+  const unescape = (h) => h.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  let lsLink;
+  await test("asking for the list needs a license; it posts a link to the channel, never an email", async () => {
+    assert.equal((await slots("/accounts/list", null, {})).status, 401);
+    const before = webhookPosts.length;
+    const { status, body, m } = await askList();
+    assert.equal(status, 200); assert.deepEqual(body, { status: "sent" });
+    assert.equal(webhookPosts.length, before + 1);
+    assert.match(m.content, /^📋 \*\*Your list for Use Assigned Account\*\*\nAsked by \*\*Owner\*\* · @ivan · license …\w{4}\n\[See the list\]\(http[^)]+\/accounts\/list\/[A-Za-z0-9_-]+\?t=[A-Za-z0-9_-]+\) · the link works for 24 hours$/, m.content);
+    assert.doesNotMatch(m.content, /@outlook\.com|@example\.com/, "no account in the channel");
+    lsLink = listLink(m.content); assert.ok(lsLink);
+  });
+  await test("the page lists every account on every store's list, free or given and to whom, never a password", async () => {
+    const rows = dbRows("SELECT store, email, key_hash, key_last4, profile, batch, offer_id, sent_at, password FROM accounts");
+    assert.ok(rows.length > 5 && rows.some((a) => !a.key_hash) && rows.some((a) => a.key_hash && a.sent_at), "a list with free and given accounts to show");
+    const r = await fetch(lsLink), html = await r.text(), text = unescape(html);
+    assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store");
+    for (const a of rows) assert.ok(text.includes(`<td class="em">${a.email}</td>`), "listed: " + a.email);
+    for (const a of rows.filter((x) => x.password)) assert.ok(!text.includes(a.password), "never a password");
+    const own = rows.filter((a) => !String(a.offer_id || "").startsWith("reuse:"));
+    assert.ok(text.includes(`<p class="who">${own.length} accounts, ${own.filter((a) => !a.key_hash).length} free</p>`), "the total and how many are free");
+    for (const st of new Set(rows.map((a) => a.store))) {
+      const mine = own.filter((a) => a.store === st), name = { target: "Target", pokemoncenter: "Pokémon Center" }[st] || st;
+      assert.ok(text.includes(`<h3>${name} <span class="count">${mine.filter((a) => !a.key_hash).length} free of ${mine.length}</span></h3>`), "each store's count: " + st);
+    }
+    const given = rows.find((a) => a.key_hash && a.sent_at && !String(a.batch || "").startsWith("parked:") && !String(a.offer_id || "").startsWith("reuse:"));
+    assert.ok(text.includes(`Given to license …${given.key_last4}${given.profile ? `, ${given.profile}` : ""}, sent `), "a given account says to whom");
+    const reused = rows.find((a) => String(a.offer_id || "").startsWith("reuse:") && a.key_hash);
+    if (reused) assert.ok(text.includes(`Reused from Target for license …${reused.key_last4}`), "a reuse says so");
+    assert.equal((await fetch(lsLink.replace(/t=[^&]+/, "t=wrong"))).status, 404, "a wrong token");
+    assert.equal((await fetch(lsLink.replace(/\/accounts\/list\/[^?]+/, "/accounts/list/nope1234"))).status, 404, "a wrong id");
+  });
+  await test("Remove asks first, then takes the email off every store's list, and the page says so", async () => {
+    const rows = dbRows("SELECT store, email, email_norm, key_hash FROM accounts");
+    const counts = new Map(); rows.forEach((a) => counts.set(a.email_norm, (counts.get(a.email_norm) || 0) + 1));
+    const target = rows.find((a) => counts.get(a.email_norm) > 1) || rows.find((a) => !a.key_hash);
+    const ask = await (await listPost(lsLink, { action: "ask", email: target.email.toUpperCase() })).text();
+    assert.match(unescape(ask), /<h2>Remove an account<\/h2>/); assert.ok(unescape(ask).includes(target.email), "names it");
+    assert.match(unescape(ask), /It comes off every store's list it's on, so no more slots get it\./);
+    assert.match(ask, /value="remove">Remove from my list<\/button>/); assert.match(ask, />Keep it<\/button>/);
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${target.email_norm}'`)[0].n, counts.get(target.email_norm), "asking removes nothing");
+    const done = unescape(await (await listPost(lsLink, { action: "remove", email: target.email })).text());
+    assert.ok(done.includes(`<p>Took ${target.email} off your list.</p>`), "the page says it");
+    assert.ok(!done.includes(`<td class="em">${target.email}</td>`), "and no longer lists it");
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${target.email_norm}'`)[0].n, 0, "off every store's list");
+    const again = unescape(await (await listPost(lsLink, { action: "remove", email: target.email })).text());
+    assert.ok(again.includes(`<p>${target.email.toLowerCase()} isn't on your list any more.</p>`), "removing it twice changes nothing");
+    assert.equal((await listPost(lsLink.replace(/t=[^&]+/, "t=wrong"), { action: "remove", email: rows[0].email })).status, 404, "never without the token");
+  });
+  await test("the link stops working after 24 hours, and asks are limited to 10 a day per license", async () => {
+    const id = lsLink.match(/\/accounts\/list\/([^?]+)/)[1];
+    execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", `UPDATE account_lists SET created_at = created_at - 86400001 WHERE id = '${id}'`], { cwd: root, env, stdio: "pipe" });
+    const r = await fetch(lsLink), html = await r.text();
+    assert.equal(r.status, 410); assert.match(html, /This link has expired\. Ask again from FAFO: Settings → Accounts to assign → See my list\./);
+    assert.doesNotMatch(html, /@outlook\.com/, "and lists nothing");
+    let n = dbRows(`SELECT COUNT(*) AS n FROM account_lists WHERE key_hash = (SELECT key_hash FROM account_lists WHERE id = '${id}') AND created_at > ${Date.now() - 86400000}`)[0].n;
+    while (n < 10) { assert.equal((await askList()).status, 200); n++; }
+    const before = webhookPosts.length;
+    assert.equal((await askList()).status, 429, "the 11th today");
+    assert.equal(webhookPosts.length, before, "nothing posted");
+    assert.equal((await askList(hanaKey)).status, 200, "another license still can");
+  });
   await test("CSV batches count toward 30 an hour per license", async () => {
     let sent = 0, limited = false;
     for (let i = 0; i < 40 && !limited; i++){

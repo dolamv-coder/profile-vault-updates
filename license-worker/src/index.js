@@ -93,6 +93,9 @@
 //   GET/POST /submissions/review/ID?t=TOKEN  approve or decline a batch of slots (link on its message)
 //   GET/POST /accounts/review/ID?t=TOKEN  add or refuse accounts sent for Use Assigned Account
 //   GET/POST /accounts/removal/ID?t=TOKEN remove accounts from the list, or keep them
+//   POST /accounts/list        {name} (license Bearer, app 1.9.102+): post a link to the owner's list to the channel
+//   GET/POST /accounts/list/ID?t=TOKEN    the list: each store's accounts, free or given (never a password), each with
+//                              Remove (asks first); the link works for 24 hours
 //   GET/POST /alerts/review/ID?t=TOKEN    allow or refuse a license sending order alerts to buyers
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/applications   every request and decision
@@ -159,6 +162,8 @@ export default {
       if (path.startsWith("/accounts/review/")) return await accountReview(request, env, ctx, url, path.slice("/accounts/review/".length));
       if (path === "/accounts/remove" && request.method === "POST") return await accountRemove(request, env, ctx, url);
       if (path.startsWith("/accounts/removal/")) return await accountRemovalReview(request, env, ctx, url, path.slice("/accounts/removal/".length));
+      if (path === "/accounts/list" && request.method === "POST") return await accountListAsk(request, env, ctx, url);
+      if (path.startsWith("/accounts/list/")) return await accountListPage(request, env, url, path.slice("/accounts/list/".length));
       if (path === "/alerts/sender" && request.method === "GET") return await alertSenderGet(request, env);
       if (path === "/alerts/sender" && request.method === "POST") return await alertSenderPost(request, env, ctx, url);
       if (path.startsWith("/alerts/review/")) return await alertSenderReview(request, env, ctx, url, path.slice("/alerts/review/".length));
@@ -1655,6 +1660,95 @@ async function accountRemovalReview(request, env, ctx, url, id) {
      ${pending ? `<div class="row">${btn("remove", "Remove from my list", "no")}${btn("keep", "Keep them", "ok")}</div>` : ""}`);
 }
 
+// See my list (app 1.9.102+, the owner's request, 2026-10-09): FAFO asks for a link to the list, which goes to the
+// owner's channel like every other review link, so only the owner opens it, whichever licensed FAFO asked. The page reads
+// the list as it is each time it's opened: every store's accounts, free or given (to which license, for which profile,
+// held for a Pokémon Center slot, or reused there from Target), never a password. Remove asks first, then takes the email
+// off every store's list, as Remove accounts does. The link works for 24 hours.
+const ACCOUNT_LISTS_PER_DAY = 10;
+const ACCOUNT_LIST_TTL_MS = 24 * 3600 * 1000;
+async function accountListAsk(request, env, ctx, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  if (!env.DISCORD_WEBHOOK_URL) return json({ error: "the Discord channel isn't set up" }, 503);
+  const text = await request.text();
+  if (text.length > 2000) return json({ error: "too large" }, 413);
+  let b; try { b = JSON.parse(text) || {}; } catch { b = {}; }
+  const now = Date.now();
+  await env.DB.prepare("DELETE FROM account_lists WHERE created_at < ?").bind(now - 7 * 86400000).run();
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM account_lists WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 86400000).first();
+  if (recent && recent.n >= ACCOUNT_LISTS_PER_DAY) return json({ error: "too many tries today" }, 429);
+  const o = { id: randomId(12), key_hash: lic.hash, key_last4: lic.last4, username: lic.username,
+    name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60), view_token: randomId(24), created_at: now };
+  await env.DB.prepare("INSERT INTO account_lists (id, key_hash, key_last4, name, username, view_token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(o.id, o.key_hash, o.key_last4, o.name, o.username, o.view_token, o.created_at).run();
+  const who = [o.name ? `**${md(o.name)}**` : "", o.username ? `@${md(o.username)}` : "", `license …${o.key_last4}`].filter(Boolean).join(" · ");
+  const id = await webhookPost(env, { content: `📋 **Your list for Use Assigned Account**\nAsked by ${who}\n[See the list](${url.origin}/accounts/list/${o.id}?t=${o.view_token}) · the link works for 24 hours` });
+  if (!id) { await env.DB.prepare("DELETE FROM account_lists WHERE id = ?").bind(o.id).run(); return json({ error: "couldn't post to the channel" }, 502); }
+  return json({ status: "sent" });
+}
+
+async function accountListPage(request, env, url, id) {
+  const o = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM account_lists WHERE id = ?").bind(id).first() : null;
+  let t = url.searchParams.get("t") || "", action = "", email = "";
+  if (request.method === "POST") {
+    const form = await request.formData().catch(() => null);
+    t = form && String(form.get("t") || "") || t;
+    action = form && String(form.get("action") || "");
+    email = form && String(form.get("email") || "").trim().toLowerCase().slice(0, 200);
+  } else if (request.method !== "GET") {
+    return page(405, "Not allowed", "");
+  }
+  if (!o || !(await sameText(t, o.view_token))) return page(404, "Not found", "This link isn't valid.");
+  const now = Date.now();
+  const until = o.created_at + ACCOUNT_LIST_TTL_MS;
+  if (now > until) return page(410, "Your list", "This link has expired. Ask again from FAFO: Settings → Accounts to assign → See my list.");
+  const when = (x) => new Date(x).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+  const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  const status = (a) => !a.key_hash ? "Free"
+    : String(a.offer_id || "").startsWith("reuse:") ? `Reused from Target for license …${esc(a.key_last4 || "")}${a.profile ? `, ${esc(a.profile)}` : ""}`
+    : String(a.batch || "").startsWith(PARKED) ? `Held for license …${esc(a.key_last4 || "")}${a.profile ? `, ${esc(a.profile)}` : ""}: its Pokémon Center slot still uses it`
+    : `Given to license …${esc(a.key_last4 || "")}${a.profile ? `, ${esc(a.profile)}` : ""}${a.sent_at ? `, sent ${esc(when(a.sent_at))}` : ", in a batch being sent"}`;
+  let done = "";
+  if (email && (action === "ask" || action === "remove")) {
+    const { results: rows } = await env.DB.prepare("SELECT store, email, key_hash, key_last4, profile, batch, offer_id, sent_at FROM accounts WHERE email_norm = ? ORDER BY store").bind(email).all();
+    if (!rows.length) done = `${email} isn't on your list any more.`;
+    else if (action === "ask") {
+      const given = rows.some((a) => a.key_hash);
+      const back = `${url.pathname}?t=${encodeURIComponent(t)}`;
+      return page(200, "Remove an account", "",
+        `<p class="who">${esc(rows[0].email)}</p>
+         <p class="small">${rows.map((a) => `${esc(accountStoreName(a.store))}: ${status(a)}`).join("<br>")}</p>
+         <p class="small">It comes off every store's list it's on, so no more slots get it.${given ? " A buyer who has it stops getting order alerts for it." : ""} Its password goes too, and can't be got back here.</p>
+         <div class="row"><form method="post">${hidden}<input type="hidden" name="email" value="${esc(email)}"><button class="no" type="submit" name="action" value="remove">Remove from my list</button></form>
+         <form method="get" action="${esc(url.pathname)}"><input type="hidden" name="t" value="${esc(t)}"><button class="ok" type="submit">Keep it</button></form></div>`);
+    } else {
+      await env.DB.prepare("DELETE FROM accounts WHERE email_norm = ?").bind(email).run();
+      await sweepParked(env);
+      for (const st of new Set(rows.map((a) => a.store))) await stockCheck(env, st, accountStoreName(st), false);
+      done = `Took ${rows[0].email} off your list.`;
+    }
+  }
+  const { results: all } = await env.DB.prepare(`SELECT store, email, key_hash, key_last4, profile, batch, offer_id, sent_at FROM accounts
+    ORDER BY store, key_hash IS NOT NULL, email_norm`).all();
+  const byStore = new Map();
+  for (const a of all) { if (!byStore.has(a.store)) byStore.set(a.store, []); byStore.get(a.store).push(a); }
+  const own = (a) => !String(a.offer_id || "").startsWith("reuse:");
+  const sections = [...byStore].map(([st, rows]) => {
+    const mine = rows.filter(own), free = mine.filter((a) => !a.key_hash).length;
+    return `<h3>${esc(accountStoreName(st))} <span class="count">${free} free of ${mine.length}</span></h3>
+      <table><thead><tr><th>Account</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((a) => `<tr${a.key_hash ? "" : ' class="free"'}>
+        <td class="em">${esc(a.email)}</td><td>${status(a)}</td>
+        <td><form method="post">${hidden}<input type="hidden" name="email" value="${esc(a.email)}"><button class="rm" type="submit" name="action" value="ask">Remove</button></form></td></tr>`).join("")}</tbody></table>`;
+  }).join("");
+  const total = all.filter(own).length;
+  const who = [o.name, o.username ? "@" + o.username : "", "license …" + o.key_last4].filter(Boolean).join(" · ");
+  return page(200, "Your list for Use Assigned Account", done,
+    `<p class="who">${total ? `${total} account${total === 1 ? "" : "s"}, ${all.filter((a) => own(a) && !a.key_hash).length} free` : "Your list is empty"}</p>
+     ${sections || `<p class="small">Add accounts from FAFO: Settings → Accounts to assign → Send accounts.</p>`}
+     <p class="small">Passwords are never shown here. Asked by ${esc(who)}; this link works until ${esc(when(until))}.</p>`, true);
+}
+
 // ---- order alerts ----------------------------------------------------------------------
 //
 // Buyers hear about orders placed on the accounts they were given (app 1.9.69+). The owner's Orbit
@@ -2256,7 +2350,7 @@ function json(data, statusCode = 200, headers = {}) {
   return new Response(JSON.stringify(data), { status: statusCode, headers: { "content-type": "application/json", ...CORS, ...headers } });
 }
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-function page(statusCode, title, msg, extra = "") {
+function page(statusCode, title, msg, extra = "", wide = false) {
   return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
 <title>FAFO · ${esc(title)}</title>
@@ -2277,6 +2371,13 @@ function page(statusCode, title, msg, extra = "") {
   button{width:100%;padding:12px;border:0;border-radius:10px;font:600 16px system-ui,sans-serif;cursor:pointer;color:#fff}
   button.ok{background:#1f9d5c} button.no{background:#c4372f}
   button.copy{width:auto;padding:8px 14px;font-size:14px;background:#2a3f7a}
-</style></head><body><main><h1>FAFO</h1><h2>${esc(title)}</h2>${msg ? `<p>${esc(msg)}</p>` : ""}${extra}</main></body></html>`,
+  main.wide{max-width:900px}
+  h3{margin:24px 0 8px;font-size:16px} h3 .count{font-weight:400;color:#b9c6ea;margin-left:6px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{text-align:left;font-weight:600;color:#b9c6ea;padding:6px 8px;border-bottom:1px solid #2a3f7a}
+  td{padding:6px 8px;border-bottom:1px solid #1c2c5c;vertical-align:middle;color:#b9c6ea}
+  td.em{color:#e6ecff;overflow-wrap:anywhere} tr.free td:nth-child(2){color:#5fd39a}
+  td form{margin:0} button.rm{width:auto;padding:6px 12px;font-size:13px;background:transparent;border:1px solid #c4372f;color:#ff8a80}
+</style></head><body><main${wide ? ' class="wide"' : ""}><h1>FAFO</h1><h2>${esc(title)}</h2>${msg ? `<p>${esc(msg)}</p>` : ""}${extra}</main></body></html>`,
     { status: statusCode, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
 }

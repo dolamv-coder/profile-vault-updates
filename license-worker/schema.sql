@@ -200,6 +200,19 @@ CREATE TABLE IF NOT EXISTS account_removals (
 );
 CREATE INDEX IF NOT EXISTS account_removals_key ON account_removals (key_hash, created_at);
 
+-- See my list (app 1.9.102+): links to the list posted to the owner's channel, each working for 24 hours; rows go
+-- after 7 days.
+CREATE TABLE IF NOT EXISTS account_lists (
+  id          TEXT PRIMARY KEY,
+  key_hash    TEXT NOT NULL,                     -- the license that asked
+  key_last4   TEXT NOT NULL,
+  name        TEXT NOT NULL DEFAULT '',
+  username    TEXT,
+  view_token  TEXT NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS account_lists_key ON account_lists (key_hash, created_at);
+
 -- Whether the owner's channel was told a store's list is low (ACCOUNTS_LOW_AT free accounts or fewer)
 -- or has run out. Adding or freeing accounts clears these again.
 CREATE TABLE IF NOT EXISTS account_stock (

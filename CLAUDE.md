@@ -142,6 +142,11 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   `openRemoveAccounts`): `POST /accounts/remove {emails, name}` posts the count and a review link (never the emails,
   D1 `account_removals`), and `/accounts/removal/:id` shows where each email is and removes it from every store's
   list (given ones too) or keeps them; asks expire like offers.
+  From 1.9.102 the owner can see the list from FAFO (Settings → Accounts to assign → See my list, `askAccountList`):
+  `POST /accounts/list {name}` posts a link to the channel (D1 `account_lists`, 10 a day per license), and
+  `/accounts/list/:id?t=…` shows each store's accounts as they are when opened (Free, Given to which license and profile,
+  Held for a Pokémon Center slot, or Reused from Target), never a password, for 24 hours; Remove on one asks first, then
+  takes it off every store's list, as Remove accounts does.
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
   once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.
   Never put the accounts or their password in this repo or a page: it's public.
@@ -647,6 +652,11 @@ From 1.9.101 the app says the seller's channel gets **AYCD and Shikari files** (
 per store since 2026-10-09), on the Submit page and window, in Send somewhere else, in the seller's Discord note and on the
 assigned accounts' notes (their email goes in the slot's Shikari row too); the Send accounts window says one person gets
 20 at most (`ASSIGNED_LIMIT` since 2026-10-07; it said 10). Nothing gains a field, so the paused web version is unaffected.
+
+From 1.9.102 Settings → Accounts to assign has **See my list** (the owner's request: "how can I see what's on the list?"),
+between Send accounts and Remove accounts: it asks the license worker to post a link to the owner's channel
+(`askAccountList`; the worker section above), and the page there lists every store's accounts, free or given and to whom,
+never their passwords, each with Remove. Nothing gains a field, so the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
