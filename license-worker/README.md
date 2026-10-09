@@ -426,12 +426,14 @@ list you keep here:
   - **Edit** an account: a new password (empty keeps it; a Target account's reuse at Pokémon Center gets
     it too), and its email while it's free. One given to a buyer keeps its email, as it was posted, and
     has **Give it back to my list**: it's free again for the next slot, the buyer stops getting order
-    alerts for it, and its reuse at Pokémon Center goes with it (as `/admin/accounts/free` does). A
-    reuse itself follows its Target account, so it's edited there.
+    alerts for it, and its reuse at Pokémon Center goes with it (as `/admin/accounts/free` does). The
+    page says when the buyer's slot at the other store checks out with the same email, and giving back a
+    Pokémon Center account frees the Target account held for it too. A reuse itself follows its Target
+    account, so it's edited there.
   - **Remove** an account: it asks first, saying where it is, then takes it off every store's list it's
     on (one given to a buyer too, so order alerts on it stop reaching them); **Keep it** goes back.
-  - **Add accounts**: pick the store and paste them one per line (`email:password`, as in FAFO's Send
-    accounts; for Pokémon Center, the email's inbox password). They're on the list at once, with no
+  - **Add accounts**: pick the store and paste them one per line (`email:password`, or the CSV lines
+    FAFO's Send accounts takes, quoted cells too; for Pokémon Center, the email's inbox password). They're on the list at once, with no
     review link. One already on that store's list keeps its password (Edit changes it), and the page
     says which lines it couldn't read.
 

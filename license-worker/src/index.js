@@ -1691,15 +1691,17 @@ async function accountListAsk(request, env, ctx, url) {
   return json({ status: "sent" });
 }
 
-// The Add box reads lines as FAFO's Send accounts does: email:password, email,password (or a tab between them),
-// email:password:inbox email:inbox password (the account's own password is kept), or an email on its own with the
-// box's password for those lines. A Pokémon Center account's password is its inbox's.
-const LIST_EMAIL = /^[^\s@:,]+@[^\s@:,]+\.[^\s@:,]+$/;
+// The Add box reads lines as FAFO's Send accounts does (parseAccountLines): email:password, email,password as CSV
+// (quoted cells too, as FAFO writes a password with : , or " in it), email:password:inbox email:inbox password (the
+// account's own password is kept), or an email on its own with the box's password for those lines; a first line naming
+// the columns is skipped. Also a tab between email and password. A Pokémon Center account's password is its inbox's.
+const LIST_EMAIL = /^[^\s@:,"]+@[^\s@:,"]+\.[^\s@:,"]+$/;
 function parseListLines(text, shared) {
   const rows = [], bad = [], bare = [], seen = new Set();
   String(text || "").split(/\r?\n/).forEach((raw, i) => {
     const line = raw.trim(), n = i + 1;
     if (!line) return;
+    if (line.length > 600) { bad.push(n); return; }
     let a = null;
     const parts = line.split(":");
     if (LIST_EMAIL.test(line)) { if (!shared) { bare.push(n); return; } a = { email: line, password: shared }; }
@@ -1712,11 +1714,12 @@ function parseListLines(text, shared) {
       }
     }
     if (!a) {
-      const cells = line.split(line.includes("\t") ? "\t" : ",").map((c) => c.trim());
-      if (LIST_EMAIL.test(cells[0]) && cells[1] && (cells.length === 2 || (cells.length === 4 && LIST_EMAIL.test(cells[2]) && cells[3]))) a = { email: cells[0], password: cells[1] };
+      const cells = (line.includes("\t") ? line.split("\t") : parseCsv(line)[0] || []).map((c) => c.trim());
+      if (i === 0 && /^e-?mail/i.test(cells[0] || "") && !line.includes("@")) return;
+      if (LIST_EMAIL.test(cells[0] || "") && cells[1] && ((!cells[2] && !cells[3]) || (LIST_EMAIL.test(cells[2] || "") && cells[3]))) a = { email: cells[0], password: cells[1] };
     }
     if (!a && parts.length === 2 && LIST_EMAIL.test(parts[0].trim()) && parts[1].trim()) a = { email: parts[0].trim(), password: parts[1].trim() };
-    if (!a || a.email.length > 120 || a.password.length > 200) { bad.push(n); return; }
+    if (!a || a.email.length > 120 || a.password.length > 200 || /[\r\n]/.test(a.password)) { bad.push(n); return; }
     const k = a.email.toLowerCase();
     if (seen.has(k)) return;
     seen.add(k); rows.push(a);
@@ -1765,11 +1768,18 @@ async function accountListPage(request, env, url, id) {
     const given = !!a.key_hash;
     let giveBack = "";
     if (given) {
-      const { results: reuses } = await env.DB.prepare("SELECT store FROM accounts WHERE email_norm = ? AND key_hash = ? AND offer_id = ?").bind(a.email_norm, a.key_hash, "reuse:" + a.store).all();
-      const reused = reuses.length ? ` Their ${reuses.map((r) => esc(accountStoreName(r.store))).join(" and ")} slot that uses it again loses it too.` : "";
-      const parked = !reused && String(a.batch || "").startsWith(PARKED) ? " Their Pokémon Center slot still checks out with this email, so another buyer's slot could get it while they use it." : "";
+      // The same buyer's rows with this email at other stores: a reuse of it (dropped with it), the owner's own account
+      // there on a slot that checks out with this email too, or one held (parked) for this slot, which comes free with it.
+      const { results: others } = await env.DB.prepare("SELECT store, offer_id, batch FROM accounts WHERE email_norm = ? AND key_hash = ? AND store <> ?")
+        .bind(a.email_norm, a.key_hash, a.store).all();
+      const names = (rs) => rs.map((r) => esc(accountStoreName(r.store))).join(" and ");
+      const reuses = others.filter((r) => r.offer_id === "reuse:" + a.store), own = others.filter((r) => !isReuse(r));
+      const using = own.filter((r) => !String(r.batch || "").startsWith(PARKED)), heldFor = own.filter((r) => String(r.batch || "").startsWith(PARKED));
+      const notes = (reuses.length ? ` Their ${names(reuses)} slot that uses it again loses it too.` : "")
+        + (using.length ? ` Their ${names(using)} slot checks out with this email too, so another buyer's ${esc(name)} slot could get it while they use it.` : "")
+        + (heldFor.length ? ` Their ${names(heldFor)} account with this email, held for this slot, goes back on your ${names(heldFor)} list too.` : "");
       giveBack = `<h3>Give it back</h3>
-        <p class="small">It goes back on your ${esc(name)} list as free, so the next slot on Use Assigned Account can get it. License …${esc(a.key_last4 || "")} keeps what was posted to your channel, and stops getting order alerts for it.${reused}${parked}</p>
+        <p class="small">It goes back on your ${esc(name)} list as free, so the next slot on Use Assigned Account can get it. License …${esc(a.key_last4 || "")} keeps what was posted to your channel, and stops getting order alerts for it.${notes}</p>
         <form method="post">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="no" type="submit" name="action" value="giveback">Give it back to my list</button></form>`;
     }
     return page(200, "Edit an account", "", `${head}
@@ -1807,16 +1817,21 @@ async function accountListPage(request, env, url, id) {
     else if (action === "giveback") {
       if (!a.key_hash) done = `${a.email} is already free on your ${name} list.`;
       else {
+        const held = `SELECT store FROM accounts WHERE email_norm = ? AND store <> ? AND batch LIKE '${PARKED}%' AND key_hash = ?`;
+        const { results: before } = await env.DB.prepare(held).bind(a.email_norm, a.store, a.key_hash).all();
         await freeAccounts(env, "store = ? AND email_norm = ?", a.store, a.email_norm);
         // Every store, as /admin/accounts/free does: freeing it can also free a Target account parked for it (sweepParked).
         const { results: stores } = await env.DB.prepare("SELECT DISTINCT store FROM accounts").all();
         for (const x of stores) await stockCheck(env, x.store, accountStoreName(x.store), false);
-        done = `Gave ${a.email} back to your ${name} list. It's free for the next slot.`;
+        const { results: still } = await env.DB.prepare(held).bind(a.email_norm, a.store, a.key_hash).all();
+        const freed = before.filter((r) => !still.some((x) => x.store === r.store)).map((r) => accountStoreName(r.store));
+        done = `Gave ${a.email} back to your ${name} list. It's free for the next slot.${freed.length ? ` Your ${freed.join(" and ")} account with this email came free too.` : ""}`;
       }
     } else {
       const newEmail = get("new_email").trim(), pw = get("password").trim();
       if (!LIST_EMAIL.test(newEmail) || newEmail.length > 120) return editPage(a, "That isn't an email address.");
       if (pw.length > 200) return editPage(a, "That password is too long: 200 characters at most.");
+      if (/[\r\n]/.test(pw)) return editPage(a, "That password can't have a line break.");
       const norm = newEmail.toLowerCase();
       if (newEmail !== a.email) {
         if (a.key_hash) return editPage(a, "It's on a buyer's slot, so its email can't change. Give it back to your list first.");
@@ -1844,7 +1859,7 @@ async function accountListPage(request, env, url, id) {
   if (action === "add" && post) {
     const st = addStores.includes(store) ? store : "", name = accountStoreName(st);
     const text = get("accounts");
-    const { rows, bad, bare } = parseListLines(text, get("password").trim());
+    const { rows, bad, bare } = text.length > 400_000 ? { rows: [], bad: [], bare: [] } : parseListLines(text, get("password").trim());
     if (!st) err = "Pick a store to add them to.";
     else if (text.length > 400_000 || rows.length > ACCOUNT_OFFER_MAX) err = `That's too many at once: ${ACCOUNT_OFFER_MAX} at most.`;
     else {
@@ -1861,7 +1876,7 @@ async function accountListPage(request, env, url, id) {
       const already = rows.length - n;
       done = rows.length ? `Added ${n} to your ${name} list.${already ? ` ${already} ${already === 1 ? "was" : "were"} already on it, and kept ${already === 1 ? "its" : "their"} password (Edit changes one).` : ""}` : "";
       err = [bad.length ? `${lineList(bad)} couldn't be read: write each account as email:password.` : "",
-        bare.length ? `${lineList(bare)} only ${bare.length === 1 ? "has" : "have"} an email: fill in the password for those.` : "",
+        bare.length ? `${lineList(bare)} ${bare.length === 1 ? "has" : "have"} only an email: add ${bare.length === 1 ? "it" : "them"} again with the password box filled in.` : "",
         !rows.length && !bad.length && !bare.length ? "Paste the accounts to add, one per line." : ""].filter(Boolean).join(" ");
     }
   }

@@ -1,1 +1,1 @@
-Sellers: Settings → Accounts to assign has See my list, which sends you a link to your whole list: every account, free or given and to whom. There you can add accounts, change an account's password or email, give one back to your list, or remove it.
+Sellers: Settings → Accounts to assign has See my list, which sends you a link to your whole list: every account, free or given and to whom. There you can add accounts, change an account's password (or its email while it's free), give one back to your list, or remove it.

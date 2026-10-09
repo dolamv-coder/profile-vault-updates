@@ -1948,6 +1948,12 @@ try {
   // can reuse it just as it closes: tried once more then, as the request never reached the worker.
   const fetchOnce = async (url, opts) => { try { return await fetch(url, opts); } catch (e) { if (e.cause && e.cause.code === "UND_ERR_SOCKET") return fetch(url, opts); throw e; } };
   const listStatus = async (url, opts) => { const r = await fetchOnce(url, opts); await r.text(); return r.status; };
+  // Each body is read, so the connection is free for the next request.
+  const view = async (link, q) => { const r = await fetchOnce(`${link}&${new URLSearchParams(q)}`); const body = await r.text(); return { status: r.status, text: async () => body }; };
+  // A change sent without following its redirect: the 303 back to the list, and where it points.
+  const sendRaw = async (link, body) => { const r = await fetchOnce(link.split("?")[0], { method: "POST", redirect: "manual", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), ...body }) }); await r.text(); return { status: r.status, location: r.headers.get("location") || "" }; };
+  const send = async (link, body) => { const r = await listPost(link, body); const text = await r.text(); return { status: r.status, text: async () => text }; };
+  const page2 = async (r) => unescape(await r.text());
   const listPost = (link, body) => fetchOnce(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), ...body }) });
   const askList = async (key = ivanKey) => { const r = await slots("/accounts/list", key, { name: "Owner" }); return { status: r.status, body: await r.json(), m: webhookPosts.at(-1) }; };
   const unescape = (h) => h.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
@@ -1999,8 +2005,6 @@ try {
       const t2 = unescape(await (await fetchOnce(lsLink)).text());
       assert.ok(t2.includes(`Held for license …${held.key_last4}${held.profile ? `, ${held.profile}` : ""}: its Pokémon Center slot still uses it`), "a held one says so");
       assert.ok(t2.includes(`Given to license …${sending.key_last4}${sending.profile ? `, ${sending.profile}` : ""}, in a batch being sent`), "one in a batch being sent says so");
-      const ed = unescape(await (await fetchOnce(`${lsLink}&action=edit&store=target&email=${encodeURIComponent(hn)}`)).text());
-      assert.ok(ed.includes("Their Pokémon Center slot still checks out with this email, so another buyer's slot could get it while they use it."), "giving a held one back says what that means");
     } finally {
       sqlRun(`UPDATE accounts SET batch = substr(batch, 8) WHERE store = 'target' AND email_norm = '${hn}' AND batch LIKE 'parked:%'; UPDATE accounts SET sent_at = ${sending.sent_at} WHERE store = 'target' AND email_norm = '${sn}'`);
     }
@@ -2017,7 +2021,11 @@ try {
     assert.match(unescape(ask), /It comes off every store's list it's on, so no more slots get it\./);
     assert.match(ask, /value="remove">Remove from my list<\/button>/); assert.match(ask, />Keep it<\/button>/);
     assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${target.email_norm}'`)[0].n, counts.get(target.email_norm), "asking removes nothing");
-    const done = unescape(await (await listPost(lsLink, { action: "remove", email: target.email })).text());
+    await view(lsLink, { action: "remove", email: target.email });
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${target.email_norm}'`)[0].n, counts.get(target.email_norm), "a link (GET) removes nothing");
+    const rm = await sendRaw(lsLink, { action: "remove", email: target.email });
+    assert.equal(rm.status, 303); assert.match(rm.location, /\?t=[^&]+&done=Took\+/, "back to the list by its link");
+    const done = unescape(await (await fetchOnce(new URL(rm.location, lsLink))).text());
     assert.ok(done.includes(`<p>Took ${target.email} off your list.</p>`), "the page says it");
     assert.ok(!done.includes(`<td class="em">${target.email}</td>`), "and no longer lists it");
     assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${target.email_norm}'`)[0].n, 0, "off every store's list");
@@ -2026,10 +2034,6 @@ try {
     const wrong = await listPost(lsLink.replace(/t=[^&]+/, "t=wrong"), { action: "remove", email: rows[0].email });
     await wrong.text(); assert.equal(wrong.status, 404, "never without the token");
   });
-  // Each body is read, so the connection is free for the next request.
-  const view = async (link, q) => { const r = await fetchOnce(`${link}&${new URLSearchParams(q)}`); const body = await r.text(); return { status: r.status, text: async () => body }; };
-  const send = async (link, body) => { const r = await listPost(link, body); const text = await r.text(); return { status: r.status, text: async () => text }; };
-  const page2 = async (r) => unescape(await r.text());
   await test("Edit changes a free account's password, and never shows one", async () => {
     const rows = dbRows("SELECT store, email, email_norm, password, key_hash, offer_id FROM accounts");
     const a = rows.find((x) => !x.key_hash && x.store === "target");
@@ -2049,6 +2053,8 @@ try {
     await raw.text();
     assert.equal(raw.status, 303, "a change goes back to the list by its link, so reloading doesn't send it again");
     assert.match(raw.headers.get("location"), /^\/accounts\/list\/[^?]+\?t=[^&]+&done=Nothing\+changed\.$/);
+    const nl = await page2(await send(lsLink, { action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: "two\nlines" }));
+    assert.ok(nl.includes(`<p class="err">That password can't have a line break.</p>`), "a password with a line break would split the logins file");
     const same = await page2(await send(lsLink, { action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: "" }));
     assert.ok(same.includes("<p>Nothing changed.</p>"), "an empty password keeps it");
     assert.equal(dbRows(`SELECT password FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].password, "Fresh-pass-1");
@@ -2098,7 +2104,9 @@ try {
     assert.equal(dbRows(`SELECT key_hash FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].key_hash, a.key_hash, "still the buyer's");
     await view(lsLink, { action: "giveback", store: "target", email: a.email_norm });
     assert.equal(dbRows(`SELECT key_hash FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].key_hash, a.key_hash, "a link (GET) gives nothing back");
-    const done = await page2(await send(lsLink, { action: "giveback", store: "target", email: a.email_norm }));
+    const gb = await sendRaw(lsLink, { action: "giveback", store: "target", email: a.email_norm });
+    assert.equal(gb.status, 303); assert.match(gb.location, /\?t=[^&]+&done=Gave\+/, "back to the list, saying so");
+    const done = await page2(await view(lsLink, Object.fromEntries(new URLSearchParams(gb.location.split("?")[1]).entries())));
     assert.ok(done.includes(`<p>Gave ${a.email} back to your Target list. It's free for the next slot.</p>`), done.slice(0, 600));
     const b = dbRows(`SELECT key_hash, batch, profile, password FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0];
     assert.deepEqual(b, { key_hash: null, batch: null, profile: null, password: "given-pw-3" }, "free, with its password");
@@ -2115,9 +2123,14 @@ try {
     const before = dbRows("SELECT COUNT(*) AS n FROM accounts")[0].n;
     const lines = ["added.one@example.com:pw-one", "added.two@example.com,pw-two", "broken line", "added.three@example.com",
       `${pc.email}:other-pw`, "added.one@example.com:dup", "added.four@example.com:acct-pw:added.four.inbox@example.com:inbox-pw"].join("\n");
-    const html = await page2(await send(lsLink, { action: "add", store: "pokemoncenter", accounts: lines, password: "" }));
+    await view(lsLink, { action: "add", store: "pokemoncenter", accounts: lines, password: "" });
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts")[0].n, before, "a link (GET) adds nothing");
+    const ad = await sendRaw(lsLink, { action: "add", store: "pokemoncenter", accounts: lines, password: "" });
+    assert.equal(ad.status, 303); assert.match(ad.location, /\?t=[^&]+&done=Added\+3[^&]*&err=Line\+3[^&]*&store=pokemoncenter$/, "back to the list with what happened, and the store");
+    const html = await page2(await view(lsLink, Object.fromEntries(new URLSearchParams(ad.location.split("?")[1]).entries())));
+    assert.ok(html.includes('<option value="pokemoncenter" selected>Pokémon Center</option>'), "the store stays picked");
     assert.ok(html.includes("<p>Added 3 to your Pokémon Center list. 1 was already on it, and kept its password (Edit changes one).</p>"), html.slice(0, 900));
-    assert.ok(html.includes(`<p class="err">Line 3 couldn't be read: write each account as email:password. Line 4 only has an email: fill in the password for those.</p>`));
+    assert.ok(html.includes(`<p class="err">Line 3 couldn't be read: write each account as email:password. Line 4 has only an email: add it again with the password box filled in.</p>`), html.slice(0, 900));
     for (const pw of ["pw-one", "pw-two", "acct-pw", "inbox-pw", "other-pw"]) assert.ok(!html.includes(pw), "no password on the page: " + pw);
     const got = dbRows("SELECT email, password, key_hash, offer_id FROM accounts WHERE store = 'pokemoncenter' AND email_norm LIKE 'added.%' ORDER BY email_norm");
     const id = lsLink.match(/\/accounts\/list\/([^?]+)/)[1];
@@ -2130,12 +2143,40 @@ try {
     const shared = await page2(await send(lsLink, { action: "add", store: "target", accounts: "added.three@example.com\n", password: "shared-pw" }));
     assert.ok(shared.includes("<p>Added 1 to your Target list.</p>"), "an email alone takes the password box's");
     assert.equal(dbRows("SELECT password FROM accounts WHERE store = 'target' AND email_norm = 'added.three@example.com'")[0].password, "shared-pw");
-    assert.ok(shared.includes('<option value="target" selected>Target</option>'), "the store stays picked");
+    assert.ok(shared.includes('<option value="target" selected>Target</option>'));
+    // Lines as FAFO's Send accounts writes them, or a spreadsheet exports them: quoted cells, empty inbox columns, a
+    // first line naming the columns. A quoted email is never taken as one.
+    const csvLines = ['email,password', '"quoted.one@example.com","p:ss"', 'quoted.two@example.com,"p,ss"', 'quoted.three@example.com,"a""b"',
+      'trailing@example.com,pw-t,,', '"bad"@example.com:pw'].join("\r\n");
+    const qd = await page2(await send(lsLink, { action: "add", store: "target", accounts: csvLines, password: "" }));
+    assert.ok(qd.includes("<p>Added 4 to your Target list.</p>") && qd.includes(`<p class="err">Line 6 couldn't be read: write each account as email:password.</p>`), qd.slice(0, 900));
+    assert.deepEqual(dbRows("SELECT email, password FROM accounts WHERE store = 'target' AND (email_norm LIKE 'quoted.%' OR email_norm = 'trailing@example.com') ORDER BY email_norm"), [
+      { email: "quoted.one@example.com", password: "p:ss" }, { email: "quoted.three@example.com", password: 'a"b' },
+      { email: "quoted.two@example.com", password: "p,ss" }, { email: "trailing@example.com", password: "pw-t" }]);
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email LIKE '%"%'`)[0].n, 0, "no email with quotes in it");
     const nowhere = await page2(await send(lsLink, { action: "add", store: "nowhere", accounts: "added.five@example.com:pw" }));
     assert.ok(nowhere.includes(`<p class="err">Pick a store to add them to.</p>`));
     const empty = await page2(await send(lsLink, { action: "add", store: "target", accounts: "  \n" }));
     assert.ok(empty.includes(`<p class="err">Paste the accounts to add, one per line.</p>`));
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts WHERE email_norm = 'added.five@example.com'")[0].n, 0);
+  });
+  await test("Give it back says what happens to the buyer's account at the other store with the same email", async () => {
+    // A buyer whose Target slot and Pokémon Center slot both check out with one email, the owner's own account on each list.
+    const rows = dbRows("SELECT store, email, email_norm, key_hash, key_last4, batch, profile, sent_at FROM accounts");
+    const t = rows.find((x) => x.store === "target" && x.key_hash && x.sent_at && !x.batch.startsWith("parked:") && !rows.some((p) => p.store === "pokemoncenter" && p.email_norm === x.email_norm));
+    sqlRun(`INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id, key_hash, key_last4, batch, store_name, profile, assigned_at, sent_at)
+      SELECT 'pokemoncenter', email, email_norm, 'inbox-pw', added_at, 'own-pc', key_hash, key_last4, batch || '-pc', 'Pokémon Center', profile, assigned_at, sent_at
+      FROM accounts WHERE store = 'target' AND email_norm = '${t.email_norm}'`);
+    const tEdit = await page2(await view(lsLink, { action: "edit", store: "target", email: t.email_norm }));
+    assert.ok(tEdit.includes("Their Pokémon Center slot checks out with this email too, so another buyer's Target slot could get it while they use it."), tEdit.slice(0, 1200));
+    // The Target slot's batch declined: its account is held (parked) for the Pokémon Center slot.
+    sqlRun(`UPDATE accounts SET batch = 'parked:' || batch WHERE store = 'target' AND email_norm = '${t.email_norm}'`);
+    const pEdit = await page2(await view(lsLink, { action: "edit", store: "pokemoncenter", email: t.email_norm }));
+    assert.ok(pEdit.includes("Their Target account with this email, held for this slot, goes back on your Target list too."), pEdit.slice(0, 1200));
+    const done = await page2(await send(lsLink, { action: "giveback", store: "pokemoncenter", email: t.email_norm }));
+    assert.ok(done.includes(`<p>Gave ${t.email} back to your Pokémon Center list. It's free for the next slot. Your Target account with this email came free too.</p>`), done.slice(0, 900));
+    assert.deepEqual(dbRows(`SELECT store, key_hash, batch FROM accounts WHERE email_norm = '${t.email_norm}' ORDER BY store`),
+      [{ store: "pokemoncenter", key_hash: null, batch: null }, { store: "target", key_hash: null, batch: null }], "both free");
   });
   await test("the link stops working after 24 hours, and asks are limited to 10 a day per license", async () => {
     const id = lsLink.match(/\/accounts\/list\/([^?]+)/)[1];

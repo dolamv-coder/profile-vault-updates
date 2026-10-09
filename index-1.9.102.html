@@ -13159,7 +13159,7 @@ function renderSettingsView(){
           <h2 class="set-title">Accounts to assign</h2>
           <p class="set-lead">Slots set to Use Assigned Account get one of your own store accounts when they reach your Discord channel: its email on the slot's AYCD profile and Shikari row, and email:password in the store's logins file (Pokémon Center has none). Buyers never see which, and each account goes to one slot only.</p>
           <div class="set-actions"><button class="btn" data-act="assign-accounts">${ic("plus")}Send accounts</button><button class="btn" data-act="list-accounts">${ic("ext")}See my list</button><button class="btn" data-act="remove-accounts">${ic("trash")}Remove accounts</button></div>
-          <p class="set-note" style="margin-top:10px">See my list posts a link to your Discord channel: every store's accounts, free or given and to whom (never their passwords). There you can add accounts, change an account's password or email, give one back to your list, or remove it. The link works for 24 hours.</p>
+          <p class="set-note" style="margin-top:10px">See my list posts a link to your Discord channel: every store's accounts, free or given and to whom (never their passwords). There you can add accounts, change an account's password (or its email while it's free), give one back to your list, or remove it. The link works for 24 hours.</p>
         </section>` : ""}
         ${licRead() && DESK ? `<section id="s-oalerts" class="set-sec">${orderAlertsSectionHTML()}</section>` : ""}
         ${CAN_UPDATE ? `<section id="s-updates" class="set-sec">${updatesSectionHTML()}</section>` : ""}
