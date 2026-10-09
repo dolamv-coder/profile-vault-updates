@@ -1,10 +1,10 @@
 {
-  "version": "1.9.103",
-  "url": "index-1.9.103.html",
-  "sha256": "19b80a5ac0de5ac2801ddfdf01b3fd22af03d17f99da23ceef359707bfe1e29a",
-  "signature": "gnAUM58CQ8esONSDNso742OyCMlfxiA9cHZIJJDriSWv/Wch2SBimJieVSnzbSnj7SyZWSB9ugNt+rjENC0OCw==",
+  "version": "1.9.104",
+  "url": "index-1.9.104.html",
+  "sha256": "9c42cc7ded379f1baba69a06951872229283bffee8d967013fd3f8f69d405dd8",
+  "signature": "SGfri81usIQTuMODnk1Bft7Y9c0HuYyty+TThE7zTHOCZP+Hi4vKmUDtxVaIUkVJMqUI+MOwridWmBnOB8O6AA==",
   "minAppVersion": "0",
-  "notes": "Order names show Pokémon and other special characters properly, and orders of the same item share its product picture. To set a picture yourself, select orders and choose Picture, then paste a picture (Ctrl+V), drop one, choose a file, or paste a link; Find it searches Target or Pokémon Center for the product. FAFO also looks again for pictures in your order emails the next time it checks them.",
+  "notes": "Pre-orders no longer show Target's gray shopping bag as the product picture, and another product's photo is no longer taken for an order's: those orders show the store's mark until a real picture comes, from the shipping email or one you set with Picture, and then every order of the item gets it.",
   "installerUrl": "",
-  "publishedAt": "2026-10-09T10:14:03.849Z"
+  "publishedAt": "2026-10-09T16:12:33.456Z"
 }
