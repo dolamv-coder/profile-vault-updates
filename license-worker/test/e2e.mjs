@@ -2064,8 +2064,10 @@ try {
     assert.equal((await send(lsLink.replace(/t=[^&]+/, "t=wrong"), { action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: "x" })).status, 404);
   });
   await test("a free account's email can change; one already on that list, or not an email, is refused", async () => {
-    const rows = dbRows("SELECT store, email, email_norm, key_hash FROM accounts WHERE store = 'target'");
-    const [a, other] = [rows.find((x) => !x.key_hash), rows.find((x) => x.key_hash)];
+    const all = dbRows("SELECT store, email, email_norm, key_hash FROM accounts"), rows = all.filter((x) => x.store === "target");
+    // A free Target account on no other store's list, so its old email is gone from the page once it changes.
+    const [a, other] = [rows.find((x) => !x.key_hash && !all.some((y) => y.store !== "target" && y.email_norm === x.email_norm)), rows.find((x) => x.key_hash)];
+    assert.ok(a && other, "a free Target account and a given one");
     const dup = await page2(await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: other.email.toUpperCase(), password: "" }));
     assert.ok(dup.includes(`<p class="err">${other.email.toUpperCase()} is already on your Target list.</p>`), dup.slice(0, 600));
     const bad = await page2(await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: "not an email", password: "" }));
@@ -2147,12 +2149,13 @@ try {
     // Lines as FAFO's Send accounts writes them, or a spreadsheet exports them: quoted cells, empty inbox columns, a
     // first line naming the columns. A quoted email is never taken as one.
     const csvLines = ['email,password', '"quoted.one@example.com","p:ss"', 'quoted.two@example.com,"p,ss"', 'quoted.three@example.com,"a""b"',
-      'trailing@example.com,pw-t,,', '"bad"@example.com:pw'].join("\r\n");
+      'trailing@example.com,pw-t,,', '"bad"@example.com:pw', 'stray@example.com,my"pass', 'tabbed@example.com\t"p""w"'].join("\r\n");
     const qd = await page2(await send(lsLink, { action: "add", store: "target", accounts: csvLines, password: "" }));
-    assert.ok(qd.includes("<p>Added 4 to your Target list.</p>") && qd.includes(`<p class="err">Line 6 couldn't be read: write each account as email:password.</p>`), qd.slice(0, 900));
-    assert.deepEqual(dbRows("SELECT email, password FROM accounts WHERE store = 'target' AND (email_norm LIKE 'quoted.%' OR email_norm = 'trailing@example.com') ORDER BY email_norm"), [
+    assert.ok(qd.includes("<p>Added 5 to your Target list.</p>") && qd.includes(`<p class="err">Lines 6, 7 couldn't be read: write each account as email:password.</p>`), qd.slice(0, 900));
+    assert.deepEqual(dbRows("SELECT email, password FROM accounts WHERE store = 'target' AND (email_norm LIKE 'quoted.%' OR email_norm IN ('trailing@example.com', 'tabbed@example.com')) ORDER BY email_norm"), [
       { email: "quoted.one@example.com", password: "p:ss" }, { email: "quoted.three@example.com", password: 'a"b' },
-      { email: "quoted.two@example.com", password: "p,ss" }, { email: "trailing@example.com", password: "pw-t" }]);
+      { email: "quoted.two@example.com", password: "p,ss" }, { email: "tabbed@example.com", password: 'p"w' }, { email: "trailing@example.com", password: "pw-t" }]);
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts WHERE email_norm = 'stray@example.com'")[0].n, 0, "a stray quote is reported, not read as another password");
     assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email LIKE '%"%'`)[0].n, 0, "no email with quotes in it");
     const nowhere = await page2(await send(lsLink, { action: "add", store: "nowhere", accounts: "added.five@example.com:pw" }));
     assert.ok(nowhere.includes(`<p class="err">Pick a store to add them to.</p>`));

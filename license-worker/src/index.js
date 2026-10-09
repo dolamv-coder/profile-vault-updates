@@ -1693,9 +1693,37 @@ async function accountListAsk(request, env, ctx, url) {
 
 // The Add box reads lines as FAFO's Send accounts does (parseAccountLines): email:password, email,password as CSV
 // (quoted cells too, as FAFO writes a password with : , or " in it), email:password:inbox email:inbox password (the
-// account's own password is kept), or an email on its own with the box's password for those lines; a first line naming
-// the columns is skipped. Also a tab between email and password. A Pokémon Center account's password is its inbox's.
+// account's own password is kept), or an email on its own with the box's password for those lines. Like FAFO's Import
+// accounts, it skips a first line naming the columns, and it takes a tab between the cells too. A Pokémon Center
+// account's password is its inbox's.
 const LIST_EMAIL = /^[^\s@:,"]+@[^\s@:,"]+\.[^\s@:,"]+$/;
+// A line's cells, split at `sep`: each one either "quoted" (with "" for a quote) or with no quote in it at all. Null for
+// any other line, so a stray quote is reported as a line that couldn't be read, never read as some other password.
+function listCells(line, sep) {
+  const cells = [];
+  for (let i = 0; ;) {
+    while (line[i] === " ") i++;
+    if (line[i] === '"') {
+      let v = "";
+      for (i++; ; i++) {
+        if (i >= line.length) return null;
+        if (line[i] === '"') { if (line[i + 1] === '"') { v += '"'; i++; continue; } i++; break; }
+        v += line[i];
+      }
+      while (line[i] === " ") i++;
+      cells.push(v);
+      if (i >= line.length) return cells;
+      if (line[i] !== sep) return null;
+      i++;
+    } else {
+      const j = line.indexOf(sep, i), v = line.slice(i, j < 0 ? line.length : j);
+      if (v.includes('"')) return null;
+      cells.push(v.trim());
+      if (j < 0) return cells;
+      i = j + 1;
+    }
+  }
+}
 function parseListLines(text, shared) {
   const rows = [], bad = [], bare = [], seen = new Set();
   String(text || "").split(/\r?\n/).forEach((raw, i) => {
@@ -1714,7 +1742,7 @@ function parseListLines(text, shared) {
       }
     }
     if (!a) {
-      const cells = (line.includes("\t") ? line.split("\t") : parseCsv(line)[0] || []).map((c) => c.trim());
+      const cells = listCells(line, line.includes("\t") ? "\t" : ",") || [];
       if (i === 0 && /^e-?mail/i.test(cells[0] || "") && !line.includes("@")) return;
       if (LIST_EMAIL.test(cells[0] || "") && cells[1] && ((!cells[2] && !cells[3]) || (LIST_EMAIL.test(cells[2] || "") && cells[3]))) a = { email: cells[0], password: cells[1] };
     }
@@ -1829,7 +1857,8 @@ async function accountListPage(request, env, url, id) {
       }
     } else {
       const newEmail = get("new_email").trim(), pw = get("password").trim();
-      if (!LIST_EMAIL.test(newEmail) || newEmail.length > 120) return editPage(a, "That isn't an email address.");
+      // Checked only when it changes: one on the list from before may not pass today's check, and still takes a password.
+      if (newEmail !== a.email && (!LIST_EMAIL.test(newEmail) || newEmail.length > 120)) return editPage(a, "That isn't an email address.");
       if (pw.length > 200) return editPage(a, "That password is too long: 200 characters at most.");
       if (/[\r\n]/.test(pw)) return editPage(a, "That password can't have a line break.");
       const norm = newEmail.toLowerCase();
