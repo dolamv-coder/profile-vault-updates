@@ -1990,7 +1990,7 @@ try {
     assert.ok(text.includes(`<p class="who">${own.length} accounts, ${own.filter((a) => !a.key_hash).length} free</p>`), "the total and how many are free");
     for (const st of new Set(rows.map((a) => a.store))) {
       const mine = own.filter((a) => a.store === st), name = { target: "Target", pokemoncenter: "Pokémon Center" }[st] || st;
-      assert.ok(text.includes(`<h3>${name} <span class="count">${mine.filter((a) => !a.key_hash).length} free of ${mine.length}</span></h3>`), "each store's count: " + st);
+      assert.ok(text.includes(`aria-label="Tick every ${name} account"> ${name} <span class="count">${mine.filter((a) => !a.key_hash).length} free of ${mine.length}</span></h3>`), "each store's count: " + st);
     }
     const given = rows.find((a) => a.key_hash && a.sent_at && !String(a.batch || "").startsWith("parked:") && !String(a.offer_id || "").startsWith("reuse:"));
     assert.ok(text.includes(`Given to license …${given.key_last4}${given.profile ? `, ${given.profile}` : ""}, sent `), "a given account says to whom");
@@ -2181,6 +2181,52 @@ try {
     assert.deepEqual(dbRows(`SELECT store, key_hash, batch FROM accounts WHERE email_norm = '${t.email_norm}' ORDER BY store`),
       [{ store: "pokemoncenter", key_hash: null, batch: null }, { store: "target", key_hash: null, batch: null }], "both free");
   });
+  await test("ticked accounts are removed together: it asks first, naming each, then takes them off every store's list", async () => {
+    const page0 = await page2(await view(lsLink, {}));
+    const rows = dbRows("SELECT store, email, email_norm, key_hash, password FROM accounts ORDER BY store, email_norm");
+    for (const a of rows) assert.ok(page0.includes(`name="pick" form="bulk" value="${a.store}|${a.email_norm}"`), "a tick box for each: " + a.email);
+    assert.ok(page0.includes('<form id="bulk" method="post" class="bulk"') && page0.includes('value="ask-many">Remove</button>') && page0.includes("data-copy=\"logins\""), "the bar");
+    for (const a of rows) assert.ok(!page0.includes(a.password), "never a password");
+    const counts = new Map(); rows.forEach((a) => counts.set(a.email_norm, (counts.get(a.email_norm) || 0) + 1));
+    const two = rows.find((a) => counts.get(a.email_norm) > 1);
+    const free = rows.filter((a) => !a.key_hash && counts.get(a.email_norm) === 1).slice(0, 2);
+    assert.ok(two && free.length === 2, "an email on two lists, and two free accounts");
+    const picked = [two, ...free].map((a) => `${a.store}|${a.email_norm}`).concat(["target|nobody.here@example.com"]);
+    const none = await page2(await send(lsLink, { action: "ask-many" }));
+    assert.ok(none.includes(`<p class="err">Tick the accounts to remove first.</p>`), "nothing ticked");
+    const askBody = new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "ask-many" }); picked.forEach((x) => askBody.append("pick", x));
+    const ask = unescape(await (await fetchOnce(lsLink.split("?")[0], { method: "POST", body: askBody })).text());
+    assert.ok(ask.includes("<h2>Remove accounts</h2>") && ask.includes('<p class="who">3 accounts</p>') && ask.includes("1 of the ones ticked isn't on your list any more.")
+      && ask.includes('value="remove">Remove 3 from my list</button>') && ask.includes(">Keep them</button>"), ask.slice(0, 1500));
+    for (const a of [two, ...free]) assert.ok(ask.includes(`<input type="hidden" name="email" value="${a.email_norm}">`) && ask.includes(a.email), "names " + a.email);
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm IN ('${two.email_norm}', '${free[0].email_norm}', '${free[1].email_norm}')`)[0].n, counts.get(two.email_norm) + 2, "asking removes nothing");
+    await view(lsLink, { action: "remove", email: free[0].email_norm });
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${free[0].email_norm}'`)[0].n, 1, "a link (GET) removes nothing");
+    const rmBody = new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "remove" }); [two, ...free].forEach((a) => rmBody.append("email", a.email_norm)); rmBody.append("email", "nobody.here@example.com");
+    const rm = await fetchOnce(lsLink.split("?")[0], { method: "POST", redirect: "manual", body: rmBody }); await rm.text();
+    assert.equal(rm.status, 303);
+    const done = unescape(await (await fetchOnce(new URL(rm.headers.get("location"), lsLink))).text());
+    assert.ok(done.includes("<p>Took 3 accounts off your list. 1 wasn't on it any more.</p>"), done.slice(0, 600));
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm IN ('${two.email_norm}', '${free[0].email_norm}', '${free[1].email_norm}')`)[0].n, 0, "off every store's list");
+    const empty = await page2(await send(lsLink, { action: "remove" }));
+    assert.ok(empty.includes(`<p class="err">Tick the accounts to remove first.</p>`), "Remove with nothing ticked says so");
+    const twice = await fetchOnce(lsLink.split("?")[0], { method: "POST", body: rmBody });
+    assert.ok(unescape(await twice.text()).includes("<p>Those 4 weren't on your list any more.</p>"), "removing them again changes nothing");
+  });
+  await test("Copy email:password answers only a POST with the link's token, in the order ticked, and never goes in the page", async () => {
+    const rows = dbRows("SELECT store, email, email_norm, password FROM accounts WHERE COALESCE(offer_id, '') NOT LIKE 'reuse:%' ORDER BY store, email_norm").slice(0, 3);
+    assert.equal(rows.length, 3);
+    const body = new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "copy" });
+    [rows[2], rows[0], rows[1]].forEach((a) => body.append("pick", `${a.store}|${a.email_norm}`)); body.append("pick", "target|nobody.here@example.com"); body.append("pick", `${rows[0].store}|${rows[0].email_norm}`);
+    const r = await fetchOnce(lsLink.split("?")[0], { method: "POST", body }), d = await r.json();
+    assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store"); assert.equal(r.headers.get("access-control-allow-origin"), null, "no other site can read it");
+    assert.deepEqual(d, { lines: [rows[2], rows[0], rows[1]].map((a) => `${a.email}:${a.password}`), missing: 1 }, "in the order ticked, once each");
+    const wrong = new URLSearchParams(body); wrong.set("t", "wrong-token");
+    const w = await fetchOnce(lsLink.split("?")[0], { method: "POST", body: wrong }), wt = await w.text();
+    assert.equal(w.status, 404); assert.ok(!wt.includes(rows[0].password), "never without the token");
+    const g = await page2(await view(lsLink, { action: "copy", pick: `${rows[0].store}|${rows[0].email_norm}` }));
+    assert.ok(g.includes("<h2>Your list for Use Assigned Account</h2>") && !g.includes(rows[0].password), "a link (GET) shows the list, never a password");
+  });
   await test("the link stops working after 24 hours, and asks are limited to 10 a day per license", async () => {
     const id = lsLink.match(/\/accounts\/list\/([^?]+)/)[1];
     execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", `UPDATE account_lists SET created_at = created_at - 86400001 WHERE id = '${id}'`], { cwd: root, env, stdio: "pipe" });
@@ -2188,6 +2234,7 @@ try {
     assert.equal(r.status, 410); assert.match(html, /This link has expired\. Ask again from FAFO: Settings → Accounts to assign → See my list\./);
     assert.doesNotMatch(html, /@outlook\.com/, "and lists nothing");
     assert.equal((await send(lsLink, { action: "add", store: "target", accounts: "too.late@example.com:pw" })).status, 410, "and changes nothing");
+    assert.equal((await send(lsLink, { action: "copy", pick: "target|too.late@example.com" })).status, 410, "and copies nothing");
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts WHERE email_norm = 'too.late@example.com'")[0].n, 0);
     let n = dbRows(`SELECT COUNT(*) AS n FROM account_lists WHERE key_hash = (SELECT key_hash FROM account_lists WHERE id = '${id}') AND created_at > ${Date.now() - 86400000}`)[0].n;
     while (n < 10) { assert.equal((await askList()).status, 200); n++; }

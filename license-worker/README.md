@@ -432,6 +432,11 @@ list you keep here:
     account, so it's edited there.
   - **Remove** an account: it asks first, saying where it is, then takes it off every store's list it's
     on (one given to a buyer too, so order alerts on it stop reaching them); **Keep it** goes back.
+  - **Tick** accounts to work on several at once (Shift+click ticks every one between, the box by a
+    store's name ticks all of its accounts, and Tick all ticks the whole list). The bar that shows
+    then has **Copy emails** and **Copy email:password** (one per line, in the order shown, onto your
+    clipboard; the passwords come from the worker when you click and never go in the page) and
+    **Remove**, which asks first, naming each one, as Remove does for one.
   - **Add accounts**: pick the store and paste them one per line (`email:password`, or the CSV lines
     FAFO's Send accounts takes, quoted cells too; for Pokémon Center, the email's inbox password). They're on the list at once, with no
     review link. One already on that store's list keeps its password (Edit changes it), and the page
