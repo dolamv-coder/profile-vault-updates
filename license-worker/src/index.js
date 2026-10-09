@@ -57,6 +57,7 @@
 //                              A batch in /submissions then gets one per such slot (see assignAccounts).
 //   POST /accounts/remove      {emails, name} (app 1.9.90+): emails to take off the list, from every store's,
 //                              once the owner confirms it from the review link posted to Discord
+//   POST /accounts/list        {name} (app 1.9.102+): post a link to the owner's list to the channel, to see and edit it
 // Order alerts (app 1.9.69+): buyers hear about orders placed on the accounts they were given.
 //   GET  /alerts/sender        {status}: none | pending | allowed | refused, for this license
 //   POST /alerts/sender        {name}: ask to send order alerts; the owner allows it from the review link
@@ -93,6 +94,8 @@
 //   GET/POST /submissions/review/ID?t=TOKEN  approve or decline a batch of slots (link on its message)
 //   GET/POST /accounts/review/ID?t=TOKEN  add or refuse accounts sent for Use Assigned Account
 //   GET/POST /accounts/removal/ID?t=TOKEN remove accounts from the list, or keep them
+//   GET/POST /accounts/list/ID?t=TOKEN    the list: each store's accounts, free or given (never a password), to edit
+//                              (password, email while free, give back), remove (asks first) or add to; 24 hours
 //   GET/POST /alerts/review/ID?t=TOKEN    allow or refuse a license sending order alerts to buyers
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/applications   every request and decision
@@ -159,6 +162,8 @@ export default {
       if (path.startsWith("/accounts/review/")) return await accountReview(request, env, ctx, url, path.slice("/accounts/review/".length));
       if (path === "/accounts/remove" && request.method === "POST") return await accountRemove(request, env, ctx, url);
       if (path.startsWith("/accounts/removal/")) return await accountRemovalReview(request, env, ctx, url, path.slice("/accounts/removal/".length));
+      if (path === "/accounts/list" && request.method === "POST") return await accountListAsk(request, env, ctx, url);
+      if (path.startsWith("/accounts/list/")) return await accountListPage(request, env, url, path.slice("/accounts/list/".length));
       if (path === "/alerts/sender" && request.method === "GET") return await alertSenderGet(request, env);
       if (path === "/alerts/sender" && request.method === "POST") return await alertSenderPost(request, env, ctx, url);
       if (path.startsWith("/alerts/review/")) return await alertSenderReview(request, env, ctx, url, path.slice("/alerts/review/".length));
@@ -1655,6 +1660,294 @@ async function accountRemovalReview(request, env, ctx, url, id) {
      ${pending ? `<div class="row">${btn("remove", "Remove from my list", "no")}${btn("keep", "Keep them", "ok")}</div>` : ""}`);
 }
 
+// See my list (app 1.9.102+, the owner's request, 2026-10-09): FAFO asks for a link to the list, which goes to the
+// owner's channel like every other review link, so only the owner opens it, whichever licensed FAFO asked. The page reads
+// the list as it is each time it's opened: every store's accounts, free or given (to which license, for which profile,
+// held for a Pokémon Center slot, or reused there from Target), never a password. Remove asks first, then takes the email
+// off every store's list, as Remove accounts does. Edit (the owner's request: "make it to where I can edit the list")
+// changes an account's password, or its email while it's free, and gives one that's been given back to the list
+// (freeAccounts, as /admin/accounts/free does); Add puts accounts on a store's list as the offers' review link does.
+// The link works for 24 hours.
+const ACCOUNT_LISTS_PER_DAY = 10;
+const ACCOUNT_LIST_TTL_MS = 24 * 3600 * 1000;
+async function accountListAsk(request, env, ctx, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  if (!env.DISCORD_WEBHOOK_URL) return json({ error: "the Discord channel isn't set up" }, 503);
+  const text = await request.text();
+  if (text.length > 2000) return json({ error: "too large" }, 413);
+  let b; try { b = JSON.parse(text) || {}; } catch { b = {}; }
+  const now = Date.now();
+  await env.DB.prepare("DELETE FROM account_lists WHERE created_at < ?").bind(now - 7 * 86400000).run();
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM account_lists WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 86400000).first();
+  if (recent && recent.n >= ACCOUNT_LISTS_PER_DAY) return json({ error: "too many tries today" }, 429);
+  const o = { id: randomId(12), key_hash: lic.hash, key_last4: lic.last4, username: lic.username,
+    name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60), view_token: randomId(24), created_at: now };
+  await env.DB.prepare("INSERT INTO account_lists (id, key_hash, key_last4, name, username, view_token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(o.id, o.key_hash, o.key_last4, o.name, o.username, o.view_token, o.created_at).run();
+  const who = [o.name ? `**${md(o.name)}**` : "", o.username ? `@${md(o.username)}` : "", `license …${o.key_last4}`].filter(Boolean).join(" · ");
+  const id = await webhookPost(env, { content: `📋 **Your list for Use Assigned Account**\nAsked by ${who}\n[See or edit the list](${url.origin}/accounts/list/${o.id}?t=${o.view_token}) · the link works for 24 hours` });
+  if (!id) { await env.DB.prepare("DELETE FROM account_lists WHERE id = ?").bind(o.id).run(); return json({ error: "couldn't post to the channel" }, 502); }
+  return json({ status: "sent" });
+}
+
+// The Add box reads lines as FAFO's Send accounts does (parseAccountLines): email:password, email,password as CSV
+// (quoted cells too, as FAFO writes a password with : , or " in it), email:password:inbox email:inbox password (the
+// account's own password is kept), or an email on its own with the box's password for those lines. Like FAFO's Import
+// accounts, it skips a first line naming the columns, and it takes a tab between the cells too. A Pokémon Center
+// account's password is its inbox's.
+const LIST_EMAIL = /^[^\s@:,"]+@[^\s@:,"]+\.[^\s@:,"]+$/;
+// A line's cells, split at `sep`: each one either "quoted" (with "" for a quote) or with no quote in it at all. Null for
+// any other line, so a stray quote is reported as a line that couldn't be read, never read as some other password.
+function listCells(line, sep) {
+  const cells = [];
+  for (let i = 0; ;) {
+    while (line[i] === " ") i++;
+    if (line[i] === '"') {
+      let v = "";
+      for (i++; ; i++) {
+        if (i >= line.length) return null;
+        if (line[i] === '"') { if (line[i + 1] === '"') { v += '"'; i++; continue; } i++; break; }
+        v += line[i];
+      }
+      while (line[i] === " ") i++;
+      cells.push(v);
+      if (i >= line.length) return cells;
+      if (line[i] !== sep) return null;
+      i++;
+    } else {
+      const j = line.indexOf(sep, i), v = line.slice(i, j < 0 ? line.length : j);
+      if (v.includes('"')) return null;
+      cells.push(v.trim());
+      if (j < 0) return cells;
+      i = j + 1;
+    }
+  }
+}
+function parseListLines(text, shared) {
+  const rows = [], bad = [], bare = [], seen = new Set();
+  String(text || "").split(/\r?\n/).forEach((raw, i) => {
+    const line = raw.trim(), n = i + 1;
+    if (!line) return;
+    if (line.length > 600) { bad.push(n); return; }
+    let a = null;
+    const parts = line.split(":");
+    if (LIST_EMAIL.test(line)) { if (!shared) { bare.push(n); return; } a = { email: line, password: shared }; }
+    if (!a && parts.length >= 4 && LIST_EMAIL.test(parts[0].trim())) {
+      for (let k = 2; k < parts.length - 1; k++) {
+        if (!LIST_EMAIL.test(parts[k].trim())) continue;
+        const pw = parts.slice(1, k).join(":");
+        if (pw && parts.slice(k + 1).join(":")) a = { email: parts[0].trim(), password: pw };
+        break;
+      }
+    }
+    if (!a) {
+      const cells = listCells(line, line.includes("\t") ? "\t" : ",") || [];
+      if (i === 0 && /^e-?mail/i.test(cells[0] || "") && !line.includes("@")) return;
+      if (LIST_EMAIL.test(cells[0] || "") && cells[1] && ((!cells[2] && !cells[3]) || (LIST_EMAIL.test(cells[2] || "") && cells[3]))) a = { email: cells[0], password: cells[1] };
+    }
+    if (!a && parts.length === 2 && LIST_EMAIL.test(parts[0].trim()) && parts[1].trim()) a = { email: parts[0].trim(), password: parts[1].trim() };
+    if (!a || a.email.length > 120 || a.password.length > 200 || /[\r\n]/.test(a.password)) { bad.push(n); return; }
+    const k = a.email.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k); rows.push(a);
+  });
+  return { rows, bad, bare };
+}
+const lineList = (ns) => `${ns.length === 1 ? "Line" : "Lines"} ${ns.slice(0, 10).join(", ")}${ns.length > 10 ? ` and ${ns.length - 10} more` : ""}`;
+
+// Views (the list, an account to edit, Remove's question) answer GET or POST; changes only POST. A change is made on
+// the list as it is then, so an account given to a slot meanwhile is never changed as if it were still free.
+async function accountListPage(request, env, url, id) {
+  const o = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM account_lists WHERE id = ?").bind(id).first() : null;
+  let t = url.searchParams.get("t") || "", form = null;
+  if (request.method === "POST") {
+    form = await request.formData().catch(() => null);
+    t = form && String(form.get("t") || "") || t;
+  } else if (request.method !== "GET") {
+    return page(405, "Not allowed", "");
+  }
+  if (!o || !(await sameText(t, o.view_token))) return page(404, "Not found", "This link isn't valid.");
+  const now = Date.now();
+  const until = o.created_at + ACCOUNT_LIST_TTL_MS;
+  if (now > until) return page(410, "Your list", "This link has expired. Ask again from FAFO: Settings → Accounts to assign → See my list.");
+  const post = request.method === "POST";
+  const get = (k) => String((form ? form.get(k) : url.searchParams.get(k)) ?? "");
+  const action = get("action"), store = get("store").slice(0, 64), email = get("email").trim().toLowerCase().slice(0, 200);
+  const when = (x) => new Date(x).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+  const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  const keep = (k, v) => `<input type="hidden" name="${k}" value="${esc(v)}">`;
+  const back = `<p><a class="back" href="${esc(url.pathname)}?t=${esc(encodeURIComponent(t))}">← Back to the list</a></p>`;
+  const isReuse = (a) => String(a.offer_id || "").startsWith("reuse:");
+  const reusedFrom = (a) => accountStoreName(String(a.offer_id).slice("reuse:".length));
+  const status = (a) => !a.key_hash ? "Free"
+    : isReuse(a) ? `Reused from ${esc(reusedFrom(a))} for license …${esc(a.key_last4 || "")}${a.profile ? `, ${esc(a.profile)}` : ""}`
+    : String(a.batch || "").startsWith(PARKED) ? `Held for license …${esc(a.key_last4 || "")}${a.profile ? `, ${esc(a.profile)}` : ""}: its Pokémon Center slot still uses it`
+    : `Given to license …${esc(a.key_last4 || "")}${a.profile ? `, ${esc(a.profile)}` : ""}${a.sent_at ? `, sent ${esc(when(a.sent_at))}` : ", in a batch being sent"}`;
+  const COLS = "store, email, email_norm, key_hash, key_last4, profile, batch, offer_id, sent_at";
+  const one = (st, em) => env.DB.prepare(`SELECT ${COLS} FROM accounts WHERE store = ? AND email_norm = ?`).bind(st, em).first();
+
+  // One account: its email (while it's free) and password, and giving it back to the list once it's given.
+  const editPage = async (a, err) => {
+    const name = accountStoreName(a.store);
+    const head = `${err ? `<p class="err">${esc(err)}</p>` : ""}<p class="who">${esc(a.email)}</p><p class="small">${esc(name)}: ${status(a)}</p>`;
+    if (isReuse(a)) return page(200, "Edit an account", "", `${head}
+      <p class="small">It's your ${esc(reusedFrom(a))} account, used again for this buyer's ${esc(name)} slot, so it follows that one: change it on your ${esc(reusedFrom(a))} list.</p>${back}`);
+    const given = !!a.key_hash;
+    let giveBack = "";
+    if (given) {
+      // The same buyer's rows with this email at other stores: a reuse of it (dropped with it), the owner's own account
+      // there on a slot that checks out with this email too, or one held (parked) for this slot, which comes free with it.
+      const { results: others } = await env.DB.prepare("SELECT store, offer_id, batch FROM accounts WHERE email_norm = ? AND key_hash = ? AND store <> ?")
+        .bind(a.email_norm, a.key_hash, a.store).all();
+      const names = (rs) => rs.map((r) => esc(accountStoreName(r.store))).join(" and ");
+      const reuses = others.filter((r) => r.offer_id === "reuse:" + a.store), own = others.filter((r) => !isReuse(r));
+      const using = own.filter((r) => !String(r.batch || "").startsWith(PARKED)), heldFor = own.filter((r) => String(r.batch || "").startsWith(PARKED));
+      const notes = (reuses.length ? ` Their ${names(reuses)} slot that uses it again loses it too.` : "")
+        + (using.length ? ` Their ${names(using)} slot checks out with this email too, so another buyer's ${esc(name)} slot could get it while they use it.` : "")
+        + (heldFor.length ? ` Their ${names(heldFor)} account with this email, held for this slot, goes back on your ${names(heldFor)} list too.` : "");
+      giveBack = `<h3>Give it back</h3>
+        <p class="small">It goes back on your ${esc(name)} list as free, so the next slot on Use Assigned Account can get it. License …${esc(a.key_last4 || "")} keeps what was posted to your channel, and stops getting order alerts for it.${notes}</p>
+        <form method="post">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="no" type="submit" name="action" value="giveback">Give it back to my list</button></form>`;
+    }
+    return page(200, "Edit an account", "", `${head}
+      <form method="post" class="edit">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}
+        <label>Email<input type="text" inputmode="email" name="new_email" value="${esc(a.email)}" maxlength="120" autocomplete="off" spellcheck="false" required${given ? " readonly" : ""}></label>
+        ${given ? `<p class="hint">It's on a buyer's slot, so its email stays as it was posted. Give it back to your list first to change it.</p>` : ""}
+        <label>New password<input type="text" name="password" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Leave empty to keep it"></label>
+        <p class="hint">${a.store === "pokemoncenter" ? "The email's inbox password: Pokémon Center checks out as a guest with the email." : "The store account's password."} It's never shown here.${given ? " What was posted already doesn't change; a slot sent again gets the new one." : ""}</p>
+        <div class="row"><button class="ok" type="submit" name="action" value="save">Save</button></div>
+      </form>${giveBack}${back}`);
+  };
+
+  let done = "";
+  if (email && (action === "ask" || (action === "remove" && post))) {
+    const { results: rows } = await env.DB.prepare(`SELECT ${COLS} FROM accounts WHERE email_norm = ? ORDER BY store`).bind(email).all();
+    if (!rows.length) done = `${email} isn't on your list any more.`;
+    else if (action === "ask") {
+      const given = rows.some((a) => a.key_hash);
+      return page(200, "Remove an account", "",
+        `<p class="who">${esc(rows[0].email)}</p>
+         <p class="small">${rows.map((a) => `${esc(accountStoreName(a.store))}: ${status(a)}`).join("<br>")}</p>
+         <p class="small">It comes off every store's list it's on, so no more slots get it.${given ? " A buyer who has it stops getting order alerts for it." : ""} Its password goes too, and can't be got back here.</p>
+         <div class="row"><form method="post">${hidden}<input type="hidden" name="email" value="${esc(email)}"><button class="no" type="submit" name="action" value="remove">Remove from my list</button></form>
+         <form method="get" action="${esc(url.pathname)}"><input type="hidden" name="t" value="${esc(t)}"><button class="ok" type="submit">Keep it</button></form></div>`);
+    } else {
+      await env.DB.prepare("DELETE FROM accounts WHERE email_norm = ?").bind(email).run();
+      await sweepParked(env);
+      for (const st of new Set(rows.map((a) => a.store))) await stockCheck(env, st, accountStoreName(st), false);
+      done = `Took ${rows[0].email} off your list.`;
+    }
+  } else if (email && store && (action === "edit" || ((action === "save" || action === "giveback") && post))) {
+    const a = await one(store, email), name = accountStoreName(store);
+    if (!a) done = `${email} isn't on your ${name} list any more.`;
+    else if (action === "edit" || isReuse(a)) return editPage(a, action === "edit" ? "" : `It follows your ${reusedFrom(a)} account: change that one.`);
+    else if (action === "giveback") {
+      if (!a.key_hash) done = `${a.email} is already free on your ${name} list.`;
+      else {
+        const held = `SELECT store FROM accounts WHERE email_norm = ? AND store <> ? AND batch LIKE '${PARKED}%' AND key_hash = ?`;
+        const { results: before } = await env.DB.prepare(held).bind(a.email_norm, a.store, a.key_hash).all();
+        await freeAccounts(env, "store = ? AND email_norm = ?", a.store, a.email_norm);
+        // Every store, as /admin/accounts/free does: freeing it can also free a Target account parked for it (sweepParked).
+        const { results: stores } = await env.DB.prepare("SELECT DISTINCT store FROM accounts").all();
+        for (const x of stores) await stockCheck(env, x.store, accountStoreName(x.store), false);
+        const { results: still } = await env.DB.prepare(held).bind(a.email_norm, a.store, a.key_hash).all();
+        const freed = before.filter((r) => !still.some((x) => x.store === r.store)).map((r) => accountStoreName(r.store));
+        done = `Gave ${a.email} back to your ${name} list. It's free for the next slot.${freed.length ? ` Your ${freed.join(" and ")} account with this email came free too.` : ""}`;
+      }
+    } else {
+      const newEmail = get("new_email").trim(), pw = get("password").trim();
+      // Checked only when it changes: one on the list from before may not pass today's check, and still takes a password.
+      if (newEmail !== a.email && (!LIST_EMAIL.test(newEmail) || newEmail.length > 120)) return editPage(a, "That isn't an email address.");
+      if (pw.length > 200) return editPage(a, "That password is too long: 200 characters at most.");
+      if (/[\r\n]/.test(pw)) return editPage(a, "That password can't have a line break.");
+      const norm = newEmail.toLowerCase();
+      if (newEmail !== a.email) {
+        if (a.key_hash) return editPage(a, "It's on a buyer's slot, so its email can't change. Give it back to your list first.");
+        if (norm !== a.email_norm && await one(a.store, norm)) return editPage(a, `${newEmail} is already on your ${name} list.`);
+        // Only while it's still free: one given to a slot meanwhile keeps the email that slot got.
+        const r = await env.DB.prepare(`UPDATE accounts SET email = ?, email_norm = ?${pw ? ", password = ?" : ""} WHERE store = ? AND email_norm = ? AND key_hash IS NULL AND ${OWN_ACCOUNT}`)
+          .bind(newEmail, norm, ...(pw ? [pw] : []), a.store, a.email_norm).run().catch(() => null);
+        if (!r || !r.meta || !r.meta.changes) return editPage((await one(a.store, a.email_norm)) || a, "It changed meanwhile (given to a slot, or edited). Look again, then try again.");
+        done = `Changed ${a.email} to ${newEmail}${pw ? ", with its new password," : ""} on your ${name} list.`;
+      } else if (pw) {
+        // A reuse of it at another store (same buyer) checks out with it too, so it gets the new password with it.
+        await env.DB.batch([
+          env.DB.prepare(`UPDATE accounts SET password = ? WHERE store = ? AND email_norm = ? AND ${OWN_ACCOUNT}`).bind(pw, a.store, a.email_norm),
+          env.DB.prepare("UPDATE accounts SET password = ? WHERE email_norm = ? AND offer_id = ? AND key_hash IS ?").bind(pw, a.email_norm, "reuse:" + a.store, a.key_hash),
+        ]);
+        done = `Changed the password of ${a.email} on your ${name} list.`;
+      } else done = "Nothing changed.";
+    }
+  }
+
+  // Stores to add to: Target and Pokémon Center (FAFO's store pickers), and any other store already on the list.
+  const { results: listed } = await env.DB.prepare("SELECT DISTINCT store FROM accounts").all();
+  const addStores = [...new Set(["target", "pokemoncenter", ...listed.map((r) => r.store)])];
+  let err = "";
+  if (action === "add" && post) {
+    const st = addStores.includes(store) ? store : "", name = accountStoreName(st);
+    const text = get("accounts");
+    const { rows, bad, bare } = text.length > 400_000 ? { rows: [], bad: [], bare: [] } : parseListLines(text, get("password").trim());
+    if (!st) err = "Pick a store to add them to.";
+    else if (text.length > 400_000 || rows.length > ACCOUNT_OFFER_MAX) err = `That's too many at once: ${ACCOUNT_OFFER_MAX} at most.`;
+    else {
+      let n = 0;
+      for (let i = 0; i < rows.length; i += 100) {
+        const res = await env.DB.batch(rows.slice(i, i + 100).map((a) => env.DB.prepare(
+          // As the review link adds them: a reused Target account on this store's list becomes this one, and stays with its slot.
+          `INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT (store, email_norm) DO UPDATE SET password = excluded.password, added_at = excluded.added_at, offer_id = excluded.offer_id WHERE NOT (${OWN_ACCOUNT})`
+        ).bind(st, a.email, a.email.toLowerCase(), a.password, now, "list:" + o.id)));
+        n += res.reduce((k, r) => k + (r.meta && r.meta.changes || 0), 0);
+      }
+      if (n) await stockCheck(env, st, name, false);
+      const already = rows.length - n;
+      done = rows.length ? `Added ${n} to your ${name} list.${already ? ` ${already} ${already === 1 ? "was" : "were"} already on it, and kept ${already === 1 ? "its" : "their"} password (Edit changes one).` : ""}` : "";
+      err = [bad.length ? `${lineList(bad)} couldn't be read: write each account as email:password.` : "",
+        bare.length ? `${lineList(bare)} ${bare.length === 1 ? "has" : "have"} only an email: add ${bare.length === 1 ? "it" : "them"} again with the password box filled in.` : "",
+        !rows.length && !bad.length && !bare.length ? "Paste the accounts to add, one per line." : ""].filter(Boolean).join(" ");
+    }
+  }
+  // After a change, back to the list by its link (303), with what happened, so reloading the page doesn't send it again.
+  if (post && ["remove", "giveback", "save", "add"].includes(action)) {
+    const q = new URLSearchParams({ t });
+    if (done) q.set("done", done);
+    if (err) q.set("err", err);
+    if (action === "add" && addStores.includes(store)) q.set("store", store);
+    return new Response(null, { status: 303, headers: { location: `${url.pathname}?${q}`, "cache-control": "no-store", "referrer-policy": "no-referrer" } });
+  }
+  if (!action) { done = get("done").slice(0, 600); err = get("err").slice(0, 600); }
+  const { results: all } = await env.DB.prepare(`SELECT ${COLS} FROM accounts ORDER BY store, key_hash IS NOT NULL, email_norm`).all();
+  const byStore = new Map();
+  for (const a of all) { if (!byStore.has(a.store)) byStore.set(a.store, []); byStore.get(a.store).push(a); }
+  const own = (a) => !isReuse(a);
+  const sections = [...byStore].map(([st, rows]) => {
+    const mine = rows.filter(own), free = mine.filter((a) => !a.key_hash).length;
+    return `<h3>${esc(accountStoreName(st))} <span class="count">${free} free of ${mine.length}</span></h3>
+      <table><thead><tr><th>Account</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((a) => `<tr${a.key_hash ? "" : ' class="free"'}>
+        <td class="em">${esc(a.email)}</td><td>${status(a)}</td>
+        <td class="act"><form method="get" action="${esc(url.pathname)}">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="ed" type="submit" name="action" value="edit">Edit</button></form><form method="get" action="${esc(url.pathname)}">${hidden}${keep("email", a.email_norm)}<button class="rm" type="submit" name="action" value="ask">Remove</button></form></td></tr>`).join("")}</tbody></table>`;
+  }).join("");
+  const total = all.filter(own).length;
+  const pick = addStores.includes(store) ? store : "target";
+  const who = [o.name, o.username ? "@" + o.username : "", "license …" + o.key_last4].filter(Boolean).join(" · ");
+  return page(200, "Your list for Use Assigned Account", done,
+    `${err ? `<p class="err">${esc(err)}</p>` : ""}
+     <p class="who">${total ? `${total} account${total === 1 ? "" : "s"}, ${all.filter((a) => own(a) && !a.key_hash).length} free` : "Your list is empty"}</p>
+     <p class="small">Edit sets a new password, or a new email while the account is free. One given to a buyer can be given back to your list from there. <a href="#add">Add accounts</a> is at the end. Changes count at once.</p>
+     ${sections}
+     <h3 id="add">Add accounts</h3>
+     <form method="post" class="edit">${hidden}
+       <label>Store<select name="store">${addStores.map((st) => `<option value="${esc(st)}"${st === pick ? " selected" : ""}>${esc(accountStoreName(st))}</option>`).join("")}</select></label>
+       <label>Accounts<textarea name="accounts" rows="5" spellcheck="false" autocomplete="off" placeholder="One per line: email:password"></textarea></label>
+       <label>Password for lines with only an email<input type="text" name="password" maxlength="200" autocomplete="off" spellcheck="false"></label>
+       <p class="hint">For Pokémon Center, the password is the email's inbox password. One already on that store's list keeps its password: Edit changes it.</p>
+       <div class="row"><button class="ok" type="submit" name="action" value="add">Add to my list</button></div>
+     </form>
+     <p class="small">Passwords are never shown here. Asked by ${esc(who)}; this link works until ${esc(when(until))}.</p>`, true);
+}
+
 // ---- order alerts ----------------------------------------------------------------------
 //
 // Buyers hear about orders placed on the accounts they were given (app 1.9.69+). The owner's Orbit
@@ -2256,7 +2549,7 @@ function json(data, statusCode = 200, headers = {}) {
   return new Response(JSON.stringify(data), { status: statusCode, headers: { "content-type": "application/json", ...CORS, ...headers } });
 }
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-function page(statusCode, title, msg, extra = "") {
+function page(statusCode, title, msg, extra = "", wide = false) {
   return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
 <title>FAFO · ${esc(title)}</title>
@@ -2277,6 +2570,29 @@ function page(statusCode, title, msg, extra = "") {
   button{width:100%;padding:12px;border:0;border-radius:10px;font:600 16px system-ui,sans-serif;cursor:pointer;color:#fff}
   button.ok{background:#1f9d5c} button.no{background:#c4372f}
   button.copy{width:auto;padding:8px 14px;font-size:14px;background:#2a3f7a}
-</style></head><body><main><h1>FAFO</h1><h2>${esc(title)}</h2>${msg ? `<p>${esc(msg)}</p>` : ""}${extra}</main></body></html>`,
+  main.wide{max-width:900px}
+  h3{margin:24px 0 8px;font-size:16px} h3 .count{font-weight:400;color:#b9c6ea;margin-left:6px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{text-align:left;font-weight:600;color:#b9c6ea;padding:6px 8px;border-bottom:1px solid #2a3f7a}
+  td{padding:6px 8px;border-bottom:1px solid #1c2c5c;vertical-align:middle;color:#b9c6ea}
+  td.em{color:#e6ecff;overflow-wrap:anywhere} tr.free td:nth-child(2){color:#5fd39a}
+  td form{margin:0} button.rm{width:auto;padding:6px 12px;font-size:13px;background:transparent;border:1px solid #c4372f;color:#ff8a80}
+  td.act{text-align:right} td.act form{display:inline-block;margin:2px 0 2px 6px}
+  button.ed{width:auto;padding:6px 12px;font-size:13px;background:transparent;border:1px solid #4a9dff;color:#9cc7ff}
+  form.edit label{display:block;margin-top:14px;font-size:14px;color:#b9c6ea}
+  form.edit input,form.edit select,form.edit textarea{display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:10px 12px;border-radius:10px;border:1px solid #2a3f7a;background:#07102b;color:#e6ecff;font:15px system-ui,sans-serif}
+  form.edit textarea{font-family:ui-monospace,Consolas,monospace;min-height:110px;resize:vertical}
+  form.edit input[readonly]{color:#8090b8}
+  .hint{font-size:13px;margin:6px 0 0} .err{color:#ff8a80;font-weight:600} a{color:#9cc7ff} a.back{display:inline-block;margin-top:16px}
+  @media (max-width:560px){
+    main{padding:22px 18px}
+    table thead{display:none}
+    table tr{display:grid;grid-template-columns:1fr auto;column-gap:10px;padding:8px 0;border-bottom:1px solid #1c2c5c}
+    table td{border:0;padding:2px 0}
+    td.em{overflow-wrap:break-word;word-break:break-word}
+    td.act{grid-column:2;grid-row:1 / span 2;align-self:center}
+    td.act form{display:block;margin:4px 0}
+  }
+</style></head><body><main${wide ? ' class="wide"' : ""}><h1>FAFO</h1><h2>${esc(title)}</h2>${msg ? `<p>${esc(msg)}</p>` : ""}${extra}</main></body></html>`,
     { status: statusCode, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
 }

@@ -81,7 +81,7 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   reuses and frees its other accounts), except, since 2026-10-07 (the owner's request), a Target account the same
   profile's Pokémon Center slot in another batch still uses: it stays held, parked (its `batch` becomes `parked:` + the
   declined batch, so it doesn't depend on `submission_reviews`, which is purged after 90 days), until no such slot is left
-  (`sweepParked`, run by `freeBatch`, `freeAccounts` and both `/admin/accounts/free` and `/remove`; `declineEffect` gives
+  (`sweepParked`, run by `freeBatch`, `freeAccounts`, both `/admin/accounts/free` and `/remove`, and See my list's Remove (1.9.102 below); `declineEffect` gives
   the page's counts), so the list can't give it to a second buyer, and the declined Target slot sent again gets it back.
   A slot sent again takes its account to the new batch before posting and back if nothing posted (`takeAccount`,
   `undoMoves`, also when assigning throws), so a decline meanwhile can't free it, and `freeAccounts` drops the reuses of a
@@ -142,6 +142,14 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   `openRemoveAccounts`): `POST /accounts/remove {emails, name}` posts the count and a review link (never the emails,
   D1 `account_removals`), and `/accounts/removal/:id` shows where each email is and removes it from every store's
   list (given ones too) or keeps them; asks expire like offers.
+  From 1.9.102 the owner can see and edit the list from FAFO (Settings → Accounts to assign → See my list,
+  `askAccountList`): `POST /accounts/list {name}` posts a link to the channel (D1 `account_lists`, 10 a day per license),
+  and `/accounts/list/:id?t=…` shows each store's accounts as they are when opened (Free, Given to which license and
+  profile, Held for a Pokémon Center slot, or Reused from Target), never a password, for 24 hours. Views answer GET,
+  changes only POST: Edit sets a new password (a reuse of it gets it too) or, while it's free, a new email; Give it back
+  frees a given one (`freeAccounts`, as `/admin/accounts/free`); Remove asks first, then takes it off every store's list,
+  as Remove accounts does; Add puts pasted `email:password` lines on a store's list at once (`parseListLines`, offer_id
+  `list:<id>`), as the offers' review link adds them, keeping the password of one already there.
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
   once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.
   Never put the accounts or their password in this repo or a page: it's public.
@@ -647,6 +655,13 @@ From 1.9.101 the app says the seller's channel gets **AYCD and Shikari files** (
 per store since 2026-10-09), on the Submit page and window, in Send somewhere else, in the seller's Discord note and on the
 assigned accounts' notes (their email goes in the slot's Shikari row too); the Send accounts window says one person gets
 20 at most (`ASSIGNED_LIMIT` since 2026-10-07; it said 10). Nothing gains a field, so the paused web version is unaffected.
+
+From 1.9.102 Settings → Accounts to assign has **See my list** (the owner's request: "how can I see what's on the list?"),
+between Send accounts and Remove accounts: it asks the license worker to post a link to the owner's channel
+(`askAccountList`; the worker section above), and the page there lists every store's accounts, free or given and to whom,
+never their passwords, where the owner can also add accounts, change one's password or email, give one back or remove
+it (the owner's request: "make it to where I can edit the list"). Nothing gains a field, so the paused web version is
+unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

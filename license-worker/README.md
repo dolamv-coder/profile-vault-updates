@@ -418,6 +418,27 @@ list you keep here:
   buyer's slot goes too, so order alerts on it stop reaching them. **Keep them** removes nothing, and
   an ask nobody decided on expires after a week. Anyone with a license can ask, but only you can
   confirm, so only remove ones you asked for. The `/admin/accounts/remove` command below still works.
+- **Seeing and editing the list** (FAFO 1.9.102+): in your FAFO, **Settings → Accounts to assign → See
+  my list**. Your channel gets a link ("📋 Your list for Use Assigned Account", with who asked), and the
+  page shows every store's accounts as they are when you open it: how many are free, and for each
+  account Free, Given to license …XXXX with the profile and when it was sent, Held for a buyer's Pokémon
+  Center slot, or Reused from Target at Pokémon Center. Passwords are never shown. There you can:
+  - **Edit** an account: a new password (empty keeps it; a Target account's reuse at Pokémon Center gets
+    it too), and its email while it's free. One given to a buyer keeps its email, as it was posted, and
+    has **Give it back to my list**: it's free again for the next slot, the buyer stops getting order
+    alerts for it, and its reuse at Pokémon Center goes with it (as `/admin/accounts/free` does). The
+    page says when the buyer's slot at the other store checks out with the same email, and giving back a
+    Pokémon Center account frees the Target account held for it too. A reuse itself follows its Target
+    account, so it's edited there.
+  - **Remove** an account: it asks first, saying where it is, then takes it off every store's list it's
+    on (one given to a buyer too, so order alerts on it stop reaching them); **Keep it** goes back.
+  - **Add accounts**: pick the store and paste them one per line (`email:password`, or the CSV lines
+    FAFO's Send accounts takes, quoted cells too; for Pokémon Center, the email's inbox password). They're on the list at once, with no
+    review link. One already on that store's list keeps its password (Edit changes it), and the page
+    says which lines it couldn't read.
+
+  The link works for 24 hours, and a license can ask 10 times a day. Anyone with a license can ask, but
+  the link only goes to your channel, so only someone who can read your channel can change the list.
 - **A slot sent again gets back the account it had** (FAFO 1.9.99+, from 2026-10-07): when a buyer
   switches a slot off and sends it again, or sends it again after you declined it, its profile gets the
   account it went out with before, while that's still theirs, instead of a new one. FAFO says which of
@@ -439,8 +460,8 @@ list you keep here:
 - **Pulling** such a slot names the account it had: "Target · Kim Lee · acct7@example.com (assigned
   account)". The account stays with that buyer (it isn't put back on your list), so the slot gets it
   again if it's sent again; free it by hand to give it to someone else.
-- The list, the waiting offers, asks to remove and those alerts are in the `accounts`, `account_offers`,
-  `account_removals` and `account_stock` tables, which
+- The list, the waiting offers, asks to remove, See my list links and those alerts are in the `accounts`,
+  `account_offers`, `account_removals`, `account_lists` and `account_stock` tables, which
   `npm run db:init` (and the deploy Action) adds. With `ADMIN_TOKEN` set:
 
 ```
