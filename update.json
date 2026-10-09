@@ -1,10 +1,10 @@
 {
-  "version": "1.9.101",
-  "url": "index-1.9.101.html",
-  "sha256": "0d67fa6f928d2ef3ea7a9bead924776ec6bc1dcdab6a18d1f7035cc8b451b365",
-  "signature": "g8Dvr18N2wHqo2eeSexcjSo5j7VapJoEWiJBy+yxLoHNbx5OiktO3AG7wv3eCl5qEIEB+sanl4Dxyecx/8tzDg==",
+  "version": "1.9.102",
+  "url": "index-1.9.102.html",
+  "sha256": "f91e707b0d27e0697013f02f3cdfb51d3492ad9056c88816dea429dc984ddc90",
+  "signature": "vOTH7UMYh7LMuntBvkaQkZF3nIiZNON6vgEa4BNR4ngrByDcfMd/0yRx9XvCkHfI2ZDva2FiVx8MZDNsz3h+Bg==",
   "minAppVersion": "0",
-  "notes": "When you send slots to the seller, they now get them as Shikari files too, alongside the AYCD files.",
+  "notes": "Sellers: Settings → Accounts to assign has See my list, which sends you a link to your whole list: every account, free or given and to whom. There you can add accounts, change an account's password (or its email while it's free), give one back to your list, or remove it.",
   "installerUrl": "",
-  "publishedAt": "2026-10-09T02:15:24.680Z"
+  "publishedAt": "2026-10-09T04:53:16.787Z"
 }
