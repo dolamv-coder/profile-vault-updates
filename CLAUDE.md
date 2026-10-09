@@ -685,15 +685,23 @@ without gets the first found), at tidy time and after each sync. Each inbox look
 orders, with Undo, or removes it; its Find links (`pictureFinds`) open the store's search (Target, Pokémon Center) and a
 picture search, where the owner copies the image's address. The order editor has the same Find links and puts a new
 picture on the item's other orders while "Use this picture for the N other orders of the same item too" is ticked. The
-Picture window also takes a picture pasted (Ctrl+V, anywhere while it's open), dropped or chosen as a file (the owner sent
-the products' photos): `pictureFromBlob` makes a WebP copy at most 240 pixels a side (`PIC_SIDE`, smaller if it comes out
-over `PIC_MAX`), kept once in the shared setting `itemPics` (`{id: {data, at}}`, id an FNV hash of it, merged per picture
-like `genDrafts`), and the orders get `image` `"pic:<id>"` (`picRef`), so an item's orders carry one copy and the vault
-stays small to sync. Everything that shows a picture reads it through `orderImageSrc`; the phone's snapshot leaves these
-out (links only), and the order editor shows an empty link box that keeps it unless a link replaces it. `tidyOrders` drops
-a picture no order has pointed at for 30 days (`PIC_KEEP_MS`). Older pages show such an order without its picture (and their
-order editor drops the reference on save). Orders gain no fields and settings gain `itemPics`, so the paused web version is
-unaffected.
+Picture window also takes a picture pasted (Ctrl+V, anywhere while it's open; text, even with a picture beside it as a
+spreadsheet copies, pastes as text), dropped or chosen as a file (the owner sent the products' photos): `pictureFromBlob`
+makes a WebP copy at most 160 pixels a side (`PIC_SIDE`; cards show 44, the success image 96), kept once in the shared
+setting `itemPics` (`{id: {data, at, unusedSince}}`, id an FNV hash of it, merged per picture like `genDrafts`, all of them
+under `PIC_TOTAL` characters since the vault is one localStorage record), and the orders get `image` `"pic:<id>"`
+(`picRef`), so an item's orders carry one copy. Cards show it through one object URL per picture (`picURL`,
+`orderImageSrc`); the success image draws its data; the phone's snapshot leaves it out (links only); and the order editor
+shows an empty link box that keeps it unless a link replaces it. `tidyOrders` notes when nothing points at a picture any
+more (`unusedSince`) and drops it 30 days later (`PIC_KEEP_MS`). A reference to a picture not kept counts as none
+(`hasPicture`). A picture taken off on purpose (Remove picture, or the editor's link cleared) stays off: the order gets
+`noPic`, which sharing and email pictures respect, and setting a picture clears it. Before this device's first merge with
+the online copy (`SYNC.oneStoreDue`) a sync shares pictures only onto the orders it added. Orders picked of different items
+say so, and their other orders start unticked; a link is refused when two were pasted into one (`goodPicLink`), and the
+box starts selected so a paste replaces it. Orders without a number that were deleted, or saved, under a name with codes
+still match the email's row read as text (`keyAsText` in `planOrderImport`). Older pages show an order with a picture
+added without it (and their order editor drops the reference on save). Orders gain `noPic` and settings `itemPics`, so the
+paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

@@ -9859,7 +9859,7 @@ function openOrderEditor(existing){
       ${fieldHTML({name:"trk", label:"Tracking number", value:(o.tracking && o.tracking[0] ? o.tracking[0].number : ""), cls:"c4", placeholder:"1Z…, 9400…, or FedEx number"})}
       ${fieldHTML({name:"image", label:"Image link", value:picRef(o) ? "" : o.image, cls:"c6", placeholder:picRef(o) ? "A picture you added: a link here replaces it" : "https://… (found automatically from order emails)"})}
       ${existing ? `<div class="c6 pic-find">${pictureFindsHTML(o)}</div>` : ""}
-      ${existing && sameItem.length ? `<label class="c6 check"><input type="checkbox" id="o-pic-all" checked> Use this picture for the ${plural(sameItem.length, "other order")} of the same item too</label>` : ""}
+      ${existing && sameItem.length ? `<label class="c6 check"><input type="checkbox" id="o-pic-all"${sameItem.some(x => (x.image && x.image !== o.image) || x.noPic) ? "" : " checked"}> Use this picture for the ${plural(sameItem.length, "other order")} of the same item too</label>` : ""}
       ${fieldHTML({type:"select", name:"trkc", label:"Carrier", options:opt([["auto","Detect automatically"]].concat(Object.keys(CARRIERS).filter(k => k !== "other").map(k => [k, CARRIERS[k].name])).concat([["other","Other"]]), (o.tracking && o.tracking[0] && o.tracking[0].manual) ? o.tracking[0].carrier : "auto"), cls:"c2 keep", showOpt:false})}
     </div></form>`,
     foot:`${existing ? `<button class="btn btn-quiet btn-danger" id="o-del">${ic("trash")}Delete</button><span class="spacer"></span>` : ""}<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="o-save">${existing ? "Save" : "Add order"}</button>`,
@@ -9872,22 +9872,29 @@ function openOrderEditor(existing){
         apply({store:b.dataset.store, storeName:b.dataset.sname || ""});
       });
       const save = () => {
+        // The link box: left as it was keeps the picture (a link, or one added from a file, which shows it empty).
+        const link = val(panel,"image"), shown = existing && !picRef(existing) ? existing.image || "" : "", kept = link === shown;
         const d = {store:store.value, storeName:sName.value, item:val(panel,"item"), orderNo:val(panel,"orderNo"), stage:val(panel,"stage"),
           qty:val(panel,"qty") || "1", total:val(panel,"total"), at:val(panel,"at"), shipTo:val(panel,"shipTo"), shipAddr:val(panel,"shipAddr"), card:val(panel,"card"), arrives:val(panel,"arrives"), buyer:val(panel,"buyer"),
-          image:/^https:\/\//i.test(val(panel,"image")) ? val(panel,"image") : (!val(panel,"image") && existing && picRef(existing) ? existing.image : "")};
+          image:kept && existing ? existing.image || "" : link};
         const tn = val(panel,"trk").toUpperCase().replace(/\s+/g, ""), tc = val(panel,"trkc");
         const rest = (o.tracking || []).slice(1);
         d.tracking = tn ? [{number:tn, carrier: tc === "auto" ? detectCarrier(tn, "") : tc, manual: tc !== "auto"}].concat(rest.filter(x => x.number !== tn)) : rest;
         let bad = false;
         if (!d.item){ setErr(panel,"item","What did you order?"); bad = true; } else setErr(panel,"item","");
         if (!d.at){ setErr(panel,"at","Pick a date."); bad = true; } else setErr(panel,"at","");
+        if (kept || !link) setErr(panel,"image","");
+        else if (!/^https:\/\//i.test(link)){ setErr(panel,"image","Paste a link that starts with https://"); bad = true; }
+        else if (link && !goodPicLink(link)){ setErr(panel,"image","That's two links in one: clear the box and paste just one."); bad = true; }
+        else setErr(panel,"image","");
         if (bad) return;
-        const picAll = $("#o-pic-all", panel), newPic = existing && d.image && d.image !== existing.image;
+        const picAll = $("#o-pic-all", panel), cleared = existing && existing.image && !d.image;
         if (existing) Object.assign(existing, d);
         else { d.id = uid(); d.createdAt = Date.now(); S.orders.push(d); }
-        // A new picture goes on the other orders of the same item too, while that's ticked (1.9.103).
+        if (existing){ if (d.image) delete existing.noPic; else if (cleared) existing.noPic = true; }
+        // The picture goes on the other orders of the same item too, while that's ticked (1.9.103).
         let also = 0;
-        if (newPic && picAll && picAll.checked) sameItem.filter(x => S.orders.includes(x) && pictureKey(x) === pictureKey(existing)).forEach(x => { x.image = d.image; x.updatedAt = Date.now(); also++; });
+        if (existing && d.image && picAll && picAll.checked) sameItem.filter(x => S.orders.includes(x) && pictureKey(x) === pictureKey(existing) && x.image !== d.image).forEach(x => { x.image = d.image; delete x.noPic; x.updatedAt = Date.now(); also++; });
         persist(); render(); toast(existing ? `Order saved${also ? `, and the picture went on ${plural(also, "other order")}` : ""}` : "Order added"); close();
       };
       $("#o-save", panel).addEventListener("click", save);
@@ -9934,9 +9941,13 @@ async function deleteSelectedOrders(){
   persist(); render();
   toast(`Deleted ${plural(gone.length, "order")}`, "", {label:"Undo", run:() => restoreOrders(gone)});
 }
+// An order key with an email's character codes read as text (1.9.103): orders with no number were saved, and deleted, under
+// the name as the email had it ("pok&#233;mon…"), and a sync now reads that name as text.
+const keyAsText = (k) => HTML_ENT.test(k) ? norm(decodeHtml(k)) : k;
 function planOrderImport(rows, opts){
-  const have = new Set((S.orders || []).map(orderKey));
-  const deleted = (opts && opts.skipDeleted && S.deletedOrders) || {};
+  const have = new Set((S.orders || []).flatMap(o => { const k = orderKey(o); return [k, keyAsText(k)]; }));
+  const del0 = (opts && opts.skipDeleted && S.deletedOrders) || {}, deleted = Object.assign({}, del0);
+  for (const k of Object.keys(del0)) if (HTML_ENT.test(k)) deleted[keyAsText(k)] = del0[k];
   const seen = new Set(), add = [], dupes = [];
   rows.forEach(r => {
     const st = STORES.find(x => x[0] !== "other" && x[0] === r.store);
@@ -10470,7 +10481,7 @@ function successData(){
     const k = storeKeyOf(o) + "|" + norm(name);
     let g = groups.get(k);
     if (!g){ g = {name, store:orderStoreLabel(o), o, image:"", qty:0, orders:0}; groups.set(k, g); }
-    g.qty += (+o.qty || 1); g.orders++; if (!g.image && orderImageSrc(o)) g.image = orderImageSrc(o);
+    g.qty += (+o.qty || 1); g.orders++; if (!g.image && hasPicture(o)) g.image = orderImageSrc(o, true);
     stores.set(orderStoreLabel(o), (stores.get(orderStoreLabel(o)) || 0) + 1);
   });
   return {r, orders:list.length, qty:list.reduce((n, o) => n + (+o.qty || 1), 0), total:list.reduce((n, o) => n + orderMoney(o.total), 0),
@@ -10836,7 +10847,7 @@ function pickProductImage(images, item){
 }
 // Give an order a photo (and a real name when it only says "Order") from an email's images.
 function applyEmailImage(o, images){
-  if (!o || o.image) return false;
+  if (!o || hasPicture(o) || o.noPic) return false;
   const im = pickProductImage(images, o.item);
   if (!im) return false;
   o.image = im.src;
@@ -10858,14 +10869,15 @@ function decodeHtml(x){
 const plainText = (x) => decodeHtml(x).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 // Orders of one item at one store share a picture: its store and its name, lowercase, letters and digits only.
 const pictureKey = (o) => !o || !o.item || /^order$/i.test(o.item) || looksLikeCode(o.item) ? "" : storeKeyOf(o) + "|" + plainText(o.item).replace(/[^a-z0-9]+/g, " ").trim();
-// An order without a picture gets the one another order of the same item has (the first found). `only` limits it to
-// those orders. Returns how many got one.
+// An order without a picture gets the one another order of the same item has (the first found), unless its picture was
+// taken off on purpose (noPic: Remove picture, or the editor's link cleared). `only` limits it to those orders. Returns
+// how many got one.
 function shareOrderPictures(only){
   const pics = new Map();
-  (S.orders || []).forEach(o => { const k = o.image && pictureKey(o); if (k && !pics.has(k)) pics.set(k, o.image); });
+  (S.orders || []).forEach(o => { const k = hasPicture(o) && pictureKey(o); if (k && !pics.has(k)) pics.set(k, o.image); });
   let n = 0;
   (S.orders || []).forEach(o => {
-    if (o.image || (only && !only.has(o.id))) return;
+    if (hasPicture(o) || o.noPic || (only && !only.has(o.id))) return;
     const im = pics.get(pictureKey(o));
     if (im){ o.image = im; o.updatedAt = Date.now(); n++; }
   });
@@ -10883,32 +10895,61 @@ function tidyOrders(){
     ORDER_TEXT_FIELDS.forEach(k => { if (typeof o[k] === "string" && HTML_ENT.test(o[k])){ const v = decodeHtml(o[k]); if (v !== o[k]){ o[k] = v; ch = true; } } });
     if (ch){ o.updatedAt = Date.now(); n++; }
   });
+  // Pictures added: one nothing points at is noted as unused from then (so Undo, or another device that still uses it, has
+  // 30 days), and goes after 30 days of that.
   const pics = S.settings.itemPics;
   if (pics && typeof pics === "object"){
-    const used = new Set(S.orders.map(picRef).filter(Boolean)), old = Date.now() - PIC_KEEP_MS, keep = {};
-    for (const [id, x] of Object.entries(pics)) if (x && typeof x.data === "string" && (used.has(id) || !(x.at < old))) keep[id] = x;
-    if (Object.keys(keep).length !== Object.keys(pics).length){ if (Object.keys(keep).length) S.settings.itemPics = keep; else delete S.settings.itemPics; n++; }
+    const used = new Set(S.orders.map(picRef).filter(Boolean)), now = Date.now(), keep = {};
+    let ch = false;
+    for (const [id, x] of Object.entries(pics)){
+      if (!x || typeof x.data !== "string"){ ch = true; continue; }
+      if (used.has(id)){ if (x.unusedSince){ const y = Object.assign({}, x); delete y.unusedSince; keep[id] = y; ch = true; } else keep[id] = x; }
+      else if (!x.unusedSince){ keep[id] = Object.assign({}, x, {unusedSince:now}); ch = true; }
+      else if (now - x.unusedSince > PIC_KEEP_MS) ch = true;
+      else keep[id] = x;
+    }
+    if (ch){ if (Object.keys(keep).length) S.settings.itemPics = keep; else delete S.settings.itemPics; n++; }
   }
   return n + shareOrderPictures();
 }
 // Pictures added from a file or the clipboard (1.9.103, the owner sent the products' photos): a small copy, at most
-// PIC_SIDE pixels a side as WebP, kept once in the shared setting itemPics ({id: {data, at}}, merged per picture like
-// genDrafts), and each order points at it with image "pic:<id>", so an item's 30 orders carry one copy and the vault stays
-// small to sync. tidyOrders drops a picture no order has pointed at for 30 days.
-const PIC_SIDE = 240, PIC_MAX = 60000, PIC_KEEP_MS = 30 * 86400000;
+// PIC_SIDE pixels a side as WebP (cards show 44, the success image 96), kept once in the shared setting itemPics ({id:
+// {data, at, unusedSince}}, merged per picture like genDrafts), and each order points at it with image "pic:<id>", so an
+// item's 30 orders carry one copy and the vault stays small to save and sync; all of them together stay under PIC_TOTAL
+// characters. tidyOrders drops a picture no order has pointed at for 30 days (unusedSince).
+const PIC_SIDE = 160, PIC_MAX = 30000, PIC_TOTAL = 1000000, PIC_KEEP_MS = 30 * 86400000;
 const picRef = (o) => /^pic:[0-9a-f]{8}$/.test(String(o && o.image || "")) ? o.image.slice(4) : "";
-function orderImageSrc(o){
+const picData = (id) => { const p = id && S && S.settings.itemPics && S.settings.itemPics[id]; return p && typeof p.data === "string" && /^data:image\/[a-z+.-]+;base64,/i.test(p.data) ? p.data : ""; };
+// Whether an order shows a picture: a link, or a picture added that's still kept (a reference to one that isn't counts as none).
+const hasPicture = (o) => !!(o && o.image) && (!picRef(o) || !!picData(picRef(o)));
+// One object URL per picture, so the cards don't each carry its data.
+const PIC_URLS = new Map();
+function picURL(id, data){
+  const c = PIC_URLS.get(id);
+  if (c && c.data === data) return c.url;
+  if (c) URL.revokeObjectURL(c.url);
+  try {
+    const m = /^data:([^;]+);base64,(.*)$/.exec(data), b = atob(m[2]), a = new Uint8Array(b.length);
+    for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([a], {type:m[1]}));
+    PIC_URLS.set(id, {data, url});
+    return url;
+  } catch(e){ return data; }
+}
+// The picture to show for an order: its link, or the picture added (`raw`: as data, for drawing the success image).
+function orderImageSrc(o, raw){
   const id = picRef(o);
   if (!id) return o && o.image || "";
-  const p = S && S.settings.itemPics && S.settings.itemPics[id];
-  return p && typeof p.data === "string" && /^data:image\//.test(p.data) ? p.data : "";
+  const d = picData(id);
+  return !d ? "" : raw ? d : picURL(id, d);
 }
+const picsSize = (pics) => Object.values(pics || {}).reduce((n, x) => n + (x && typeof x.data === "string" ? x.data.length : 0), 0);
 const picHash = (x) => { let h = 0x811c9dc5; for (let i = 0; i < x.length; i++){ h ^= x.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, "0"); };
 // A picture file (pasted, dropped or chosen) as a small WebP data link; smaller still if it comes out over PIC_MAX.
 async function pictureFromBlob(blob){
   const bmp = await createImageBitmap(blob);
   try {
-    for (const [side, q] of [[PIC_SIDE, 0.85], [180, 0.72], [120, 0.6]]){
+    for (const [side, q] of [[PIC_SIDE, 0.82], [128, 0.72], [96, 0.6]]){
       const k = Math.min(1, side / Math.max(bmp.width, bmp.height));
       const c = document.createElement("canvas");
       c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
@@ -10927,6 +10968,8 @@ function pictureFinds(o){
   out.push(["Search pictures", `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(orderStoreLabel(o) + " " + item)}`]);
   return out;
 }
+// A picture's link: https, one address (a second pasted onto the first isn't one; ?url=https://… inside one is fine).
+const goodPicLink = (v) => /^https:\/\/\S+$/i.test(v) && !/[^=]https?:\/\//i.test(v.slice(8));
 const pictureFindsHTML = (o) => pictureFinds(o).map(([t, u]) => `<a class="btn btn-sm" href="${esc(u)}" target="_blank" rel="noopener">${ic("search")}${esc(t)}</a>`).join("");
 // Picture for the orders picked (1.9.103, the owner's request: "find and update products pictures"): a picture pasted,
 // dropped or chosen as a file (kept in itemPics), or a link to the product's photo, which goes on them and, ticked to
@@ -10938,22 +10981,24 @@ function openOrderPicture(ids){
   const keys = new Set(picked.map(pictureKey).filter(Boolean));
   const others = (S.orders || []).filter(o => !ids.has(o.id) && keys.has(pictureKey(o)));
   const items = [...new Map(picked.map(o => [pictureKey(o) || o.id, o])).values()];
-  const first = picked.find(o => orderImageSrc(o));
+  const first = picked.find(hasPicture);
+  const several = keys.size > 1;   // orders of different items: the picture goes on them all, so say so
   openLayer({
     title:picked.length === 1 ? "Picture for this order" : `Picture for ${plural(picked.length, "order")}`, dismiss:false,
     body:`<div class="pic-items">${items.slice(0, 3).map(o => `<div class="pic-item">${orderThumb(o)}<div><div class="item-title">${esc(decodeHtml(o.item) || "Order")}</div><div class="item-sub">${esc(orderStoreLabel(o))}</div></div></div>`).join("")}${items.length > 3 ? `<p class="item-sub" style="margin:4px 0 0">and ${plural(items.length - 3, "other item")}</p>` : ""}</div>
       <div class="form-grid" style="margin-top:14px">
         <div class="c6 pic-drop" id="pic-drop" tabindex="0">${ic("image")}<div><strong>Paste a picture here (Ctrl+V)</strong> or drop one, or <button type="button" class="link" id="pic-choose">choose a file</button>.<br><span class="item-sub">On the product's page, right-click its picture and choose Copy image.</span></div><input type="file" id="pic-file" accept="image/*" hidden></div>
-        <div class="field c6" data-field="pic_url"><label for="pic-url">Or a link to the picture</label><input id="pic-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://…" value="${esc(first && !picRef(first) ? first.image : "")}">
+        <div class="field c6" data-field="pic_url"><label for="pic-url">Or a link to the picture</label><input id="pic-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" autofocus placeholder="https://…" value="${esc(first && !picRef(first) ? first.image : "")}">
           <span class="hint">Right-click the product's picture and choose Copy image address, then paste it here.</span><span class="err"></span></div>
         <div class="c6 pic-find">${pictureFindsHTML(items[0])}</div>
         <div class="c6 pic-prev" id="pic-prev" hidden><span class="othumb"><img id="pic-img" alt="" referrerpolicy="no-referrer"></span><span class="item-sub" id="pic-state"></span></div>
-        ${others.length ? `<label class="c6 check"><input type="checkbox" id="pic-all" checked> Also the ${plural(others.length, "other order")} of the same item</label>` : ""}
+        ${several ? `<p class="c6 item-sub" style="margin:0">These are ${keys.size} different items: the picture goes on all ${plural(picked.length, "order")} picked.</p>` : ""}
+        ${others.length ? `<label class="c6 check"><input type="checkbox" id="pic-all"${several ? "" : " checked"}> Also the ${plural(others.length, "other order")} of ${several ? "these items" : "the same item"}</label>` : ""}
       </div>`,
     foot:`${picked.some(o => o.image) ? `<button class="btn btn-quiet btn-danger" id="pic-clear">${ic("trash")}Remove picture</button><span class="spacer"></span>` : ""}<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="pic-save">Save</button>`,
     mount:(panel, close) => {
       const url = $("#pic-url", panel), prev = $("#pic-prev", panel), img = $("#pic-img", panel), state = $("#pic-state", panel), drop = $("#pic-drop", panel);
-      let chosen = "";   // a picture pasted, dropped or chosen, as a small data link
+      let chosen = "", reading = null;   // a picture pasted, dropped or chosen, as a small data link; one still being read
       const preview = (src, loading, done) => {
         prev.hidden = !src;
         if (!src) return;
@@ -10967,17 +11012,26 @@ function openOrderPicture(ids){
         else if (/^https:\/\//i.test(v)) preview(v, "Loading…", "This is the picture.");
         else preview(first && !v ? orderImageSrc(first) : "", "", "The picture now.");
       };
-      const usePicture = async (file) => {
+      const usePicture = (file) => {
         setErr(panel, "pic_url", "");
         if (!file || !/^image\//.test(file.type || "")){ setErr(panel, "pic_url", "That isn't a picture: paste or drop an image."); return; }
-        try { chosen = await pictureFromBlob(file); url.value = ""; show(); }
-        catch(e){ setErr(panel, "pic_url", "FAFO couldn't read that picture. Try another, or paste its link."); }
+        state.textContent = "Reading the picture…"; prev.hidden = false;
+        const r = reading = pictureFromBlob(file).then(d => { if (reading === r){ chosen = d; url.value = ""; show(); } },
+          () => { if (reading === r){ setErr(panel, "pic_url", "FAFO couldn't read that picture. Try another, or paste its link."); show(); } })
+          .finally(() => { if (reading === r) reading = null; });
       };
-      url.addEventListener("input", () => { setErr(panel, "pic_url", ""); if (url.value.trim()) chosen = ""; show(); });
-      // A picture pasted while this window is open (Ctrl+V), wherever the focus is; text pastes into the link box as usual.
+      url.addEventListener("input", () => { setErr(panel, "pic_url", ""); if (url.value.trim()){ chosen = ""; reading = null; } show(); });
+      url.addEventListener("focus", () => url.select(), {once:true});   // selected, so a link pasted replaces the one there
+      // A picture pasted while this window is open (Ctrl+V), wherever the focus is. Text pastes into the link box as usual, even
+      // with a picture beside it (a spreadsheet copies a picture of the cell too); a link pasted elsewhere goes in the box.
       const onPaste = (e) => {
         if (!panel.isConnected) return document.removeEventListener("paste", onPaste, true);
-        const it = [...((e.clipboardData && e.clipboardData.items) || [])].find(i => i.kind === "file" && /^image\//.test(i.type));
+        const cd = e.clipboardData, text = ((cd && cd.getData("text/plain")) || "").trim();
+        if (text){
+          if (e.target === url || /^(input|textarea)$/i.test(e.target && e.target.tagName || "") || !/^https:\/\/\S+$/i.test(text)) return;
+          e.preventDefault(); chosen = ""; reading = null; url.value = text; setErr(panel, "pic_url", ""); show(); return;
+        }
+        const it = [...((cd && cd.items) || [])].find(i => i.kind === "file" && /^image\//.test(i.type));
         if (it){ e.preventDefault(); e.stopPropagation(); usePicture(it.getAsFile()); }
       };
       document.addEventListener("paste", onPaste, true);
@@ -10988,29 +11042,33 @@ function openOrderPicture(ids){
         const f = [...((e.dataTransfer && e.dataTransfer.files) || [])][0];
         if (f) return usePicture(f);
         const link = ((e.dataTransfer && e.dataTransfer.getData("text/uri-list")) || "").split(/\r?\n/).find(l => /^https:\/\//i.test(l));
-        if (link){ chosen = ""; url.value = link; show(); }
+        if (link){ chosen = ""; reading = null; url.value = link; show(); }
       });
       $("#pic-choose", panel).addEventListener("click", () => $("#pic-file", panel).click());
       $("#pic-file", panel).addEventListener("change", (e) => usePicture(e.target.files && e.target.files[0]));
-      show(); setTimeout(() => url.focus(), 30);
+      show();
       const apply = (image) => {
         const all = $("#pic-all", panel), list = picked.concat(all && all.checked ? others : []);
-        const before = list.map(o => [o, o.image || ""]);
-        list.forEach(o => { o.image = image; o.updatedAt = Date.now(); });
+        const before = list.map(o => [o, o.image || "", !!o.noPic]);
+        // Taken off on purpose, so sharing and emails don't put it back (noPic); a picture set clears that.
+        list.forEach(o => { o.image = image; if (image) delete o.noPic; else o.noPic = true; o.updatedAt = Date.now(); });
         persist(); render(); close();
         toast(image ? `Picture set for ${plural(list.length, "order")}` : `Picture removed from ${plural(list.length, "order")}`, "", {label:"Undo", run:() => {
-          before.forEach(([o, v]) => { if (S.orders.includes(o)){ o.image = v; o.updatedAt = Date.now(); } });
+          before.forEach(([o, v, np]) => { if (S.orders.includes(o)){ o.image = v; if (np) o.noPic = true; else delete o.noPic; o.updatedAt = Date.now(); } });
           persist(); render(); toast("Pictures put back");
         }});
       };
-      const save = () => {
+      const save = async () => {
+        if (reading){ const r = reading; await r.catch(() => {}); if (!panel.isConnected) return; }
         if (chosen){
-          const id = picHash(chosen);
-          S.settings.itemPics = Object.assign({}, S.settings.itemPics || {}, {[id]: {data:chosen, at:Date.now()}});
+          const id = picHash(chosen), pics = S.settings.itemPics || {};
+          if (!pics[id] && picsSize(pics) + chosen.length > PIC_TOTAL){ setErr(panel, "pic_url", "FAFO already keeps as many pictures as it can. Use a link for this one; pictures no order uses go after 30 days."); return; }
+          S.settings.itemPics = Object.assign({}, pics, {[id]: {data:chosen, at:Date.now()}});
           return apply("pic:" + id);
         }
         const v = url.value.trim();
         if (!/^https:\/\/\S+$/i.test(v)){ setErr(panel, "pic_url", "Paste a picture, or a link that starts with https://"); return; }
+        if (!goodPicLink(v)){ setErr(panel, "pic_url", "That's two links in one: clear the box and paste just one."); return; }
         apply(v);
       };
       $("#pic-save", panel).addEventListener("click", save);
@@ -11021,7 +11079,7 @@ function openOrderPicture(ids){
   });
 }
 function orderThumb(o){
-  const src = orderImageSrc(o);
+  const src = hasPicture(o) ? orderImageSrc(o) : "";
   if (!src) return storeMark(o);
   return `<span class="othumb"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('is-broken')">${storeMark(o)}</span>`;
 }
@@ -11207,13 +11265,15 @@ async function syncOneInbox(inbox, quiet){
   if (noTo.size) (res.emails || []).forEach(e => { const o = noTo.get(orderNoFrom([e.subject, e.text].join("\n"))), to = o && recipientOf(e.to, inbox.email); if (to) o.sentTo = to; });
   // Product photos for orders that don't have one yet (from confirmations or status emails).
   let pictured = 0;
-  const noImg = new Map((S.orders || []).filter(o => o.orderNo && !o.image).map(o => [String(o.orderNo).toUpperCase(), o]));
+  const noImg = new Map((S.orders || []).filter(o => o.orderNo && !hasPicture(o) && !o.noPic).map(o => [String(o.orderNo).toUpperCase(), o]));
   if (noImg.size) (res.emails || []).forEach(e => {
     if (!e.images || !e.images.length) return;
     const o = noImg.get(orderNoFrom([e.subject, e.text].join("\n")));
     if (o && applyEmailImage(o, e.images)){ pictured++; noImg.delete(String(o.orderNo).toUpperCase()); }
   });
-  pictured += shareOrderPictures();   // and orders of the same item take a picture one of them has
+  // And orders of the same item take a picture one of them has: only the ones just added while this device hasn't merged
+  // with the online copy yet (its copy may be out of date; the merge's tidy shares the rest).
+  pictured += shareOrderPictures(SYNC.oneStoreDue ? new Set(plan.add.map(o => o.id)) : null);
   if (imageEngine){ live.imagesBackfilled = true; live.imagesV103 = true; }
   live.lastSync = Date.now(); live.syncError = "";
   if (statusEngine){ live.statusBackfilled = true; live.trackingBackfilled = true; }
