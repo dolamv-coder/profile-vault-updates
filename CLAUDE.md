@@ -671,6 +671,22 @@ never their passwords, where the owner can also add accounts, change one's passw
 it (the owner's request: "make it to where I can edit the list"). Nothing gains a field, so the paused web version is
 unaffected.
 
+From 1.9.103 order names read as text and orders get pictures more often (the owner's screenshot: Target orders named
+"Pok&#233;mon Trading C…" with the store's mark where the product's picture goes). The desktop app turns an HTML-only
+email into text decoding only `&amp;` and `&nbsp;`, so the page now reads the rest (`decodeHtml`, through a textarea) in
+what each sync hands it (subject, text and the images' alts) before parsing, and `tidyOrders` puts right saved orders'
+`item`, `buyer`, `shipTo` and `shipAddr`; it runs inside `oneStoreRun`, so at the same moments as the one-store pass (at
+unlock, or after the first sync round, and after merges). `pickProductImage` matches words without codes or accents
+(`nameWords`, `plainText`), and takes an image that looks decorative (`DECOR_IMG`, e.g. Target's `fmt=png-alpha`) when its
+alt names the item (2+ words). Orders of one item at one store share a picture (`pictureKey`, `shareOrderPictures`: one
+without gets the first found), at tidy time and after each sync. Each inbox looks again once for pictures
+(`imagesV103`, a per-device inbox field in `SYNC_DEVICE_FIELDS`). **Picture** on the Orders selection bar
+(`openOrderPicture`) sets a link (https only, with a preview) on the orders picked and, ticked to start with, the item's other
+orders, with Undo, or removes it; its Find links (`pictureFinds`) open the store's search (Target, Pokémon Center) and a
+picture search, where the owner copies the image's address. The order editor has the same Find links and puts a new
+picture on the item's other orders while "Use this picture for the N other orders of the same item too" is ticked. Orders
+gain no fields, so the paused web version is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
