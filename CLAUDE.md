@@ -723,8 +723,14 @@ Picture) takes its place on every order of the item. Each inbox looks again once
 one whose alt is cut short (ending in `...` or `…`: Target's "Up next" picks, whose names keep only words the whole set
 shares) and one whose alt names another product: it must have every word of the item's name (a short name like "Delta Reign
 ETB" against the store's full title) or at most one word the item's name lacks (the set's Three-Booster Blister photo isn't
-its Elite Trainer Box's, either way round). An item named by a code has no words to go by. Inboxes gain `imagesV104`, a
-per-device field, and the orders' data doesn't change, so the paused web version is unaffected.
+its Elite Trainer Box's, either way round). An item named by a code has no words to go by. A forward's links are taken off
+an item's line (`dropLinks`): Gmail's plain text puts each product link on a line of its own between the name and `Qty:`,
+which was read as the item (so the order was named `<https://click.oe1.target.com/…>` and, with the rule above, got no
+photo), and Outlook glues it onto the name; `tidyOrders` puts saved names right (one that was only a link is "Order" again).
+Status emails: "arrive today" reads as arriving, and Premium Bandai's "Shipment Delay Notice" no longer reads as shipped.
+These were checked against 30 of the owner's real order emails, run through the desktop's own parser and both pages: the
+only differences from 1.9.103 are these fixes. Inboxes gain `imagesV104`, a per-device field, and the orders' data doesn't
+change otherwise, so the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

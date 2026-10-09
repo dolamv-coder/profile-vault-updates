@@ -9799,7 +9799,7 @@ function parseOrderEmail(text){
   if (qtyIdx > -1){
     // Table-style emails put "SKU ... Qty" on one line, so strip pipes and skip SKU/price lines.
     const before = text.slice(Math.max(0, qtyIdx - 400), qtyIdx).split("\n").map(s => s.replace(/\|/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
-    for (let i = before.length - 1; i >= 0; i--){ const ln = before[i]; if (ln.length > 8 && !/^https?:|order|summary|delivers|shipping|billing|^\$|^sku\b|^price\b/i.test(ln) && !/^[\d\s#:.-]+$/.test(ln)){ item = ln; break; } }
+    for (let i = before.length - 1; i >= 0; i--){ const ln = dropLinks(before[i]); if (ln.length > 8 && !/^https?:|order|summary|delivers|shipping|billing|^\$|^sku\b|^price\b/i.test(ln) && !/^[\d\s#:.-]+$/.test(ln)){ item = ln; break; } }
   }
   if (!item){ const im = text.match(/\n([A-Z][^\n]{10,90}?)\n\s*SKU/i); if (im) item = im[1].trim(); }
   const qty = pick(/\bQty\s*:\s*(\d+)/i) || "1";
@@ -10809,12 +10809,16 @@ function mergeTracking(o, list){
   return added;
 }
 // Product name from a shipping/status email (used to repair orders named after a SKU code).
+// A forward's links in an item's line (1.9.104): Gmail's plain text puts each product link on a line of its own
+// ("<https://click.oe1.target.com/?qs=…>"), which was read as the item, and Outlook glues it onto the name
+// ("…Poster Collection<https://click…>"). Taken off, a line that was only a link is empty.
+function dropLinks(s){ return String(s || "").replace(/\s*<https?:\/\/[^>\s]*>?/gi, " ").replace(/\s+/g, " ").trim(); }
 function itemFromEmailText(text){
   const lines = String(text || "").split("\n").map(s => s.replace(/\|/g, " ").replace(/\[[^\]]*\]\([^)]*\)/g, "").replace(/\s+/g, " ").trim()).filter(Boolean);
   for (let i = 0; i < lines.length; i++){
     if (/^sku\b/i.test(lines[i]) || /\bqty\s*:/i.test(lines[i])){
       for (let j = i - 1; j >= Math.max(0, i - 3); j--){
-        const ln = lines[j].replace(/^\[|\]$/g, "");
+        const ln = dropLinks(lines[j].replace(/^\[|\]$/g, ""));
         if (ln.length > 8 && !/^[\d\s#:.-]+$/.test(ln) && !/order|summary|shipping|billing|details|address|^https?:/i.test(ln)) return ln.slice(0, 120);
       }
     }
@@ -10839,7 +10843,7 @@ const NAME_STOP = new Set(["order","orders","item","items","your","with","from",
 // Words of a name to match on: character codes read, accents off ("Pok&#233;mon" and "Pokémon" both give "pokemon").
 const nameWords = (x) => (plainText(x).match(/[a-z0-9]{4,}/g) || []).filter(w => !NAME_STOP.has(w));
 function pickProductImage(images, item){
-  const words = new Set(looksLikeCode(item) ? [] : nameWords(item));
+  const words = new Set(looksLikeCode(item) ? [] : nameWords(dropLinks(item)));
   let best = null, bestScore = 0;
   (images || []).forEach((im, i) => {
     if (PLACEHOLDER_IMG.test(im.src)) return;
@@ -10915,6 +10919,9 @@ function tidyOrders(){
     let ch = false;
     const k0 = orderKey(o);
     ORDER_TEXT_FIELDS.forEach(k => { if (typeof o[k] === "string" && HTML_ENT.test(o[k])){ const v = decodeHtml(o[k]); if (v !== o[k]){ o[k] = v; ch = true; } } });
+    // A name with a forward's link (1.9.104): the link taken off, and one that was only a link is "Order" again, which a
+    // product photo's alt can name.
+    if (typeof o.item === "string" && /<https?:/i.test(o.item)){ o.item = dropLinks(o.item) || "Order"; ch = true; }
     if (ch){
       o.updatedAt = Date.now(); n++;
       // An order with no number is known by its name: the old one counts as deleted, so a device before 1.9.103, whose email
@@ -11149,8 +11156,9 @@ function statusFromEmail(subject, text){
   if (/cancel(l?ed|lation)|has\s+been\s+cancel|we\s+(had|have)\s+to\s+cancel|couldn'?t\s+be\s+processed/i.test(subj) || /(order|item\(s\)|items?)\s+[^.\n]{0,60}(has|have)\s+been\s+cancel/i.test(head)) return "canceled";
   // "Items have arrived from order #…" (Target) is a delivery notice, not a new order.
   if (/\bdelivered\b|was\s+delivered|has\s+been\s+delivered|ha(ve|s)\s+arrived|\barrived\s+(from|at|to)\b/i.test(subj)) return "delivered";
-  if (/out\s+for\s+delivery|arriv(es|ing)\s+(today|tomorrow)/i.test(subj)) return "arriving";
-  if (/\bshipped\b|has\s+shipped|on\s+(its|the)\s+way|shipping\s+confirm|about\s+to\s+ship|ready\s+to\s+ship|label\s+(has\s+been\s+)?created|shipment/i.test(subj)) return "shipped";
+  if (/out\s+for\s+delivery|arriv(e|es|ing)\s+(today|tomorrow)/i.test(subj)) return "arriving";
+  // "Shipment Delay Notice" (Premium Bandai) says it hasn't shipped (1.9.104).
+  if (/\bshipped\b|has\s+shipped|on\s+(its|the)\s+way|shipping\s+confirm|about\s+to\s+ship|ready\s+to\s+ship|label\s+(has\s+been\s+)?created/i.test(subj) || (/shipment/i.test(subj) && !/\bdelay/i.test(subj))) return "shipped";
   return null;
 }
 /* -- dates from email text -- */
