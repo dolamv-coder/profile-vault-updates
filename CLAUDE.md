@@ -684,8 +684,16 @@ without gets the first found), at tidy time and after each sync. Each inbox look
 (`openOrderPicture`) sets a link (https only, with a preview) on the orders picked and, ticked to start with, the item's other
 orders, with Undo, or removes it; its Find links (`pictureFinds`) open the store's search (Target, Pokémon Center) and a
 picture search, where the owner copies the image's address. The order editor has the same Find links and puts a new
-picture on the item's other orders while "Use this picture for the N other orders of the same item too" is ticked. Orders
-gain no fields, so the paused web version is unaffected.
+picture on the item's other orders while "Use this picture for the N other orders of the same item too" is ticked. The
+Picture window also takes a picture pasted (Ctrl+V, anywhere while it's open), dropped or chosen as a file (the owner sent
+the products' photos): `pictureFromBlob` makes a WebP copy at most 240 pixels a side (`PIC_SIDE`, smaller if it comes out
+over `PIC_MAX`), kept once in the shared setting `itemPics` (`{id: {data, at}}`, id an FNV hash of it, merged per picture
+like `genDrafts`), and the orders get `image` `"pic:<id>"` (`picRef`), so an item's orders carry one copy and the vault
+stays small to sync. Everything that shows a picture reads it through `orderImageSrc`; the phone's snapshot leaves these
+out (links only), and the order editor shows an empty link box that keeps it unless a link replaces it. `tidyOrders` drops
+a picture no order has pointed at for 30 days (`PIC_KEEP_MS`). Older pages show such an order without its picture (and their
+order editor drops the reference on save). Orders gain no fields and settings gain `itemPics`, so the paused web version is
+unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

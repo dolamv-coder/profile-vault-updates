@@ -347,7 +347,9 @@ img,svg{max-width:100%}
 .othumb.is-broken{width:auto;height:auto;background:none}
 .othumb.is-broken img{display:none}
 .pic-items{display:grid;gap:10px}.pic-item{display:flex;align-items:center;gap:12px;min-width:0}.pic-item > div{min-width:0}
-.pic-find{display:flex;flex-wrap:wrap;gap:8px}.pic-prev{display:flex;align-items:center;gap:12px}.pic-prev[hidden]{display:none}
+.pic-find{display:flex;flex-wrap:wrap;gap:8px}
+.pic-drop{display:flex;align-items:center;gap:12px;padding:14px;border:1.5px dashed var(--line-2,rgba(255,255,255,.25));border-radius:12px;color:var(--ink-2);cursor:default}
+.pic-drop svg{width:26px;height:26px;flex:none;color:var(--accent)}.pic-drop strong{color:var(--ink)}.pic-drop.is-over,.pic-drop:focus{border-color:var(--accent);outline:none}.pic-prev{display:flex;align-items:center;gap:12px}.pic-prev[hidden]{display:none}
 .othumb.is-broken .smark{position:static;width:26px;height:26px;border-radius:7px;font-size:calc(11px*var(--fs));box-shadow:none}
 .smark-lg{width:34px;height:34px;font-size:calc(13px*var(--fs));border-radius:9px}
 .ret-pick{display:flex;flex-wrap:wrap;gap:8px}
@@ -9855,7 +9857,7 @@ function openOrderEditor(existing){
       ${fieldHTML({name:"arrives", label:"Arrives", value:o.arrives, cls:"c3"})}
       ${fieldHTML({name:"buyer", label:"Account name", value:o.buyer, cls:"c3"})}
       ${fieldHTML({name:"trk", label:"Tracking number", value:(o.tracking && o.tracking[0] ? o.tracking[0].number : ""), cls:"c4", placeholder:"1Z…, 9400…, or FedEx number"})}
-      ${fieldHTML({name:"image", label:"Image link", value:o.image, cls:"c6", placeholder:"https://… (found automatically from order emails)"})}
+      ${fieldHTML({name:"image", label:"Image link", value:picRef(o) ? "" : o.image, cls:"c6", placeholder:picRef(o) ? "A picture you added: a link here replaces it" : "https://… (found automatically from order emails)"})}
       ${existing ? `<div class="c6 pic-find">${pictureFindsHTML(o)}</div>` : ""}
       ${existing && sameItem.length ? `<label class="c6 check"><input type="checkbox" id="o-pic-all" checked> Use this picture for the ${plural(sameItem.length, "other order")} of the same item too</label>` : ""}
       ${fieldHTML({type:"select", name:"trkc", label:"Carrier", options:opt([["auto","Detect automatically"]].concat(Object.keys(CARRIERS).filter(k => k !== "other").map(k => [k, CARRIERS[k].name])).concat([["other","Other"]]), (o.tracking && o.tracking[0] && o.tracking[0].manual) ? o.tracking[0].carrier : "auto"), cls:"c2 keep", showOpt:false})}
@@ -9872,7 +9874,7 @@ function openOrderEditor(existing){
       const save = () => {
         const d = {store:store.value, storeName:sName.value, item:val(panel,"item"), orderNo:val(panel,"orderNo"), stage:val(panel,"stage"),
           qty:val(panel,"qty") || "1", total:val(panel,"total"), at:val(panel,"at"), shipTo:val(panel,"shipTo"), shipAddr:val(panel,"shipAddr"), card:val(panel,"card"), arrives:val(panel,"arrives"), buyer:val(panel,"buyer"),
-          image:/^https:\/\//i.test(val(panel,"image")) ? val(panel,"image") : ""};
+          image:/^https:\/\//i.test(val(panel,"image")) ? val(panel,"image") : (!val(panel,"image") && existing && picRef(existing) ? existing.image : "")};
         const tn = val(panel,"trk").toUpperCase().replace(/\s+/g, ""), tc = val(panel,"trkc");
         const rest = (o.tracking || []).slice(1);
         d.tracking = tn ? [{number:tn, carrier: tc === "auto" ? detectCarrier(tn, "") : tc, manual: tc !== "auto"}].concat(rest.filter(x => x.number !== tn)) : rest;
@@ -10468,7 +10470,7 @@ function successData(){
     const k = storeKeyOf(o) + "|" + norm(name);
     let g = groups.get(k);
     if (!g){ g = {name, store:orderStoreLabel(o), o, image:"", qty:0, orders:0}; groups.set(k, g); }
-    g.qty += (+o.qty || 1); g.orders++; if (!g.image && o.image) g.image = o.image;
+    g.qty += (+o.qty || 1); g.orders++; if (!g.image && orderImageSrc(o)) g.image = orderImageSrc(o);
     stores.set(orderStoreLabel(o), (stores.get(orderStoreLabel(o)) || 0) + 1);
   });
   return {r, orders:list.length, qty:list.reduce((n, o) => n + (+o.qty || 1), 0), total:list.reduce((n, o) => n + orderMoney(o.total), 0),
@@ -10881,7 +10883,41 @@ function tidyOrders(){
     ORDER_TEXT_FIELDS.forEach(k => { if (typeof o[k] === "string" && HTML_ENT.test(o[k])){ const v = decodeHtml(o[k]); if (v !== o[k]){ o[k] = v; ch = true; } } });
     if (ch){ o.updatedAt = Date.now(); n++; }
   });
+  const pics = S.settings.itemPics;
+  if (pics && typeof pics === "object"){
+    const used = new Set(S.orders.map(picRef).filter(Boolean)), old = Date.now() - PIC_KEEP_MS, keep = {};
+    for (const [id, x] of Object.entries(pics)) if (x && typeof x.data === "string" && (used.has(id) || !(x.at < old))) keep[id] = x;
+    if (Object.keys(keep).length !== Object.keys(pics).length){ if (Object.keys(keep).length) S.settings.itemPics = keep; else delete S.settings.itemPics; n++; }
+  }
   return n + shareOrderPictures();
+}
+// Pictures added from a file or the clipboard (1.9.103, the owner sent the products' photos): a small copy, at most
+// PIC_SIDE pixels a side as WebP, kept once in the shared setting itemPics ({id: {data, at}}, merged per picture like
+// genDrafts), and each order points at it with image "pic:<id>", so an item's 30 orders carry one copy and the vault stays
+// small to sync. tidyOrders drops a picture no order has pointed at for 30 days.
+const PIC_SIDE = 240, PIC_MAX = 60000, PIC_KEEP_MS = 30 * 86400000;
+const picRef = (o) => /^pic:[0-9a-f]{8}$/.test(String(o && o.image || "")) ? o.image.slice(4) : "";
+function orderImageSrc(o){
+  const id = picRef(o);
+  if (!id) return o && o.image || "";
+  const p = S && S.settings.itemPics && S.settings.itemPics[id];
+  return p && typeof p.data === "string" && /^data:image\//.test(p.data) ? p.data : "";
+}
+const picHash = (x) => { let h = 0x811c9dc5; for (let i = 0; i < x.length; i++){ h ^= x.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, "0"); };
+// A picture file (pasted, dropped or chosen) as a small WebP data link; smaller still if it comes out over PIC_MAX.
+async function pictureFromBlob(blob){
+  const bmp = await createImageBitmap(blob);
+  try {
+    for (const [side, q] of [[PIC_SIDE, 0.85], [180, 0.72], [120, 0.6]]){
+      const k = Math.min(1, side / Math.max(bmp.width, bmp.height));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+      c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+      const d = c.toDataURL("image/webp", q);
+      if (/^data:image\/(webp|png);base64,/.test(d) && d.length <= PIC_MAX) return d;
+    }
+  } finally { if (bmp.close) bmp.close(); }
+  throw new Error("too big");
 }
 // Where to find an order's product photo: the store's own search, and a picture search.
 function pictureFinds(o){
@@ -10892,37 +10928,70 @@ function pictureFinds(o){
   return out;
 }
 const pictureFindsHTML = (o) => pictureFinds(o).map(([t, u]) => `<a class="btn btn-sm" href="${esc(u)}" target="_blank" rel="noopener">${ic("search")}${esc(t)}</a>`).join("");
-// Picture for the orders picked (1.9.103, the owner's request: "find and update products pictures"): a link to the
-// product's photo, which goes on them and, ticked to start with, on every other order of the same item. Find opens the
-// product at its store; right-click its picture, Copy image address, and paste it here. Undo puts back what they had.
+// Picture for the orders picked (1.9.103, the owner's request: "find and update products pictures"): a picture pasted,
+// dropped or chosen as a file (kept in itemPics), or a link to the product's photo, which goes on them and, ticked to
+// start with, on every other order of the same item. Find opens the product at its store, to copy its picture or its
+// address. Undo puts back what they had.
 function openOrderPicture(ids){
   const picked = (S.orders || []).filter(o => ids.has(o.id));
   if (!picked.length) return;
   const keys = new Set(picked.map(pictureKey).filter(Boolean));
   const others = (S.orders || []).filter(o => !ids.has(o.id) && keys.has(pictureKey(o)));
   const items = [...new Map(picked.map(o => [pictureKey(o) || o.id, o])).values()];
-  const first = picked.find(o => o.image);
+  const first = picked.find(o => orderImageSrc(o));
   openLayer({
     title:picked.length === 1 ? "Picture for this order" : `Picture for ${plural(picked.length, "order")}`, dismiss:false,
     body:`<div class="pic-items">${items.slice(0, 3).map(o => `<div class="pic-item">${orderThumb(o)}<div><div class="item-title">${esc(decodeHtml(o.item) || "Order")}</div><div class="item-sub">${esc(orderStoreLabel(o))}</div></div></div>`).join("")}${items.length > 3 ? `<p class="item-sub" style="margin:4px 0 0">and ${plural(items.length - 3, "other item")}</p>` : ""}</div>
       <div class="form-grid" style="margin-top:14px">
-        <div class="field c6" data-field="pic_url"><label for="pic-url">Picture link</label><input id="pic-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://…" value="${esc(first ? first.image : "")}">
-          <span class="hint">Find the product, right-click its picture and choose Copy image address, then paste it here.</span><span class="err"></span></div>
+        <div class="c6 pic-drop" id="pic-drop" tabindex="0">${ic("image")}<div><strong>Paste a picture here (Ctrl+V)</strong> or drop one, or <button type="button" class="link" id="pic-choose">choose a file</button>.<br><span class="item-sub">On the product's page, right-click its picture and choose Copy image.</span></div><input type="file" id="pic-file" accept="image/*" hidden></div>
+        <div class="field c6" data-field="pic_url"><label for="pic-url">Or a link to the picture</label><input id="pic-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://…" value="${esc(first && !picRef(first) ? first.image : "")}">
+          <span class="hint">Right-click the product's picture and choose Copy image address, then paste it here.</span><span class="err"></span></div>
         <div class="c6 pic-find">${pictureFindsHTML(items[0])}</div>
         <div class="c6 pic-prev" id="pic-prev" hidden><span class="othumb"><img id="pic-img" alt="" referrerpolicy="no-referrer"></span><span class="item-sub" id="pic-state"></span></div>
         ${others.length ? `<label class="c6 check"><input type="checkbox" id="pic-all" checked> Also the ${plural(others.length, "other order")} of the same item</label>` : ""}
       </div>`,
     foot:`${picked.some(o => o.image) ? `<button class="btn btn-quiet btn-danger" id="pic-clear">${ic("trash")}Remove picture</button><span class="spacer"></span>` : ""}<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="pic-save">Save</button>`,
     mount:(panel, close) => {
-      const url = $("#pic-url", panel), prev = $("#pic-prev", panel), img = $("#pic-img", panel), state = $("#pic-state", panel);
+      const url = $("#pic-url", panel), prev = $("#pic-prev", panel), img = $("#pic-img", panel), state = $("#pic-state", panel), drop = $("#pic-drop", panel);
+      let chosen = "";   // a picture pasted, dropped or chosen, as a small data link
+      const preview = (src, loading, done) => {
+        prev.hidden = !src;
+        if (!src) return;
+        state.textContent = loading; img.onload = () => { state.textContent = done; }; img.onerror = () => { state.textContent = "It doesn't load: copy the image's address, not the page's."; };
+        if (img.getAttribute("src") !== src) img.src = src;
+        else if (img.complete) state.textContent = img.naturalWidth ? done : "It doesn't load: copy the image's address, not the page's.";
+      };
       const show = () => {
         const v = url.value.trim();
-        prev.hidden = !/^https:\/\//i.test(v);
-        if (prev.hidden) return;
-        state.textContent = "Loading…"; img.onload = () => { state.textContent = "This is the picture."; }; img.onerror = () => { state.textContent = "It doesn't load: copy the image's address, not the page's."; };
-        if (img.getAttribute("src") !== v) img.src = v;
+        if (chosen) preview(chosen, "", "Your picture, ready to save.");
+        else if (/^https:\/\//i.test(v)) preview(v, "Loading…", "This is the picture.");
+        else preview(first && !v ? orderImageSrc(first) : "", "", "The picture now.");
       };
-      url.addEventListener("input", () => { setErr(panel, "pic_url", ""); show(); });
+      const usePicture = async (file) => {
+        setErr(panel, "pic_url", "");
+        if (!file || !/^image\//.test(file.type || "")){ setErr(panel, "pic_url", "That isn't a picture: paste or drop an image."); return; }
+        try { chosen = await pictureFromBlob(file); url.value = ""; show(); }
+        catch(e){ setErr(panel, "pic_url", "FAFO couldn't read that picture. Try another, or paste its link."); }
+      };
+      url.addEventListener("input", () => { setErr(panel, "pic_url", ""); if (url.value.trim()) chosen = ""; show(); });
+      // A picture pasted while this window is open (Ctrl+V), wherever the focus is; text pastes into the link box as usual.
+      const onPaste = (e) => {
+        if (!panel.isConnected) return document.removeEventListener("paste", onPaste, true);
+        const it = [...((e.clipboardData && e.clipboardData.items) || [])].find(i => i.kind === "file" && /^image\//.test(i.type));
+        if (it){ e.preventDefault(); e.stopPropagation(); usePicture(it.getAsFile()); }
+      };
+      document.addEventListener("paste", onPaste, true);
+      drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("is-over"); });
+      drop.addEventListener("dragleave", () => drop.classList.remove("is-over"));
+      drop.addEventListener("drop", (e) => {
+        e.preventDefault(); drop.classList.remove("is-over");
+        const f = [...((e.dataTransfer && e.dataTransfer.files) || [])][0];
+        if (f) return usePicture(f);
+        const link = ((e.dataTransfer && e.dataTransfer.getData("text/uri-list")) || "").split(/\r?\n/).find(l => /^https:\/\//i.test(l));
+        if (link){ chosen = ""; url.value = link; show(); }
+      });
+      $("#pic-choose", panel).addEventListener("click", () => $("#pic-file", panel).click());
+      $("#pic-file", panel).addEventListener("change", (e) => usePicture(e.target.files && e.target.files[0]));
       show(); setTimeout(() => url.focus(), 30);
       const apply = (image) => {
         const all = $("#pic-all", panel), list = picked.concat(all && all.checked ? others : []);
@@ -10935,8 +11004,13 @@ function openOrderPicture(ids){
         }});
       };
       const save = () => {
+        if (chosen){
+          const id = picHash(chosen);
+          S.settings.itemPics = Object.assign({}, S.settings.itemPics || {}, {[id]: {data:chosen, at:Date.now()}});
+          return apply("pic:" + id);
+        }
         const v = url.value.trim();
-        if (!/^https:\/\/\S+$/i.test(v)){ setErr(panel, "pic_url", "Paste a link that starts with https://"); return; }
+        if (!/^https:\/\/\S+$/i.test(v)){ setErr(panel, "pic_url", "Paste a picture, or a link that starts with https://"); return; }
         apply(v);
       };
       $("#pic-save", panel).addEventListener("click", save);
@@ -10947,8 +11021,9 @@ function openOrderPicture(ids){
   });
 }
 function orderThumb(o){
-  if (!o.image) return storeMark(o);
-  return `<span class="othumb"><img src="${esc(o.image)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('is-broken')">${storeMark(o)}</span>`;
+  const src = orderImageSrc(o);
+  if (!src) return storeMark(o);
+  return `<span class="othumb"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('is-broken')">${storeMark(o)}</span>`;
 }
 
 /* -- order status updates from email (canceled / shipped / arriving / delivered) -- */
@@ -11286,7 +11361,7 @@ function phoneSnapshot(){
       deliveredApprox:!!(o.dates && o.dates.delivered && o.dates.deliveredSrc === "email"),
       deliveredReported:(o.dates && o.dates.deliveredSrc === "store" && o.dates.deliveredReported) || "",
       attention:(orderStuck(o) || {}).text || (recentlyCanceled(o) ? "Canceled recently" : ""),
-      stage:o.stage || "placed", stageLabel:stageLabel(o.stage || "placed"), image:o.image || "", inbox:o.inbox || "",
+      stage:o.stage || "placed", stageLabel:stageLabel(o.stage || "placed"), image:picRef(o) ? "" : (o.image || ""), inbox:o.inbox || "",
       tracking:(o.tracking || []).map(t => ({carrier:carrierName(t), number:t.number, url:trackUrl(t)}))
     };
   })};
