@@ -716,10 +716,15 @@ shopping bag). Target's pre-order confirmations have no photo of the item, only 
 its alt, which 1.9.103's `DECOR_IMG` rule took for the photo (two alt words matching) and shared to every order of the item.
 `PLACEHOLDER_IMG` (that, and addresses named no-image, image-not-available, image-coming-soon or placeholder) is never picked,
 and an order showing one counts as having no picture (`hasPicture`): its card and the success image show the store's mark,
-the phone gets none, it isn't shared, and a real photo (Target's shipping email has one, another order of the item, or
-Picture) takes its place on every order of the item. `pickProductImage` also skips a photo whose alt names another product
-(at least two alt words, fewer than half of them in the item's name: Target's "Up next" picks), which would otherwise have
-won with the item's own photo a stand-in. The orders' data doesn't change, so the paused web version is unaffected.
+the phone gets none, it isn't shared, the order editor shows no link for it (and doesn't copy it to the item's other orders),
+Picture offers no Remove picture for it, and a real photo (Target's shipping email has one, another order of the item, or
+Picture) takes its place on every order of the item. Each inbox looks again once (`imagesV104`, per device like
+`imagesV103`). With the item's own photo a stand-in, another product's photo would have won, so `pickProductImage` now skips
+one whose alt is cut short (ending in `...` or `…`: Target's "Up next" picks, whose names keep only words the whole set
+shares) and one whose alt names another product: it must have every word of the item's name (a short name like "Delta Reign
+ETB" against the store's full title) or at most one word the item's name lacks (the set's Three-Booster Blister photo isn't
+its Elite Trainer Box's, either way round). An item named by a code has no words to go by. Inboxes gain `imagesV104`, a
+per-device field, and the orders' data doesn't change, so the paused web version is unaffected.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

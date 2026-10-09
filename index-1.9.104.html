@@ -9858,9 +9858,9 @@ function openOrderEditor(existing){
       ${fieldHTML({name:"arrives", label:"Arrives", value:o.arrives, cls:"c3"})}
       ${fieldHTML({name:"buyer", label:"Account name", value:o.buyer, cls:"c3"})}
       ${fieldHTML({name:"trk", label:"Tracking number", value:(o.tracking && o.tracking[0] ? o.tracking[0].number : ""), cls:"c4", placeholder:"1Z…, 9400…, or FedEx number"})}
-      ${fieldHTML({name:"image", label:"Image link", value:picRef(o) ? "" : o.image, cls:"c6", placeholder:picRef(o) ? "A picture you added: a link here replaces it" : "https://… (found automatically from order emails)"})}
+      ${fieldHTML({name:"image", label:"Image link", value:picRef(o) || !hasPicture(o) ? "" : o.image, cls:"c6", placeholder:picRef(o) ? "A picture you added: a link here replaces it" : "https://… (found automatically from order emails)"})}
       ${existing ? `<div class="c6 pic-find">${pictureFindsHTML(o)}</div>` : ""}
-      ${existing && sameItem.length ? `<label class="c6 check"><input type="checkbox" id="o-pic-all"${sameItem.some(x => (x.image && x.image !== o.image) || x.noPic) ? "" : " checked"}> Use this picture for the ${plural(sameItem.length, "other order")} of the same item too</label>` : ""}
+      ${existing && sameItem.length ? `<label class="c6 check"><input type="checkbox" id="o-pic-all"${sameItem.some(x => (hasPicture(x) && x.image !== o.image) || x.noPic) ? "" : " checked"}> Use this picture for the ${plural(sameItem.length, "other order")} of the same item too</label>` : ""}
       ${fieldHTML({type:"select", name:"trkc", label:"Carrier", options:opt([["auto","Detect automatically"]].concat(Object.keys(CARRIERS).filter(k => k !== "other").map(k => [k, CARRIERS[k].name])).concat([["other","Other"]]), (o.tracking && o.tracking[0] && o.tracking[0].manual) ? o.tracking[0].carrier : "auto"), cls:"c2 keep", showOpt:false})}
     </div></form>`,
     foot:`${existing ? `<button class="btn btn-quiet btn-danger" id="o-del">${ic("trash")}Delete</button><span class="spacer"></span>` : ""}<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="o-save">${existing ? "Save" : "Add order"}</button>`,
@@ -9874,7 +9874,7 @@ function openOrderEditor(existing){
       });
       const save = () => {
         // The link box: left as it was keeps the picture (a link, or one added from a file, which shows it empty).
-        const link = val(panel,"image"), shown = existing && !picRef(existing) ? existing.image || "" : "", kept = link === shown;
+        const link = val(panel,"image"), shown = existing && !picRef(existing) && hasPicture(existing) ? existing.image || "" : "", kept = link === shown;
         const d = {store:store.value, storeName:sName.value, item:val(panel,"item"), orderNo:val(panel,"orderNo"), stage:val(panel,"stage"),
           qty:val(panel,"qty") || "1", total:val(panel,"total"), at:val(panel,"at"), shipTo:val(panel,"shipTo"), shipAddr:val(panel,"shipAddr"), card:val(panel,"card"), arrives:val(panel,"arrives"), buyer:val(panel,"buyer"),
           image:kept && existing ? existing.image || "" : link};
@@ -9890,13 +9890,13 @@ function openOrderEditor(existing){
         else if (link && !goodPicLink(link, shown)){ setErr(panel,"image","That's two links in one: clear the box and paste just one."); bad = true; }
         else setErr(panel,"image","");
         if (bad) return;
-        const picAll = $("#o-pic-all", panel), cleared = existing && existing.image && !d.image;
+        const picAll = $("#o-pic-all", panel), cleared = existing && hasPicture(existing) && !d.image;
         if (existing) Object.assign(existing, d);
         else { d.id = uid(); d.createdAt = Date.now(); S.orders.push(d); }
         if (existing){ if (d.image) delete existing.noPic; else if (cleared) existing.noPic = true; }
         // The picture goes on the other orders of the same item too, while that's ticked (1.9.103).
         let also = 0;
-        if (existing && d.image && picAll && picAll.checked) sameItem.filter(x => S.orders.includes(x) && pictureKey(x) === pictureKey(existing) && x.image !== d.image).forEach(x => { x.image = d.image; delete x.noPic; x.updatedAt = Date.now(); also++; });
+        if (existing && hasPicture(d) && picAll && picAll.checked) sameItem.filter(x => S.orders.includes(x) && pictureKey(x) === pictureKey(existing) && x.image !== d.image).forEach(x => { x.image = d.image; delete x.noPic; x.updatedAt = Date.now(); also++; });
         persist(); render(); toast(existing ? `Order saved${also ? `, and the picture went on ${plural(also, "other order")}` : ""}` : "Order added"); close();
       };
       $("#o-save", panel).addEventListener("click", save);
@@ -10839,16 +10839,25 @@ const NAME_STOP = new Set(["order","orders","item","items","your","with","from",
 // Words of a name to match on: character codes read, accents off ("Pok&#233;mon" and "Pokémon" both give "pokemon").
 const nameWords = (x) => (plainText(x).match(/[a-z0-9]{4,}/g) || []).filter(w => !NAME_STOP.has(w));
 function pickProductImage(images, item){
-  const words = new Set(nameWords(item));
+  const words = new Set(looksLikeCode(item) ? [] : nameWords(item));
   let best = null, bestScore = 0;
   (images || []).forEach((im, i) => {
     if (PLACEHOLDER_IMG.test(im.src)) return;
+    // Another product's photo isn't this item's, however product-like its address (1.9.104: with the item's own photo a
+    // stand-in, it would win). Target's "Up next" picks have their names cut short ("Pokemon ME5 Mega Evolution P..."),
+    // which leaves only words the whole set shares, so a cut-off alt is never the item's; the item's own photo has its
+    // full name.
+    if (/(\.\.\.|…)\s*$/.test(im.alt || "")) return;
+    const altWords = [...new Set(nameWords(im.alt))];
     let hits = 0;
-    const altWords = nameWords(im.alt);
     altWords.forEach(w => { if (words.has(w)) hits++; });
-    // A photo whose alt names another product (Target's "Up next" picks, say) isn't this item's, however product-like its
-    // address (1.9.104: with the item's own photo a stand-in, the first suggestion would win).
-    if (words.size && altWords.length >= 2 && hits * 2 < altWords.length) return;
+    // An alt naming a product: it's this item's when it has every word of the item's name (a short name such as "Delta
+    // Reign ETB" against the store's full title) or at most one word the item's name lacks (the same title written a little
+    // differently). A sibling (the set's Three-Booster Blister for its Elite Trainer Box, either way round) has neither.
+    if (words.size && altWords.length >= 2){
+      const altSet = new Set(altWords);
+      if (![...words].every(w => altSet.has(w)) && altWords.length - hits > 1) return;
+    }
     // One that looks like a banner (Target's see-through PNGs, say) still counts when its alt names the item (1.9.103).
     if (DECOR_IMG.test(im.src) && hits < 2) return;
     let s = (PRODUCT_IMG.test(im.src) ? 5 : RETAIL_CDN.test(im.src) ? 1 : 0) + hits;
@@ -11017,7 +11026,7 @@ function openOrderPicture(ids){
         ${several ? `<p class="c6 item-sub" style="margin:0">These are ${keys.size} different items: the picture goes on ${picked.length === 2 ? "both orders" : "all " + plural(picked.length, "order")} picked.</p>` : ""}
         ${others.length ? `<label class="c6 check"><input type="checkbox" id="pic-all"${several ? "" : " checked"}> Also the ${plural(others.length, "other order")} of ${several ? "these items" : "the same item"}</label>` : ""}
       </div>`,
-    foot:`${picked.some(o => o.image) ? `<button class="btn btn-quiet btn-danger" id="pic-clear">${ic("trash")}Remove picture</button><span class="spacer"></span>` : ""}<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="pic-save">Save</button>`,
+    foot:`${picked.some(hasPicture) ? `<button class="btn btn-quiet btn-danger" id="pic-clear">${ic("trash")}Remove picture</button><span class="spacer"></span>` : ""}<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="pic-save">Save</button>`,
     mount:(panel, close) => {
       const url = $("#pic-url", panel), prev = $("#pic-prev", panel), img = $("#pic-img", panel), state = $("#pic-state", panel), drop = $("#pic-drop", panel);
       // A picture pasted, dropped or chosen, as a small data link; one still being read; one that couldn't be read (Save
@@ -11275,8 +11284,9 @@ async function syncOneInbox(inbox, quiet){
   const statusEngine = (window.pvDesktop && window.pvDesktop.version >= 4);
   const imageEngine = (window.pvDesktop && window.pvDesktop.version >= 6);
   // confirmFixed: one 90-day pass to fix order dates/prices from their confirmations.
-  // imagesV103: 1.9.103 looks again, once, for pictures its matching finds now (codes read, see-through product photos).
-  const needsBackfill = !inbox.inboxTagged || !inbox.confirmFixed || !inbox.addrBackfilled || !inbox.datesV4 || (imageEngine && (!inbox.imagesBackfilled || !inbox.imagesV103)) || (statusEngine && (!inbox.statusBackfilled || !inbox.trackingBackfilled));
+  // imagesV103: 1.9.103 looks again, once, for pictures its matching finds now (codes read, see-through product photos);
+  // imagesV104: 1.9.104 once more, for the orders 1.9.103 gave Target's pre-order stand-in (a shipping email may have the photo).
+  const needsBackfill = !inbox.inboxTagged || !inbox.confirmFixed || !inbox.addrBackfilled || !inbox.datesV4 || (imageEngine && (!inbox.imagesBackfilled || !inbox.imagesV103 || !inbox.imagesV104)) || (statusEngine && (!inbox.statusBackfilled || !inbox.trackingBackfilled));
   const days = inbox.lastSync && !needsBackfill ? Math.min(90, Math.ceil((Date.now() - inbox.lastSync) / 86400000) + 3) : 90;
   // Move verified order emails out of Spam first (the sync reads Spam either way).
   let rescued = 0;
@@ -11323,7 +11333,7 @@ async function syncOneInbox(inbox, quiet){
   // And orders of the same item take a picture one of them has: only the ones just added while this device hasn't merged
   // with the online copy yet (its copy may be out of date; the merge's tidy shares the rest).
   pictured += shareOrderPictures(fresh);
-  if (imageEngine && !fresh){ live.imagesBackfilled = true; live.imagesV103 = true; }
+  if (imageEngine && !fresh){ live.imagesBackfilled = true; live.imagesV103 = true; live.imagesV104 = true; }
   live.lastSync = Date.now(); live.syncError = "";
   if (statusEngine){ live.statusBackfilled = true; live.trackingBackfilled = true; }
   live.lastResult = {scanned:res.scanned, found:rows.length, added:plan.add.length, updated:st.total};
@@ -11964,7 +11974,7 @@ const SYNC_SETS = ["slots"];
 const SYNC_VALUES = ["lastBatch","submitTo","submitName","share"];
 const LOCAL_SETTINGS = ["autoLockMin","slotAllow","server","phone","autoClean","rescueSpam","orderPeriod","keepEmails","autoAdd","cleanSpamAll","alertsSince","alerts","_sampleRemoved","_linkedByEmail","_seeded","_storeSplitSeen"];
 // What a device's email sync writes on an inbox about its own progress (syncOneInbox).
-const SYNC_DEVICE_FIELDS = {inboxes:["syncError","lastSync","lastResult","confirmFixed","addrBackfilled","datesV4","inboxTagged","imagesBackfilled","imagesV103","statusBackfilled","trackingBackfilled"]};
+const SYNC_DEVICE_FIELDS = {inboxes:["syncError","lastSync","lastResult","confirmFixed","addrBackfilled","datesV4","inboxTagged","imagesBackfilled","imagesV103","imagesV104","statusBackfilled","trackingBackfilled"]};
 // Short unit-key prefixes, since every unit's key is kept with its hash.
 const SYNC_CODE = {groups:"g", cardGroups:"G", addresses:"a", cards:"c", profiles:"p", logins:"l", inboxes:"i", checkouts:"k", orders:"o", shareOld:"H",
   settings:"s", caps:"x", subs:"u", deletedOrders:"d", slots:"t", lastBatch:"b", submitTo:"T", submitName:"N", share:"h"};
