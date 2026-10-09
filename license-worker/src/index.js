@@ -94,8 +94,10 @@
 //   GET/POST /submissions/review/ID?t=TOKEN  approve or decline a batch of slots (link on its message)
 //   GET/POST /accounts/review/ID?t=TOKEN  add or refuse accounts sent for Use Assigned Account
 //   GET/POST /accounts/removal/ID?t=TOKEN remove accounts from the list, or keep them
-//   GET/POST /accounts/list/ID?t=TOKEN    the list: each store's accounts, free or given (never a password), to edit
-//                              (password, email while free, give back), remove (asks first) or add to; 24 hours
+//   GET/POST /accounts/list/ID?t=TOKEN    the list: each store's accounts, free or given (never a password in the page), to
+//                              edit (password, email while free, give back), remove (asks first) or add to, and to tick
+//                              several to copy or remove; POST action=copy answers the ticked ones' email:password as
+//                              JSON, the only place a password leaves the worker; 24 hours
 //   GET/POST /alerts/review/ID?t=TOKEN    allow or refuse a license sending order alerts to buyers
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/applications   every request and decision
@@ -1669,6 +1671,7 @@ async function accountRemovalReview(request, env, ctx, url, id) {
 // (freeAccounts, as /admin/accounts/free does); Add puts accounts on a store's list as the offers' review link does.
 // The link works for 24 hours.
 const ACCOUNT_LISTS_PER_DAY = 10;
+const LIST_PICK_MAX = 5000;   // accounts ticked on the list that one Copy or Remove takes
 const ACCOUNT_LIST_TTL_MS = 24 * 3600 * 1000;
 async function accountListAsk(request, env, ctx, url) {
   const lic = await slotLicense(request, env);
@@ -1801,14 +1804,19 @@ const LIST_SCRIPT = `<script>
     const seen = new Set(), emails = rows.map((b) => b.dataset.email).filter((e) => !seen.has(e.toLowerCase()) && seen.add(e.toLowerCase()));
     const text = kind === "emails" ? Promise.resolve(emails.join("\\r\\n"))
       : fetch(location.pathname, { method: "POST", body: new URLSearchParams([["t", T], ["action", "copy"], ...rows.map((b) => ["pick", b.value])]) })
-        .then((r) => r.ok ? r.json() : Promise.reject(r.status)).then((d) => { info = d; return d.lines.join("\\r\\n"); });
+        .then((r) => r.ok ? r.json() : Promise.reject(r.status)).then((d) => { info = d; return d.lines.length ? d.lines.join("\\r\\n") : Promise.reject("none"); });
     let ok;
     try { ok = await put(text); }
-    catch (code) { say(code === 410 ? "This link has expired. Ask again from FAFO." : "Couldn't get them from the server. Try again."); return; }
+    catch (code) {
+      say(code === 410 ? "This link has expired. Ask again from FAFO." : code === "none" ? "Nothing copied: " + (rows.length === 1 ? "it isn't" : "those aren't") + " on your list any more."
+        : "Couldn't get them from the server. Try again.");
+      return;
+    }
     if (!ok) { say("Your browser didn't allow copying."); return; }
-    const n = info ? info.lines.length : emails.length, miss = info && info.missing;
+    const n = info ? info.lines.length : emails.length, miss = info && info.missing, over = info && info.over;
     say("Copied " + n + (info ? (n === 1 ? " email:password" : " email:password lines") : (n === 1 ? " email" : " emails")) + "."
-      + (miss ? " " + miss + (miss === 1 ? " isn't" : " aren't") + " on your list any more." : ""));
+      + (miss ? " " + miss + (miss === 1 ? " isn't" : " aren't") + " on your list any more." : "")
+      + (over ? " " + over + " more weren't copied: ${LIST_PICK_MAX} at most at once." : ""));
   };
   document.addEventListener("click", (e) => {
     const t = e.target;
@@ -1827,11 +1835,15 @@ const LIST_SCRIPT = `<script>
       boxes().forEach((b) => { b.checked = false; }); say(""); paint();
     } else if (t.dataset.copy) copy(t.dataset.copy);
   });
+  // Enter on a tick box would send the bar's form, whose only submit button is Remove.
+  document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.name === "pick") e.preventDefault(); });
   paint();
+  addEventListener("pageshow", paint);   // ticks the browser puts back on Back come after the first paint
 })();
 </script>`;
 
-// Views (the list, an account to edit, Remove's question) answer GET or POST; changes only POST. A change is made on
+// Views (the list, an account to edit, Remove's question) answer GET or POST; changes, Copy email:password and Remove for
+// the ticked (ask-many, whose ticks come only in a POST) only POST. A change is made on
 // the list as it is then, so an account given to a slot meanwhile is never changed as if it were still free.
 async function accountListPage(request, env, url, id) {
   const o = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM account_lists WHERE id = ?").bind(id).first() : null;
@@ -1861,10 +1873,12 @@ async function accountListPage(request, env, url, id) {
     : `Given to license …${esc(a.key_last4 || "")}${a.profile ? `, ${esc(a.profile)}` : ""}${a.sent_at ? `, sent ${esc(when(a.sent_at))}` : ", in a batch being sent"}`;
   const COLS = "store, email, email_norm, key_hash, key_last4, profile, batch, offer_id, sent_at";
   const one = (st, em) => env.DB.prepare(`SELECT ${COLS} FROM accounts WHERE store = ? AND email_norm = ?`).bind(st, em).first();
-  // The accounts ticked on the list (each "store|email"), and the emails sent to Remove, at most ACCOUNT_OFFER_MAX each.
-  const picks = () => [...new Set((form ? form.getAll("pick") : []).map(String))].slice(0, ACCOUNT_OFFER_MAX)
-    .map((p) => { const i = p.indexOf("|"); return i > 0 ? { store: p.slice(0, i), email: p.slice(i + 1).trim().toLowerCase() } : null; }).filter(Boolean);
-  const emailsSent = () => [...new Set((form ? form.getAll("email") : [email]).map((e) => String(e).trim().toLowerCase().slice(0, 200)).filter(Boolean))].slice(0, ACCOUNT_OFFER_MAX);
+  // The accounts ticked on the list, each "store email" (split at the last space: an email has none, a typed store's key
+  // can have spaces or a |), from a POST only; at most LIST_PICK_MAX at once, and `over` counts any past that.
+  const tickedAll = [...new Set((form ? form.getAll("pick") : []).map(String))]
+    .map((p) => { const i = p.lastIndexOf(" "); return i > 0 ? { store: p.slice(0, i), email: p.slice(i + 1).trim().toLowerCase() } : null; }).filter(Boolean);
+  const picks = () => tickedAll.slice(0, LIST_PICK_MAX), over = Math.max(0, tickedAll.length - LIST_PICK_MAX);
+  const emailsSent = () => [...new Set((form ? form.getAll("email") : [email]).map((e) => String(e).trim().toLowerCase().slice(0, 200)).filter(Boolean))].slice(0, LIST_PICK_MAX);
   // Each email's rows on every store's list (a batch of reads at a time).
   const rowsOf = async (emails) => {
     const out = new Map();
@@ -1918,7 +1932,7 @@ async function accountListPage(request, env, url, id) {
       for (const r of res) found.push((r.results || [])[0] || null);
     }
     const lines = [...new Set(found.filter(Boolean).map((a) => `${a.email}:${a.password}`))];
-    return new Response(JSON.stringify({ lines, missing: found.filter((a) => !a).length }),
+    return new Response(JSON.stringify({ lines, missing: found.filter((a) => !a).length, over }),
       { headers: { "content-type": "application/json", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
   }
   // Remove for every account ticked: asks first, naming where each one is, as Remove on one account does.
@@ -1928,11 +1942,12 @@ async function accountListPage(request, env, url, id) {
     if (!on.length) err = emails.length ? "Those aren't on your list any more." : "Tick the accounts to remove first.";
     else {
       const given = on.some((e) => rows.get(e).some((a) => a.key_hash)), n = on.length;
-      const line = (e) => { const rs = rows.get(e); return `${esc(rs[0].email)}: ${rs.map((a) => `${esc(accountStoreName(a.store))} ${status(a).replace(/^Free$/, "free")}`).join("; ")}`; };
+      const line = (e) => { const rs = rows.get(e); return `${esc(rs[0].email)} · ${rs.map((a) => `${esc(accountStoreName(a.store))}: ${status(a)}`).join("; ")}`; };
       return page(200, "Remove accounts", "",
         `<p class="who">${n} account${n === 1 ? "" : "s"}</p>
          <p class="small">${on.slice(0, 200).map(line).join("<br>")}${n > 200 ? `<br>and ${n - 200} more` : ""}</p>
          ${gone ? `<p class="small">${gone} of the ones ticked ${gone === 1 ? "isn't" : "aren't"} on your list any more.</p>` : ""}
+         ${over ? `<p class="small err">${over} more ticked ${over === 1 ? "isn't" : "aren't"} included: ${LIST_PICK_MAX} at most at once. Remove ${over === 1 ? "it" : "them"} next.</p>` : ""}
          <p class="small">Each comes off every store's list it's on, so no more slots get ${n === 1 ? "it" : "them"}.${given ? ` A buyer who has one stops getting order alerts for it.` : ""} Their passwords go too, and can't be got back here.</p>
          <div class="row"><form method="post">${hidden}${on.map((e) => keep("email", e)).join("")}<button class="no" type="submit" name="action" value="remove">Remove ${n} from my list</button></form>
          <form method="get" action="${esc(url.pathname)}"><input type="hidden" name="t" value="${esc(t)}"><button class="ok" type="submit">Keep ${n === 1 ? "it" : "them"}</button></form></div>`, true);
@@ -2032,7 +2047,7 @@ async function accountListPage(request, env, url, id) {
     }
   }
   // After a change, back to the list by its link (303), with what happened, so reloading the page doesn't send it again.
-  if (post && ["remove", "giveback", "save", "add"].includes(action)) {
+  if (post && (["remove", "giveback", "save", "add"].includes(action) || (action === "ask-many" && err))) {
     const q = new URLSearchParams({ t });
     if (done) q.set("done", done);
     if (err) q.set("err", err);
@@ -2048,7 +2063,7 @@ async function accountListPage(request, env, url, id) {
     const mine = rows.filter(own), free = mine.filter((a) => !a.key_hash).length;
     return `<h3><input type="checkbox" class="all js" hidden data-store="${esc(st)}" aria-label="Tick every ${esc(accountStoreName(st))} account"> ${esc(accountStoreName(st))} <span class="count">${free} free of ${mine.length}</span></h3>
       <table><thead><tr><th class="pick"></th><th>Account</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((a) => `<tr${a.key_hash ? "" : ' class="free"'}>
-        <td class="pick"><input type="checkbox" name="pick" form="bulk" value="${esc(a.store + "|" + a.email_norm)}" data-store="${esc(a.store)}" data-email="${esc(a.email)}" aria-label="Tick ${esc(a.email)}"></td>
+        <td class="pick"><input type="checkbox" name="pick" form="bulk" value="${esc(a.store + " " + a.email_norm)}" data-store="${esc(a.store)}" data-email="${esc(a.email)}" aria-label="Tick ${esc(a.email)}"></td>
         <td class="em">${esc(a.email)}</td><td>${status(a)}</td>
         <td class="act"><form method="get" action="${esc(url.pathname)}">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="ed" type="submit" name="action" value="edit">Edit</button></form><form method="get" action="${esc(url.pathname)}">${hidden}${keep("email", a.email_norm)}<button class="rm" type="submit" name="action" value="ask">Remove</button></form></td></tr>`).join("")}</tbody></table>`;
   }).join("");

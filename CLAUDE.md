@@ -150,10 +150,11 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   frees a given one (`freeAccounts`, as `/admin/accounts/free`); Remove asks first, then takes it off every store's list,
   as Remove accounts does; Add puts pasted `email:password` lines on a store's list at once (`parseListLines`, offer_id
   `list:<id>`), as the offers' review link adds them, keeping the password of one already there. Since 2026-10-09 (the
-  owner's request: "enable bulk edit to delete or copy quicker") each account has a tick (`pick`, `store|email`; Shift+click
-  for a run, a store's box, Tick all; `LIST_SCRIPT`), and the bar copies the ticked accounts' emails, or email:password
-  (fetched by POST `action=copy`, JSON with no CORS, never in the page), CRLF in the order shown, or removes them
-  (`ask-many`, then `remove` with several `email`s).
+  owner's request: "enable bulk edit to delete or copy quicker") each account has a tick (`pick`, `store email`, split at
+  the last space since a typed store's key can have spaces or a `|`; Shift+click for a run, a store's box, Tick all;
+  `LIST_SCRIPT`), and the bar copies the ticked accounts' emails, or email:password (fetched by POST `action=copy`, JSON
+  with no CORS, never in the page), CRLF in the order shown, or removes them (`ask-many`, then `remove` with several
+  `email`s), up to `LIST_PICK_MAX` (5000) at once, saying how many past that it left out.
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
   once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.
   Never put the accounts or their password in this repo or a page: it's public.

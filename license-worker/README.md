@@ -436,7 +436,8 @@ list you keep here:
     store's name ticks all of its accounts, and Tick all ticks the whole list). The bar that shows
     then has **Copy emails** and **Copy email:password** (one per line, in the order shown, onto your
     clipboard; the passwords come from the worker when you click and never go in the page) and
-    **Remove**, which asks first, naming each one, as Remove does for one.
+    **Remove**, which asks first, naming each one, as Remove does for one. One Copy or Remove takes up
+    to 5000; past that, it says how many it left out.
   - **Add accounts**: pick the store and paste them one per line (`email:password`, or the CSV lines
     FAFO's Send accounts takes, quoted cells too; for Pokémon Center, the email's inbox password). They're on the list at once, with no
     review link. One already on that store's list keeps its password (Edit changes it), and the page

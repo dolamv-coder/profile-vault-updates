@@ -1955,7 +1955,7 @@ try {
   const send = async (link, body) => { const r = await listPost(link, body); const text = await r.text(); return { status: r.status, text: async () => text }; };
   const page2 = async (r) => unescape(await r.text());
   const listPost = (link, body) => fetchOnce(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), ...body }) });
-  const askList = async (key = ivanKey) => { const r = await slots("/accounts/list", key, { name: "Owner" }); return { status: r.status, body: await r.json(), m: webhookPosts.at(-1) }; };
+  const askList = async (key = ivanKey) => { const r = await fetchOnce(BASE + "/accounts/list", { method: "POST", headers: { authorization: "Bearer " + key, "content-type": "application/json" }, body: JSON.stringify({ name: "Owner" }) }); return { status: r.status, body: await r.json(), m: webhookPosts.at(-1) }; };
   const unescape = (h) => h.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
   const sqlRun = (cmd) => execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", cmd], { cwd: root, env, stdio: "pipe" });
   // A buyer's Pokémon Center slot that got their Target account again, as reuseAccount keeps it (made if there's none).
@@ -2184,21 +2184,24 @@ try {
   await test("ticked accounts are removed together: it asks first, naming each, then takes them off every store's list", async () => {
     const page0 = await page2(await view(lsLink, {}));
     const rows = dbRows("SELECT store, email, email_norm, key_hash, password FROM accounts ORDER BY store, email_norm");
-    for (const a of rows) assert.ok(page0.includes(`name="pick" form="bulk" value="${a.store}|${a.email_norm}"`), "a tick box for each: " + a.email);
+    for (const a of rows) assert.ok(page0.includes(`name="pick" form="bulk" value="${a.store} ${a.email_norm}"`), "a tick box for each: " + a.email);
     assert.ok(page0.includes('<form id="bulk" method="post" class="bulk"') && page0.includes('value="ask-many">Remove</button>') && page0.includes("data-copy=\"logins\""), "the bar");
     for (const a of rows) assert.ok(!page0.includes(a.password), "never a password");
     const counts = new Map(); rows.forEach((a) => counts.set(a.email_norm, (counts.get(a.email_norm) || 0) + 1));
     const two = rows.find((a) => counts.get(a.email_norm) > 1);
     const free = rows.filter((a) => !a.key_hash && counts.get(a.email_norm) === 1).slice(0, 2);
     assert.ok(two && free.length === 2, "an email on two lists, and two free accounts");
-    const picked = [two, ...free].map((a) => `${a.store}|${a.email_norm}`).concat(["target|nobody.here@example.com"]);
+    const picked = [two, ...free].map((a) => `${a.store} ${a.email_norm}`).concat(["target nobody.here@example.com"]);
+    const noneRaw = await sendRaw(lsLink, { action: "ask-many" });
+    assert.equal(noneRaw.status, 303, "nothing ticked goes back to the list by its link");
     const none = await page2(await send(lsLink, { action: "ask-many" }));
     assert.ok(none.includes(`<p class="err">Tick the accounts to remove first.</p>`), "nothing ticked");
     const askBody = new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "ask-many" }); picked.forEach((x) => askBody.append("pick", x));
     const ask = unescape(await (await fetchOnce(lsLink.split("?")[0], { method: "POST", body: askBody })).text());
     assert.ok(ask.includes("<h2>Remove accounts</h2>") && ask.includes('<p class="who">3 accounts</p>') && ask.includes("1 of the ones ticked isn't on your list any more.")
       && ask.includes('value="remove">Remove 3 from my list</button>') && ask.includes(">Keep them</button>"), ask.slice(0, 1500));
-    for (const a of [two, ...free]) assert.ok(ask.includes(`<input type="hidden" name="email" value="${a.email_norm}">`) && ask.includes(a.email), "names " + a.email);
+    for (const a of [two, ...free]) assert.ok(ask.includes(`<input type="hidden" name="email" value="${a.email_norm}">`) && ask.includes(`${a.email} · `), "names " + a.email);
+    assert.ok(ask.includes(`${free[0].email} · ${{ target: "Target", pokemoncenter: "Pokémon Center" }[free[0].store]}: Free`), "and says where each one is", ask.slice(0, 1500));
     assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm IN ('${two.email_norm}', '${free[0].email_norm}', '${free[1].email_norm}')`)[0].n, counts.get(two.email_norm) + 2, "asking removes nothing");
     await view(lsLink, { action: "remove", email: free[0].email_norm });
     assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${free[0].email_norm}'`)[0].n, 1, "a link (GET) removes nothing");
@@ -2217,15 +2220,39 @@ try {
     const rows = dbRows("SELECT store, email, email_norm, password FROM accounts WHERE COALESCE(offer_id, '') NOT LIKE 'reuse:%' ORDER BY store, email_norm").slice(0, 3);
     assert.equal(rows.length, 3);
     const body = new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "copy" });
-    [rows[2], rows[0], rows[1]].forEach((a) => body.append("pick", `${a.store}|${a.email_norm}`)); body.append("pick", "target|nobody.here@example.com"); body.append("pick", `${rows[0].store}|${rows[0].email_norm}`);
+    [rows[2], rows[0], rows[1]].forEach((a) => body.append("pick", `${a.store} ${a.email_norm}`)); body.append("pick", "target nobody.here@example.com"); body.append("pick", `${rows[0].store} ${rows[0].email_norm}`);
     const r = await fetchOnce(lsLink.split("?")[0], { method: "POST", body }), d = await r.json();
     assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store"); assert.equal(r.headers.get("access-control-allow-origin"), null, "no other site can read it");
-    assert.deepEqual(d, { lines: [rows[2], rows[0], rows[1]].map((a) => `${a.email}:${a.password}`), missing: 1 }, "in the order ticked, once each");
+    assert.deepEqual(d, { lines: [rows[2], rows[0], rows[1]].map((a) => `${a.email}:${a.password}`), missing: 1, over: 0 }, "in the order ticked, once each");
     const wrong = new URLSearchParams(body); wrong.set("t", "wrong-token");
     const w = await fetchOnce(lsLink.split("?")[0], { method: "POST", body: wrong }), wt = await w.text();
     assert.equal(w.status, 404); assert.ok(!wt.includes(rows[0].password), "never without the token");
-    const g = await page2(await view(lsLink, { action: "copy", pick: `${rows[0].store}|${rows[0].email_norm}` }));
+    const g = await page2(await view(lsLink, { action: "copy", pick: `${rows[0].store} ${rows[0].email_norm}` }));
     assert.ok(g.includes("<h2>Your list for Use Assigned Account</h2>") && !g.includes(rows[0].password), "a link (GET) shows the list, never a password");
+  });
+  await test("ticks work on a typed store whose name has a | or spaces, and past 5000 ticked the page says how many it left out", async () => {
+    sqlRun(`INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES ('other:a|b c', 'Typed.One@example.com', 'typed.one@example.com', 'typed-pw', 1, 'x')`);
+    const page1 = await page2(await view(lsLink, {}));
+    assert.ok(page1.includes('value="other:a|b c typed.one@example.com"'), "its tick");
+    const one = new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "copy" }); one.append("pick", "other:a|b c typed.one@example.com");
+    assert.deepEqual(await (await fetchOnce(lsLink.split("?")[0], { method: "POST", body: one })).json(), { lines: ["Typed.One@example.com:typed-pw"], missing: 0, over: 0 });
+    // 5003 ticked: Copy takes 5000 and says how many more; Remove's question says so too.
+    sqlRun(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5002)
+      INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id) SELECT 'bulktest', 'bulk' || i || '@example.com', 'bulk' || i || '@example.com', 'pw' || i, 1, 'x' FROM n`);
+    try {
+      const many = new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "copy" });
+      for (let i = 1; i <= 5002; i++) many.append("pick", `bulktest bulk${i}@example.com`);
+      many.append("pick", "other:a|b c typed.one@example.com");
+      const d = await (await fetchOnce(lsLink.split("?")[0], { method: "POST", body: many })).json();
+      assert.equal(d.lines.length, 5000); assert.equal(d.over, 3); assert.equal(d.missing, 0); assert.equal(d.lines[0], "bulk1@example.com:pw1");
+      many.set("action", "ask-many");
+      const ask = unescape(await (await fetchOnce(lsLink.split("?")[0], { method: "POST", body: many })).text());
+      assert.ok(ask.includes('<p class="who">5000 accounts</p>') && ask.includes("3 more ticked aren't included: 5000 at most at once. Remove them next."), ask.slice(0, 400));
+    } finally {
+      sqlRun("DELETE FROM accounts WHERE store IN ('bulktest', 'other:a|b c')");
+    }
+    const gone = new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "copy" }); gone.append("pick", "other:a|b c typed.one@example.com");
+    assert.deepEqual(await (await fetchOnce(lsLink.split("?")[0], { method: "POST", body: gone })).json(), { lines: [], missing: 1, over: 0 }, "none left: nothing to copy");
   });
   await test("the link stops working after 24 hours, and asks are limited to 10 a day per license", async () => {
     const id = lsLink.match(/\/accounts\/list\/([^?]+)/)[1];
@@ -2234,7 +2261,7 @@ try {
     assert.equal(r.status, 410); assert.match(html, /This link has expired\. Ask again from FAFO: Settings → Accounts to assign → See my list\./);
     assert.doesNotMatch(html, /@outlook\.com/, "and lists nothing");
     assert.equal((await send(lsLink, { action: "add", store: "target", accounts: "too.late@example.com:pw" })).status, 410, "and changes nothing");
-    assert.equal((await send(lsLink, { action: "copy", pick: "target|too.late@example.com" })).status, 410, "and copies nothing");
+    assert.equal((await send(lsLink, { action: "copy", pick: "target too.late@example.com" })).status, 410, "and copies nothing");
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts WHERE email_norm = 'too.late@example.com'")[0].n, 0);
     let n = dbRows(`SELECT COUNT(*) AS n FROM account_lists WHERE key_hash = (SELECT key_hash FROM account_lists WHERE id = '${id}') AND created_at > ${Date.now() - 86400000}`)[0].n;
     while (n < 10) { assert.equal((await askList()).status, 200); n++; }
