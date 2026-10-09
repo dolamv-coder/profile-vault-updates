@@ -438,6 +438,11 @@ list you keep here:
     clipboard; the passwords come from the worker when you click and never go in the page) and
     **Remove**, which asks first, naming each one, as Remove does for one. One Copy or Remove takes up
     to 5000; past that, it says how many it left out.
+  - **Search** (the box above the list): shows only the accounts with every word typed in their email,
+    store or status (Free, a buyer's license ending, a profile name; accents don't matter, so "pokemon"
+    finds Pokémon Center), and hides a store with none. While searching, Tick all (Tick shown), a
+    store's box and Shift+click tick only what's shown; ticks on accounts the search hides stay, and the
+    bar counts them. The search stays in that tab after a change or a reload; Escape clears it.
   - **Add accounts**: pick the store and paste them one per line (`email:password`, or the CSV lines
     FAFO's Send accounts takes, quoted cells too; for Pokémon Center, the email's inbox password). They're on the list at once, with no
     review link. One already on that store's list keeps its password (Edit changes it), and the page

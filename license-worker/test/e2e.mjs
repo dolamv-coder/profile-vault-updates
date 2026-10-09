@@ -1985,6 +1985,18 @@ try {
     const r = await fetchOnce(lsLink), html = await r.text(), text = unescape(html);
     assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store");
     for (const a of rows) assert.ok(text.includes(`<td class="em">${a.email}</td>`), "listed: " + a.email);
+    assert.ok(text.includes('<input type="search" id="find"'), "a search box");
+    // What the search looks in: the email, the store and the status as the page writes it, lowercase, accents off.
+    const fold = (x) => x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const at = (x) => new Date(x).toISOString().replace("T", " ").slice(0, 16) + " UTC", who = (a) => `license …${a.key_last4}${a.profile ? `, ${a.profile}` : ""}`;
+    for (const a of rows) {
+      const name = { target: "Target", pokemoncenter: "Pokémon Center" }[a.store] || a.store;
+      const st = !a.key_hash ? "Free" : String(a.offer_id || "").startsWith("reuse:") ? `Reused from Target for ${who(a)}`
+        : String(a.batch).startsWith("parked:") ? `Held for ${who(a)}: its Pokémon Center slot still uses it`
+        : `Given to ${who(a)}${a.sent_at ? `, sent ${at(a.sent_at)}` : ", in a batch being sent"}`;
+      assert.ok(text.includes(`data-q="${fold(`${a.email} ${name} ${st}`)}"`), "the search looks in its email, store and status: " + a.email);
+      if (a.store === "pokemoncenter") assert.ok(text.includes(`data-q="${fold(a.email)} pokemon center `), "pokemon (no accent) finds Pokémon Center");
+    }
     for (const a of rows.filter((x) => x.password)) assert.ok(!text.includes(a.password), "never a password");
     const own = rows.filter((a) => !String(a.offer_id || "").startsWith("reuse:"));
     assert.ok(text.includes(`<p class="who">${own.length} accounts, ${own.filter((a) => !a.key_hash).length} free</p>`), "the total and how many are free");
