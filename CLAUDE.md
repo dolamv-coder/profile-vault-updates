@@ -154,7 +154,9 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   the last space since a typed store's key can have spaces or a `|`; Shift+click for a run, a store's box, Tick all;
   `LIST_SCRIPT`), and the bar copies the ticked accounts' emails, or email:password (fetched by POST `action=copy`, JSON
   with no CORS, never in the page), CRLF in the order shown, or removes them (`ask-many`, then `remove` with several
-  `email`s), up to `LIST_PICK_MAX` (5000) at once, saying how many past that it left out.
+  `email`s), up to `LIST_PICK_MAX` (5000) at once, saying how many past that it left out. Its search box (the owner's
+  request) shows the rows with every word typed in their `data-q` (email, store and `statusText`), kept per tab in
+  sessionStorage (`?q=` sets it); Tick all and a store's box then tick only the rows shown.
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
   once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.
   Never put the accounts or their password in this repo or a page: it's public.

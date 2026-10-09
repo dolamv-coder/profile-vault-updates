@@ -1759,8 +1759,11 @@ function parseListLines(text, shared) {
 }
 const lineList = (ns) => `${ns.length === 1 ? "Line" : "Lines"} ${ns.slice(0, 10).join(", ")}${ns.length > 10 ? ` and ${ns.length - 10} more` : ""}`;
 
-// The list's ticks: Shift+click ticks every row between it and the last one clicked, a store's header box ticks its
-// rows, and the bar shows once one is ticked. Copy emails reads them from the page; Copy email:password asks the worker
+// The list's search and ticks. The search box shows the rows with every word typed in their email, store or status
+// (data-q), and hides a store with none; it's kept for the tab (sessionStorage), so it's still there after a change sends
+// the page back to the list, and ?q= sets it. Ticks: Shift+click ticks every row shown between it and the last one
+// clicked, a store's header box and Tick all (Tick shown, while searching) tick the rows shown, ticks on rows the search
+// hides stay (the bar counts them), and the bar shows once one is ticked. Copy emails reads them from the page; Copy email:password asks the worker
 // (POST action=copy) and puts the lines on the clipboard, one per line (CRLF), in the order shown, as FAFO copies logins.
 // Without the script, the boxes still go with Remove.
 const LIST_SCRIPT = `<script>
@@ -1769,19 +1772,36 @@ const LIST_SCRIPT = `<script>
   if (!bar) return;
   const T = bar.querySelector('input[name="t"]').value;
   const boxes = () => [...document.querySelectorAll('input[name="pick"]')], ticked = () => boxes().filter((b) => b.checked);
+  const shown = (b) => !b.closest("tr").hidden, visible = () => boxes().filter(shown);
+  const find = document.getElementById("find"), KEY = "list-find:" + location.pathname;
   const say = (s) => { msg.textContent = s; };
   document.querySelectorAll(".js").forEach((e) => { e.hidden = false; });
   let last = null;
+  const searching = () => !!find.value.trim();
   const paint = () => {
-    const k = ticked().length;
-    bar.querySelector(".n").textContent = k + (k === 1 ? " account ticked" : " accounts ticked");
+    const k = ticked().length, out = ticked().filter((b) => !shown(b)).length;
+    bar.querySelector(".n").textContent = k + (k === 1 ? " account ticked" : " accounts ticked") + (out ? " (" + out + " not shown)" : "");
     bar.hidden = !k;
     document.querySelectorAll("input.all").forEach((a) => {
-      const s = boxes().filter((b) => b.dataset.store === a.dataset.store), on = s.filter((b) => b.checked).length;
+      const s = visible().filter((b) => b.dataset.store === a.dataset.store), on = s.filter((b) => b.checked).length;
       a.checked = !!s.length && on === s.length; a.indeterminate = on > 0 && on < s.length;
     });
-    const all = document.querySelector("[data-pickall]");
-    if (all) all.textContent = k && k === boxes().length ? "Untick all" : "Tick all";
+    const v = visible(), all = document.querySelector("[data-pickall]"), every = !!v.length && v.every((b) => b.checked);
+    all.textContent = (every ? "Untick " : "Tick ") + (searching() ? "shown" : "all");
+    all.disabled = !v.length;
+  };
+  const filter = () => {
+    const words = find.value.toLowerCase().split(/\\s+/).filter(Boolean);
+    let n = 0, total = 0;
+    document.querySelectorAll("section.store").forEach((sec) => {
+      let k = 0;
+      sec.querySelectorAll("tbody tr").forEach((tr) => { const on = words.every((w) => tr.dataset.q.includes(w)); tr.hidden = !on; total++; if (on) k++; });
+      sec.hidden = !k; n += k;
+    });
+    document.getElementById("shown").textContent = words.length ? n + " of " + total + " shown" : "";
+    document.getElementById("none-match").hidden = !words.length || !!n;
+    try { sessionStorage.setItem(KEY, find.value); } catch (e) {}
+    paint();
   };
   const put = async (text) => {
     if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
@@ -1821,24 +1841,31 @@ const LIST_SCRIPT = `<script>
   document.addEventListener("click", (e) => {
     const t = e.target;
     if (t.name === "pick") {
-      if (e.shiftKey && last && last !== t) {
-        const all = boxes(), i = all.indexOf(last), j = all.indexOf(t);
+      if (e.shiftKey && last && last !== t && shown(last)) {
+        const all = visible(), i = all.indexOf(last), j = all.indexOf(t);
         all.slice(Math.min(i, j), Math.max(i, j) + 1).forEach((b) => { b.checked = t.checked; });
         const sel = getSelection(); if (sel) sel.removeAllRanges();
       }
       last = t; say(""); paint();
     } else if (t.classList.contains("all")) {
-      boxes().filter((b) => b.dataset.store === t.dataset.store).forEach((b) => { b.checked = t.checked; }); say(""); paint();
+      visible().filter((b) => b.dataset.store === t.dataset.store).forEach((b) => { b.checked = t.checked; }); say(""); paint();
     } else if (t.hasAttribute("data-pickall")) {
-      const on = ticked().length !== boxes().length; boxes().forEach((b) => { b.checked = on; }); say(""); paint();
+      const v = visible(), on = !v.every((b) => b.checked); v.forEach((b) => { b.checked = on; }); say(""); paint();
     } else if (t.hasAttribute("data-clear")) {
       boxes().forEach((b) => { b.checked = false; }); say(""); paint();
     } else if (t.dataset.copy) copy(t.dataset.copy);
   });
   // Enter on a tick box would send the bar's form, whose only submit button is Remove.
-  document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.name === "pick") e.preventDefault(); });
-  paint();
-  addEventListener("pageshow", paint);   // ticks the browser puts back on Back come after the first paint
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.name === "pick") e.preventDefault();
+    if (e.key === "Escape" && e.target === find && find.value) { find.value = ""; filter(); }
+  });
+  find.addEventListener("input", filter);
+  let q0 = new URLSearchParams(location.search).get("q");
+  if (q0 === null) { try { q0 = sessionStorage.getItem(KEY); } catch (e) {} }
+  if (q0) find.value = q0;
+  filter();
+  addEventListener("pageshow", filter);   // ticks and a search the browser puts back on Back come after the first paint
 })();
 </script>`;
 
@@ -1867,10 +1894,12 @@ async function accountListPage(request, env, url, id) {
   const back = `<p><a class="back" href="${esc(url.pathname)}?t=${esc(encodeURIComponent(t))}">← Back to the list</a></p>`;
   const isReuse = (a) => String(a.offer_id || "").startsWith("reuse:");
   const reusedFrom = (a) => accountStoreName(String(a.offer_id).slice("reuse:".length));
-  const status = (a) => !a.key_hash ? "Free"
-    : isReuse(a) ? `Reused from ${esc(reusedFrom(a))} for license …${esc(a.key_last4 || "")}${a.profile ? `, ${esc(a.profile)}` : ""}`
-    : String(a.batch || "").startsWith(PARKED) ? `Held for license …${esc(a.key_last4 || "")}${a.profile ? `, ${esc(a.profile)}` : ""}: its Pokémon Center slot still uses it`
-    : `Given to license …${esc(a.key_last4 || "")}${a.profile ? `, ${esc(a.profile)}` : ""}${a.sent_at ? `, sent ${esc(when(a.sent_at))}` : ", in a batch being sent"}`;
+  // An account's status as text (statusText, for the search) and as HTML (status).
+  const statusText = (a) => !a.key_hash ? "Free"
+    : isReuse(a) ? `Reused from ${reusedFrom(a)} for license …${a.key_last4 || ""}${a.profile ? `, ${a.profile}` : ""}`
+    : String(a.batch || "").startsWith(PARKED) ? `Held for license …${a.key_last4 || ""}${a.profile ? `, ${a.profile}` : ""}: its Pokémon Center slot still uses it`
+    : `Given to license …${a.key_last4 || ""}${a.profile ? `, ${a.profile}` : ""}${a.sent_at ? `, sent ${when(a.sent_at)}` : ", in a batch being sent"}`;
+  const status = (a) => esc(statusText(a));
   const COLS = "store, email, email_norm, key_hash, key_last4, profile, batch, offer_id, sent_at";
   const one = (st, em) => env.DB.prepare(`SELECT ${COLS} FROM accounts WHERE store = ? AND email_norm = ?`).bind(st, em).first();
   // The accounts ticked on the list, each "store email" (split at the last space: an email has none, a typed store's key
@@ -2061,11 +2090,12 @@ async function accountListPage(request, env, url, id) {
   const own = (a) => !isReuse(a);
   const sections = [...byStore].map(([st, rows]) => {
     const mine = rows.filter(own), free = mine.filter((a) => !a.key_hash).length;
-    return `<h3><input type="checkbox" class="all js" hidden data-store="${esc(st)}" aria-label="Tick every ${esc(accountStoreName(st))} account"> ${esc(accountStoreName(st))} <span class="count">${free} free of ${mine.length}</span></h3>
-      <table><thead><tr><th class="pick"></th><th>Account</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((a) => `<tr${a.key_hash ? "" : ' class="free"'}>
+    // Each row carries what the search box looks in: its email, its store and its status, in lowercase.
+    return `<section class="store" data-store="${esc(st)}"><h3><input type="checkbox" class="all js" hidden data-store="${esc(st)}" aria-label="Tick every ${esc(accountStoreName(st))} account"> ${esc(accountStoreName(st))} <span class="count">${free} free of ${mine.length}</span></h3>
+      <table><thead><tr><th class="pick"></th><th>Account</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((a) => `<tr${a.key_hash ? "" : ' class="free"'} data-q="${esc(`${a.email} ${accountStoreName(st)} ${statusText(a)}`.toLowerCase())}">
         <td class="pick"><input type="checkbox" name="pick" form="bulk" value="${esc(a.store + " " + a.email_norm)}" data-store="${esc(a.store)}" data-email="${esc(a.email)}" aria-label="Tick ${esc(a.email)}"></td>
         <td class="em">${esc(a.email)}</td><td>${status(a)}</td>
-        <td class="act"><form method="get" action="${esc(url.pathname)}">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="ed" type="submit" name="action" value="edit">Edit</button></form><form method="get" action="${esc(url.pathname)}">${hidden}${keep("email", a.email_norm)}<button class="rm" type="submit" name="action" value="ask">Remove</button></form></td></tr>`).join("")}</tbody></table>`;
+        <td class="act"><form method="get" action="${esc(url.pathname)}">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="ed" type="submit" name="action" value="edit">Edit</button></form><form method="get" action="${esc(url.pathname)}">${hidden}${keep("email", a.email_norm)}<button class="rm" type="submit" name="action" value="ask">Remove</button></form></td></tr>`).join("")}</tbody></table></section>`;
   }).join("");
   const total = all.filter(own).length;
   const pick = addStores.includes(store) ? store : "target";
@@ -2073,8 +2103,9 @@ async function accountListPage(request, env, url, id) {
   return page(200, "Your list for Use Assigned Account", done,
     `${err ? `<p class="err">${esc(err)}</p>` : ""}
      <p class="who">${total ? `${total} account${total === 1 ? "" : "s"}, ${all.filter((a) => own(a) && !a.key_hash).length} free` : "Your list is empty"}</p>
-     <p class="small">Edit sets a new password, or a new email while the account is free. One given to a buyer can be given back to your list from there. Tick accounts (Shift+click ticks a run of them) to copy or remove them together. <a href="#add">Add accounts</a> is at the end. Changes count at once.</p>
-     ${all.length ? `<p class="js" hidden><button type="button" class="ed" data-pickall>Tick all</button></p>` : ""}
+     <p class="small">Edit sets a new password, or a new email while the account is free. One given to a buyer can be given back to your list from there. Tick accounts (Shift+click ticks a run of them) to copy or remove them together. Search matches emails, stores and what each says (Free, a buyer's license, a profile name). <a href="#add">Add accounts</a> is at the end. Changes count at once.</p>
+     ${all.length ? `<div class="find js" hidden><input type="search" id="find" placeholder="Search your list" aria-label="Search your list" autocomplete="off" spellcheck="false"><button type="button" class="ed" data-pickall>Tick all</button><span class="shown" id="shown" role="status"></span></div>
+     <p class="small" id="none-match" hidden>No accounts match your search.</p>` : ""}
      ${sections}
      ${all.length ? `<form id="bulk" method="post" class="bulk" action="${esc(url.pathname)}">${hidden}
        <span class="n">Ticked accounts</span><span class="msg" id="bulk-msg" role="status"></span>
@@ -2724,7 +2755,9 @@ function page(statusCode, title, msg, extra = "", wide = false) {
   td.em{color:#e6ecff;overflow-wrap:anywhere} tr.free td:nth-child(3){color:#5fd39a}
   th.pick,td.pick{width:22px;padding-right:0} input[type=checkbox]{width:16px;height:16px;margin:0;accent-color:#4a9dff;cursor:pointer}
   .bulk{position:sticky;bottom:12px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:16px;padding:10px 12px;background:#132556;border:1px solid #2a3f7a;border-radius:12px;box-shadow:0 8px 24px #0009}
-  .bulk[hidden]{display:none} .bulk .n{font-weight:600;color:#e6ecff} .bulk .msg{flex:1;min-width:120px;font-size:13px;color:#5fd39a}
+  .bulk[hidden]{display:none} section.store[hidden],table tr[hidden],.find[hidden]{display:none !important}
+  .find{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:16px 0 4px} .find .shown{font-size:13px;color:#b9c6ea}
+  .find input{flex:1;min-width:180px;box-sizing:border-box;padding:10px 12px;border-radius:10px;border:1px solid #2a3f7a;background:#07102b;color:#e6ecff;font:15px system-ui,sans-serif} .bulk .n{font-weight:600;color:#e6ecff} .bulk .msg{flex:1;min-width:120px;font-size:13px;color:#5fd39a}
   td form{margin:0} button.rm{width:auto;padding:6px 12px;font-size:13px;background:transparent;border:1px solid #c4372f;color:#ff8a80}
   td.act{text-align:right} td.act form{display:inline-block;margin:2px 0 2px 6px}
   button.ed{width:auto;padding:6px 12px;font-size:13px;background:transparent;border:1px solid #4a9dff;color:#9cc7ff}

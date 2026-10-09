@@ -1985,6 +1985,11 @@ try {
     const r = await fetchOnce(lsLink), html = await r.text(), text = unescape(html);
     assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store");
     for (const a of rows) assert.ok(text.includes(`<td class="em">${a.email}</td>`), "listed: " + a.email);
+    assert.ok(text.includes('<input type="search" id="find"'), "a search box");
+    for (const a of rows) {
+      const name = { target: "Target", pokemoncenter: "Pokémon Center" }[a.store] || a.store;
+      assert.ok(new RegExp(`data-q="${a.email.toLowerCase().replace(/[.+]/g, "\\$&")} ${name.toLowerCase()} (free|given to license …|reused from|held for)`).test(text), "the search looks in its email, store and status: " + a.email);
+    }
     for (const a of rows.filter((x) => x.password)) assert.ok(!text.includes(a.password), "never a password");
     const own = rows.filter((a) => !String(a.offer_id || "").startsWith("reuse:"));
     assert.ok(text.includes(`<p class="who">${own.length} accounts, ${own.filter((a) => !a.key_hash).length} free</p>`), "the total and how many are free");
