@@ -1,0 +1,1 @@
+FAFO on the web now sends your slots straight to the seller's Discord channel, like the desktop app, and shows Pending approval until the seller approves them. Slots the web version marked Submitted without sending are switched on again, so press Submit to send them. If the browser doesn't have your license key yet, Submit asks for it once.
