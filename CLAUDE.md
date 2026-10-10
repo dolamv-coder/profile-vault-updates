@@ -319,7 +319,8 @@ publisher key built into the apps; otherwise it keeps the last good page. So a
 release reaches the web the same way it reaches installed apps, and the
 worker itself only changes for its own fixes ("Deploy web app",
 `.github/workflows/deploy-web-app.yml`, on `web-worker/` changes to `main`).
-Opening it needs no license key (`licenseGate` only runs in the desktop app),
+Opening it needs no license key (`licenseGate` only runs in the desktop app; from 1.9.107 sending slots to the seller
+uses the vault's, below),
 and email sync and Clean emails stay in the desktop app.
 
 **The web version follows releases again from 1.9.106** (the owner's request, 2026-10-10: "add the web base project into
@@ -773,6 +774,20 @@ anyone else's is checked by its original subject and opening lines, as before (a
 stays). The page sees subjects without "FW:", so that part only changes what the app reads. `CLEAN_RULES_KEY`
 takes in `CLEAN_STORE_WEAK`, so auto-clean looks back 30 days once. 1.9.106 also has the web version follow releases again
 (the next section). Nothing gains a field.
+
+From 1.9.107 the web version sends slots to the seller like the desktop app (the owner's report: a slot submitted in the web
+version said Submitted, never Pending approval, and nothing reached their Discord channel). Every step of sending to the
+seller checked for the desktop app (`DESK`), so a browser only made a plain copy of the slots and marked them submitted with
+no `to`. They now go by `sellerLic()`: the desktop's license key, or in a browser the one the vault syncs with
+(`S._local.lic`, which stays when sync is turned off), or one Submit asks for when there's none (`ss-lic`; kept in
+`S._local.lic`, with sync still off, once the license worker accepts it). That covers Submit's files (`csvToSeller`,
+`canSendToSeller`), Pending approval and Success (`refreshApprovals`), pulls (`canTellSeller`, `flushPulls`), the slot
+limit and Request more slots. A slot marked submitted with no `to` and no batch since the web version began (`unsent`,
+`UNSENT_FROM`, 1.9.65; from 1.9.52 a licensed desktop always set one) counts as not sent: switched on, it shows Not sent yet,
+with a note, and Submit sends it (`slotsOut` leaves it out of `active`); switched off, the mark goes (`setSel`). A key kept in a
+vault that never synced starts its `_local` with what's there as `seen`, so turning sync on later doesn't take every setting
+from the browser. Order alerts for buyers, Settings → License and Accounts to assign
+stay in the desktop app. Nothing gains a field (`_local` is per device and never synced).
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
