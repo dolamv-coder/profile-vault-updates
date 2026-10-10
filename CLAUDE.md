@@ -841,3 +841,5 @@ git.
 dashboard with Discord OAuth login (`/api/auth/discord/callback`). It is not
 the Orbit desktop app or the relay.
 Claude may merge its own pull requests into main once tests pass, except changes to licenses.json
+Before merging anything that ships (a new page, a worker change people see, a desktop download), send the owner
+screenshots of it and wait for their go-ahead (the owner's request, 2026-10-10).
