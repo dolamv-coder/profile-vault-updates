@@ -761,6 +761,17 @@ is chips, Today, Yesterday, Weekly (the last 7 days, as on Generate success), Ov
 More (`#o-period`); the saved values are as before. Settings gain `canceledGone` and nothing else changes, so the paused
 web version is unaffected.
 
+From 1.9.106 Clean emails clears a store's newsletter that sounds like a delivery (the owner's screenshot: Best Buy's "Your
+next computer has arrived", a laptop sale sent to each account, kept since "arrived" protected it). From a store's newsletter
+address (`CLEAN_STORE_FROM`, or relayed from one), "arrived", "arriving", "on its way" and "alert" keep an email only when its
+subject also names an order, package, shipment, delivery, purchase, item, card, refund or return (`CLEAN_STORE_WEAK`,
+`CLEAN_STORE_REAL`, `storeGuarded` in `applyCleanSafety`, for its Spam rule too); its other words still keep it, and stores
+send their order mail from other addresses (`BestBuyInfo@emailinfo.bestbuy.com`, `orders@oe.target.com`). "Your next … has
+arrived / is arriving / is here / is on its way" is a sale (`CLEAN_SALE`, which the desktop app gets as `promoSubject`), so a
+forward of it ("FW: …") isn't kept by its subject and the app reads it to find the store, and a subject naming an order,
+package, delivery or item never is one. `CLEAN_RULES_KEY` takes in `CLEAN_STORE_WEAK`, so auto-clean looks back 30 days once.
+Nothing gains a field, so the paused web version is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

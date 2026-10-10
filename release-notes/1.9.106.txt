@@ -1,0 +1,1 @@
+Clean emails now clears store newsletters that sound like a delivery, like Best Buy's "Your next computer has arrived" laptop sale. Store emails about an order, package or delivery are still kept. Auto-clean looks back 30 days once, so ones you already have go too.
