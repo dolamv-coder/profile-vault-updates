@@ -13374,9 +13374,11 @@ const cleanKeepList = () => (S && S.settings && Array.isArray(S.settings.cleanKe
 // Plain sales and survey senders. Also sent to the desktop app (version 10+), which uses them to
 // find these emails, so they can change with a page update. Same rules on both sides. Sale events
 // count too (Target Circle Deal Days and Circle Week), also when someone forwarded them ("FW: …").
-// "Your next computer has arrived" (1.9.106) is a store's sale too: as one, its "arrived" doesn't keep it, so the app also
-// reads forwards of it ("FW: …") to find who sent them. A subject naming an order, package, delivery or item never is one.
-const CLEAN_SALE = /flash\s+sale|\bsale\b|%\s*off|\$\d+\s+off|deals?\s+of\s+the\s+(day|week)|doorbuster|clearance|limited[\s-]time|shop\s+now|shopping\s+moment|deal\s+days|circle\s+week|\byour\s+next\b[^.!?]{0,40}?\b(arriv(es|ed|ing)|is\s+here|on\s+(its|the)\s+way)/i;
+// A forward ("FW: …", 1.9.106) whose subject has only "arrived", "arriving" or "on its way" to protect it counts as a sale for
+// that subject, so the app reads it to find who sent it: a store's newsletter goes (Best Buy's "Your next computer has arrived",
+// forwarded by an account's mailbox), while anyone else's is checked by its original subject and opening lines, as before.
+// The page sees subjects without "FW:", so this only changes what the app reads.
+const CLEAN_SALE = /flash\s+sale|\bsale\b|%\s*off|\$\d+\s+off|deals?\s+of\s+the\s+(day|week)|doorbuster|clearance|limited[\s-]time|shop\s+now|shopping\s+moment|deal\s+days|circle\s+week|^\s*(?:fw|fwd)\s*:.*\b(?:arriv(?:es|ed|ing)\b|on\s+(?:its|the)\s+way)/i;
 const CLEAN_SURVEY_FROM = /(^|[.@])(medallia|qualtrics|surveymonkey|smg360|inmoment|bazaarvoice|powerreviews|yotpo|trustpilot|feefo|questionpro|alchemer)\.com$|survey/i;
 // iCloud Hide My Email passes mail on from <sender>_at_<domain, dots as underscores>_<code>_<code>@icloud.com
 // and drops the unsubscribe headers the desktop app looks for, so a store's newsletter reads like
@@ -13425,7 +13427,8 @@ const CLEAN_RULES_KEY = CLEAN_RULES.promoSubject + "\n" + CLEAN_RULES.surveyFrom
 const CLEAN_WEAK = /arriv(es|ing|ed)\b|on\s+(its|the)\s+way|pick\s*up|\balerts?\b/gi;
 const CLEAN_ORDERISH = /\b(orders?|package|parcel|shipment|delivery|purchase|items?)\b/i;
 const cleanGuarded = (s, guard) => guard.test(s) && (guard.test(s.replace(CLEAN_WEAK, " ")) || !(CLEAN_SALE.test(s) && !CLEAN_ORDERISH.test(s)));
-const storeGuarded = (s, guard) => guard.test(s) && (guard.test(s.replace(CLEAN_STORE_WEAK, " ")) || CLEAN_STORE_REAL.test(s));
+// Only ever clears more than cleanGuarded: whatever that clears stays cleared.
+const storeGuarded = (s, guard) => cleanGuarded(s, guard) && (guard.test(s.replace(CLEAN_STORE_WEAK, " ")) || CLEAN_STORE_REAL.test(s));
 // spam: true when every email in r came from the Spam folder.
 function applyCleanSafety(r, spam){
   const keep = new Set(cleanKeepList().map(a => String(a).toLowerCase()));

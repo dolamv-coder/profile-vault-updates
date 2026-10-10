@@ -11,16 +11,12 @@ released page, the same `index-X.Y.Z.html` installed apps update to:
 New releases need nothing here: once the "Publish Orbit update" Action ships one, the web version
 serves it within a minute or so. The address it reads is `UPDATE_URL` in `wrangler.toml`.
 
-## Paused at 1.9.67
+## Paused at 1.9.67 until 1.9.106
 
-Since 2026-10-01, at the owner's request, the web version stays on Orbit 1.9.67 until one big
-update. `UPDATE_URL` points at `update.json` in the "Release 1.9.67" commit, which never changes,
-so new releases still reach installed apps but not the web. The worker checks that release
-the same way: SHA-256 and signature.
-
-To follow releases again, set `UPDATE_URL` back to
-`https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/update.json` and merge.
-"Deploy web app" then deploys it and checks it serves the newest release.
+From 2026-10-01, at the owner's request, the web version stayed on Orbit 1.9.67 for one big update: `UPDATE_URL`
+pointed at `update.json` in the "Release 1.9.67" commit, so releases reached installed apps but not the web. With
+1.9.106 (2026-10-10) the owner had it follow releases again: `UPDATE_URL` is main's `update.json`. To hold the web
+version at one release again, point `UPDATE_URL` at `update.json` in that release's commit and merge.
 
 The page keeps its vault in the browser, encrypted, as the desktop app does. With sync on (Orbit
 1.9.65+), it opens the same vault as the desktop app through the license worker's `/vault`
