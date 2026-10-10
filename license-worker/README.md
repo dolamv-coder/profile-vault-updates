@@ -35,6 +35,10 @@ Run these in a terminal inside this `license-worker` folder.
    ```
 
    Log in with the Cloudflare account that owns `orbit-app.workers.dev`.
+   (Since 2026-10-10 the worker also answers at `https://license.fafoaco.com`, a custom domain added in the
+   dashboard: Workers & Pages → orbit-license → Settings → Domains & Routes. Pages from 1.9.109 use that address
+   first and this one when a network blocks it, so both must keep working, and Discord's OAuth2 redirects need
+   `https://license.fafoaco.com/discord/callback` as well as the workers.dev one.)
 
 2. **Create the database**
 

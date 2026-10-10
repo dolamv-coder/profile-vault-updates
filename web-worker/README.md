@@ -1,7 +1,8 @@
 # Orbit on the web
 
-`https://app.orbit-app.workers.dev` opens Orbit in any browser. This worker serves the newest
-released page, the same `index-X.Y.Z.html` installed apps update to:
+`https://app.fafoaco.com` (from 2026-10-10; still `https://app.orbit-app.workers.dev` for older pages and bookmarks)
+opens FAFO in any browser. This worker serves the newest released page, the same `index-X.Y.Z.html` installed apps
+update to:
 
 1. It reads `update.json` (at most once a minute per worker instance).
 2. It downloads the page that file names.
@@ -22,6 +23,14 @@ The page keeps its vault in the browser, encrypted, as the desktop app does. Wit
 1.9.65+), it opens the same vault as the desktop app through the license worker's `/vault`
 (see `license-worker/README.md`). Email sync and Clean emails stay in the desktop app: browsers
 can't sign in to email.
+
+## fafoaco.com
+
+The owner's domain points at this worker as Cloudflare custom domains, added in the dashboard (Workers & Pages → app →
+Settings → Domains & Routes), not in `wrangler.toml`, so a deploy needs no access to the domain and leaves them as they
+are: `app.fafoaco.com` (the app), `fafoaco.com` (FAFO's front page, `src/site.js`, with `/download` going to the newest
+Windows download and `/app` to the app) and `www.fafoaco.com` (to `fafoaco.com`). `SITE_HOST` in the environment
+changes the front page's address (the tests use `localhost`).
 
 ## Deploying
 

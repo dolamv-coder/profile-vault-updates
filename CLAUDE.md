@@ -189,7 +189,8 @@ The release feed for installed copies of Orbit. It is not the full source tree.
 - `desktop/`: the Windows app itself (Electron), recovered from the v1.9.49
   download. See "Desktop app" below and `desktop/README.md`.
 - `web-worker/`: the web version, a Cloudflare Worker (`app`) at
-  `https://app.orbit-app.workers.dev`. See "Web version and sync" below.
+  `https://app.fafoaco.com` (and still `https://app.orbit-app.workers.dev`), and FAFO's front page at
+  `https://fafoaco.com`. See "Web version and sync" below.
 - GitHub Releases: the app links new users to
   `releases/latest/download/FAFO-Windows.zip` on this repo (`Orbit-Windows.zip`
   until 1.9.75; each release also carries the same zip as `Orbit-Windows.zip` and
@@ -802,6 +803,23 @@ has no version of its own built in: right after a release, a page that loaded fr
 can take the new one for its own and miss that bar (the next release shows it). Nothing runs in the desktop app, on
 claude.ai or from a file, and an address without the header does nothing. Tabs on 1.9.107 or older need one reload by hand.
 Nothing gains a field.
+
+From 1.9.109 FAFO lives at the owner's domain, **fafoaco.com** (bought 2026-10-10, the owner's request: "I want everything
+merged over to a domain"). The custom domains are added in Cloudflare's dashboard, not in `wrangler.toml`, so deploys need
+no access to the domain and leave them alone: the web worker (`app`) answers at `app.fafoaco.com` (the app), `fafoaco.com`
+(the front page, `web-worker/src/site.js`, with `/download` and `/app` redirects and the release it serves) and
+`www.fafoaco.com` (to `fafoaco.com`); the license worker at `license.fafoaco.com`; the phone relay (`orders`) at
+`orders.fafoaco.com`, though `PHONE_RELAY` stays on its old address until the relay's code (not in this repo) is checked
+there. The old addresses keep working, since every FAFO before 1.9.109 has them built in. The page uses `RELAY_NEW` first
+and `RELAY_OLD` when a network blocks it (some filters block newly registered domains): `relayProbe` asks both
+`/discord/ready` 1.2 seconds after it starts and after a request can't connect, `relayFetch` (every license server request)
+sends a GET again to the address that answers but never a POST or PUT, the old one is kept per device for 6 hours
+(`orbit-relay`), and `licFetch` and the update mirror (`updateMirror()`) use the address that answers. Continue with
+Discord opens the address that answers, so Discord's OAuth2 redirects need `https://license.fafoaco.com/discord/callback`
+too, and review links in the channel name whichever address the app used. `WEB_URL` is `https://app.fafoaco.com`; FAFO in
+a browser at the old address (`ON_OLD_WEB`) says it moved, on the lock screen and above every page (`movedHTML`,
+`paintMoved`), and that a vault that isn't synced needs sync or a backup to come along, since a browser keeps each
+address's data apart. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
