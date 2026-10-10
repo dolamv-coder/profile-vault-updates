@@ -1,10 +1,10 @@
 {
-  "version": "1.9.105",
-  "url": "index-1.9.105.html",
-  "sha256": "92ee2a47d68f92445099004848380514d7dfcd58a0627bb577d4486c329d20a2",
-  "signature": "TdBkaTDbzlF/X2NfiLxcRfaH7qdVgdk4AqqsKK0BluG6oOPPZrIFJTwtTerW4W+hmVCJLqoaUiN1pRQbn7LDBA==",
+  "version": "1.9.106",
+  "url": "index-1.9.106.html",
+  "sha256": "7888e29d4a50a324c8bfdfe036e23fab02d2cc4364db0bf587defad3a7a36284",
+  "signature": "G4I/q42C1Hv7gWVoLqO6snbgYCivdbrh16mmdZDWl15tFy/ZY+kq1RhgQi6W0rBL8MpvBjdEWI4RjXIjImA7Bw==",
   "minAppVersion": "0",
-  "notes": "Orders has a Delete canceled button: it removes the canceled orders shown and, with the newest FAFO download, moves their emails (the order confirmation, the cancellation and any other email with the order number) to Trash. Generate success now shows your stick rate, how many items stuck against how many were canceled, and big amounts spent are no longer cut off. Showing on Orders has Today, Yesterday, Weekly, Overall and Custom as buttons, with the other periods under More.",
+  "notes": "Clean emails now clears store newsletters that sound like a delivery, like Best Buy's \"Your next computer has arrived\" laptop sale. Store emails about an order, package or delivery are still kept. Auto-clean looks back 30 days once, so ones you already have go too. FAFO on the web (app.orbit-app.workers.dev) is up to date again: it now gets every update, starting with this one.",
   "installerUrl": "",
-  "publishedAt": "2026-10-10T03:53:00.200Z"
+  "publishedAt": "2026-10-10T05:05:53.464Z"
 }
