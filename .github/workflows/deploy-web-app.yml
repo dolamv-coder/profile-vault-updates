@@ -1,6 +1,6 @@
 name: Deploy web app
 
-# Orbit on the web (https://app.orbit-app.workers.dev): the worker in web-worker/, which serves the
+# Orbit on the web (https://app.fafoaco.com, and https://app.orbit-app.workers.dev): the worker in web-worker/, which serves the
 # signed release its wrangler.toml's UPDATE_URL names (normally the newest). Runs when it changes on
 # main, or by hand from the Actions tab. New releases don't need a deploy: the worker follows
 # update.json on its own, unless UPDATE_URL holds it at one release.

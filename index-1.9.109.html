@@ -3710,7 +3710,7 @@ function renderLock(msg){
   $("#app").innerHTML = `<main class="lock"><div class="lock-inner">
     <div class="lock-upd" id="lock-upd" hidden></div>
     <div class="lock-upd" id="lock-done" hidden></div>
-    ${ON_OLD_WEB ? `<div class="lock-upd lock-moved">${movedHTML(creating ? "new" : syncHint() ? "synced" : "local")}</div>` : ""}
+    ${ON_OLD_WEB ? `<div class="lock-upd lock-moved">${movedHTML(creating ? "new" : !syncHint() ? "local" : syncHint().dirty ? "pending" : "synced")}</div>` : ""}
     ${msg ? `<p class="lock-msg">${esc(msg)}</p>` : ""}
     <form class="lock-label" id="lock-form" autocomplete="on">
       <h1 class="wordmark">FAFO</h1>
@@ -3897,13 +3897,19 @@ function movedHTML(how){
   const go = `<a class="btn btn-primary btn-sm" href="${esc(WEB_URL)}/">Open ${host}</a>`;
   const say = how === "synced" ? `Your vault is synced, so it's there too: open it and choose <strong>Open my synced vault</strong>.`
     : how === "new" ? `Open it there instead.`
+    : how === "pending" ? `Some changes in this browser haven't reached your synced vault yet. Unlock it here so they sync, then open the new address and choose <strong>Open my synced vault</strong>.`
+    : how === "stuck" ? `Sync isn't working right now, so your synced vault may not have this browser's latest changes. Fix it in Settings, then Web version &amp; sync, or download a backup, before you open the new address.`
     : `This browser's vault isn't synced, so it isn't there yet. Unlock it here, turn on sync (Settings, then Web version &amp; sync) or download a backup, then open the new address.`;
   return `<span><strong>FAFO has a new address: ${host}.</strong> ${say}</span>${go}`;
 }
+// Unlocked: synced once the online copy has this vault (a change on its way doesn't count), unless sync is stuck.
 function paintMoved(){
   const b = $("#moved-banner"); if (!b) return;
   b.hidden = !ON_OLD_WEB || MODE !== "vault";
-  if (!b.hidden) b.innerHTML = movedHTML(syncOn() ? "synced" : "local").replace("Unlock it here, turn on sync", "Turn on sync");
+  if (b.hidden) return;
+  const how = !syncOn() ? "local" : !S._local.vid || ["error", "offline", "password", "license", "locked"].includes(SYNC.state) ? "stuck" : "synced";
+  const html = movedHTML(how).replace("Unlock it here, turn on sync", "Turn on sync");
+  if (b.innerHTML !== html) b.innerHTML = html;
 }
 
 function countIn(gid){
@@ -12731,6 +12737,7 @@ function syncShow(state, msg){
       ? `<div><strong>Sync is paused.</strong> The master password was changed on another device. Enter it to keep this ${DESK ? "computer" : "browser"} in sync.</div><button class="btn btn-sm btn-primary" data-act="sync-password">Enter password</button>`
       : `<div><strong>Sync is paused.</strong> Your license key wasn't accepted by the sync service.</div><button class="btn btn-sm" data-act="sync-open">Sync settings</button>`;
   }
+  if (ON_OLD_WEB) paintMoved();
   return state;
 }
 function syncSideHTML(){
@@ -13129,16 +13136,24 @@ async function updViaMirror(st, manual){
     let info = null; try { info = await pd.updateInfo(); } catch(e){}
     if (!info || info.source !== UPDATE_GH) return st;
     updMirrorAt = Date.now(); UPD.viaMirror = "trying";
-    const mirror = updateMirror();
-    const set = await pd.setUpdateSource(mirror).catch(() => null);
-    if (!set || !set.ok){ UPD.viaMirror = ""; return st; }
-    let st2 = null;
-    try { st2 = await pd.checkForUpdates(); } catch(e){}
-    finally {
-      // Back to the built-in address, unless an address was saved in Settings meanwhile.
-      try { const now = await pd.updateInfo(); if (now && now.source === mirror) await pd.setUpdateSource(""); } catch(e){}
+    // 1.9.109: the copy is on the license server, at whichever of its addresses answers on this network (asked again
+    // here, since a FAFO left locked makes no other request that would notice), then at the other if that copy fails.
+    await relayProbe();
+    const other = (LICENSE_RELAY === RELAY_NEW ? RELAY_OLD : RELAY_NEW) + "/mirror/update.json";
+    let st2 = null, ok = false;
+    for (const mirror of [...new Set([updateMirror(), other])]){
+      const set = await pd.setUpdateSource(mirror).catch(() => null);
+      if (!set || !set.ok) break;
+      st2 = null;
+      let mine = true;
+      try { st2 = await pd.checkForUpdates(); } catch(e){}
+      finally {
+        // Back to the built-in address, unless an address was saved in Settings meanwhile.
+        try { const now = await pd.updateInfo(); mine = !!now && now.source === mirror; if (mine) await pd.setUpdateSource(""); } catch(e){}
+      }
+      ok = !!(st2 && st2.state && st2.state !== "error");
+      if (ok || !mine) break;
     }
-    const ok = st2 && st2.state && st2.state !== "error";
     UPD.viaMirror = ok ? "yes" : "";
     return ok ? st2 : st;
   })();

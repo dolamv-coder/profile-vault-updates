@@ -816,10 +816,14 @@ and `RELAY_OLD` when a network blocks it (some filters block newly registered do
 sends a GET again to the address that answers but never a POST or PUT, the old one is kept per device for 6 hours
 (`orbit-relay`), and `licFetch` and the update mirror (`updateMirror()`) use the address that answers. Continue with
 Discord opens the address that answers, so Discord's OAuth2 redirects need `https://license.fafoaco.com/discord/callback`
-too, and review links in the channel name whichever address the app used. `WEB_URL` is `https://app.fafoaco.com`; FAFO in
+too (the worker sends the callback on the address the sign-in started from), which has to be registered before a page using
+the new address ships; review links in the channel name whichever address the app used. The update copy (`updViaMirror`)
+asks `relayProbe` first, since a locked FAFO makes no other request that would notice a network change, then tries the
+other address's copy if that one fails. `WEB_URL` is `https://app.fafoaco.com`; FAFO in
 a browser at the old address (`ON_OLD_WEB`) says it moved, on the lock screen and above every page (`movedHTML`,
-`paintMoved`), and that a vault that isn't synced needs sync or a backup to come along, since a browser keeps each
-address's data apart. Nothing gains a field.
+`paintMoved`, repainted by `syncShow`), and that a vault that isn't synced needs sync or a backup to come along, since a
+browser keeps each address's data apart; a synced vault with changes not sent yet (the hint's `dirty`) is told to unlock
+there first, and one whose sync is stuck (no online copy yet, an error, offline, paused) to fix it or take a backup. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
