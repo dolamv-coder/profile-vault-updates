@@ -34,6 +34,9 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method !== "GET" && request.method !== "HEAD") return text(405, "Method not allowed.");
+    // Only over HTTPS: a .com isn't HTTPS-only in browsers as .dev is, and the page needs a secure context (crypto.subtle)
+    // and keeps each origin's vault apart, so http://app.fafoaco.com would be a broken, separate FAFO. (Local tests use http.)
+    if (url.protocol === "http:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname)) { url.protocol = "https:"; return Response.redirect(url.toString(), 301); }
     const site = env.SITE_HOST || SITE_HOST;
     if (url.hostname === "www." + site) return Response.redirect(`${url.protocol}//${site}${url.pathname}${url.search}`, 301);
     if (url.hostname === site) return frontPage(request, env, url);

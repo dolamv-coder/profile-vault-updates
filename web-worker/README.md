@@ -30,7 +30,9 @@ The owner's domain points at this worker as Cloudflare custom domains, added in 
 Settings → Domains & Routes), not in `wrangler.toml`, so a deploy needs no access to the domain and leaves them as they
 are: `app.fafoaco.com` (the app), `fafoaco.com` (FAFO's front page, `src/site.js`, with `/download` going to the newest
 Windows download and `/app` to the app) and `www.fafoaco.com` (to `fafoaco.com`). `SITE_HOST` in the environment
-changes the front page's address (the tests use `localhost`).
+changes the front page's address (the tests use `localhost`). Every `http://` request goes to `https://` (301), since the
+page needs a secure context and a browser keeps each origin's vault apart; turning on SSL/TLS → Edge Certificates →
+Always Use HTTPS for the zone does the same at Cloudflare's edge.
 
 ## Deploying
 

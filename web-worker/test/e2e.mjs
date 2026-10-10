@@ -116,6 +116,16 @@ try {
     const r = await worker.fetch(new Request("https://www.fafoaco.com/download?x=1"), {});
     assert.equal(r.status, 301); assert.equal(r.headers.get("location"), "https://fafoaco.com/download?x=1");
   });
+  await test("http:// goes to https:// (app, front page and www), so FAFO never opens without a secure context", async () => {
+    const { default: worker } = await import("../src/index.js");
+    for (const [from, to] of [["http://app.fafoaco.com/?x=1", "https://app.fafoaco.com/?x=1"], ["http://fafoaco.com/download", "https://fafoaco.com/download"], ["http://www.fafoaco.com/", "https://www.fafoaco.com/"], ["http://app.orbit-app.workers.dev/", "https://app.orbit-app.workers.dev/"]]) {
+      const r = await worker.fetch(new Request(from), {});
+      assert.equal(r.status, 301, from); assert.equal(r.headers.get("location"), to, from);
+    }
+    const w = await worker.fetch(new Request("https://www.fafoaco.com/"), {});
+    assert.equal(w.headers.get("location"), "https://fafoaco.com/");
+    assert.equal((await worker.fetch(new Request("http://app.fafoaco.com/", { method: "POST", body: "x" }), {})).status, 405);
+  });
   await test("update.json is read at most once in the check interval, however many visits", async () => {
     await wait(350);
     const before = manifestHits;
