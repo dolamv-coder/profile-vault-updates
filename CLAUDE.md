@@ -789,6 +789,20 @@ vault that never synced starts its `_local` with what's there as `seen`, so turn
 from the browser. Order alerts for buyers, Settings → License and Accounts to assign
 stay in the desktop app. Nothing gains a field (`_local` is per device and never synced).
 
+From 1.9.108 the web version says when a newer release is out (the owner's request: their phone's tab kept running 1.9.106
+after 1.9.107 came out, so slots still went nowhere). The page asks its own address with `HEAD /` (the web worker answers
+`x-orbit-version`) as it starts, which is the version it's running (`WEB_UPD.mine`), then every 10 minutes while it's shown,
+whenever it's shown again (`visibilitychange`, `pageshow` from the page cache) and back online, at most every 2 minutes
+(`webVersionCheck`). With a newer one out: unlocked, a bar under the top bar (`#web-upd`, `webUpdBar`, in the sticky header,
+so it stays in view; one line on phones) says "FAFO X is out." with Reload (`webReload`: lets a save and a sync round
+finish; in collecting mode it asks first) and Not now (until the next release); on the lock screen with no password typed
+and no window open, it reloads by itself (`webReloadOnLock`, also right after locking, at most once every 10 minutes per tab),
+and the lock screen after a reload says "Updated to version X" (`#lock-done`, sessionStorage `orbit-web-updated`). The page
+has no version of its own built in: right after a release, a page that loaded from a worker instance still on the old one
+can take the new one for its own and miss that bar (the next release shows it). Nothing runs in the desktop app, on
+claude.ai or from a file, and an address without the header does nothing. Tabs on 1.9.107 or older need one reload by hand.
+Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

@@ -75,6 +75,7 @@ try {
     assert.equal(r.status, 200); assert.equal(await r.text(), page1);
     assert.equal(r.headers.get("content-type"), "text/html; charset=utf-8");
     assert.equal(r.headers.get("x-orbit-version"), "1.9.0");
+    assert.equal(r.headers.get("server-timing"), 'v;desc="1.9.0"');
     assert.equal(r.headers.get("cache-control"), "no-cache");
     assert.equal(r.headers.get("x-frame-options"), "DENY");
     assert.equal(r.headers.get("content-security-policy"), "frame-ancestors 'none'");
@@ -101,7 +102,7 @@ try {
     manifest = await release("1.9.1", page2);
     await wait(350);
     const r = await get();
-    assert.equal(await r.text(), page2); assert.equal(r.headers.get("x-orbit-version"), "1.9.1");
+    assert.equal(await r.text(), page2); assert.equal(r.headers.get("x-orbit-version"), "1.9.1"); assert.equal(r.headers.get("server-timing"), 'v;desc="1.9.1"');
   });
   await test("a page that doesn't match update.json's SHA-256 is refused; the last good one stays", async () => {
     manifest = await release("1.9.2", "<p>tampered</p>", { shaOf: "<p>what was signed</p>" });
