@@ -1,10 +1,10 @@
 {
-  "version": "1.9.107",
-  "url": "index-1.9.107.html",
-  "sha256": "2c1de31c73fcf0133bb82fec961916cea4305233a2968979bf8fb6de38f1da00",
-  "signature": "qnyvonGzZCv06qX2NxAG6vZezr+Qd+cPpBt5YOleUnQJ1fL+RNwgzO79nLbP02LD2bQer7BBCjZtx9r76MCMCg==",
+  "version": "1.9.108",
+  "url": "index-1.9.108.html",
+  "sha256": "36a283ffe703c05e4fd0b1abaa03c4e329a49259cf3a1d09869d16a171a470d9",
+  "signature": "8NAUbxUzWVi32MNkg8KGJ0RtsqI5cykFmtUXvjYVrSMoNJPrCCDv3JnOyvqRmeEJojiF5jE21mrckZLf5pL8CQ==",
   "minAppVersion": "0",
-  "notes": "FAFO on the web now sends your slots straight to the seller's Discord channel, like the desktop app, and shows Pending approval until the seller approves them. Slots the web version marked Submitted without sending are switched on again, so press Submit to send them. If the browser doesn't have your license key yet, Submit asks for it once.",
+  "notes": "FAFO on the web now tells you when there's a new version: a bar at the top offers Reload, and a locked page updates by itself. Nothing changes in the desktop app.",
   "installerUrl": "",
-  "publishedAt": "2026-10-10T12:02:29.136Z"
+  "publishedAt": "2026-10-10T19:22:04.733Z"
 }
