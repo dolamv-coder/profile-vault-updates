@@ -1,10 +1,10 @@
 {
-  "version": "1.9.106",
-  "url": "index-1.9.106.html",
-  "sha256": "7888e29d4a50a324c8bfdfe036e23fab02d2cc4364db0bf587defad3a7a36284",
-  "signature": "G4I/q42C1Hv7gWVoLqO6snbgYCivdbrh16mmdZDWl15tFy/ZY+kq1RhgQi6W0rBL8MpvBjdEWI4RjXIjImA7Bw==",
+  "version": "1.9.107",
+  "url": "index-1.9.107.html",
+  "sha256": "2c1de31c73fcf0133bb82fec961916cea4305233a2968979bf8fb6de38f1da00",
+  "signature": "qnyvonGzZCv06qX2NxAG6vZezr+Qd+cPpBt5YOleUnQJ1fL+RNwgzO79nLbP02LD2bQer7BBCjZtx9r76MCMCg==",
   "minAppVersion": "0",
-  "notes": "Clean emails now clears store newsletters that sound like a delivery, like Best Buy's \"Your next computer has arrived\" laptop sale. Store emails about an order, package or delivery are still kept. Auto-clean looks back 30 days once, so ones you already have go too. FAFO on the web (app.orbit-app.workers.dev) is up to date again: it now gets every update, starting with this one.",
+  "notes": "FAFO on the web now sends your slots straight to the seller's Discord channel, like the desktop app, and shows Pending approval until the seller approves them. Slots the web version marked Submitted without sending are switched on again, so press Submit to send them. If the browser doesn't have your license key yet, Submit asks for it once.",
   "installerUrl": "",
-  "publishedAt": "2026-10-10T05:05:53.464Z"
+  "publishedAt": "2026-10-10T12:02:29.136Z"
 }
