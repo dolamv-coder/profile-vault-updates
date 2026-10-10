@@ -16,7 +16,7 @@ license, inboxes and page updates over, and `shortcuts.js` moves the older copie
 | --- | --- |
 | `main.js` | Starts the app, the window and the IPC handlers the page calls. |
 | `preload.js` | `window.pvDesktop` for the page. Its `version` tells pages what this app can do. |
-| `imap-sync.js` | Email: order sync, Clean emails (scan and trash), moving orders out of Spam. |
+| `imap-sync.js` | Email: order sync, Clean emails (scan and trash), moving orders out of Spam, a canceled order's emails to Trash. |
 | `trust.js` | Certificates for email connections: Node's list plus the ones Windows trusts. |
 | `shortcuts.js` | The Start menu shortcut (Windows takes notifications' app name from it), and moving shortcuts to an older copy over to this one. |
 | `updater.js` | Checks `update.json`, verifies the page's signature, installs it on restart. |
@@ -31,7 +31,8 @@ license, inboxes and page updates over, and `shortcuts.js` moves the older copie
 - `preload.js`'s `version` is what pages check for features (`pvDesktop.version >= 11`). Bump it when
   the page gets something new to use. 10 was the v1.9.49 download; 11 trusts Windows' certificates and
   explains certificate errors (`CERT_ERROR` plus what it saw); 12 is the v1.9.76 download, `FAFO.exe`
-  (pages name the exe by it).
+  (pages name the exe by it); 13 is the v1.9.105 download, with `trashOrderMail` (Orders → Delete canceled moves
+  those orders' emails to Trash).
 
 ## Test, build, release
 
@@ -44,7 +45,9 @@ ELECTRON="$(node -p "require('electron')")" node test/check-build.mjs dist/FAFO-
 
 The tests make throwaway certificates with openssl and run the email code against a local TLS server
 posing as imap.gmail.com: normal, re-signed by antivirus, self-signed, expired, not yet valid, another
-server's name, and with the antivirus root trusted by Windows. `test/powershell.test.cjs` checks the
+server's name, and with the antivirus root trusted by Windows. `test/order-mail.test.cjs` runs `trashOrderMail`'s search
+and checks against a pretend mail server (Gmail's X-GM-RAW and other servers' SEARCH, whole-word order numbers, emails
+that also name a kept order). `test/powershell.test.cjs` checks the
 PowerShell that reads Windows' certificates (skipped without `pwsh`). `test/shortcuts.test.cjs` runs
 `shortcuts.js` against a pretend Windows profile: Orbit and Profile Vault shortcuts moving to FAFO.exe.
 
