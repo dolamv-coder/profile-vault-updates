@@ -1,10 +1,10 @@
 {
-  "version": "1.9.104",
-  "url": "index-1.9.104.html",
-  "sha256": "9c42cc7ded379f1baba69a06951872229283bffee8d967013fd3f8f69d405dd8",
-  "signature": "SGfri81usIQTuMODnk1Bft7Y9c0HuYyty+TThE7zTHOCZP+Hi4vKmUDtxVaIUkVJMqUI+MOwridWmBnOB8O6AA==",
+  "version": "1.9.105",
+  "url": "index-1.9.105.html",
+  "sha256": "92ee2a47d68f92445099004848380514d7dfcd58a0627bb577d4486c329d20a2",
+  "signature": "TdBkaTDbzlF/X2NfiLxcRfaH7qdVgdk4AqqsKK0BluG6oOPPZrIFJTwtTerW4W+hmVCJLqoaUiN1pRQbn7LDBA==",
   "minAppVersion": "0",
-  "notes": "Pre-orders no longer show Target's gray shopping bag as the product picture, and another product's photo is no longer taken for an order's: those orders show the store's mark until a real picture comes, from the shipping email or one you set with Picture, and then every order of the item gets it.",
+  "notes": "Orders has a Delete canceled button: it removes the canceled orders shown and, with the newest FAFO download, moves their emails (the order confirmation, the cancellation and any other email with the order number) to Trash. Generate success now shows your stick rate, how many items stuck against how many were canceled, and big amounts spent are no longer cut off. Showing on Orders has Today, Yesterday, Weekly, Overall and Custom as buttons, with the other periods under More.",
   "installerUrl": "",
-  "publishedAt": "2026-10-09T16:12:33.456Z"
+  "publishedAt": "2026-10-10T03:53:00.200Z"
 }
