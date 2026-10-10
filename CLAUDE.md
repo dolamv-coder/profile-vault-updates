@@ -322,16 +322,15 @@ worker itself only changes for its own fixes ("Deploy web app",
 Opening it needs no license key (`licenseGate` only runs in the desktop app),
 and email sync and Clean emails stay in the desktop app.
 
-**The web version is paused at 1.9.67** (since 2026-10-01, at the owner's request, until one big
-update): `web-worker/wrangler.toml`'s `UPDATE_URL` points at `update.json` in the "Release 1.9.67"
-commit, so releases reach installed apps but not the web. Resume by setting it back to main's
-`update.json`. Meanwhile the web page (1.9.67) still syncs with newer desktops, and it only syncs the
-top-level vault keys it knows (`SYNC_LISTS`, `SYNC_MAPS`, `SYNC_SETS`, `SYNC_VALUES`) and rewrites
-store modes it doesn't know (`fixMode`). A release in the meantime that adds either would have it
-undone by a web device that syncs a change, so keep those for the big update. New fields on existing
-items and new shared settings keys are safe (a new per-device setting would still sync through a web
-device, which doesn't know to keep it local). Its Import profiles also predates `xlUnwrap`, so it
-doesn't read the `="…"` cells in slot files.
+**The web version follows releases again from 1.9.106** (the owner's request, 2026-10-10: "add the web base project into
+this update"). From 2026-10-01 it was paused at 1.9.67, at the owner's request, until one big update: `web-worker/wrangler.toml`'s
+`UPDATE_URL` pointed at `update.json` in the "Release 1.9.67" commit, and pages in the meantime kept new data where 1.9.67 would
+sync it as it was (new fields on existing items, new shared settings such as `genDrafts`, `loginGroups`, `itemPics`,
+`canceledGone`) and added no top-level vault keys or store modes, which a 1.9.67 device would have undone. That's why the notes
+from 1.9.68 to 1.9.105 say "the paused web version is unaffected". `UPDATE_URL` is main's `update.json` again, so a browser
+gets each release when it opens or reloads the page. A tab left open on an older page keeps running it until reloaded, like a
+desktop app that hasn't restarted, so a release that adds top-level vault keys or store modes still has to expect older
+devices syncing for a while.
 
 From 1.9.71, **Generate** (sidebar, under Cards) makes profiles in bulk: one address, a name prefix
 (`<name> #n`, numbered after the highest in use), how many, and pasted emails (the first word of each
@@ -760,6 +759,20 @@ is chips, Today, Yesterday, Weekly (the last 7 days, as on Generate success), Ov
 (`ORDER_PERIOD_CHIPS`, `data-act="order-period"`), with This billing week, Last week and the last 30 and 90 days under
 More (`#o-period`); the saved values are as before. Settings gain `canceledGone` and nothing else changes, so the paused
 web version is unaffected.
+
+From 1.9.106 Clean emails clears a store's newsletter that sounds like a delivery (the owner's screenshot: Best Buy's "Your
+next computer has arrived", a laptop sale sent to each account, kept since "arrived" protected it). From a store's newsletter
+address (`CLEAN_STORE_FROM`, or relayed from one), "arrived", "arriving", "on its way" and "alert" keep an email only when its
+subject also names an order, package, shipment, delivery, purchase, item, card, refund or return (`CLEAN_STORE_WEAK`,
+`CLEAN_STORE_REAL`, `storeGuarded` in `applyCleanSafety`, for its Spam rule too; it only ever clears more than `cleanGuarded`,
+so a store's sale it cleared stays cleared); its other words still keep it, and stores send their order mail from other
+addresses (`BestBuyInfo@emailinfo.bestbuy.com`, `orders@oe.target.com`). A forward ("FW: …") whose subject has only
+"arrived", "arriving" or "on its way" to protect it counts as a sale for that subject (`CLEAN_SALE`, which the desktop app gets
+as `promoSubject`), so the app reads it to find who sent it: a store's newsletter forwarded by an account's mailbox goes, and
+anyone else's is checked by its original subject and opening lines, as before (a forwarded "Arriving today: … Order #…"
+stays). The page sees subjects without "FW:", so that part only changes what the app reads. `CLEAN_RULES_KEY`
+takes in `CLEAN_STORE_WEAK`, so auto-clean looks back 30 days once. 1.9.106 also has the web version follow releases again
+(the next section). Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
