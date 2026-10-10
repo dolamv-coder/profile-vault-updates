@@ -440,4 +440,96 @@ async function rescueSpam(cfg) {
 }
 module.exports.rescueSpam = rescueSpam;
 module.exports._rescue = { verifiedFrom, retailerOf };
+
+// ================= A canceled order's emails =================
+// Moves every email naming one of the given order numbers (its confirmation, the cancellation, shipping
+// notes, forwards) to Trash: from the main folder (All Mail on Gmail) and Spam. The server's search finds
+// candidates; each is then read and moved only when its subject or text has one of the numbers as a whole
+// word and none of the `keep` numbers (orders still in FAFO, so a note about several orders stays). Trash
+// keeps them restorable. Order numbers need 6 to 40 letters, digits or dashes, at least 5 of them digits.
+const ORDER_NO = /^(?=(?:[^0-9]*[0-9]){5})[A-Za-z0-9-]{6,40}$/;
+const orderNoList = (a, max) => Array.from(new Set((Array.isArray(a) ? a : []).map(x => String(x == null ? "" : x).trim().toUpperCase()).filter(n => ORDER_NO.test(n)))).slice(0, max);
+// The words of an email that could be order numbers: runs of letters, digits and dashes, and their parts between dashes.
+function orderTokens(text) {
+  const out = new Set();
+  for (const t of String(text || "").toUpperCase().match(/[A-Z0-9-]{6,}/g) || []) {
+    out.add(t.replace(/^-+|-+$/g, ""));
+    for (const p of t.split("-")) if (p.length >= 6) out.add(p);
+  }
+  return out;
+}
+const mailText = (mail) => [mail.subject || "", mail.text || "", String(mail.html || "").replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&#(\d+);/g, (m, d) => String.fromCharCode(+d))].join("\n");
+const gmDate = (d) => d.toISOString().slice(0, 10).replace(/-/g, "/");
+
+// With a connected client: finds and moves. orders [{no, since: "YYYY-MM-DD"}], keep [numbers].
+async function moveOrderMail(c, cfg, orders, keep) {
+  const want = new Map();
+  for (const o of Array.isArray(orders) ? orders : []) {
+    const [no] = orderNoList([o && o.no], 1);
+    if (!no) continue;
+    const at = /^\d{4}-\d{2}-\d{2}$/.test(String(o.since || "")) ? new Date(o.since + "T00:00:00Z") : null;
+    const since = at && !isNaN(at) ? new Date(at.getTime() - 3 * 86400000) : new Date(Date.now() - 400 * 86400000);
+    if (!want.has(no) || since < want.get(no)) want.set(no, since);
+    if (want.size >= 500) break;
+  }
+  const keepSet = new Set(orderNoList(keep, 50000).filter(n => !want.has(n)));
+  const found = {}, empty = { ok: true, moved: 0, found, kept: 0, boxes: [] };
+  if (!want.size) return empty;
+  const isGmail = /gmail\.com|googlemail\.com/i.test(cfg.host) || c.capabilities?.has?.("X-GM-EXT-1");
+  const list = await c.list();
+  const trash = list.find(b => b.specialUse === "\\Trash") || list.find(b => /^(\[gmail\]\/)?(trash|bin|deleted items|deleted messages)$/i.test(b.path));
+  if (!trash) return { ok: false, error: "Couldn't find a Trash folder in this inbox, so its emails stay where they are." };
+  const boxes = (await pickMailboxes(c, isGmail)).filter(p => p !== trash.path);
+  const nos = Array.from(want.keys());
+  let moved = 0, kept = 0;
+  const done = [];
+  for (const [bi, box] of boxes.entries()) {
+    let lock;
+    try { lock = await c.getMailboxLock(box); } catch (e) { if (bi === 0) throw e; continue; }
+    try {
+      const cand = new Set();
+      for (let i = 0; i < nos.length; i += 20) {
+        const batch = nos.slice(i, i + 20);
+        const since = new Date(Math.min(...batch.map(n => want.get(n).getTime())));
+        const uids = isGmail
+          ? await c.search({ gmraw: "(" + batch.map(n => '"' + n + '"').join(" OR ") + ") after:" + gmDate(since) }, { uid: true })
+          : await c.search({ since, or: batch.flatMap(n => [{ subject: n }, { body: n }]) }, { uid: true });
+        for (const u of uids || []) cand.add(u);
+        if (cand.size >= 3000) break;
+      }
+      const pick = [];
+      if (cand.size) {
+        for await (const m of c.fetch(Array.from(cand).slice(0, 3000), { uid: true, source: true }, { uid: true })) {
+          try {
+            const words = orderTokens(mailText(await simpleParser(m.source)));
+            const hits = nos.filter(n => words.has(n));
+            if (!hits.length) continue;
+            if (keepSet.size && Array.from(words).some(w => keepSet.has(w))) { kept++; continue; }
+            pick.push(m.uid);
+            hits.forEach(n => { found[n] = (found[n] || 0) + 1; });
+          } catch {}
+        }
+      }
+      if (pick.length) {
+        const res = await c.messageMove(pick, trash.path, { uid: true });
+        moved += res && res.uidMap ? res.uidMap.size : pick.length;
+      }
+      done.push(box);
+    } finally { lock.release(); }
+  }
+  return { ok: true, moved, found, kept, boxes: done, trash: trash.path };
+}
+async function trashOrderMail(cfg, orders, keep) {
+  const c = await open(cfg);
+  try {
+    await c.connect();
+    return await moveOrderMail(c, cfg, orders, keep);
+  } catch (e) {
+    return { ok: false, error: await explain(e, cfg) };
+  } finally {
+    try { await c.logout(); } catch { try { c.close(); } catch {} }
+  }
+}
+module.exports.trashOrderMail = trashOrderMail;
+module.exports._orderMail = { moveOrderMail, orderTokens, orderNoList, ORDER_NO };
 module.exports._clean = { PROTECT, SPAM_KEEP, looksPromoSender, forwardedFrom, normSubject, cleanRules, isSurvey, isSale, isProtected };

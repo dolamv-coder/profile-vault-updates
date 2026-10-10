@@ -65,6 +65,14 @@ ipcMain.handle("imap:trash-promos", async (_e, cfg, uids, uidValidity) => {
   return imap.trashPromos(c, uids, uidValidity);
 });
 
+// A canceled order's emails to Trash (pages from 1.9.105): orders [{no, since}], keep [order numbers that stay].
+ipcMain.handle("imap:trash-order-mail", async (_e, cfg, orders, keep) => {
+  const c = clean(cfg);
+  if (!c.email || !c.password || !c.host) return { ok: false, error: "Email, app password and server are all needed." };
+  const list = (Array.isArray(orders) ? orders : []).slice(0, 500).map(o => ({ no: String(o && o.no || "").slice(0, 40), since: String(o && o.since || "").slice(0, 10) }));
+  return imap.trashOrderMail(c, list, (Array.isArray(keep) ? keep : []).slice(0, 50000).map(n => String(n || "").slice(0, 40)));
+});
+
 ipcMain.handle("imap:rescue-spam", async (_e, cfg) => {
   const c = clean(cfg);
   if (!c.email || !c.password || !c.host) return { ok: false, error: "Email, app password and server are all needed." };
