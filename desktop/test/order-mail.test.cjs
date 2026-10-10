@@ -2,29 +2,33 @@
 // server for on Gmail and elsewhere, and which emails it moves to Trash. Sample order numbers and addresses only.
 "use strict";
 const assert = require("assert");
-const { _orderMail: { moveOrderMail, orderTokens, orderNoList } } = require("../imap-sync.js");
+const { _orderMail: { moveOrderMail, orderTokens, orderNoList, moveMail } } = require("../imap-sync.js");
 
 let pass = 0;
 const t = async (name, fn) => { try { await fn(); pass++; } catch (e) { console.log(`FAIL ${name}: ${e.message}`); process.exitCode = 1; } };
 const raw = (subject, body) => `From: Store <orders@example.com>\r\nTo: buyer@example.com\r\nSubject: ${subject}\r\nContent-Type: text/plain\r\n\r\n${body}\r\n`;
 
-// boxes: {path: [{uid, subject, body}]}; gmail adds X-GM-EXT-1 and All Mail.
-function fakeClient({ gmail, boxes }) {
-  const calls = { search: [], move: [], opened: [] };
+// boxes: {path: [{uid, subject, body}]}; gmail adds X-GM-EXT-1 and All Mail. noMove: a server without MOVE;
+// failSearch / failMove / failCopy: the server refuses (imapflow answers false).
+function fakeClient({ gmail, boxes, noMove, failSearch, failMove, failCopy }) {
+  const calls = { search: [], move: [], opened: [], copy: [], del: [] };
   let open = null;
   const list = Object.keys(boxes).map(path => ({ path, specialUse: /trash/i.test(path) ? "\\Trash" : /spam|junk/i.test(path) ? "\\Junk" : /all mail/i.test(path) ? "\\All" : "" }));
   return {
     calls,
-    capabilities: new Set(gmail ? ["X-GM-EXT-1"] : []),
+    capabilities: new Map([...(gmail ? ["X-GM-EXT-1"] : []), ...(noMove ? [] : ["MOVE"])].map(k => [k, true])),
     list: async () => list,
     getMailboxLock: async (p) => { if (!boxes[p]) throw new Error("no such box"); open = p; calls.opened.push(p); return { release() { open = null; } }; },
     search: async (q) => {
       calls.search.push({ box: open, q });
+      if (failSearch && failSearch(open)) return false;
       const words = q.gmraw ? (q.gmraw.match(/"([^"]+)"/g) || []).map(s => s.slice(1, -1)) : q.or.map(x => x.subject || x.body);
       return boxes[open].filter(m => words.some(w => (m.subject + " " + m.body).toUpperCase().includes(w))).map(m => m.uid);
     },
     fetch: async function* (uids) { for (const m of boxes[open]) if (uids.includes(m.uid)) yield { uid: m.uid, source: Buffer.from(raw(m.subject, m.body)) }; },
-    messageMove: async (uids, dest) => { calls.move.push({ box: open, uids: uids.slice(), dest }); return { uidMap: new Map(uids.map(u => [u, u + 1000])) }; }
+    messageMove: async (uids, dest) => { if (failMove && failMove(open)) return false; calls.move.push({ box: open, uids: uids.slice(), dest }); return { uidMap: new Map(uids.map(u => [u, u + 1000])) }; },
+    messageCopy: async (uids, dest) => { if (failCopy) return false; calls.copy.push({ box: open, uids: uids.slice(), dest }); return { uidMap: new Map() }; },
+    messageDelete: async (uids) => { calls.del.push({ box: open, uids: uids.slice() }); return true; }
   };
 }
 
@@ -82,6 +86,29 @@ function fakeClient({ gmail, boxes }) {
     const c = fakeClient({ gmail: false, boxes: { INBOX: [], Trash: [] } });
     const r = await moveOrderMail(c, { host: "imap.example.com" }, [{ no: "1234" }, { no: "ORDER" }], []);
     assert.deepStrictEqual([r.ok, r.moved, c.calls.search.length], [true, 0, 0]);
+  });
+  await t("a search the server refuses is an error, not 'no emails found'", async () => {
+    const c = fakeClient({ gmail: true, failSearch: (box) => box === "[Gmail]/Spam", boxes: {
+      "[Gmail]/All Mail": [{ uid: 1, subject: "Canceled 902003840648514", body: "" }], "[Gmail]/Spam": [], "[Gmail]/Trash": [] } });
+    const r = await moveOrderMail(c, { host: "imap.gmail.com" }, [{ no: "902003840648514" }], []);
+    assert.strictEqual(r.ok, false);
+    assert.match(r.error, /couldn't search/);
+    assert.strictEqual(r.moved, 1, "what moved before it is counted");
+  });
+  await t("a move the server refuses is an error, and not counted", async () => {
+    const c = fakeClient({ gmail: true, failMove: () => true, boxes: { "[Gmail]/All Mail": [{ uid: 1, subject: "Canceled 902003840648514", body: "" }], "[Gmail]/Trash": [] } });
+    const r = await moveOrderMail(c, { host: "imap.gmail.com" }, [{ no: "902003840648514" }], []);
+    assert.deepStrictEqual([r.ok, r.moved], [false, 0]);
+    assert.match(r.error, /didn't move the emails to Trash/);
+  });
+  await t("a server without MOVE: copy to Trash, then delete; a failed copy deletes nothing", async () => {
+    let c = fakeClient({ noMove: true, boxes: { INBOX: [{ uid: 4, subject: "Canceled 902003840648514", body: "" }], Trash: [] } });
+    let r = await moveOrderMail(c, { host: "imap.example.com" }, [{ no: "902003840648514" }], []);
+    assert.deepStrictEqual([r.ok, r.moved, c.calls.copy.length, c.calls.del.length, c.calls.move.length], [true, 1, 1, 1, 0]);
+    c = fakeClient({ noMove: true, failCopy: true, boxes: { INBOX: [{ uid: 4, subject: "Canceled 902003840648514", body: "" }], Trash: [] } });
+    r = await moveOrderMail(c, { host: "imap.example.com" }, [{ no: "902003840648514" }], []);
+    assert.deepStrictEqual([r.ok, r.moved, c.calls.del.length], [false, 0, 0]);
+    await assert.rejects(moveMail(c, [4], "Trash"), /MOVE_FAILED/);
   });
   console.log(`${pass} passed`);
 })();

@@ -17,6 +17,8 @@ const GMAIL_QUERY = '(subject:(order OR "thanks for your order" OR "order confir
 
 function friendlyError(e) {
   const m = String((e && (e.responseText || e.message)) || e || "");
+  if (m === "SEARCH_FAILED") return "The mail server couldn't search this inbox, so its emails weren't moved.";
+  if (m === "MOVE_FAILED") return "The mail server didn't move the emails to Trash, so they're where they were.";
   if (e && e.authenticationFailed || /AUTHENTICATIONFAILED|Invalid credentials|authentication failed|LOGIN failed/i.test(m))
     return "Sign-in failed. Use an app password, not your normal password, and check the email address.";
   if (/ENOTFOUND|EAI_AGAIN/i.test(m)) return "Couldn't find that mail server. Check the provider or server name.";
@@ -270,6 +272,21 @@ function forwardedFrom(text) {
 const normSubject = (s) => String(s || "").replace(/^\s*((fw|fwd|re)\s*:\s*)+/i, "").replace(/\s+/g, " ").trim();
 const displayName = (fromText) => { const m = String(fromText || "").match(/^\s*"?([^"<]+?)"?\s*</); return m ? m[1].trim() : parseAddr(fromText); };
 
+// Moves messages (by UID) out of the open folder and says how many went. imapflow's messageMove answers false when the
+// server refuses, and on a server without MOVE it copies and then deletes even when the copy failed, which would lose
+// the emails. So there it copies first and deletes only once the copy worked. Throws MOVE_FAILED when nothing moved.
+async function moveMail(c, uids, dest) {
+  if (c.capabilities && typeof c.capabilities.has === "function" && !c.capabilities.has("MOVE")) {
+    const copied = await c.messageCopy(uids, dest, { uid: true });
+    if (!copied) throw new Error("MOVE_FAILED");
+    await c.messageDelete(uids, { uid: true, silent: true });
+    return copied.uidMap && copied.uidMap.size ? copied.uidMap.size : uids.length;
+  }
+  const res = await c.messageMove(uids, dest, { uid: true });
+  if (!res) throw new Error("MOVE_FAILED");
+  return res.uidMap && res.uidMap.size ? res.uidMap.size : uids.length;
+}
+
 // "inbox" or "spam". Spam is found by its special-use flag, or by its usual names.
 async function resolveFolder(c, which) {
   if (String(which || "inbox").toLowerCase() !== "spam") return { path: "INBOX", spam: false };
@@ -371,8 +388,7 @@ async function trashPromos(cfg, uids, uidValidity) {
       // If the mailbox was rebuilt since the scan, message numbers may point elsewhere. Stop.
       if (uidValidity && String(c.mailbox && c.mailbox.uidValidity || "") !== String(uidValidity))
         return { ok: false, error: "The inbox changed since the scan. Scan again, then retry." };
-      const res = await c.messageMove(uids, trash.path, { uid: true });
-      const moved = res && res.uidMap ? res.uidMap.size : uids.length;
+      const moved = await moveMail(c, uids, trash.path);
       return { ok: true, moved, trash: trash.path };
     } finally { lock.release(); }
   } catch (e) {
@@ -429,8 +445,7 @@ async function rescueSpam(cfg) {
         }
       }
       if (!pick.length) return { ok: true, moved: 0, items: [] };
-      const res = await c.messageMove(pick, "INBOX", { uid: true });
-      return { ok: true, moved: res && res.uidMap ? res.uidMap.size : pick.length, items };
+      return { ok: true, moved: await moveMail(c, pick, "INBOX"), items };
     } finally { lock.release(); }
   } catch (e) {
     return { ok: false, error: await explain(e, cfg) };
@@ -481,43 +496,48 @@ async function moveOrderMail(c, cfg, orders, keep) {
   if (!trash) return { ok: false, error: "Couldn't find a Trash folder in this inbox, so its emails stay where they are." };
   const boxes = (await pickMailboxes(c, isGmail)).filter(p => p !== trash.path);
   const nos = Array.from(want.keys());
-  let moved = 0, kept = 0;
+  let moved = 0, kept = 0, partial = false;
   const done = [];
-  for (const [bi, box] of boxes.entries()) {
-    let lock;
-    try { lock = await c.getMailboxLock(box); } catch (e) { if (bi === 0) throw e; continue; }
-    try {
-      const cand = new Set();
-      for (let i = 0; i < nos.length; i += 20) {
-        const batch = nos.slice(i, i + 20);
-        const since = new Date(Math.min(...batch.map(n => want.get(n).getTime())));
-        const uids = isGmail
-          ? await c.search({ gmraw: "(" + batch.map(n => '"' + n + '"').join(" OR ") + ") after:" + gmDate(since) }, { uid: true })
-          : await c.search({ since, or: batch.flatMap(n => [{ subject: n }, { body: n }]) }, { uid: true });
-        for (const u of uids || []) cand.add(u);
-        if (cand.size >= 3000) break;
-      }
-      const pick = [];
-      if (cand.size) {
-        for await (const m of c.fetch(Array.from(cand).slice(0, 3000), { uid: true, source: true }, { uid: true })) {
-          try {
-            const words = orderTokens(mailText(await simpleParser(m.source)));
-            const hits = nos.filter(n => words.has(n));
-            if (!hits.length) continue;
-            if (keepSet.size && Array.from(words).some(w => keepSet.has(w))) { kept++; continue; }
-            pick.push(m.uid);
-            hits.forEach(n => { found[n] = (found[n] || 0) + 1; });
-          } catch {}
+  try {
+    for (const [bi, box] of boxes.entries()) {
+      let lock;
+      try { lock = await c.getMailboxLock(box); } catch (e) { if (bi === 0) throw e; continue; }
+      try {
+        const cand = new Set();
+        for (let i = 0; i < nos.length; i += 20) {
+          const batch = nos.slice(i, i + 20);
+          const since = new Date(Math.min(...batch.map(n => want.get(n).getTime())));
+          const uids = isGmail
+            ? await c.search({ gmraw: "(" + batch.map(n => '"' + n + '"').join(" OR ") + ") after:" + gmDate(since) }, { uid: true })
+            : await c.search({ since, or: batch.flatMap(n => [{ subject: n }, { body: n }]) }, { uid: true });
+          if (!Array.isArray(uids)) throw new Error("SEARCH_FAILED");   // imapflow answers false when the server refuses
+          for (const u of uids) cand.add(u);
+          if (cand.size >= 3000 && i + 20 < nos.length) { partial = true; break; }
         }
-      }
-      if (pick.length) {
-        const res = await c.messageMove(pick, trash.path, { uid: true });
-        moved += res && res.uidMap ? res.uidMap.size : pick.length;
-      }
-      done.push(box);
-    } finally { lock.release(); }
+        if (cand.size > 3000) partial = true;
+        const pick = [];
+        if (cand.size) {
+          for await (const m of c.fetch(Array.from(cand).slice(0, 3000), { uid: true, source: true }, { uid: true })) {
+            try {
+              const words = orderTokens(mailText(await simpleParser(m.source)));
+              const hits = nos.filter(n => words.has(n));
+              if (!hits.length) continue;
+              if (keepSet.size && Array.from(words).some(w => keepSet.has(w))) { kept++; continue; }
+              pick.push(m.uid);
+              hits.forEach(n => { found[n] = (found[n] || 0) + 1; });
+            } catch {}
+          }
+        }
+        if (pick.length) moved += await moveMail(c, pick, trash.path);
+        done.push(box);
+      } finally { lock.release(); }
+    }
+  } catch (e) {
+    // What moved before the failure is said too, so the page counts it.
+    return { ok: false, error: await explain(e, cfg), moved, found, kept, boxes: done, partial };
   }
-  return { ok: true, moved, found, kept, boxes: done, trash: trash.path };
+  // partial: more emails matched than one run reads (3000 a folder), so some are left where they were.
+  return { ok: true, moved, found, kept, boxes: done, trash: trash.path, partial };
 }
 async function trashOrderMail(cfg, orders, keep) {
   const c = await open(cfg);
@@ -531,5 +551,5 @@ async function trashOrderMail(cfg, orders, keep) {
   }
 }
 module.exports.trashOrderMail = trashOrderMail;
-module.exports._orderMail = { moveOrderMail, orderTokens, orderNoList, ORDER_NO };
+module.exports._orderMail = { moveOrderMail, orderTokens, orderNoList, ORDER_NO, moveMail };
 module.exports._clean = { PROTECT, SPAM_KEEP, looksPromoSender, forwardedFrom, normSubject, cleanRules, isSurvey, isSale, isProtected };

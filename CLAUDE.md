@@ -735,18 +735,22 @@ change otherwise, so the paused web version is unaffected.
 
 From 1.9.105 (the owner's requests, with screenshots of a Target order's confirmation and cancellation emails and of a
 success card showing "$14,70…"), Orders has **Delete N canceled** (beside Select all, on the All, Needs attention and
-Canceled lists): the canceled orders the page shows (period, inbox, store and search: `CXL_SHOWN`), deleted with
-`forgetOrders` and Undo. With desktop 13 (`CAN_TRASH_ORDER_MAIL`) its window's "Also move their emails to Trash" (ticked)
-asks the desktop app's `trashOrderMail(cfg, [{no, since}], keep)` for each connected inbox in turn: it searches the main
-folder (All Mail on Gmail, with X-GM-RAW) and Spam for the order numbers (20 to a search, from 3 days before the order),
-reads each email found, and moves to Trash those with one of the numbers as a whole word and none of `keep` (the numbers
-of the orders staying in FAFO). A number an order that stays also has keeps its emails, and an order with no number has
-none to find (`canceledPlan` counts both for the window). The orders go first; the window says which inbox it's on, then
-closes with a toast (Undo brings the orders back; the emails stay in Trash), or stays and says which inbox failed.
+Canceled lists): the canceled orders the page shows (`CXL_SHOWN`), deleted with `forgetOrders` and Undo. With desktop 13
+(`CAN_TRASH_ORDER_MAIL`) its window's "Also move their emails to Trash" (ticked) asks the desktop app's
+`trashOrderMail(cfg, [{no, since}], keep)` for each connected inbox in turn, a hundred numbers to a call: it searches the
+main folder (All Mail on Gmail, with X-GM-RAW) and Spam for the order numbers (20 to a search, from 3 days before the
+order), reads each email found, and moves to Trash those with one of the numbers as a whole word and none of `keep` (the
+numbers of the orders staying in FAFO, and of those that shipped something before they were canceled). A search or move
+the server refuses is an error, not "none found" (imapflow answers false), and on a server without MOVE it copies to Trash
+and deletes only once the copy worked (`moveMail`, which Clean emails and moving orders out of Spam use too); `partial`
+says more matched than one call reads (3000 a folder). `canceledPlan` runs again on the click, so an order a sync moved on
+meanwhile stays, and counts for the window the orders with no number, those that shipped first and those sharing a number
+with one that stays. The orders go first; the window says which inbox and part it's on, then closes with a toast (Undo
+brings the orders back; the emails stay in Trash), or says which inbox failed, with Undo, in the window or a toast.
 Older downloads get "Get the newest FAFO" there instead (`upd-get`, handled in the window, since the page's click
 handler skips windows). `ORDER_MAIL.busy` holds back an automatic update restart. Canceled orders deleted any way still
-count in Generate success's stick rate: `forgetOrders` keeps each one's `{at, store, inbox, qty, t}` by its order key in
-the shared setting `canceledGone` (400 days); `unforgetOrders` (Undo, adding it back) takes it out, an order with that
+count in Generate success's stick rate: `forgetOrders` keeps each one's `{at, store, inbox, qty}` by its order key in
+the shared setting `canceledGone` (the newest 3000, none ordered over 400 days ago); `unforgetOrders` (Undo, adding it back) takes it out, an order with that
 key again counts instead, and two devices that both add to it before agreeing on a version keep both sides' entries
 (`syncMerge`, as for `itemPics`). Generate success shows the **stick rate** (Show stick rate, on to start): of the
 period's items at its store and inbox, whatever the boxes include, how many weren't canceled, as a percentage

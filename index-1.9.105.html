@@ -428,8 +428,8 @@ img,svg{max-width:100%}
 .slip.is-sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .order.is-sel{background:color-mix(in srgb, var(--accent) 12%, var(--sheet))}
 .order .o-pick{width:16px;height:16px;flex:none;margin:14px 0 0;accent-color:var(--accent);cursor:pointer}
-.o-chiprow{display:flex;align-items:center;gap:12px}
-.o-chiprow > .chips{flex:1;min-width:0}
+.o-chiprow{display:flex;align-items:center;gap:4px 12px;flex-wrap:wrap}
+.o-chiprow > .chips{flex:1 1 auto;min-width:0}
 .o-period{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:0 0 12px}
 .o-period > .o-period-l{font-weight:600;color:var(--ink-2)}
 .o-period .o-period-chips{margin:0;padding:0;flex-wrap:wrap;overflow:visible}
@@ -440,10 +440,10 @@ img,svg{max-width:100%}
 .o-period-dates{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .o-wk{display:flex;align-items:center;gap:8px;font-size:calc(13px*var(--fs));color:var(--ink-2)}
 .o-selall{flex:none;white-space:nowrap;padding:0 4px 6px;font-size:calc(13px*var(--fs))}
-.o-delcxl{flex:none;white-space:nowrap;margin:0 0 6px}
+.o-delcxl{flex:none;white-space:nowrap;margin:0 0 6px auto}
+.o-chiprow > .chips + .o-selall{margin-left:auto}
 .dc-prog:not([hidden]){display:flex;align-items:center;gap:10px}
 .dc-prog .spin{flex:none}
-@media (max-width:640px){ .o-chiprow{flex-wrap:wrap;row-gap:4px} .o-chiprow > .chips{flex:1 1 100%} .o-chiprow .o-delcxl{margin-right:auto} }
 .o-selall input{width:16px;height:16px;margin:0;accent-color:var(--accent)}
 .marquee{position:fixed;display:none;z-index:25;pointer-events:none;border:1px solid var(--accent);background:color-mix(in srgb, var(--accent) 14%, transparent);border-radius:4px}
 body.is-marquee,body.is-marquee *{user-select:none!important;-webkit-user-select:none!important}
@@ -9921,7 +9921,7 @@ function openOrderEditor(existing){
 // Deleted orders leave their key behind (for 120 days, longer than any sync looks back),
 // so syncing the same emails again doesn't re-add them. Adding one by hand clears it.
 // A canceled one also leaves its day, store, inbox and quantity in the shared setting canceledGone
-// ({orderKey: {at, store, inbox, qty, t}}, 400 days), so it still counts in Generate success's stick rate (1.9.105).
+// ({orderKey: {at, store, inbox, qty}}), so it still counts in Generate success's stick rate (1.9.105).
 function forgetOrders(ids){
   const gone = (S.orders || []).filter(o => ids.has(o.id));
   if (!gone.length) return [];
@@ -9931,10 +9931,12 @@ function forgetOrders(ids){
   for (const [k, t] of Object.entries(S.deletedOrders)) if (now - t > 120 * 86400000) delete S.deletedOrders[k];
   const cxl = gone.filter(o => o.stage === "canceled");
   if (cxl.length || S.settings.canceledGone){
-    const kept = {};
-    for (const [k, g] of Object.entries(S.settings.canceledGone || {})) if (g && now - (+g.t || 0) <= 400 * 86400000) kept[k] = g;
-    cxl.forEach(o => { kept[orderKey(o)] = {at:o.at || "", store:storeKeyOf(o), inbox:o.inbox || "", qty:+o.qty || 1, t:now}; });
-    S.settings.canceledGone = kept;
+    // The vault is one record, so this keeps the newest 3000 and none ordered more than 400 days ago.
+    const kept = Object.assign({}, S.settings.canceledGone || {}), old = localISO(new Date(now - 400 * 86400000));
+    cxl.forEach(o => { kept[orderKey(o)] = {at:o.at || todayISO(), store:storeKeyOf(o), inbox:o.inbox || "", qty:+o.qty || 1}; });
+    const keys = Object.keys(kept).filter(k => kept[k] && typeof kept[k] === "object" && String(kept[k].at || "") >= old)
+      .sort((a, b) => String(kept[b].at).localeCompare(String(kept[a].at))).slice(0, 3000);
+    S.settings.canceledGone = Object.fromEntries(keys.map(k => [k, kept[k]]));
   }
   S.orders = S.orders.filter(o => !ids.has(o.id));
   ids.forEach(id => UI.orderSel.delete(id));
@@ -9973,16 +9975,20 @@ function canceledPlan(ids){
   const orders = (S.orders || []).filter(o => set.has(o.id) && o.stage === "canceled");
   const gone = new Set(orders.map(o => o.id));
   const keep = new Set((S.orders || []).filter(o => !gone.has(o.id)).map(o => orderNoPlain(o.orderNo)).filter(n => ORDER_NO_MAIL.test(n)));
+  // One that shipped something before it was canceled (part of it, maybe) keeps its emails: its tracking is in them.
+  const shippedFirst = (o) => (o.tracking || []).length > 0 || !!(o.dates && (o.dates.shipped || o.dates.arriving || o.dates.delivered));
+  orders.forEach(o => { const no = orderNoPlain(o.orderNo); if (shippedFirst(o) && ORDER_NO_MAIL.test(no)) keep.add(no); });
   const nos = new Map(), shared = new Set();
-  let noNumber = 0;
+  let noNumber = 0, shipped = 0;
   orders.forEach(o => {
     const no = orderNoPlain(o.orderNo);
     if (!ORDER_NO_MAIL.test(no)){ noNumber++; return; }
+    if (shippedFirst(o)){ shipped++; return; }
     if (keep.has(no)){ shared.add(no); return; }
     if (!nos.has(no) || (o.at && (!nos.get(no) || o.at < nos.get(no)))) nos.set(no, o.at || "");
   });
   const inboxes = (S.inboxes || []).filter(i => i.password && i.host && i.email);
-  return {orders, ids:gone, nos, keep:Array.from(keep), shared:shared.size, noNumber, inboxes};
+  return {orders, ids:gone, nos, keep:Array.from(keep), shared:shared.size, noNumber, shipped, inboxes};
 }
 function openDeleteCanceled(ids){
   const plan = canceledPlan(ids);
@@ -9990,6 +9996,7 @@ function openDeleteCanceled(ids){
   const canMail = DESK && plan.nos.size > 0 && plan.inboxes.length > 0;
   const where = plan.inboxes.length === 1 ? esc(plan.inboxes[0].email) : `your ${plan.inboxes.length} inboxes`;
   const notes = [plan.noNumber ? `${plural(plan.noNumber, "order")} ${plan.noNumber === 1 ? "has" : "have"} no order number, so ${plan.noNumber === 1 ? "its emails stay" : "their emails stay"}.` : "",
+    plan.shipped ? `${plural(plan.shipped, "order")} shipped something before ${plan.shipped === 1 ? "it was" : "they were"} canceled, so ${plan.shipped === 1 ? "its emails stay" : "their emails stay"}.` : "",
     plan.shared ? `${plural(plan.shared, "order number")} ${plan.shared === 1 ? "is" : "are"} also on an order you're keeping, so ${plan.shared === 1 ? "its emails stay" : "their emails stay"}.` : ""].filter(Boolean);
   openLayer({
     title:`Delete ${plural(n, "canceled order")}`, small:true,
@@ -10011,22 +10018,34 @@ function openDeleteCanceled(ids){
         go.disabled = true;
         const mail = !!(mailBox && mailBox.checked && CAN_TRASH_ORDER_MAIL);
         if (mailBox) mailBox.disabled = true;
+        // Planned again: a sync while the window was open may have moved an order on (one not canceled now stays).
+        const fresh = canceledPlan(Array.from(plan.ids));
+        if (!fresh.orders.length){ close(); toast("Those orders aren't canceled any more, so nothing was deleted"); return; }
         // The orders go now; their emails follow, and closing the window doesn't stop that.
-        const gone = forgetOrders(plan.ids); persist(); render();
+        const gone = forgetOrders(fresh.ids); persist(); render();
         const undo = {label:"Undo", run:() => restoreOrders(gone)};
-        if (!mail){ close(); toast(`Deleted ${plural(gone.length, "canceled order")}`, "", undo); return; }
-        const list = Array.from(plan.nos, ([no, at]) => ({no, since:at}));
+        if (!mail || !fresh.nos.size || !fresh.inboxes.length){ close(); toast(`Deleted ${plural(gone.length, "canceled order")}`, "", undo); return; }
+        // A hundred numbers at a time, well inside what the desktop app takes at once (500 numbers, 3000 emails a folder).
+        const list = Array.from(fresh.nos, ([no, at]) => ({no, since:at})), parts = [];
+        for (let k = 0; k < list.length; k += 100) parts.push(list.slice(k, k + 100));
         let moved = 0; const errs = [];
         const shut = $("[data-close].btn", panel); if (shut) shut.textContent = "Close";
         ORDER_MAIL.busy++;
         try {
-          for (const [i, ib] of plan.inboxes.entries()){
-            prog.hidden = false;
-            prog.innerHTML = `<span class="spin" aria-hidden="true"></span><span>Moving their emails to Trash in ${esc(ib.email)}${plan.inboxes.length > 1 ? ` (${i + 1} of ${plan.inboxes.length})` : ""}…</span>`;
-            let r;
-            try { r = await window.pvDesktop.trashOrderMail({id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port}, list, plan.keep); }
-            catch(e){ r = {ok:false, error:String(e && e.message || e)}; }
-            if (r && r.ok) moved += +r.moved || 0; else errs.push(`${ib.email}: ${(r && r.error) || "something went wrong"}`);
+          for (const [i, ib] of fresh.inboxes.entries()){
+            let err = "", left = false;
+            for (const [j, part] of parts.entries()){
+              prog.hidden = false;
+              prog.innerHTML = `<span class="spin" aria-hidden="true"></span><span>Moving their emails to Trash in ${esc(ib.email)}${fresh.inboxes.length > 1 ? ` (${i + 1} of ${fresh.inboxes.length})` : ""}${parts.length > 1 ? `, part ${j + 1} of ${parts.length}` : ""}…</span>`;
+              let r;
+              try { r = await window.pvDesktop.trashOrderMail({id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port}, part, fresh.keep); }
+              catch(e){ r = {ok:false, error:String(e && e.message || e)}; }
+              moved += +(r && r.moved) || 0;   // what moved before a failure counts too
+              if (!r || !r.ok){ err = (r && r.error) || "something went wrong"; break; }
+              if (r.partial) left = true;
+            }
+            if (err) errs.push(`${ib.email}: ${err}`);
+            else if (left) errs.push(`${ib.email}: more of their emails matched than FAFO reads at once, so some are still there`);
           }
         } finally { ORDER_MAIL.busy--; }
         const msg = `Deleted ${plural(gone.length, "canceled order")}${moved ? ` and moved ${plural(moved, "email")} to Trash` : errs.length ? "" : ". No emails of theirs were left to move"}`;
@@ -10037,7 +10056,7 @@ function openDeleteCanceled(ids){
           go.hidden = true; const c = $("[data-close].btn", panel); if (c) c.textContent = "Done";
           const u = document.createElement("button"); u.className = "btn"; u.type = "button"; u.textContent = "Undo";
           u.addEventListener("click", () => { restoreOrders(gone); close(); }, {once:true}); go.before(u);
-        } else toast(text, "err");
+        } else toast(text, "err", undo);
       });
     }
   });
@@ -10166,9 +10185,8 @@ function renderOrders(){
   else if (UI.orderStage && UI.orderStage !== "all") list = list.filter(o => (o.stage || "placed") === UI.orderStage);
   const matchQ = (o) => norm([orderStoreLabel(o), o.item, o.orderNo, o.shipTo, o.buyer, o.card].join(" ")).includes(q);
   if (q) list = list.filter(matchQ);
-  // Delete N canceled (1.9.105): the canceled orders this view would show with Canceled picked.
-  CXL_SHOWN = ["all", "attention", "canceled"].includes(UI.orderStage || "all")
-    ? byInbox.filter(o => o.stage === "canceled" && (UI.store === "all" || storeKeyOf(o) === UI.store) && (!q || matchQ(o))).map(o => o.id) : [];
+  // Delete N canceled (1.9.105): the canceled orders shown.
+  CXL_SHOWN = list.filter(o => o.stage === "canceled").map(o => o.id);
   list.sort((a,b) => (b.at || "").localeCompare(a.at || "") || (b.createdAt||0) - (a.createdAt||0));
   // Only orders you can see stay selected, so a filter change never deletes hidden ones.
   const shown = new Set(list.map(o => o.id));
