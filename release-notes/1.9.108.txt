@@ -1,0 +1,1 @@
+FAFO on the web now tells you when there's a new version: a bar at the top offers Reload, and a locked page updates by itself. Nothing changes in the desktop app.

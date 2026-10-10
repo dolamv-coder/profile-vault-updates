@@ -32,8 +32,11 @@ export default {
     if (url.pathname !== "/" && url.pathname !== "/index.html") return Response.redirect(url.origin + "/", 302);
     try { await refresh(env); } catch (e) { console.error("refresh", e && e.message || e); }
     if (!current) return text(503, "Orbit couldn't be loaded just now. Try again in a minute.");
+    // Server-Timing carries the version too (1.9.108+ pages): the page reads it from its own response, which stays with
+    // it when a browser shows a copy from its cache, so it knows which release it's running whatever HEAD / says now.
+    const timing = /^[0-9A-Za-z.-]{1,40}$/.test(current.version) ? { "server-timing": `v;desc="${current.version}"` } : {};
     return new Response(request.method === "HEAD" ? null : current.html, {
-      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache", "x-orbit-version": current.version, ...HEADERS },
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache", "x-orbit-version": current.version, ...timing, ...HEADERS },
     });
   },
 };
