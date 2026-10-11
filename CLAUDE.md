@@ -22,9 +22,10 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   only if the signature verifies against the publisher key built into them.
 - `web-update.json`: the same, signed the same way, for the web version (app.fafoaco.com, `web-worker/`): its own
   feed since 2026-10-11, so the web gets releases while desktop updates are paused.
-- `channels.json`: `{"desktop": "paused", "version", "sha256"}` keeps `update.json` (installed apps) exactly on that
-  release (the checks refuse any other `update.json`, a copied or hand-signed one too); `{"desktop": "follow"}` lets
-  installed apps follow releases again. It's required, and anything else in it fails the checks. **Desktop updates are paused since 2026-10-11, until further notice** (the
+- `channels.json`: `{"desktop": "paused", "version", "sha256", "feedSha256"}` keeps `update.json` (installed apps)
+  byte for byte on that release (`feedSha256` is the sha256 of `update.json` itself; the checks refuse any other
+  `update.json`, a copied, re-signed or edited one too); `{"desktop": "follow"}` lets installed apps follow releases
+  again. It's required, and anything else in it fails the checks. **Desktop updates are paused since 2026-10-11, until further notice** (the
   owner: "paused desktop updates until further notice. work only on fafoaco website"): work only on the fafoaco
   website (the web version and the front page), and don't set `channels.json` to `follow`, publish a desktop download
   ("Release desktop app") or change `desktop/` unless the owner asks.
@@ -276,9 +277,10 @@ over that copy is rejected by every app. Sign a copy taken from git instead:
       --html /path/outside/repo/index-X.Y.Z.html --notes "What changed"
 
 (`tools/release.mjs` is the signing tool in the publisher's project folder.)
-Copy its `release/update.json` here and commit it as `Release X.Y.Z`. **While `channels.json` pauses desktop
-updates, copy it to `web-update.json` instead** (`Release X.Y.Z (web only)`) and leave `update.json` exactly as it is:
-the checks refuse an `update.json` that isn't the release `channels.json` holds (its `version` and `sha256`). Before
+Copy its `release/update.json` here as both `update.json` and `web-update.json` and commit them as `Release X.Y.Z`.
+**While `channels.json` pauses desktop updates, copy it to `web-update.json` only** (`Release X.Y.Z (web only)`) and
+leave `update.json` exactly as it is: the checks refuse an `update.json` that isn't byte for byte the one
+`channels.json` holds (its `feedSha256`). Before
 pushing, check that the `sha256` matches
 `git show HEAD:index-X.Y.Z.html | sha256sum`. After pushing, raw.githubusercontent.com
 can keep serving the old `update.json` for about 5 minutes.

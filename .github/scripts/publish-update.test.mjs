@@ -361,7 +361,8 @@ console.log("11. Desktop updates paused (channels.json): new pages go to the web
 {
   const [x, y, z] = NEXT.split(".").map(Number), WEB1 = `${x}.${y}.${z + 1}`;
   const deskBefore = originJSON();
-  const pauseJSON = JSON.stringify({ desktop: "paused", version: deskBefore.version, sha256: deskBefore.sha256, note: "test" }, null, 2) + "\n";
+  const deskBytes = sh("git", ["--git-dir", ORIGIN, "show", "main:update.json"]);
+  const pauseJSON = JSON.stringify({ desktop: "paused", version: deskBefore.version, sha256: deskBefore.sha256, feedSha256: sha(deskBytes), note: "test" }, null, 2) + "\n";
   commitToOrigin(`pause; page ${WEB1}`, (C) => {
     writeFileSync(path.join(C, "channels.json"), pauseJSON);
     writeFileSync(path.join(C, `index-${WEB1}.html`), readFileSync(path.join(C, `index-${NEXT}.html`), "utf8").replace("</body>", `<!-- ${WEB1} --></body>`));
@@ -404,9 +405,20 @@ console.log("11. Desktop updates paused (channels.json): new pages go to the web
   // hand-signed one fails the pull request check and the Action, so it never reaches installed apps.
   commitToOrigin("copy the web feed over update.json", (C) => writeFileSync(path.join(C, "update.json"), readFileSync(path.join(C, "web-update.json"))));
   r = runStep({});
-  ok(r.code !== 0 && /Desktop updates are paused .* update\.json has to stay on/.test(r.log), "paused: web-update.json copied over update.json fails");
+  ok(r.code !== 0 && /Desktop updates are paused .* update\.json has to stay exactly as it was/.test(r.log), "paused: web-update.json copied over update.json fails");
   ok(script(["--verify"]).code !== 0, "…and the pull request check fails too");
   gitc(ORIGIN, "update-ref", "refs/heads/main", pausedAt);
+  // The same release, re-signed with another minAppVersion and installerUrl (what --min-app/--installer-url make), or
+  // edited without signing (an absolute url, other notes): installed apps would see it, so it fails too.
+  const { sign: signM } = await import("node:crypto");
+  const resigned = { ...deskBefore, minAppVersion: "99.0.0", installerUrl: "https://example.test/other.zip" };
+  resigned.signature = signM(null, Buffer.from(["profile-vault-update", resigned.version, resigned.sha256, resigned.minAppVersion].join("\n")), good.privateKey).toString("base64");
+  for (const [name, m] of [["re-signed with another minAppVersion and installerUrl", resigned], ["an absolute url, not re-signed", { ...deskBefore, url: "https://example.test/index.html" }], ["other notes", { ...deskBefore, notes: "Something else." }], ["the same, reformatted", null]]) {
+    commitToOrigin(`paused update.json: ${name}`, (C) => writeFileSync(path.join(C, "update.json"), m ? JSON.stringify(m, null, 2) + "\n" : JSON.stringify(deskBefore) + "\n"));
+    r = runStep({});
+    ok(r.code !== 0 && /has to stay exactly as it was/.test(r.log), `paused update.json ${name}: fails`);
+    gitc(ORIGIN, "update-ref", "refs/heads/main", pausedAt);
+  }
 
   // channels.json that's missing, says something else, or isn't a JSON object: fails rather than taking it for "follow".
   const badChannels = [
@@ -419,7 +431,8 @@ console.log("11. Desktop updates paused (channels.json): new pages go to the web
     ["an array", "[]", /isn't a JSON object/],
     ["a bare string", JSON.stringify("paused"), /isn't a JSON object/],
     ["paused without the release it holds", JSON.stringify({ desktop: "paused" }), /without saying which release/],
-    ["paused on another release", JSON.stringify({ desktop: "paused", version: BASE, sha256: baseM.sha256 }), /has to stay on/],
+    ["paused without the feed's own sha256", JSON.stringify({ desktop: "paused", version: deskBefore.version, sha256: deskBefore.sha256 }), /without saying which release/],
+    ["paused on another release", JSON.stringify({ desktop: "paused", version: BASE, sha256: baseM.sha256, feedSha256: sha(deskBytes) }), /has to stay exactly as it was/],
   ];
   for (const [name, body, re] of badChannels) {
     commitToOrigin(`channels: ${name}`, (C) => body === null ? rmSync(path.join(C, "channels.json")) : writeFileSync(path.join(C, "channels.json"), body));

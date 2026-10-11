@@ -175,11 +175,12 @@ jobs:
             fi
             sleep $((attempt * 5))
           done
-          if [ "$channels" = web ]; then
-            echo "::error::main didn't accept the push of the release (a branch rule may require pull requests). Nothing was published. Desktop updates are paused (channels.json), so sign $version on the desktop and commit its release/update.json as web-update.json, leaving update.json as it is."
-          else
-            echo "::error::main didn't accept the push of the release (a branch rule may require pull requests). Nothing was published; sign $version on the desktop instead."
-          fi
+          case "$channels" in
+            web) where="as web-update.json only, leaving update.json as it is (channels.json holds installed apps, or they have it already)";;
+            desktop) where="as update.json (web-update.json has it already)";;
+            *) where="as both update.json and web-update.json";;
+          esac
+          echo "::error::main didn't accept the push of the release (a branch rule may require pull requests). Nothing was published. Sign $version on the desktop and commit its release/update.json $where."
           exit 1
 
       - name: Check it's served
