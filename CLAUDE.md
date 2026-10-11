@@ -839,17 +839,22 @@ owner's choice; it was "Checkout profiles, addresses and cards"). Nothing gains 
 
 From 1.9.110 the phone tracker's built-in relay is `orders.fafoaco.com` (`PHONE_RELAY`; the owner's request, "add
 orders.fafoaco.com and switch FAFO to it if it's safe"). The relay's code, read with the Cloudflare connector on 2026-10-11,
-answers any site (`Access-Control-Allow-Origin: *`), never checks which address it was called on, and its phone page asks it
+answers any site (`Access-Control-Allow-Origin: *`), its tracker routes never check which address they were called on (only its
+legacy Discord routes, which 1.9.40 calls on the old address, build their callback from it), and its phone page asks it
 only by relative paths (`/s/`, `/cmd/`, `/push/`, `/vapid`, `/sw.js`, the manifest); the one old address in it is the
 contact (`sub`) in its push alerts' VAPID claim, which needn't match. Both addresses are the same worker and the same stored
 snapshots, so a tracker turned on before keeps `orders.orbit-app.workers.dev` (`PHONE_RELAY_OLD`; its phone keeps working and
 its link doesn't change), and only trackers turned on from 1.9.110 get the new address. That's the one that answers on this
 network (`phoneRelayPick`, asking both `/vapid`), so its phone link opens here too. Every request goes through `phoneFetch`:
 on the built-in relay one that can't connect goes to the other address unless it's a POST (an alert's send, which may have
-arrived), and that tracker uses that address for 6 hours (`phoneAlt`, `phoneBase`); your own relay with its write token never
-falls back. Turning the tracker on when the first upload fails no longer leaves Settings showing a QR code for a tracker that
-wasn't saved (`phoneConnecting` holds back `pushPhone`'s redraw): the form stays as typed, and an upload that can't connect
-says "Couldn't reach the relay" instead of "Failed to fetch". The phone page itself is the relay's and still says Orbit; its
+arrived), and that tracker uses that address for up to 6 hours, in memory until FAFO restarts (`phoneAlt`, `phoneBase`); your
+own relay with its write token never falls back. Turning the tracker on when the first upload fails no longer leaves Settings
+showing a QR code for a tracker that wasn't saved (`phoneConnecting` holds back `pushPhone`'s redraw, and the form is drawn
+again if Settings redrew during the upload): the form stays as typed, one connect runs at a time (a form drawn meanwhile says
+Connecting…), and an upload that can't connect (`phoneFetch` marks it `net`) says "Couldn't reach the relay" instead of
+"Failed to fetch". Known gap: the phone link is the address the computer reached, and the phone page only asks its own address,
+so a phone whose own network blocks the new domain (newly registered domains, for its first weeks) can't open a new tracker's
+link while the computer can; the same id works on the old address. The phone page itself is the relay's and still says Orbit; its
 own scanner refuses a code for another address ("a different tracker address"), so a phone already on the old address scans a
 new tracker's code with the Camera app. Nothing gains a field.
 

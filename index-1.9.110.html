@@ -11743,19 +11743,23 @@ const PHONE_RELAY = "https://orders.fafoaco.com", PHONE_RELAY_OLD = "https://ord
 const PHONE_BUILTIN = [PHONE_RELAY, PHONE_RELAY_OLD];
 // A network can block one of the built-in relay's addresses (a new domain for its first weeks, or workers.dev), so a request
 // that can't connect goes to the other one when it's safe to send twice (not a POST, which may have arrived), and this
-// tracker uses that one for 6 hours (`phoneAlt`). The phone link stays the one the tracker was made with.
+// tracker uses that one for up to 6 hours, until FAFO restarts (`phoneAlt`, in memory). The phone link stays the one the
+// tracker was made with.
 let phoneAlt = null;   // {from, to, at}
 function phoneBase(c){
   const u = String(c.url || "").replace(/\/+$/, "");
   return phoneAlt && phoneAlt.from === u && Date.now() - phoneAlt.at < RELAY_OLD_FOR ? phoneAlt.to : u;
 }
+// A request that couldn't connect is marked `net`, so pushPhone can say so (and not for its own errors).
+const phoneNet = (e) => { try { if (e && typeof e === "object") e.net = true; } catch(x){} return e; };
 async function phoneFetch(c, path, opts){
   const u = String(c.url || "").replace(/\/+$/, ""), base = phoneBase(c);
   try { return await fetch(base + path, opts); }
   catch(e){
-    if (c.token || !PHONE_BUILTIN.includes(base) || /^POST$/i.test((opts && opts.method) || "GET")) throw e;
+    if (c.token || !PHONE_BUILTIN.includes(base) || /^POST$/i.test((opts && opts.method) || "GET")) throw phoneNet(e);
     const other = base === PHONE_RELAY ? PHONE_RELAY_OLD : PHONE_RELAY;
-    const r = await fetch(other + path, opts);
+    let r;
+    try { r = await fetch(other + path, opts); } catch(e2){ throw phoneNet(e2); }
     phoneAlt = other === u ? null : {from:u, to:other, at:Date.now()};
     return r;
   }
@@ -11802,8 +11806,8 @@ async function pushPhone(force){
     persistQuiet();
     return {ok:true};
   } catch(e){
-    // fetch can't connect (offline, or a network blocking the relay): say so, not "Failed to fetch".
-    const msg = e && e.name === "TypeError" ? "Couldn't reach the relay. Check this computer's internet connection." : String(e && e.message || e);
+    // The relay couldn't be reached (offline, or a network blocking it): say so, not "Failed to fetch".
+    const msg = e && e.net ? "Couldn't reach the relay. Check this computer's internet connection." : String(e && e.message || e);
     const live = phoneCfg(); if (live){ live.lastError = msg.slice(0, 160); persistQuiet(); }
     return {ok:false, error:msg};
   } finally {
@@ -11928,7 +11932,7 @@ function phoneSectionHTML(){
           ${fieldHTML({name:"ph_url", label:"Relay address", value:"", placeholder:PHONE_RELAY, cls:"c6", attrs:'inputmode="url" autocapitalize="off" spellcheck="false"'})}
           ${fieldHTML({name:"ph_token", label:"Relay write token", value:"", type:"password", cls:"c6", attrs:'autocomplete="off" spellcheck="false"'})}
         </div></details>
-      <div class="c6"><button class="btn btn-primary" type="submit" id="ph-go">Turn on phone tracker</button></div>
+      <div class="c6"><button class="btn btn-primary" type="submit" id="ph-go" ${phoneConnecting ? "disabled" : ""}>${phoneConnecting ? "Connecting…" : "Turn on phone tracker"}</button></div>
     </form>`;
   const when = c.lastSent ? new Date(c.lastSent).toLocaleString([], {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"}) : "";
   return head + `<p class="set-note">Your orders are sent, encrypted, after every change. <strong>On your iPhone, open the Camera and point it at this code</strong>, tap the link, enter your passcode, then <strong>Share → Add to Home Screen</strong>.</p>
@@ -11954,6 +11958,7 @@ function phoneQR(text){
   } catch(e){ return ""; }
 }
 async function connectPhone(panel){
+  if (phoneConnecting) return;   // one at a time (Settings can redraw the form while one is under way)
   const own = val(panel, "ph_url").trim().replace(/\/+$/, ""), token = val(panel, "ph_token").trim(), pass = val(panel, "ph_pass"), pass2 = val(panel, "ph_pass2");
   let bad = false, e;
   e = !own || /^https:\/\/[^\s/]+\.[^\s/]+$/i.test(own) ? "" : "Use the relay's https:// address."; setErr(panel, "ph_url", e); if (e) bad = true;
@@ -11963,14 +11968,24 @@ async function connectPhone(panel){
   e = pass === pass2 ? "" : "The passcodes don't match."; setErr(panel, "ph_pass2", e); if (e) bad = true;
   if (bad) return;
   const go = $("#ph-go", panel); go.disabled = true; go.textContent = "Connecting…";
-  const url = own || await phoneRelayPick();
-  const salt = phB64s(crypto.getRandomValues(new Uint8Array(16)));
-  const key = phB64s(await phoneKey(pass, salt));
-  S.settings.phone = {url, token:own ? token : "", id:phB64u(crypto.getRandomValues(new Uint8Array(18))), salt, key, lastHash:"", lastSent:0, lastError:""};
   phoneConnecting = true;
-  let r;
-  try { r = await pushPhone(true); } finally { phoneConnecting = false; }
-  if (!r.ok){ go.disabled = false; go.textContent = "Turn on phone tracker"; const err = S.settings.phone.lastError; delete S.settings.phone; persist(); toast(err || "Couldn't reach the relay.", "err"); return; }
+  let r, mine;
+  try {
+    const url = own || await phoneRelayPick();
+    const salt = phB64s(crypto.getRandomValues(new Uint8Array(16)));
+    const key = phB64s(await phoneKey(pass, salt));
+    if (!S) return;   // locked meanwhile
+    mine = S.settings.phone = {url, token:own ? token : "", id:phB64u(crypto.getRandomValues(new Uint8Array(18))), salt, key, lastHash:"", lastSent:0, lastError:""};
+    r = await pushPhone(true);
+  } finally { phoneConnecting = false; }
+  if (!S || S.settings.phone !== mine) return;   // locked, or turned off from a redrawn card, meanwhile
+  if (!r.ok){
+    const err = mine.lastError; delete S.settings.phone; persist();
+    go.disabled = false; go.textContent = "Turn on phone tracker";
+    // Settings drawn again during the upload showed this unsaved tracker: put the form back.
+    if (!go.isConnected && UI.view === "settings-view"){ const box = $("#s-phone"); if (box) box.innerHTML = phoneSectionHTML(); }
+    toast(err || "Couldn't reach the relay.", "err"); return;
+  }
   persist(); renderMain(); toast("Phone tracker on. Scan the QR code with your phone's camera.");
 }
 document.addEventListener("submit", (e) => {
