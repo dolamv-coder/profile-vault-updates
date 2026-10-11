@@ -809,8 +809,7 @@ merged over to a domain"). The custom domains are added in Cloudflare's dashboar
 no access to the domain and leave them alone: the web worker (`app`) answers at `app.fafoaco.com` (the app), `fafoaco.com`
 (the front page, `web-worker/src/site.js`, with `/download` and `/app` redirects and the release it serves) and
 `www.fafoaco.com` (to `fafoaco.com`); the license worker at `license.fafoaco.com`; the phone relay (`orders`) at
-`orders.fafoaco.com`, though `PHONE_RELAY` stays on its old address until the relay's code (not in this repo) is checked
-there. The old addresses keep working, since every FAFO before 1.9.109 has them built in. The page uses `RELAY_NEW` first
+`orders.fafoaco.com` (attached 2026-10-11; `PHONE_RELAY` from 1.9.110, below). The old addresses keep working, since every FAFO before 1.9.109 has them built in. The page uses `RELAY_NEW` first
 and `RELAY_OLD` when a network blocks it (some filters block newly registered domains): `relayProbe` asks both
 `/discord/ready` 1.2 seconds after it starts and after a request can't connect, `relayFetch` (every license server request)
 sends a GET again to the address that answers but never a POST or PUT, the old one is kept per device for 6 hours
@@ -837,6 +836,22 @@ password, and the desktop app and a claude.ai copy (`ON_CLAUDE`, which can't rea
 moved note and Settings → Web version & sync say Continue with Discord or Enter it instead, and Erase vault's message names
 them (`erasedMsg`). The line under the wordmark on the lock, license and sign-in screens is "Cop it. Track it. FAFO." (the
 owner's choice; it was "Checkout profiles, addresses and cards"). Nothing gains a field.
+
+From 1.9.110 the phone tracker's built-in relay is `orders.fafoaco.com` (`PHONE_RELAY`; the owner's request, "add
+orders.fafoaco.com and switch FAFO to it if it's safe"). The relay's code, read with the Cloudflare connector on 2026-10-11,
+answers any site (`Access-Control-Allow-Origin: *`), never checks which address it was called on, and its phone page asks it
+only by relative paths (`/s/`, `/cmd/`, `/push/`, `/vapid`, `/sw.js`, the manifest); the one old address in it is the
+contact (`sub`) in its push alerts' VAPID claim, which needn't match. Both addresses are the same worker and the same stored
+snapshots, so a tracker turned on before keeps `orders.orbit-app.workers.dev` (`PHONE_RELAY_OLD`; its phone keeps working and
+its link doesn't change), and only trackers turned on from 1.9.110 get the new address. That's the one that answers on this
+network (`phoneRelayPick`, asking both `/vapid`), so its phone link opens here too. Every request goes through `phoneFetch`:
+on the built-in relay one that can't connect goes to the other address unless it's a POST (an alert's send, which may have
+arrived), and that tracker uses that address for 6 hours (`phoneAlt`, `phoneBase`); your own relay with its write token never
+falls back. Turning the tracker on when the first upload fails no longer leaves Settings showing a QR code for a tracker that
+wasn't saved (`phoneConnecting` holds back `pushPhone`'s redraw): the form stays as typed, and an upload that can't connect
+says "Couldn't reach the relay" instead of "Failed to fetch". The phone page itself is the relay's and still says Orbit; its
+own scanner refuses a code for another address ("a different tracker address"), so a phone already on the old address scans a
+new tracker's code with the Camera app. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
@@ -881,8 +896,9 @@ which until then lasted only until Orbit closed.
 As of 2026-09-26, none of these are in `dolamv-coder/profile-vault-updates` or
 `dolamv-coder/profile-vault`. The original local project folder was lost.
 
-- **Relay worker**: a Cloudflare Worker at `https://orders.orbit-app.workers.dev`
-  (`PHONE_RELAY` in the HTML). The old address,
+- **Relay worker**: a Cloudflare Worker (`orders`) at `https://orders.fafoaco.com`
+  (`PHONE_RELAY` in the HTML from 1.9.110) and `https://orders.orbit-app.workers.dev`
+  (`PHONE_RELAY_OLD`, built into every page before it). The oldest address,
   `profile-vault-orders.profile-vault-phone-relay.workers.dev`, is redirected in
   the app (`OLD_RELAYS`). Endpoints the app uses:
   - `PUT /s/:id`: encrypted order snapshot for the phone tracker (AES-GCM,
@@ -905,7 +921,9 @@ As of 2026-09-26, none of these are in `dolamv-coder/profile-vault-updates` or
 
   To recover the source, open the Cloudflare dashboard, go to Workers & Pages,
   open `orders` and choose Edit code. Or use the Cloudflare Developer Platform
-  connector. Once recovered, it should get its own repo.
+  connector (`workers_get_worker_code`, which returns the bundle: `worker.js`,
+  `phone.html`, its icons and jsQR). Once recovered, it should get its own repo,
+  not this public one.
 - **`tools/license.mjs`**: makes license keys and signs `licenses.json`. It
   holds the license private key.
 - **Update signing tool and key**: produces `update.json`'s `signature`. A copy
