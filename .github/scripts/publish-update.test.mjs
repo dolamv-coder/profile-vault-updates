@@ -381,7 +381,7 @@ console.log("11. Desktop updates paused (channels.json): new pages go to the web
     writeFileSync(path.join(C, "update.json"), JSON.stringify(j, null, 2) + "\n");
   });
   r = runStep({ UPDATE_SIGNING_KEY: KEY });
-  ok(r.code !== 0 && /update\.json \(.*isn't signed/.test(r.log) && originWeb().version !== WEB1, "the paused update.json mis-signed while a web release is pending: fails, nothing published");
+  ok(r.code !== 0 && /has to stay exactly as it was|update\.json \(.*isn't signed/.test(r.log) && originWeb().version !== WEB1, "the paused update.json mis-signed while a web release is pending: fails, nothing published");
   gitc(ORIGIN, "update-ref", "refs/heads/main", pending);
   r = runStep({ UPDATE_SIGNING_KEY: KEY });
   ok(r.code === 0 && new RegExp(`version=${WEB1.replace(/\./g, "\\.")}`).test(r.out) && /channels=web\n/.test(r.out), `published ${WEB1}, channels=web`);
