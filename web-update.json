@@ -1,0 +1,10 @@
+{
+  "version": "1.9.112",
+  "url": "index-1.9.112.html",
+  "sha256": "600d70ec8840041c9801291d025c45384e139f8661b7ec2f1220a85541b8366d",
+  "signature": "y2ci7D4B82wh/gRvdG6AT1HEapBKhPrltskWXSB80kw3BBt/7WI6AVWeI0BYepvKKUsxdWokJO6P0ctfGBbVBw==",
+  "minAppVersion": "0",
+  "notes": "Every store login now needs the inbox its sign-in codes and order emails go to. Not sure how to set one up? Press Set it up step by step: FAFO shows you which inbox to use, how to make the app password your email wants, and in the desktop app checks that it signs in.",
+  "installerUrl": "",
+  "publishedAt": "2026-10-11T21:05:54.348Z"
+}

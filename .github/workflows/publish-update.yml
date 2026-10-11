@@ -1,11 +1,13 @@
 name: Publish Orbit update
 
-# Ships a new app version to installed copies: signs update.json for the newest index-X.Y.Z.html
-# and commits it to main as "Release X.Y.Z". Runs when a page, its notes or update.json land on
-# main, or by hand from the Actions tab. A page is published once release-notes/X.Y.Z.txt (the
-# update notice shown in the app) is on main with it and it's newer than update.json. A newer page
-# without notes, or a released page changed after release, fails the run. Pull requests get the
-# same checks without signing.
+# Ships a new app version: signs the newest index-X.Y.Z.html into web-update.json (the web version at app.fafoaco.com)
+# and update.json (installed apps), and commits it to main as "Release X.Y.Z". While channels.json says
+# "desktop": "paused" (since 2026-10-11, the owner's request), update.json is left as it is and the commit is
+# "Release X.Y.Z (web only)"; setting it to "follow" brings installed apps up to the newest page ("Release X.Y.Z
+# (installed apps)" when the web has it already). Runs when a page, its notes, a feed or channels.json land on main,
+# or by hand from the Actions tab. A page is published once release-notes/X.Y.Z.txt (the update notice shown in the
+# app) is on main with it and it's newer than a feed. A newer page without notes, or a released page changed after
+# release, fails the run. Pull requests get the same checks without signing.
 #
 # Setup, once: Settings > Environments > New environment "release". Under Deployment branches
 # choose Selected branches and add main. Then Add environment secret UPDATE_SIGNING_KEY: the whole
@@ -16,9 +18,9 @@ name: Publish Orbit update
 on:
   push:
     branches: [main]
-    paths: ["index-*.html", "release-notes/**", "update.json"]
+    paths: ["index-*.html", "release-notes/**", "update.json", "web-update.json", "channels.json"]
   pull_request:
-    paths: ["index-*.html", "release-notes/**", "update.json", ".github/scripts/publish-update*.mjs", ".github/scripts/sync-merge.test.mjs", ".github/scripts/one-store.test.mjs", ".github/workflows/publish-update.yml"]
+    paths: ["index-*.html", "release-notes/**", "update.json", "web-update.json", "channels.json", "web-worker/wrangler.toml", ".github/scripts/publish-update*.mjs", ".github/scripts/sync-merge.test.mjs", ".github/scripts/one-store.test.mjs", ".github/workflows/publish-update.yml"]
   workflow_dispatch:
     inputs:
       version:
@@ -121,7 +123,7 @@ jobs:
     steps:
       # Picks the version from the commit this run is for, then signs on top of the latest main
       # each try, so a push that lands meanwhile doesn't lose it.
-      - name: Sign and push update.json
+      - name: Sign and push update.json and web-update.json
         id: publish
         env:
           UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
@@ -155,22 +157,30 @@ jobs:
               exit 1
             fi
             VERSION="$version" node .github/scripts/publish-update.mjs
-            if git diff --quiet -- update.json; then
+            desk=; web=
+            git diff --quiet -- update.json || desk=desktop
+            git diff --quiet -- web-update.json || web=web
+            if [ -z "$desk$web" ]; then
               echo "published=false" >> "$GITHUB_OUTPUT"; exit 0
             fi
-            git commit -q -m "Release $version" -- update.json
+            if [ -n "$desk" ] && [ -n "$web" ]; then title="Release $version"; channels="web,desktop"
+            elif [ -n "$web" ]; then title="Release $version (web only)"; channels="web"
+            else title="Release $version (installed apps)"; channels="desktop"; fi
+            git commit -q -m "$title" -- update.json web-update.json
             if git push -q origin HEAD:main; then
               echo "published=true" >> "$GITHUB_OUTPUT"
               echo "version=$version" >> "$GITHUB_OUTPUT"
+              echo "channels=$channels" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             sleep $((attempt * 5))
           done
-          echo "::error::main didn't accept the push of update.json (a branch rule may require pull requests). Nothing was published; sign $version on the desktop instead."
+          echo "::error::main didn't accept the push of the release (a branch rule may require pull requests). Nothing was published; sign $version on the desktop instead."
           exit 1
 
-      - name: Check apps are served it
+      - name: Check it's served
         if: steps.publish.outputs.published == 'true'
         env:
           VERSION: ${{ steps.publish.outputs.version }}
-        run: node .github/scripts/publish-update.mjs --check "$VERSION"
+          CHANNELS: ${{ steps.publish.outputs.channels }}
+        run: node .github/scripts/publish-update.mjs --check "$VERSION" "$CHANNELS"

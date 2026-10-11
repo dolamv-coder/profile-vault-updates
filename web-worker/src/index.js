@@ -1,8 +1,8 @@
-// Orbit on the web: this worker's address serves the newest released Orbit page, the same file
-// installed apps update to, so Orbit opens in any browser. It reads update.json, downloads the page it
-// names, and serves it only if the page's SHA-256 matches and update.json's signature checks out
-// against the publisher key built into the apps. Anything else keeps the last good page (or a short
-// "try again" note if there's none yet).
+// Orbit on the web: this worker's address serves the newest released Orbit page, so Orbit opens in any browser. It
+// reads web-update.json (the web version's feed since 2026-10-11, signed like installed apps' update.json, which stays
+// put while desktop updates are paused: see channels.json), downloads the page it names, and serves it only if the
+// page's SHA-256 matches and the feed's signature checks out against the publisher key built into the apps. Anything
+// else keeps the last good page (or a short "try again" note if there's none yet).
 //
 // The page keeps its vault in the browser, encrypted, as it does in the desktop app. With sync on
 // (1.9.65+), it opens the same vault as the desktop app through the license worker.
@@ -13,7 +13,7 @@
 // Windows download; www.fafoaco.com goes to fafoaco.com.
 import { sitePage, SITE_HOST, DOWNLOAD_URL, APP_URL } from "./site.js";
 
-const UPDATE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/update.json";
+const UPDATE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/web-update.json";
 // The apps' update key (index.html's updater checks the same signature).
 const PUBLISHER_KEY = "MCowBQYDK2VwAyEAjMqbFzE6HEjJ+PZAxJdcRPQutn4Eh6YjedtapiYe48o=";
 const SIG_CONTEXT = "profile-vault-update";
@@ -66,7 +66,7 @@ async function frontPage(request, env, url) {
   });
 }
 
-// Looks at update.json at most once a minute per worker instance; downloads the page only when the
+// Looks at the feed (web-update.json) at most once a minute per worker instance; downloads the page only when the
 // release changed.
 async function refresh(env) {
   const now = Date.now(), every = Number(env.CHECK_EVERY_MS) >= 0 && String(env.CHECK_EVERY_MS ?? "") !== "" ? Number(env.CHECK_EVERY_MS) : CHECK_EVERY_MS;
@@ -74,15 +74,15 @@ async function refresh(env) {
   if (current) current.checkedAt = now;   // a failed check isn't retried on every request
   const src = env.UPDATE_URL || UPDATE_URL;
   const res = await fetch(src + (src.includes("?") ? "&" : "?") + "t=" + now, { headers: { "cache-control": "no-cache" } });
-  if (!res.ok) throw new Error("update.json answered " + res.status);
+  if (!res.ok) throw new Error("the feed answered " + res.status);
   const m = await res.json();
   if (current && m.version === current.version && m.sha256 === current.sha256) return;
-  if (!m || typeof m.version !== "string" || typeof m.url !== "string" || !/^[0-9a-f]{64}$/.test(m.sha256 || "") || typeof m.signature !== "string") throw new Error("update.json is incomplete");
-  if (!(await signed(env, m))) throw new Error("update.json's signature doesn't check out");
+  if (!m || typeof m.version !== "string" || typeof m.url !== "string" || !/^[0-9a-f]{64}$/.test(m.sha256 || "") || typeof m.signature !== "string") throw new Error("the feed is incomplete");
+  if (!(await signed(env, m))) throw new Error("the feed's signature doesn't check out");
   const page = await fetch(new URL(m.url, src).toString(), { headers: { "cache-control": "no-cache" } });
   if (!page.ok) throw new Error("the page answered " + page.status);
   const html = await page.arrayBuffer();
-  if (hex(await crypto.subtle.digest("SHA-256", html)) !== m.sha256) throw new Error("the page doesn't match update.json");
+  if (hex(await crypto.subtle.digest("SHA-256", html)) !== m.sha256) throw new Error("the page doesn't match the feed");
   current = { version: m.version, sha256: m.sha256, html, checkedAt: now };
 }
 

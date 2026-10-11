@@ -1,0 +1,4 @@
+{
+  "desktop": "paused",
+  "note": "The owner paused desktop updates on 2026-10-11, until further notice. While \"desktop\" is \"paused\", the Publish Orbit update Action signs new pages into web-update.json only (the web version, app.fafoaco.com) and leaves update.json, which installed apps read, on the release it has. Set \"desktop\" to \"follow\" to let installed apps follow releases again: the next run brings them up to the newest page."
+}

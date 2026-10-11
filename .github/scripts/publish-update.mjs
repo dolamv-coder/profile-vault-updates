@@ -3,20 +3,23 @@
 //
 //   node .github/scripts/publish-update.mjs [--version X.Y.Z]   sign the release (writes update.json)
 //   node .github/scripts/publish-update.mjs --verify            the same checks, no key and no writing
-//   node .github/scripts/publish-update.mjs --check X.Y.Z       wait until apps are served it, and check it
+//   node .github/scripts/publish-update.mjs --check X.Y.Z [web,desktop]   wait until they're served it, and check it
 //
-// It publishes the newest index-X.Y.Z.html when it's newer than update.json. That needs
-// release-notes/X.Y.Z.txt next to it (the update notice shown in the app), and fails without it so
-// a page never sits on main unpublished by mistake. When there's nothing newer, it checks that
-// the page update.json points to is still on main unchanged and properly signed, because apps
-// refuse it otherwise. Everything is read from the committed tree (git show HEAD:…), so the hash
-// is of the bytes raw.githubusercontent.com serves.
+// There are two feeds, signed the same way (since 2026-10-11): update.json for installed apps (the desktop app, and
+// the license worker's /mirror copy of it) and web-update.json for the web version (the web worker at app.fafoaco.com
+// reads it). The newest index-X.Y.Z.html goes into each feed that's older than it, except that update.json is left as it
+// is while channels.json says "desktop": "paused" (the owner paused desktop updates on 2026-10-11); setting it to
+// "follow" brings installed apps up to the newest page. A new page needs release-notes/X.Y.Z.txt next to it (the
+// update notice shown in the app), and fails without it so a page never sits on main unpublished by mistake. Each run
+// also checks that the pages both feeds point to are still on main unchanged and properly signed, because apps
+// refuse them otherwise. Everything is read from the committed tree (git show HEAD:…), so the hash is of the bytes
+// raw.githubusercontent.com serves.
 //
 // The key comes from UPDATE_SIGNING_KEY: the publisher's Ed25519 private key. The signature is
 // checked against the public key built into the app (update-config.json in the desktop app) before
 // anything is written, so a wrong key fails here instead of every installed app refusing the update.
 //
-// Signing changes update.json only when there's something to publish. With PICK_OUT set, --verify
+// Signing changes a feed only when there's something to publish to it. With PICK_OUT set, --verify
 // writes the version it would publish (or nothing) to that file. Each run adds a line to
 // $GITHUB_STEP_SUMMARY.
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
@@ -26,8 +29,13 @@ import { appendFileSync, writeFileSync } from "node:fs";
 // Built into the desktop app (update-config.json, publicKey): SPKI DER, base64. ORBIT_UPDATE_PUBLIC_KEY
 // replaces it only for tests with a throwaway key.
 const APP_PUBLIC_KEY = process.env.ORBIT_UPDATE_PUBLIC_KEY || "MCowBQYDK2VwAyEAjMqbFzE6HEjJ+PZAxJdcRPQutn4Eh6YjedtapiYe48o=";
-// Where installed apps look (update-config.json, manifestUrl).
+// Where installed apps look (update-config.json, manifestUrl), and where the web version looks (web-worker's UPDATE_URL).
 const MANIFEST_URL = process.env.ORBIT_MANIFEST_URL || "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/update.json";
+const WEB_MANIFEST_URL = process.env.ORBIT_WEB_MANIFEST_URL || "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/web-update.json";
+// The web version itself: its HEAD / answers the release it serves (x-orbit-version). Checked after a web release, as a warning only.
+const WEB_APP_URL = process.env.ORBIT_WEB_APP_URL ?? "https://app.fafoaco.com/";
+// The feeds: file, who reads it, and its address.
+const FEEDS = { desktop: { file: "update.json", who: "installed apps", url: MANIFEST_URL }, web: { file: "web-update.json", who: "the web version", url: WEB_MANIFEST_URL } };
 const SIG_CONTEXT = "profile-vault-update";   // updater.js signs [context, version, sha256, minAppVersion]
 const VERSION_RE = /^\d+\.\d+\.\d+$/;
 const MAX_HTML = 25 * 1024 * 1024;              // updater.js refuses bigger pages
@@ -81,24 +89,40 @@ function privateKey(raw) {
   fail("UPDATE_SIGNING_KEY isn't an Ed25519 private key. Paste the whole key tools/release.mjs signs with (a PEM, JWK or JSON key file, or its base64); for a password-protected key also add UPDATE_SIGNING_KEY_PASSPHRASE.");
 }
 
-// The update.json on main must still describe what main serves, or apps refuse it.
-function checkLive(current) {
+// A feed on main must still describe what main serves, or apps (and the web version) refuse it.
+function checkLive(current, file = "update.json") {
   const u = String(current.url || "");
   if (!/^index-\d+\.\d+\.\d+\.html$/.test(u)) return;   // an absolute URL is served from somewhere else
   let live = null;
   try { live = git("show", `HEAD:${u}`); } catch {}
-  if (!live) fail(`update.json points to ${u}, which isn't on main any more (removed or reverted?), so apps can't download it. Put it back, or publish a newer version.`);
+  if (!live) fail(`${file} points to ${u}, which isn't on main any more (removed or reverted?), so it can't be downloaded. Put it back, or publish a newer version.`);
   if (sha256(live) !== String(current.sha256 || "").toLowerCase()) {
     fail(`${u} changed after it was released as ${current.version}, so apps that haven't updated refuse it (checksum mismatch) and apps that have never get the change. Undo that change, and put it in a new index-X.Y.Z.html with release-notes/X.Y.Z.txt instead.`);
   }
-  if (!appAccepts(current)) fail(`update.json (${current.version}) isn't signed with the key the app trusts, so every app refuses it. Publish it again, from this Action or by signing on the desktop.`);
+  if (!appAccepts(current)) fail(`${file} (${current.version}) isn't signed with the key the app trusts, so it's refused. Publish it again, from this Action or by signing on the desktop.`);
+}
+
+// channels.json: {"desktop": "paused"} holds installed apps at the release update.json has; "follow" (or no file) lets
+// them follow each release. The web version always follows.
+function desktopPaused() {
+  let raw = null;
+  try { raw = git("show", "HEAD:channels.json").toString("utf8"); } catch { return false; }
+  let c;
+  try { c = JSON.parse(raw); } catch { fail("channels.json isn't valid JSON. It holds {\"desktop\": \"paused\"} or {\"desktop\": \"follow\"}."); }
+  if (c.desktop === "paused") return true;
+  if (c.desktop === "follow" || c.desktop === undefined) return false;
+  fail(`channels.json's "desktop" is ${JSON.stringify(c.desktop)}; it has to be "paused" or "follow".`);
 }
 
 function sign_(dryRun) {
   const i = process.argv.indexOf("--version");
   const asked = (i > 0 ? process.argv[i + 1] || "" : process.env.VERSION || "").trim();
   if (asked && !VERSION_RE.test(asked)) fail(`"${asked}" isn't a version like 1.9.52.`);
-  const current = JSON.parse(git("show", "HEAD:update.json").toString("utf8"));
+  const read = (file) => JSON.parse(git("show", `HEAD:${file}`).toString("utf8"));
+  const desk = read("update.json");
+  let web;
+  try { web = read("web-update.json"); } catch { fail("web-update.json isn't on main. The web version (app.fafoaco.com) reads it: start it as a copy of update.json."); }
+  const paused = desktopPaused();
   const files = git("ls-tree", "-r", "--name-only", "HEAD").toString("utf8").split("\n");
   const pages = new Set(files.map((f) => (f.match(/^index-(\d+\.\d+\.\d+)\.html$/) || [])[1]).filter(Boolean));
   const noted = new Set(files.map((f) => (f.match(/^release-notes\/(\d+\.\d+\.\d+)\.txt$/) || [])[1]).filter(Boolean));
@@ -107,75 +131,113 @@ function sign_(dryRun) {
   const notesOf = (v) => git("show", `HEAD:release-notes/${v}.txt`).toString("utf8").replace(/\s+/g, " ").trim();
 
   if (!pages.has(version)) fail(`index-${version}.html isn't on main.`);
-  if (cmp(version, current.version) <= 0) {
-    checkLive(current);
-    if (noted.has(current.version) && notesOf(current.version) !== current.notes) {
-      console.log(`::warning::release-notes/${current.version}.txt changed after ${current.version} was released. Apps only show notes with a new version, so put the text in the next version's notes.`);
+  const held = paused ? ` Desktop updates are paused (channels.json), so installed apps stay on ${desk.version}.` : "";
+  const toDesk = !paused && cmp(version, desk.version) > 0, toWeb = cmp(version, web.version) > 0;
+  // A feed this run doesn't replace has to still describe what main serves, as it was signed (a newer release fixes the
+  // one it replaces). So a paused update.json is checked on every run.
+  if (!toDesk) checkLive(desk, "update.json");
+  if (!toWeb) checkLive(web, "web-update.json");
+  if (!toDesk && !toWeb) {
+    for (const m of new Set([desk, web])) {
+      if (noted.has(m.version) && notesOf(m.version) !== m.notes) {
+        console.log(`::warning::release-notes/${m.version}.txt changed after ${m.version} was released. Apps only show notes with a new version, so put the text in the next version's notes.`);
+      }
     }
-    summary(`Nothing to publish: ${version} isn't newer than ${current.version}, which update.json already points to (checked: its page on main is unchanged and it's signed with the app's key).`);
+    summary(`Nothing to publish: ${version} isn't newer than what the web version (${web.version}) and installed apps (${desk.version}) have (checked: their pages on main are unchanged and signed with the app's key).${held}`);
     pick("");
     process.exit(0);
   }
-  if (!noted.has(version)) fail(`index-${version}.html is newer than update.json (${current.version}) but has no release-notes/${version}.txt, so it wasn't published. Add that file with a sentence or two for the app's update notice.`);
+  if (!noted.has(version)) fail(`index-${version}.html is newer than ${toWeb ? `web-update.json (${web.version})` : `update.json (${desk.version})`} but has no release-notes/${version}.txt, so it wasn't published. Add that file with a sentence or two for the app's update notice.`);
 
   const notes = notesOf(version);
   if (!notes) fail(`release-notes/${version}.txt is empty.`);
   if (notes.length > 1000) fail(`release-notes/${version}.txt is ${notes.length} characters; keep it under 1000.`);
   const html = git("show", `HEAD:index-${version}.html`);
   if (html.length > MAX_HTML) fail(`index-${version}.html is ${html.length} bytes; apps refuse pages over ${MAX_HTML}.`);
+  const where = toDesk && toWeb ? "the web version and installed apps" : toWeb ? "the web version only" : "installed apps (the web version has it already)";
   if (dryRun) {
-    summary(`Ready to publish Orbit ${version} (sha256 ${sha256(html)}). Notes: ${notes}`);
+    summary(`Ready to publish Orbit ${version} to ${where} (sha256 ${sha256(html)}).${toWeb && !toDesk ? held : ""} Notes: ${notes}`);
     pick(version);
     process.exit(0);
   }
 
-  const m = {
-    version,
-    url: `index-${version}.html`,
-    sha256: sha256(html),
-    signature: "",
-    minAppVersion: current.minAppVersion || "0",
-    notes,
-    installerUrl: current.installerUrl || "",
-    publishedAt: new Date().toISOString(),
-  };
   const key = privateKey(process.env.UPDATE_SIGNING_KEY);
-  m.signature = sign(null, signedMessage(m), key).toString("base64");
-  // The same check every installed app makes; stop here if it would refuse this.
-  if (!appAccepts(m)) {
-    fail("UPDATE_SIGNING_KEY isn't the key Orbit trusts: its public half doesn't match the one built into the app, so every app would refuse this update. Use the key tools/release.mjs signs with.");
+  const publishedAt = new Date().toISOString();
+  for (const [file, current] of [toDesk && ["update.json", desk], toWeb && ["web-update.json", web]].filter(Boolean)) {
+    const m = {
+      version,
+      url: `index-${version}.html`,
+      sha256: sha256(html),
+      signature: "",
+      minAppVersion: current.minAppVersion || "0",
+      notes,
+      installerUrl: current.installerUrl || "",
+      publishedAt,
+    };
+    m.signature = sign(null, signedMessage(m), key).toString("base64");
+    // The same check every installed app (and the web worker) makes; stop here if it would refuse this.
+    if (!appAccepts(m)) {
+      fail("UPDATE_SIGNING_KEY isn't the key Orbit trusts: its public half doesn't match the one built into the app, so every app would refuse this update. Use the key tools/release.mjs signs with.");
+    }
+    writeFileSync(file, JSON.stringify(m, null, 2) + "\n");
   }
-  writeFileSync("update.json", JSON.stringify(m, null, 2) + "\n");
-  summary(`Signed Orbit ${version} (sha256 ${m.sha256}). Notes: ${notes}`);
+  summary(`Signed Orbit ${version} for ${where} (sha256 ${sha256(html)}).${toWeb && !toDesk ? held : ""} Notes: ${notes}`);
 }
 
-// After the push: fetch the manifest and page the way the app does, until the new version is served.
-async function check(version) {
+// After the push: fetch each feed and its page the way the app does, until the new version is served. `channels` is
+// "web,desktop" (the default), "web" or "desktop". After a web release, the web version's own answer is checked too.
+async function check(version, channels = "web,desktop") {
   if (!VERSION_RE.test(version || "")) fail("--check needs a version like 1.9.52.");
+  const want = String(channels || "web,desktop").split(",").map((c) => c.trim()).filter(Boolean);
+  if (!want.length || want.some((c) => !FEEDS[c])) fail(`--check takes web, desktop or web,desktop, not "${channels}".`);
   const tries = Number(process.env.CHECK_TRIES) || 36, wait = Number(process.env.CHECK_WAIT_MS) || 10000;
   const get = async (url) => {
     const r = await fetch(url, { cache: "no-store", redirect: "follow" });
     if (!r.ok) throw new Error(`HTTP ${r.status} from ${url}`);
     return Buffer.from(await r.arrayBuffer());
   };
-  let last = "";
-  for (let n = 1; n <= tries; n++) {
-    try {
-      const m = JSON.parse((await get(MANIFEST_URL + "?t=" + Date.now())).toString("utf8"));
-      last = m.version;
-      if (m.version === version) {
-        const page = await get(new URL(m.url, MANIFEST_URL).toString());
-        if (sha256(page) !== m.sha256) fail(`The served ${m.url} hashes to ${sha256(page)}, not ${m.sha256}: apps would refuse it.`);
-        if (!appAccepts(m)) fail("The served update.json isn't signed with the key the app trusts: apps would refuse it.");
-        summary(`Apps are now served Orbit ${version}, and it passes the app's own checks. They install it on their next restart.`);
-        return;
+  for (const c of want) {
+    const { file, who, url } = FEEDS[c];
+    let last = "", done = false;
+    for (let n = 1; n <= tries && !done; n++) {
+      try {
+        const m = JSON.parse((await get(url + "?t=" + Date.now())).toString("utf8"));
+        last = m.version;
+        if (m.version === version) {
+          const page = await get(new URL(m.url, url).toString());
+          if (sha256(page) !== m.sha256) fail(`The served ${m.url} hashes to ${sha256(page)}, not ${m.sha256}: ${who} would refuse it.`);
+          if (!appAccepts(m)) fail(`The served ${file} isn't signed with the key the app trusts: ${who} would refuse it.`);
+          summary(c === "desktop" ? `Apps are now served Orbit ${version}, and it passes the app's own checks. They install it on their next restart.`
+            : `${file} now names Orbit ${version}, and it passes the app's own checks.`);
+          done = true;
+          break;
+        }
+      } catch (e) { last = String((e && e.message) || e); }
+      if (n < tries) await new Promise((r) => setTimeout(r, wait));
+    }
+    if (!done) {
+      console.log(`::warning::raw.githubusercontent.com still serves ${last} in ${file} after ${Math.round(tries * wait / 60000)} minutes. It usually catches up within about 5; nothing to redo.`);
+      summary(`${file} not served yet (still ${last}); raw.githubusercontent.com can take a few minutes.`);
+      continue;
+    }
+    if (c === "web" && WEB_APP_URL) {
+      let served = "";
+      for (let n = 1; n <= tries; n++) {
+        try {
+          const r = await fetch(WEB_APP_URL, { method: "HEAD", cache: "no-store" });
+          served = r.headers.get("x-orbit-version") || `HTTP ${r.status}`;
+          if (served === version) break;
+        } catch (e) { served = String((e && e.message) || e); }
+        if (n < tries) await new Promise((r) => setTimeout(r, wait));
       }
-    } catch (e) { last = String((e && e.message) || e); }
-    if (n < tries) await new Promise((r) => setTimeout(r, wait));
+      if (served === version) summary(`The web version (${WEB_APP_URL}) now serves Orbit ${version}.`);
+      else {
+        console.log(`::warning::The web version (${WEB_APP_URL}) still answers ${served || "nothing"}. It reads web-update.json at most once a minute; check that "Deploy web app" ran.`);
+        summary(`The web version still answers ${served || "nothing"}.`);
+      }
+    }
   }
-  console.log(`::warning::raw.githubusercontent.com still serves ${last} after ${Math.round(tries * wait / 60000)} minutes. It usually catches up within about 5; nothing to redo.`);
-  summary(`Not served yet (still ${last}); raw.githubusercontent.com can take a few minutes.`);
 }
 
-if (process.argv[2] === "--check") await check(process.argv[3]);
+if (process.argv[2] === "--check") await check(process.argv[3], process.argv[4]);
 else sign_(process.argv.includes("--verify"));
