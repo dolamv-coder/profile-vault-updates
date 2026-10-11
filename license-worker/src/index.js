@@ -201,6 +201,21 @@ const day = (ms) => new Date(ms).toISOString().slice(0, 10);
 
 // ---- sign-in -------------------------------------------------------------------
 
+// The web version's addresses. From page 1.9.111 it sends its own as `web` with /discord/start, and the sign-in carries
+// which one in its state (`<id>.w<n>`, nothing new stored), so the page Discord sends the buyer back to can take them
+// straight back to FAFO there (`backToWeb`) instead of telling them to find the tab it opened from.
+const WEB_APPS = ["https://app.fafoaco.com", "https://app.orbit-app.workers.dev"];
+const webAppOf = (state) => { const m = /\.w(\d)$/.exec(state || ""); return m ? WEB_APPS[+m[1]] || "" : ""; };
+// Closes this tab, which goes back to the FAFO tab that opened it; where the browser won't, opens FAFO here (it
+// picks the sign-in up by itself). Only the tab FAFO opened is closed: it went through discord.com first, so it has
+// more than one page in its history. One with a single page was opened by something else (the Discord app handing
+// the sign-in back to the browser, say), and closing it would leave the buyer back in Discord, so it opens FAFO.
+const backToWeb = (app) => `<p class="go"><button class="go" id="back" type="button">Back to FAFO</button></p>
+<p class="hint">Signed in from the Discord app or another browser? Go back to FAFO there.</p>
+<script>document.getElementById("back").addEventListener("click", function(){ var go = function(){ location.replace(${JSON.stringify(app + "/")}); };
+  if (history.length < 2) return go();
+  try { window.close(); } catch(e){} setTimeout(go, 400); });</script>`;
+
 async function start(request, env, ctx, url) {
   const r = url.searchParams.get("r") || "";
   if (!validId(r)) return page(400, "This link isn't valid", "Go back to FAFO and click Continue with Discord again.");
@@ -213,13 +228,14 @@ async function start(request, env, ctx, url) {
     .bind(ip, now - 3600 * 1000).first();
   if (recent && recent.n >= STARTS_PER_IP_PER_HOUR) return page(429, "Too many tries", "Wait an hour, then try again.");
 
-  const state = randomId(24);
+  const web = WEB_APPS.indexOf(url.searchParams.get("web") || "");
+  const state = randomId(24) + (web >= 0 ? ".w" + web : "");
   const res = await env.DB.prepare(
     `INSERT INTO requests (r, state, ip, created_at) VALUES (?, ?, ?, ?)
      ON CONFLICT (r) DO UPDATE SET state = excluded.state, created_at = excluded.created_at
      WHERE requests.status = 'pending'`
   ).bind(r, state, ip, now).run();
-  if (!res.meta || !res.meta.changes) return page(200, "Already done", "Go back to FAFO.");
+  if (!res.meta || !res.meta.changes) return page(200, "Already done", "Go back to FAFO.", web >= 0 ? backToWeb(WEB_APPS[web]) : "");
 
   const params = new URLSearchParams({
     client_id: env.DISCORD_CLIENT_ID,
@@ -235,16 +251,20 @@ async function callback(env, ctx, url) {
   const state = url.searchParams.get("state") || "";
   const code = url.searchParams.get("code") || "";
   const req = state ? await env.DB.prepare("SELECT * FROM requests WHERE state = ?").bind(state).first() : null;
+  const webApp = webAppOf(state), back = webApp ? backToWeb(webApp) : "";
+  // A request waiting for the seller lasts as long as the app waits for it (reloading its page later isn't "expired").
+  if (req && req.status === "review" && Date.now() - req.created_at <= REVIEW_TTL_MS) return page(200, "Request sent", "The seller will review your request.", back);
   if (!req || Date.now() - req.created_at > REQUEST_TTL_MS) {
-    return page(400, "This sign-in expired", "Go back to FAFO and click Continue with Discord again.");
+    return page(400, "This sign-in expired", "Go back to FAFO and click Continue with Discord again.", back);
   }
-  if (req.status === "issued") return page(200, "You're all set", "Go back to FAFO. It has your key.");
-  if (req.status === "review") return page(200, "Request sent", "The seller will review your request.");
-  if (req.status !== "pending") return page(400, "Something went wrong", req.error || "Go back to FAFO and try again.");
+  if (req.status === "issued") return webApp
+    ? page(200, "You're all set", "FAFO has your key. Go back to it: your master password opens your vault there, or you choose one if you're new.", back)
+    : page(200, "You're all set", "Go back to FAFO. It has your key.");
+  if (req.status !== "pending") return page(400, "Something went wrong", req.error || "Go back to FAFO and try again.", back);
 
   const fail = async (title, msg, statusCode = 403) => {
     await env.DB.prepare("UPDATE requests SET status = 'error', error = ? WHERE r = ? AND status = 'pending'").bind(msg, req.r).run();
-    return page(statusCode, title, msg);
+    return page(statusCode, title, msg, webApp ? backToWeb(webApp) : "");
   };
   if (url.searchParams.get("error") || !code) return fail("Sign-in cancelled", "Discord sign-in was cancelled. Click Continue with Discord in FAFO to try again.", 400);
 
@@ -278,6 +298,7 @@ async function callback(env, ctx, url) {
     if (app.status === "denied") return fail("Request declined", DECLINED_MSG);
     if (app.status === "pending") {
       await env.DB.prepare("UPDATE requests SET status = 'review', discord_id = ? WHERE r = ? AND status = 'pending'").bind(user.id, req.r).run();
+      if (webApp) return page(200, "Request sent", "The seller approves new accounts by hand. Once you're approved, FAFO goes on by itself, even if you close it and come back later.", backToWeb(webApp));
       return page(200, "Request sent", "The seller will review your request. Once it's approved, FAFO activates by itself if it's waiting, or click Continue with Discord in FAFO again.");
     }
   }
@@ -288,8 +309,9 @@ async function callback(env, ctx, url) {
     return app && app.status === "denied" ? fail("Request declined", DECLINED_MSG) : fail("License turned off", REVOKED_MSG);
   }
   await env.DB.prepare("UPDATE requests SET status = 'issued', discord_id = ? WHERE r = ? AND status = 'pending'").bind(user.id, req.r).run();
-  return page(200, "You're all set", "Go back to FAFO. It activates by itself in a few seconds.",
-    `<p class="small">Your license key, in case you need it later:</p><p class="key">${esc(lic.license_key)}</p>`);
+  const keyHtml = `<p class="small">Your license key, in case you need it later:</p><p class="key">${esc(lic.license_key)}</p>`;
+  if (webApp) return page(200, "You're all set", "Go back to FAFO: your master password opens your vault there, or you choose one if you're new. It keeps your profiles and cards private.", backToWeb(webApp) + keyHtml);
+  return page(200, "You're all set", "Go back to FAFO. It activates by itself in a few seconds.", keyHtml);
 }
 
 async function exchangeCode(env, code, redirectUri) {
@@ -2756,6 +2778,7 @@ function page(statusCode, title, msg, extra = "", wide = false) {
   .row form{flex:1;margin:0}
   button{width:100%;padding:12px;border:0;border-radius:10px;font:600 16px system-ui,sans-serif;cursor:pointer;color:#fff}
   button.ok{background:#1f9d5c} button.no{background:#c4372f}
+  p.go{margin:20px 0 0} button.go{background:#4a9dff;color:#06122e}
   button.copy{width:auto;padding:8px 14px;font-size:14px;background:#2a3f7a}
   main.wide{max-width:900px}
   h3{margin:24px 0 8px;font-size:16px} h3 .count{font-weight:400;color:#b9c6ea;margin-left:6px} h3 input.all{vertical-align:-2px;margin-right:6px}
