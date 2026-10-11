@@ -1,10 +1,10 @@
 {
-  "version": "1.9.110",
-  "url": "index-1.9.110.html",
-  "sha256": "f814f1bd7bb271d962010ae2c963bf30bc9220fb7837b97c2f525918f7d57814",
-  "signature": "WSPflpoFg2+roCQ304JAflt7qkLxtXObbZsy7HV4YuQwHvDnb4cBUEPPbonr/2JI4Z0/jIWKXrVqZssKtIThDw==",
+  "version": "1.9.111",
+  "url": "index-1.9.111.html",
+  "sha256": "36bd8fc5d2d48693843c62820e5f3a1cbec28a6a14f4feb2057d42188affe179",
+  "signature": "ap9i3i2lHDWo/a9NKLtiOG1RdI7UnphLHKli5jeAUj0kn+qZVs0xmozMRq0WleIAOHd0RNJYgX5cIUWg1JxaAA==",
   "minAppVersion": "0",
-  "notes": "Phone trackers you turn on from now use FAFO's own address, orders.fafoaco.com, or the old one on networks that block it. Phones you've already set up keep working as they are. If a network blocks one of the tracker's addresses, FAFO sends your orders through the other, and turning the tracker on without a connection now says so and keeps what you typed.",
+  "notes": "On the web, signing in with Discord now ends with a Back to FAFO button that takes you straight back to FAFO to open your vault, or create one, and start making profiles. New accounts still wait for the seller's approval first.",
   "installerUrl": "",
-  "publishedAt": "2026-10-11T12:52:04.853Z"
+  "publishedAt": "2026-10-11T18:14:10.190Z"
 }
