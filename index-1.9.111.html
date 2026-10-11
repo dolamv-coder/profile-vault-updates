@@ -3551,6 +3551,9 @@ function sanitizeState(s){
 }
 
 /* ---------- storage + crypto ---------- */
+// The vault as saved now, for the lock screen: another tab of this browser may have saved it since the screen was
+// drawn (1.9.111: Back to FAFO can leave two FAFO tabs open), and opening the copy from then would save it over that.
+function lockRecord(rec){ const cur = readStore(); return validRecord(cur) ? cur : rec; }
 function readStore(){
   try { const raw = localStorage.getItem(STORE_KEY); return raw ? JSON.parse(raw) : null; }
   catch(e){ STORAGE_OK = false; return null; }
@@ -3790,15 +3793,16 @@ function renderLock(msg){
       } catch(ex){ go.disabled = false; go.textContent = "Create vault"; err.textContent = "Couldn't create the vault in this browser."; }
     } else {
       go.disabled = true; go.textContent = "Unlocking…";
+      const cur = lockRecord(rec);
       try {
-        const r = await openRecord(rec, pw);
+        const r = await openRecord(cur, pw);
         if (S) return; // auto-unlock got there first
-        KEY = r.key; SYNC_AUTH = r.auth; S = r.state; VAULT = rec;
+        KEY = r.key; SYNC_AUTH = r.auth; S = r.state; VAULT = cur;
         startApp();
       } catch(ex){
         if (S) return;
         // A synced vault's password may have been changed on another device: try the online copy.
-        const o = await syncUnlockOnline(rec, pw).catch(() => false);
+        const o = await syncUnlockOnline(cur, pw).catch(() => false);
         if (S || o === true) return;
         go.disabled = false; go.textContent = "Unlock";
         err.textContent = o === "cancel" ? "" : typeof o === "string" ? o : "That password doesn't open this vault.";
@@ -3813,12 +3817,12 @@ function renderLock(msg){
       const pw = pw1.value;
       if (!pw) return;
       autoTimer = setTimeout(async () => {
-        const seq = ++autoSeq;
+        const seq = ++autoSeq, cur = lockRecord(rec);
         try {
-          const r = await openRecord(rec, pw);
+          const r = await openRecord(cur, pw);
           // Ignore results for text that's no longer in the box, or if already open.
           if (seq !== autoSeq || pw1.value !== pw || S) return;
-          KEY = r.key; SYNC_AUTH = r.auth; S = r.state; VAULT = rec;
+          KEY = r.key; SYNC_AUTH = r.auth; S = r.state; VAULT = cur;
           startApp();
         } catch(ex){ /* wrong so far: stay quiet while typing */ }
       }, 300);
@@ -13145,15 +13149,20 @@ function webDiscordStart(){
   const go = $("#wd-go"); if (!go) return;
   const SIGNIN_WAIT = 15 * 60 * 1000, REVIEW_WAIT = 7 * 86400000;
   const reviewText = "Request sent. The seller approves new accounts by hand. You can close this page: when you come back, FAFO goes on by itself once you're approved.";
-  const watch = (r, started, review) => {
+  const finishText = "Finish signing in with Discord in the tab that opened, then come back here.";
+  // `resumed`: a sign-in saved earlier, picked up as the page loads (a reload, or Back to FAFO opening FAFO in Discord's
+  // tab, 1.9.111): it's asked about at once, and Continue with Discord waits for the answer, so it isn't started again.
+  const watch = (r, started, review, resumed) => {
     const gen = ++webDc.gen; clearTimeout(webDc.timer);
-    webDcSay(review ? reviewText : "Finish signing in with Discord in the tab that opened, then come back here.");
+    const checking = !!resumed && !review;
+    webDcSay(review ? reviewText : checking ? "Checking your Discord sign-in…" : finishText);
+    go.hidden = checking;
     let heard = review;
     const tick = webDc.tick = async () => {
       if (gen !== webDc.gen || !$("#wd-msg") || webDc.busy === gen) return;
       clearTimeout(webDc.timer);
       if (Date.now() - started > (review ? REVIEW_WAIT : SIGNIN_WAIT)){
-        webKeyreq(null);
+        webKeyreq(null); go.hidden = false;
         webDcSay(review ? "Your request wasn't answered in time. Continue with Discord to ask again." : "Sign-in timed out. Continue with Discord to try again.", "err");
         return;
       }
@@ -13162,6 +13171,7 @@ function webDiscordStart(){
       try { const res = await relayFetch("/discord/status/" + r, {cache:"no-store"}); s = res.status >= 500 ? null : await res.json(); } catch(e){}
       finally { if (webDc.busy === gen) webDc.busy = 0; }
       if (gen !== webDc.gen || !$("#wd-msg")) return;
+      if (go.hidden && !(s && s.status === "issued" && s.key)){ go.hidden = false; if (!s || !s.status || s.status === "pending" || s.status === "unknown") webDcSay(finishText); }
       if (s && s.status && s.status !== "unknown") heard = true;
       // Until the browser has opened the sign-in page, the worker doesn't know this request yet.
       if (!s || !s.status || s.status === "pending" || s.status === "review" || (s.status === "unknown" && !heard)){
@@ -13174,7 +13184,7 @@ function webDiscordStart(){
       webKeyreq(null);
       webDcSay(s.error || "Sign-in didn't finish. Continue with Discord to try again.", "err");
     };
-    webDc.timer = setTimeout(tick, review ? 800 : 3000);
+    webDc.timer = setTimeout(tick, review ? 800 : checking ? 300 : 3000);
   };
   go.addEventListener("click", () => {
     // A random id links this page to the sign-in in the other tab, so it can collect the key.
@@ -13189,7 +13199,7 @@ function webDiscordStart(){
   // Signed in already (the screen was drawn again): straight to the password.
   if (webDc.lic && webDc.info) return webShowPassword();
   const saved = webKeyreq();
-  if (saved && saved.r && saved.at && Date.now() - saved.at < (saved.review ? REVIEW_WAIT : SIGNIN_WAIT)) return watch(saved.r, saved.at, !!saved.review);
+  if (saved && saved.r && saved.at && Date.now() - saved.at < (saved.review ? REVIEW_WAIT : SIGNIN_WAIT)) return watch(saved.r, saved.at, !!saved.review, true);
   // Sign-in not set up on the server: say so, and the other ways stay.
   relayFetch("/discord/ready", {cache:"no-store"}).then(r => r.ok ? r.json() : null).then(j => {
     if (j && j.ready === false && $("#wd-go")){ go.hidden = true; webDcSay("Discord sign-in isn't available right now. Enter your license key instead, or use this browser only.", "err"); }
@@ -13212,7 +13222,7 @@ async function webGotKey(lic){
   webDcSay("Signed in. Looking for your synced vault…", "ok");
   let info;
   try { info = await syncInfo(lic); }
-  catch(m){ webDcSay((typeof m === "string" ? m : SYNC_ERR.server) + " Continue with Discord to try again.", "err"); return; }
+  catch(m){ const g = $("#wd-go"); if (g) g.hidden = false; webDcSay((typeof m === "string" ? m : SYNC_ERR.server) + " Continue with Discord to try again.", "err"); return; }
   if (!$("#wd-pw")) return;
   webDc.lic = lic; webDc.info = info;
   webShowPassword();

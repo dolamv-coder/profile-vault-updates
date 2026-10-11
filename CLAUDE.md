@@ -38,9 +38,13 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   `review`; 1.9.41 shows the message and asks the user to try again later.
   Since 2026-10-11 (the owner's request: buyers should go on to make profiles online) a sign-in started by the web
   version (page 1.9.111+ sends its address as `web` with `/discord/start`; only `WEB_APPS`, kept in the sign-in's
-  `state` as `.w<n>`, nothing new stored) ends on a page with **Back to FAFO** (`backToWeb`): it closes that tab, which
-  goes back to the FAFO tab, now at the master password, or where the browser won't, opens FAFO in it, which picks the
-  sign-in up by itself. The desktop app's sign-in pages are as before.
+  `state` as `.w<n>`, nothing new stored) ends on a page with **Back to FAFO** (`backToWeb`), on every page it can end on
+  (issued, waiting for approval, failed, loaded again, expired, Already done): in the tab FAFO opened (it went through
+  discord.com, so more than one page of history) it closes the tab, back to the FAFO tab, now at the master password, or
+  where the browser won't, opens FAFO in it, which picks the sign-in up by itself; a tab with one page (the Discord app
+  handing the sign-in to the browser) opens FAFO at once rather than closing back into Discord, and the page says to go
+  back to FAFO in the Discord app or other browser where it was signed in. A request waiting for approval reloaded after
+  15 minutes says Request sent, not expired (`REVIEW_TTL_MS`). The desktop app's sign-in pages are as before.
   It also keeps each license's slot limit (default 20 switched on at once on the
   Submit page, app 1.9.46+): `/slots/limit` and `/slots/request` take the license
   key as `Authorization: Bearer`, and requests are approved at `/slots/review/:id`.
@@ -868,7 +872,11 @@ Back to FAFO (the worker section above; the owner's request, 2026-10-11: buyers 
 Discord had opened, and didn't find their way on to make profiles). Back to FAFO can open FAFO in a second tab of the same
 browser, and both tabs reach the master password, so a vault made or opened in one stops the other making one over it: a
 `storage` event, or a check before and after Create vault's and Open vault's slow steps (`webVaultTaken`), shows the lock
-screen for it instead, with "FAFO was set up in another tab of this browser" (`WEB_TAKEN_MSG`). Nothing gains a field.
+screen for it instead, with "FAFO was set up in another tab of this browser" (`WEB_TAKEN_MSG`), and unlocking opens the vault
+as saved at that moment (`lockRecord`), not as it was when the lock screen was drawn, which would save an older copy over the
+other tab's. A sign-in picked up as the page loads (a reload, or FAFO opened in Discord's tab) is asked about at once and says
+"Checking your Discord sign-in…", with Continue with Discord held back until the answer, so it isn't started again. Nothing
+gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
