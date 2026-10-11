@@ -1,10 +1,10 @@
 {
-  "version": "1.9.108",
-  "url": "index-1.9.108.html",
-  "sha256": "36a283ffe703c05e4fd0b1abaa03c4e329a49259cf3a1d09869d16a171a470d9",
-  "signature": "8NAUbxUzWVi32MNkg8KGJ0RtsqI5cykFmtUXvjYVrSMoNJPrCCDv3JnOyvqRmeEJojiF5jE21mrckZLf5pL8CQ==",
+  "version": "1.9.109",
+  "url": "index-1.9.109.html",
+  "sha256": "711b7e796e86de247f2cf93a4f9cf428b723ac0286f7e968ab042ebebe72c4cf",
+  "signature": "KyvE8mZPE91g+BXHnMPzTlBt4Gq4prxm8cnRyw6o9bIvcr7oh1R45RVwGx4v3TPwJ8f9cgoXh2caYLIqPTPcCQ==",
   "minAppVersion": "0",
-  "notes": "FAFO on the web now tells you when there's a new version: a bar at the top offers Reload, and a locked page updates by itself. Nothing changes in the desktop app.",
+  "notes": "FAFO has a new home: fafoaco.com. FAFO on the web is now at app.fafoaco.com and starts with Continue with Discord: sign in, then your master password opens your synced vault. FAFO connects to the new address, falling back to the old one on networks that block it. If you use FAFO in a browser without sync, turn on sync or download a backup before moving to the new address, so your vault comes along.",
   "installerUrl": "",
-  "publishedAt": "2026-10-10T19:22:04.733Z"
+  "publishedAt": "2026-10-11T05:37:00.286Z"
 }
