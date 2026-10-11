@@ -1,0 +1,54 @@
+name: Attach orders.fafoaco.com (one-off)
+
+# Temporary, at the owner's request (2026-10-11: "add orders.fafoaco.com"): attaches the phone relay worker (`orders`) to
+# orders.fafoaco.com with the deploy token, as Workers & Pages → Domains would, then checks it answers there as it does on
+# its workers.dev address. Removed again once it has run. Prints no token and no account id.
+on:
+  push:
+    branches: [claude/elegant-shannon-wp2xrc]
+    paths: [".github/workflows/attach-orders-domain.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Attach the custom domain
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          token="$(printf '%s' "$TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          account="$(printf '%s' "$ACCOUNT" | tr -d '[:space:]' | tr 'A-F' 'a-f')"
+          echo "::add-mask::$account"
+          api="https://api.cloudflare.com/client/v4"
+          get() { curl -sS -H "Authorization: Bearer $token" "$api$1"; }
+          zone="$(get "/zones?name=fafoaco.com" | jq -r '.result[0].id // empty')"
+          echo "--- worker domains before"
+          get "/accounts/$account/workers/domains" | jq '{success, errors, domains: [.result[]? | {hostname, service}]}'
+          echo "--- attach orders.fafoaco.com to orders"
+          body="$(jq -nc --arg z "$zone" '{hostname: "orders.fafoaco.com", service: "orders", environment: "production"} + (if $z != "" then {zone_id: $z} else {} end)')"
+          curl -sS -X PUT -H "Authorization: Bearer $token" -H "Content-Type: application/json" "$api/accounts/$account/workers/domains" --data "$body" \
+            | jq '{success, errors, messages, attached: (.result | if type == "object" then {hostname, service, zone_name} else null end)}'
+          echo "--- worker domains after"
+          get "/accounts/$account/workers/domains" | jq '{success, errors, domains: [.result[]? | {hostname, service}]}'
+
+      - name: Check it answers on both addresses
+        run: |
+          check() {
+            vapid="$(curl -sS -m 10 "$1/vapid" 2>&1 | jq -c '{has_key: ((.key // "") | length > 0)}' 2>&1 | head -c 120)"
+            page="$(curl -sS -m 10 -o /dev/null -w '%{http_code} %{content_type}' "$1/" 2>&1 | head -c 120)"
+            cors="$(curl -sS -m 10 -o /dev/null -D - -X OPTIONS -H 'Origin: https://app.fafoaco.com' -H 'Access-Control-Request-Method: PUT' "$1/s/xxxxxxxxxxxxxxxxxxxxxxxx" 2>&1 | grep -i '^access-control-allow-origin' | tr -d '\r' | head -c 120)"
+            snap="$(curl -sS -m 10 -o /dev/null -w '%{http_code}' "$1/s/xxxxxxxxxxxxxxxxxxxxxxxx" 2>&1 | head -c 40)"
+            echo "$1 | vapid: $vapid | page: $page | preflight: $cors | unknown snapshot: $snap"
+          }
+          for i in $(seq 1 36); do
+            new="$(check https://orders.fafoaco.com)"; old="$(check https://orders.orbit-app.workers.dev)"
+            echo "[$i] $new"; echo "[$i] $old"
+            if echo "$new" | grep -q '"has_key":true' && echo "$new" | grep -q 'page: 200 text/html' && echo "$new" | grep -qi 'allow-origin: \*' && echo "$new" | grep -q 'unknown snapshot: 404'; then echo "orders.fafoaco.com answers like the old address."; exit 0; fi
+            sleep 20
+          done
+          echo "::warning::orders.fafoaco.com didn't answer within 12 minutes (a new certificate can take longer)."
