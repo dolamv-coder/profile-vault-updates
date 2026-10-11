@@ -35,6 +35,10 @@ Run these in a terminal inside this `license-worker` folder.
    ```
 
    Log in with the Cloudflare account that owns `orbit-app.workers.dev`.
+   (Since 2026-10-10 the worker also answers at `https://license.fafoaco.com`, a custom domain added in the
+   dashboard: Workers & Pages → orbit-license → Settings → Domains & Routes. Pages from 1.9.109 use that address
+   first and this one when a network blocks it, so both must keep working, and Discord's OAuth2 redirects need
+   `https://license.fafoaco.com/discord/callback` as well as the workers.dev one.)
 
 2. **Create the database**
 
@@ -56,7 +60,8 @@ Run these in a terminal inside this `license-worker` folder.
 
    It prints the worker's address. It must be
    `https://orbit-license.orbit-app.workers.dev`, because that is what the app
-   calls (`LICENSE_RELAY` in `index-*.html`). If it prints something else, the app
+   calls (`RELAY_OLD` in `index-*.html` from 1.9.109, `LICENSE_RELAY` before; from 1.9.109 the app tries
+   `RELAY_NEW`, `https://license.fafoaco.com`, first). If it prints something else, the app
    needs that address instead.
 
 4. **Add the secrets.** Each command asks you to paste the value.
@@ -86,12 +91,17 @@ Run these in a terminal inside this `license-worker` folder.
      otherwise the worker posts there each time someone gets a new key. Keys themselves
      are never posted.
 
-5. **Add the redirect in Discord.** On the application's **OAuth2** page, under
-   **Redirects**, add this and save:
+5. **Add the redirects in Discord.** On the application's **OAuth2** page, under
+   **Redirects**, add both of these and save:
 
    ```
    https://orbit-license.orbit-app.workers.dev/discord/callback
+   https://license.fafoaco.com/discord/callback
    ```
+
+   The worker gives Discord the callback on the address the sign-in started from, and FAFO 1.9.109+ starts it on
+   `license.fafoaco.com` whenever that answers: without the second redirect, Continue with Discord ends on Discord's
+   "Invalid OAuth2 redirect_uri". Add it before a page that uses the new address is released.
 
 6. **Check it.** Open https://orbit-license.orbit-app.workers.dev/discord/ready in a
    browser. It should say `{"ready":true}`. Until it does, FAFO hides the Discord
@@ -525,7 +535,7 @@ curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit
 ## The web version's synced vaults
 
 From Orbit 1.9.65, a desktop app can keep an encrypted copy of its vault here (Settings → Web
-version & sync), so the web version at https://app.orbit-app.workers.dev (`web-worker/`) and other
+version & sync), so the web version at https://app.fafoaco.com (`web-worker/`; also app.orbit-app.workers.dev) and other
 computers can open the same profiles, cards, logins and orders. Nothing to set up: the deploy
 creates the `vaults` and `vault_chunks` tables.
 

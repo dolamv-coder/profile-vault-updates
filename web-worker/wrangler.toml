@@ -1,4 +1,4 @@
-# Orbit on the web: https://app.orbit-app.workers.dev serves the Orbit page UPDATE_URL names.
+# Orbit on the web: https://app.fafoaco.com (and https://app.orbit-app.workers.dev) serves the Orbit page UPDATE_URL names.
 name = "app"
 main = "src/index.js"
 compatibility_date = "2025-09-01"

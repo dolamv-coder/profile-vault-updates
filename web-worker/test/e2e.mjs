@@ -41,7 +41,8 @@ const gh = createServer((req, res) => {
 });
 await new Promise((r) => gh.listen(GH_PORT, "127.0.0.1", r));
 
-writeFileSync(join(tmp, ".env"), [`UPDATE_URL=http://127.0.0.1:${GH_PORT}/update.json`, `PUBLISHER_KEY=${spki}`, "CHECK_EVERY_MS=300"].join("\n"));
+// The front page's address is localhost here (fafoaco.com for real); the app stays on 127.0.0.1.
+writeFileSync(join(tmp, ".env"), [`UPDATE_URL=http://127.0.0.1:${GH_PORT}/update.json`, `PUBLISHER_KEY=${spki}`, "CHECK_EVERY_MS=300", "SITE_HOST=localhost"].join("\n"));
 const env = { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost", CI: "1" };
 const wranglerJs = [join(root, "node_modules", "wrangler", "bin", "wrangler.js")];
 const dev = spawn(process.execPath, [...wranglerJs, "dev", "--local", "--ip", "127.0.0.1", "--port", String(WORKER_PORT), "--persist-to", join(tmp, "state"),
@@ -90,6 +91,40 @@ try {
     assert.equal(h.status, 200); assert.equal(await h.text(), ""); assert.equal(h.headers.get("x-orbit-version"), "1.9.0");
     assert.equal((await get("/", { method: "POST", body: "x" })).status, 405);
     assert.match(await (await get("/robots.txt")).text(), /Disallow: \//);
+  });
+  await test("the front page's address serves the front page (with the release), /download and /app redirect, the app stays the app", async () => {
+    const site = `http://localhost:${WORKER_PORT}`;
+    const r = await fetch(site + "/", { redirect: "manual" });
+    const body = await r.text();
+    assert.equal(r.status, 200); assert.match(body, /Your slots in\. Your orders tracked\./); assert.match(body, /Version 1\.9\.0 /);
+    assert.match(body, /href="\/download"/); assert.match(body, /href="https:\/\/app\.fafoaco\.com"/);
+    assert.equal(r.headers.get("content-type"), "text/html; charset=utf-8"); assert.equal(r.headers.get("x-frame-options"), "DENY");
+    assert.equal(r.headers.get("x-orbit-version"), null);
+    const d = await fetch(site + "/download", { redirect: "manual" });
+    assert.equal(d.status, 302); assert.equal(d.headers.get("location"), "https://github.com/dolamv-coder/profile-vault-updates/releases/latest/download/FAFO-Windows.zip");
+    const a = await fetch(site + "/app", { redirect: "manual" });
+    assert.equal(a.status, 302); assert.equal(a.headers.get("location"), "https://app.fafoaco.com/");
+    const o = await fetch(site + "/something", { redirect: "manual" });
+    assert.equal(o.status, 302); assert.equal(o.headers.get("location"), site + "/");
+    assert.match(await (await fetch(site + "/robots.txt")).text(), /Allow: \//);
+    assert.equal((await fetch(site + "/", { method: "POST", body: "x" })).status, 405);
+    const app = await get();
+    assert.equal(await app.text(), page1); assert.equal(app.headers.get("x-orbit-version"), "1.9.0");
+  });
+  await test("www.fafoaco.com goes to fafoaco.com (the worker's code, called directly: wrangler dev keeps its own address)", async () => {
+    const { default: worker } = await import("../src/index.js");
+    const r = await worker.fetch(new Request("https://www.fafoaco.com/download?x=1"), {});
+    assert.equal(r.status, 301); assert.equal(r.headers.get("location"), "https://fafoaco.com/download?x=1");
+  });
+  await test("http:// goes to https:// (app, front page and www), so FAFO never opens without a secure context", async () => {
+    const { default: worker } = await import("../src/index.js");
+    for (const [from, to] of [["http://app.fafoaco.com/?x=1", "https://app.fafoaco.com/?x=1"], ["http://fafoaco.com/download", "https://fafoaco.com/download"], ["http://www.fafoaco.com/", "https://www.fafoaco.com/"], ["http://app.orbit-app.workers.dev/", "https://app.orbit-app.workers.dev/"]]) {
+      const r = await worker.fetch(new Request(from), {});
+      assert.equal(r.status, 301, from); assert.equal(r.headers.get("location"), to, from);
+    }
+    const w = await worker.fetch(new Request("https://www.fafoaco.com/"), {});
+    assert.equal(w.headers.get("location"), "https://fafoaco.com/");
+    assert.equal((await worker.fetch(new Request("http://app.fafoaco.com/", { method: "POST", body: "x" }), {})).status, 405);
   });
   await test("update.json is read at most once in the check interval, however many visits", async () => {
     await wait(350);
