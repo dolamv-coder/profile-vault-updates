@@ -338,6 +338,8 @@ img,svg{max-width:100%}
 .btn.btn-discord{width:100%;justify-content:center;gap:8px;background:#5865F2;border-color:#5865F2;color:#fff}
 .btn.btn-discord:hover{background:#4752C4;border-color:#4752C4}
 .lic-dc-msg{margin:10px 0 0;font-size:calc(12.5px*var(--fs));color:var(--ink-2)}
+.lock-label .wd-key{margin:14px 0 0;font-size:calc(13px*var(--fs))}
+#wd-msg:empty{display:none}
 .lic-dc-msg.is-ok{color:var(--ok)}
 .lic-dc-msg.is-err{color:var(--danger)}
 /* Order photo, with the store's mark as a small badge in the corner */
@@ -3701,12 +3703,16 @@ function ccHTML(c, reveal){
 }
 
 /* ================= LOCK SCREEN ================= */
+// 1.9.109 (the owner's choice): in a browser with no vault yet, FAFO opens on Continue with Discord (webDiscordStart);
+// "Use this browser only" goes back to making a vault here without signing in.
+let LOCK_LOCAL = false;
 function renderLock(msg){
   closeAllLayers();
   MODE = "vault"; SUB = null;
   const rec = readStore();
   const creating = !validRecord(rec);
   const noCrypto = !(window.crypto && crypto.subtle);
+  const webStart = creating && !DESK && !noCrypto && !LOCK_LOCAL;
   $("#app").innerHTML = `<main class="lock"><div class="lock-inner">
     <div class="lock-upd" id="lock-upd" hidden></div>
     <div class="lock-upd" id="lock-done" hidden></div>
@@ -3717,6 +3723,22 @@ function renderLock(msg){
       <div>Checkout profiles, addresses and cards</div>
       <div class="lock-rule"></div>
       ${noCrypto ? `<p>This browser can't encrypt data on this page, so the vault can't open here. Try a current version of Chrome, Safari, Edge or Firefox.</p>` :
+      webStart ? `
+        <div id="wd-start">
+          <p>Sign in with Discord to open FAFO. Your master password then opens your vault. New here? The seller approves new accounts first.</p>
+          <button class="btn btn-discord" type="button" id="wd-go">${DISCORD_ICON}Continue with Discord</button>
+          <p class="lic-dc-msg" id="wd-msg" role="status"></p>
+          <p class="item-sub wd-key">Have your license key? <button class="link" type="button" id="lock-key">Enter it instead</button></p>
+        </div>
+        <div id="wd-pw" hidden>
+          <p id="wd-say"></p>
+          <input class="sr" type="text" name="username" autocomplete="username" value="Profile Vault" tabindex="-1" aria-hidden="true">
+          <div class="field" style="margin-bottom:12px"><label for="pw1">Master password</label><input id="pw1" type="password" autocomplete="current-password"></div>
+          <div class="field" id="wd-pw2" hidden style="margin-bottom:16px"><label for="pw2">Confirm password</label><input id="pw2" type="password" autocomplete="new-password"></div>
+          <div class="field"><span class="err" id="lock-err" role="alert"></span></div>
+          <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center;margin-top:6px" id="lock-go">Open vault</button>
+          <p class="item-sub wd-key"><button class="link" type="button" id="wd-back">Start over</button></p>
+        </div>` :
       creating ? `
         <p>Create a master password. Everything you add is encrypted with it and stays on this device. It can't be recovered, so store it in your password manager.</p>
         <input class="sr" type="text" name="username" autocomplete="username" value="Profile Vault" tabindex="-1" aria-hidden="true">
@@ -3731,10 +3753,11 @@ function renderLock(msg){
         <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center;margin-top:6px" id="lock-go">Unlock</button>`}
     </form>
     ${noCrypto ? "" : `${RT.config && !RT.isOwner ? `<button class="btn btn-primary" type="button" id="lock-inbox" style="width:100%;justify-content:center;margin-top:12px">Send profiles to this vault</button>` : ""}
-    ${creating ? `<div class="lic-sep"><span>Use FAFO on another device?</span></div><button class="btn" type="button" id="lock-sync" style="width:100%;justify-content:center">${ic("refresh")}Open my synced vault</button>` : ""}
+    ${creating && !webStart ? `<div class="lic-sep"><span>Use FAFO on another device?</span></div><button class="btn" type="button" id="lock-sync" style="width:100%;justify-content:center">${ic("refresh")}Open my synced vault</button>` : ""}
     <button class="btn" type="button" id="lock-submit" style="width:100%;justify-content:center;margin-top:12px">I was sent a code</button>
     <div class="lock-foot">
       <button class="link" type="button" id="lock-restore">Restore a backup</button>
+      ${webStart ? `<button class="link" type="button" id="lock-local">Use this browser only</button>` : creating && !DESK ? `<button class="link" type="button" id="lock-dc">Sign in with Discord instead</button>` : ""}
       ${creating ? "" : `<button class="link link-danger" type="button" id="lock-erase">Forgot it? Erase vault</button>`}
     </div>`}
   </div></main>`;
@@ -3743,10 +3766,11 @@ function renderLock(msg){
   // The app's click handler only runs when unlocked, so the lock banner handles its own buttons.
   $("#lock-upd").addEventListener("click", (e) => { const b = e.target.closest("[data-act]"); if (b) updAction(b.dataset.act); });
   if (noCrypto) return;
-  const pw1 = $("#pw1"); setTimeout(() => pw1 && pw1.focus(), 30);
+  const pw1 = $("#pw1"); if (!webStart) setTimeout(() => pw1 && pw1.focus(), 30);
   $("#lock-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     if (S) return;
+    if (webStart) return webVaultSubmit();
     const err = $("#lock-err"), go = $("#lock-go");
     err.textContent = "";
     const pw = pw1.value;
@@ -3805,6 +3829,10 @@ function renderLock(msg){
   $("#lock-restore").addEventListener("click", () => openRestore(false));
   $("#lock-submit").addEventListener("click", openSubmitStart);
   const ls = $("#lock-sync"); if (ls) ls.addEventListener("click", openSyncSignIn);
+  const lk = $("#lock-key"); if (lk) lk.addEventListener("click", openSyncSignIn);
+  const ll = $("#lock-local"); if (ll) ll.addEventListener("click", () => { LOCK_LOCAL = true; webDc.gen++; clearTimeout(webDc.timer); renderLock(); });
+  const ld = $("#lock-dc"); if (ld) ld.addEventListener("click", () => { LOCK_LOCAL = false; renderLock(); });
+  if (webStart) webDiscordStart();
   const li = $("#lock-inbox");
   if (li) li.addEventListener("click", () => startSubmit({pub:RT.config.pub, keyId:RT.config.keyId, viaDb:true}));
   const er = $("#lock-erase");
@@ -13039,6 +13067,136 @@ async function discordKeyFill(panel, onKey){
     };
     setTimeout(tick, 3000);
   });
+}
+// 1.9.109: the web version's first screen (renderLock's webStart). Continue with Discord opens the same sign-in that hands
+// out keys: an account with a license gets its key back at once, a new one waits for the seller's approval (the request
+// is kept in WEB_KEYREQ, so it goes on after the page is closed and opened again). With the key, the master password
+// opens the synced vault, or, with none online yet, makes a new vault that syncs from the start.
+const WEB_KEYREQ = "orbit-web-keyreq";
+const webDc = {gen:0, timer:null, tick:null, busy:false, lic:"", info:null};
+function webKeyreq(v){
+  try {
+    if (v === undefined) return JSON.parse(localStorage.getItem(WEB_KEYREQ) || "null");
+    if (v) localStorage.setItem(WEB_KEYREQ, JSON.stringify(v)); else localStorage.removeItem(WEB_KEYREQ);
+  } catch(e){ return null; }
+}
+function webDcSay(t, tone){
+  const msg = $("#wd-msg"); if (!msg) return;
+  msg.textContent = t || ""; msg.classList.toggle("is-ok", tone === "ok"); msg.classList.toggle("is-err", tone === "err");
+}
+function webDiscordStart(){
+  const go = $("#wd-go"); if (!go) return;
+  const SIGNIN_WAIT = 15 * 60 * 1000, REVIEW_WAIT = 7 * 86400000;
+  const reviewText = "Request sent. The seller approves new accounts by hand. You can close this page: when you come back, FAFO goes on by itself once you're approved.";
+  const watch = (r, started, review) => {
+    const gen = ++webDc.gen; clearTimeout(webDc.timer);
+    webDcSay(review ? reviewText : "Finish signing in with Discord in the tab that opened, then come back here.");
+    let heard = review;
+    const tick = webDc.tick = async () => {
+      if (gen !== webDc.gen || !$("#wd-msg") || webDc.busy) return;
+      clearTimeout(webDc.timer);
+      if (Date.now() - started > (review ? REVIEW_WAIT : SIGNIN_WAIT)){
+        webKeyreq(null);
+        webDcSay(review ? "Your request wasn't answered in time. Continue with Discord to ask again." : "Sign-in timed out. Continue with Discord to try again.", "err");
+        return;
+      }
+      let s = null;
+      webDc.busy = true;
+      try { const res = await relayFetch("/discord/status/" + r, {cache:"no-store"}); s = res.status >= 500 ? null : await res.json(); } catch(e){}
+      finally { webDc.busy = false; }
+      if (gen !== webDc.gen || !$("#wd-msg")) return;
+      if (s && s.status && s.status !== "unknown") heard = true;
+      // Until the browser has opened the sign-in page, the worker doesn't know this request yet.
+      if (!s || !s.status || s.status === "pending" || s.status === "review" || (s.status === "unknown" && !heard)){
+        if (s && s.status === "review" && !review){ review = true; webKeyreq({r, at:started, review:true}); webDcSay(reviewText); }
+        webDc.timer = setTimeout(tick, review ? 30000 : 3000);
+        return;
+      }
+      webKeyreq(null);
+      if (s.status === "issued" && s.key) return webGotKey(licFormat(s.key));
+      webDcSay(s.error || "Sign-in didn't finish. Continue with Discord to try again.", "err");
+    };
+    webDc.timer = setTimeout(tick, review ? 800 : 3000);
+  };
+  go.addEventListener("click", () => {
+    // A random id links this page to the sign-in in the other tab, so it can collect the key.
+    const r = phB64u(crypto.getRandomValues(new Uint8Array(18))), at = Date.now();
+    webKeyreq({r, at});
+    window.open(LICENSE_RELAY + "/discord/start?r=" + r, "_blank", "noopener");
+    watch(r, at, false);
+  });
+  $("#wd-back").addEventListener("click", () => { webDc.gen++; clearTimeout(webDc.timer); webDc.lic = ""; webDc.info = null; webKeyreq(null); renderLock(); });
+  // Signed in already (the screen was drawn again): straight to the password.
+  if (webDc.lic && webDc.info) return webShowPassword();
+  const saved = webKeyreq();
+  if (saved && saved.r && saved.at && Date.now() - saved.at < (saved.review ? REVIEW_WAIT : SIGNIN_WAIT)) return watch(saved.r, saved.at, !!saved.review);
+  // Sign-in not set up on the server: say so, and the other ways stay.
+  relayFetch("/discord/ready", {cache:"no-store"}).then(r => r.ok ? r.json() : null).then(j => {
+    if (j && j.ready === false && $("#wd-go")){ go.hidden = true; webDcSay("Discord sign-in isn't available right now. Enter your license key instead, or use this browser only.", "err"); }
+  }, () => {});
+}
+// Coming back to the tab checks at once (phones pause timers in a tab that's in the background).
+document.addEventListener("visibilitychange", () => { if (!document.hidden && webDc.tick && $("#wd-msg") && !$("#wd-start[hidden]")) webDc.tick(); });
+async function webGotKey(lic){
+  webDcSay("Signed in. Looking for your synced vault…", "ok");
+  let info;
+  try { info = await syncInfo(lic); }
+  catch(m){ webDcSay(typeof m === "string" ? m : SYNC_ERR.server, "err"); return; }
+  if (!$("#wd-pw")) return;
+  webDc.lic = lic; webDc.info = info;
+  webShowPassword();
+}
+function webShowPassword(){
+  const {lic, info} = webDc;
+  $("#wd-start").hidden = true; $("#wd-pw").hidden = false;
+  const who = `Signed in with Discord (license ending ${esc(lic.slice(-4))}).`;
+  $("#wd-say").innerHTML = info.exists
+    ? `${who} Enter your master password to open your synced vault.`
+    : `${who} Create a master password for your vault. Everything you add is encrypted with it before it's synced, so it can't be recovered: store it in your password manager.`;
+  const pw1 = $("#pw1");
+  pw1.setAttribute("autocomplete", info.exists ? "current-password" : "new-password");
+  $("#wd-pw2").hidden = info.exists;
+  $("#lock-go").textContent = info.exists ? "Open vault" : "Create vault";
+  setTimeout(() => pw1.focus(), 30);
+}
+async function webVaultSubmit(){
+  const {lic, info} = webDc;
+  const err = $("#lock-err"), go = $("#lock-go"), pw = $("#pw1").value;
+  if (!lic || !info || !go || go.disabled) return;
+  err.textContent = "";
+  if (!pw){ err.textContent = info.exists ? "Enter your master password." : "Enter a password."; return; }
+  if (info.exists){
+    go.disabled = true; go.textContent = "Opening…";
+    try {
+      const o = await syncFetchWith(lic, info, pw);
+      if (S) return;
+      webDc.lic = ""; webDc.info = null;
+      await syncStartFrom(lic, info, o);
+      toast("Your synced vault is open");
+    } catch(m){
+      if (S) return;
+      err.textContent = typeof m === "string" ? m : "Your synced vault couldn't be opened.";
+      go.disabled = false; go.textContent = "Open vault"; $("#pw1").select();
+    }
+    return;
+  }
+  if (pw !== $("#pw2").value){ err.textContent = "The passwords don't match."; return; }
+  go.disabled = true; go.textContent = "Creating…";
+  try {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const dk = await deriveKeys(pw, salt, ITER);
+    if (S) return;
+    KEY = dk.key; SYNC_AUTH = dk.auth;
+    S = blankState();
+    // Synced from the start, as Turn on sync does for a vault with no online copy yet: its first round puts it online.
+    S._local = {on:true, lic, rev:0, vid:0, base:{}, seen:{}, mt:{}};
+    VAULT = await sealState(KEY, {iter:ITER, salt:toB64(salt)}, S);
+    writeStore(VAULT);
+    syncHintWrite({lic, dirty:true});
+    webDc.lic = ""; webDc.info = null;
+    startApp();
+    toast("Your vault is ready. It syncs, so it opens wherever you sign in.");
+  } catch(ex){ S = null; KEY = null; SYNC_AUTH = null; go.disabled = false; go.textContent = "Create vault"; err.textContent = "Couldn't create the vault in this browser."; }
 }
 // This device's password didn't open its vault, but it syncs: the password may have been changed on
 // another device. If the online copy opens with it, this device's vault moves onto it: merged, once the

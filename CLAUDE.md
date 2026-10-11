@@ -321,7 +321,7 @@ release reaches the web the same way it reaches installed apps, and the
 worker itself only changes for its own fixes ("Deploy web app",
 `.github/workflows/deploy-web-app.yml`, on `web-worker/` changes to `main`).
 Opening it needs no license key (`licenseGate` only runs in the desktop app; from 1.9.107 sending slots to the seller
-uses the vault's, below),
+uses the vault's, below; from 1.9.109 a browser with no vault opens on Continue with Discord, with Use this browser only),
 and email sync and Clean emails stay in the desktop app.
 
 **The web version follows releases again from 1.9.106** (the owner's request, 2026-10-10: "add the web base project into
@@ -823,7 +823,16 @@ other address's copy if that one fails. `WEB_URL` is `https://app.fafoaco.com`; 
 a browser at the old address (`ON_OLD_WEB`) says it moved, on the lock screen and above every page (`movedHTML`,
 `paintMoved`, repainted by `syncShow`), and that a vault that isn't synced needs sync or a backup to come along, since a
 browser keeps each address's data apart; a synced vault with changes not sent yet (the hint's `dirty`) is told to unlock
-there first, and one whose sync is stuck (no online copy yet, an error, offline, paused) to fix it or take a backup. Nothing gains a field.
+there first, and one whose sync is stuck (no online copy yet, an error, offline, paused) to fix it or take a backup. Also
+from 1.9.109 (the owner's choice: "change the front page to discord login"), a browser with no vault opens on **Continue
+with Discord** (`renderLock`'s `webStart`, `webDiscordStart`): the sign-in that hands out keys gives an account with a license
+its key back at once, and a new one waits for the seller's approval (kept in `orbit-web-keyreq`, so it goes on after the page
+is closed; coming back to the tab checks at once); with the key, `webGotKey` asks `/vault/info`, and the master password
+either opens the synced vault (`syncStartFrom`) or makes a new vault that syncs from the start (`webVaultSubmit`: `_local`
+set as Turn on sync sets it for a vault with no online copy). The master password stays: it's the key the vault is
+encrypted with, which Discord can't stand in for. Have your license key? Enter it instead opens Open my synced vault, and
+Use this browser only (`LOCK_LOCAL`) makes a vault in the browser as before; a browser that has a vault unlocks with its
+password, and the desktop app is unchanged. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
