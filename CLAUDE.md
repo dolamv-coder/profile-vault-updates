@@ -835,7 +835,8 @@ encrypted with, which Discord can't stand in for. Have your license key? Enter i
 Use this browser only (`LOCK_LOCAL`) makes a vault in the browser as before; a browser that has a vault unlocks with its
 password, and the desktop app and a claude.ai copy (`ON_CLAUDE`, which can't reach the license server) are unchanged. The
 moved note and Settings → Web version & sync say Continue with Discord or Enter it instead, and Erase vault's message names
-them (`erasedMsg`). Nothing gains a field.
+them (`erasedMsg`). The line under the wordmark on the lock, license and sign-in screens is "Cop it. Track it. FAFO." (the
+owner's choice; it was "Checkout profiles, addresses and cards"). Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
