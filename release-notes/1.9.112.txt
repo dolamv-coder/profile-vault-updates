@@ -1,0 +1,1 @@
+Every store login now needs the inbox its sign-in codes and order emails go to. Not sure how to set one up? Press Set it up step by step: FAFO shows you which inbox to use, how to make the app password your email wants, and in the desktop app checks that it signs in.
