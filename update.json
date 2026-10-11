@@ -1,10 +1,10 @@
 {
-  "version": "1.9.109",
-  "url": "index-1.9.109.html",
-  "sha256": "711b7e796e86de247f2cf93a4f9cf428b723ac0286f7e968ab042ebebe72c4cf",
-  "signature": "KyvE8mZPE91g+BXHnMPzTlBt4Gq4prxm8cnRyw6o9bIvcr7oh1R45RVwGx4v3TPwJ8f9cgoXh2caYLIqPTPcCQ==",
+  "version": "1.9.110",
+  "url": "index-1.9.110.html",
+  "sha256": "f814f1bd7bb271d962010ae2c963bf30bc9220fb7837b97c2f525918f7d57814",
+  "signature": "WSPflpoFg2+roCQ304JAflt7qkLxtXObbZsy7HV4YuQwHvDnb4cBUEPPbonr/2JI4Z0/jIWKXrVqZssKtIThDw==",
   "minAppVersion": "0",
-  "notes": "FAFO has a new home: fafoaco.com. FAFO on the web is now at app.fafoaco.com and starts with Continue with Discord: sign in, then your master password opens your synced vault. FAFO connects to the new address, falling back to the old one on networks that block it. If you use FAFO in a browser without sync, turn on sync or download a backup before moving to the new address, so your vault comes along.",
+  "notes": "Phone trackers you turn on from now use FAFO's own address, orders.fafoaco.com, or the old one on networks that block it. Phones you've already set up keep working as they are. If a network blocks one of the tracker's addresses, FAFO sends your orders through the other, and turning the tracker on without a connection now says so and keeps what you typed.",
   "installerUrl": "",
-  "publishedAt": "2026-10-11T05:37:00.286Z"
+  "publishedAt": "2026-10-11T12:52:04.853Z"
 }
