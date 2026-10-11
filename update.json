@@ -1,10 +1,10 @@
 {
-  "version": "1.9.111",
-  "url": "index-1.9.111.html",
-  "sha256": "36bd8fc5d2d48693843c62820e5f3a1cbec28a6a14f4feb2057d42188affe179",
-  "signature": "ap9i3i2lHDWo/a9NKLtiOG1RdI7UnphLHKli5jeAUj0kn+qZVs0xmozMRq0WleIAOHd0RNJYgX5cIUWg1JxaAA==",
+  "version": "1.9.112",
+  "url": "index-1.9.112.html",
+  "sha256": "600d70ec8840041c9801291d025c45384e139f8661b7ec2f1220a85541b8366d",
+  "signature": "y2ci7D4B82wh/gRvdG6AT1HEapBKhPrltskWXSB80kw3BBt/7WI6AVWeI0BYepvKKUsxdWokJO6P0ctfGBbVBw==",
   "minAppVersion": "0",
-  "notes": "On the web, signing in with Discord now ends with a Back to FAFO button that takes you straight back to FAFO to open your vault, or create one, and start making profiles. New accounts still wait for the seller's approval first.",
+  "notes": "Every store login now needs the inbox its sign-in codes and order emails go to. Not sure how to set one up? Press Set it up step by step: FAFO shows you which inbox to use, how to make the app password your email wants, and in the desktop app checks that it signs in.",
   "installerUrl": "",
-  "publishedAt": "2026-10-11T18:14:10.190Z"
+  "publishedAt": "2026-10-11T21:05:54.348Z"
 }
