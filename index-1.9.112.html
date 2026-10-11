@@ -8799,6 +8799,9 @@ function mailboxKey(email){
   if (dom === "gmail.com") local = local.replace(/\./g, "");
   return local + "@" + dom;
 }
+// The saved inbox for an address: the same address first (a vault can hold a dot version too, from before or from imports),
+// then the same mailbox.
+const savedInboxFor = (email, list = S.inboxes) => list.find(i => norm(i.email) === norm(email)) || list.find(i => mailboxKey(i.email) === mailboxKey(email)) || null;
 const baseMailAddr = (email) => String(email || "").trim().replace(/^([^@+]+)\+[^@]*@/, "$1@");
 const cleanAppPw = (provider, pw) => APP_PW[provider] && APP_PW[provider].strip ? String(pw || "").replace(/\s+/g, "") : String(pw || "");
 // o.email: the inbox's address, if typed yet. o.typed: an address has been typed (no provider
@@ -9441,7 +9444,7 @@ function openInboxGuide(o){
   if (!g.provider) g.provider = detect(g.email);
   let step = 0, provHand = !!o.provider, busy = false, failed = false, pwFor = "", paintedAt = 0;
   const emailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
-  const savedFor = (e) => emailOk(e) && S.inboxes.find(i => mailboxKey(i.email) === mailboxKey(e)) || null;
+  const savedFor = (e) => emailOk(e) && savedInboxFor(e) || null;
   const NAMES = ["Your inbox", "App password", "Paste it"];
   const stepsHTML = () => `<ol class="ig-steps">${NAMES.map((n, k) => `<li class="${k < step ? "is-done" : k === step ? "is-on" : ""}"${k === step ? ' aria-current="step"' : ""}><span class="ig-n">${k < step ? ic("check") : k + 1}</span><span>${n}</span></li>`).join("")}</ol>`;
   const pvName = () => g.provider === "custom" ? "Your email provider" : providerName(g.provider);
@@ -9477,12 +9480,23 @@ function openInboxGuide(o){
     if (step === 1) return `${back}<button type="button" class="btn btn-primary" data-ig="next" id="ig-go">Next</button>`;
     return `${back}${failed ? `<button type="button" class="btn" data-ig="anyway">Use it anyway</button>` : ""}<button type="button" class="btn btn-primary" data-ig="next" id="ig-go" ${busy ? "disabled" : ""}>${busy ? "Signing in…" : canTest ? (failed ? "Check again" : "Check and use") : "Use this inbox"}</button>`;
   };
+  // A closing window lets clicks through to the one below (it's inert while it fades), so the second tap of a double tap
+  // on Cancel, × or Use this inbox would press the store login editor's Cancel, × or Save login there: when a click closed
+  // it, drop the next one. (Closed by Enter, Escape or a sign-in check finishing, nothing is dropped.)
+  let clickAt = -1e9;
+  const eatClick = () => {
+    if (performance.now() - clickAt > 100) return;
+    const t0 = performance.now(), eat = (e) => { if (performance.now() - t0 < 400){ e.stopPropagation(); e.preventDefault(); } };
+    document.addEventListener("click", eat, true);
+    setTimeout(() => document.removeEventListener("click", eat, true), 450);
+  };
   openLayer({
-    title:"Set up your inbox", dismiss:false,
+    title:"Set up your inbox", dismiss:false, onClose:eatClick,
     body:`<form id="ig-form" novalidate><div id="ig-steps"></div><div id="ig-body"></div></form>`,
     foot:`<span></span>`,
     mount:(panel, close) => {
       const foot = $(".panel-foot", panel), body = $("#ig-body", panel);
+      panel.addEventListener("click", () => { clickAt = performance.now(); }, true);
       // Step 1's notes: where the provider came from, and an inbox FAFO already has with this address.
       const notes = () => {
         const pn = $("#ig-prov", panel), sn = $("#ig-saved", panel), go = $("#ig-go", panel); if (!pn) return;
@@ -9648,7 +9662,7 @@ function openLoginEditor(existing, onSaved, opts){
       const followEmail = () => {
         const em = val(panel, "email");
         if (us && !usHand && !ibxHand){
-          const m = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em) && inboxes.find(i => mailboxKey(i.email) === mailboxKey(em));
+          const m = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em) && savedInboxFor(em, inboxes);
           if (m){ ibxSel.value = m.id; showSaved(true); usAuto = true; setErr(panel, "inboxId", ""); }
           else if (usAuto){ showSaved(false); usAuto = false; }
           ibxAuto.hidden = !usAuto;
@@ -9720,7 +9734,7 @@ function openLoginEditor(existing, onSaved, opts){
         if (us && us.checked){
           inboxId = val(panel,"inboxId"); e = inboxId ? "" : "Choose an inbox."; setErr(panel,"inboxId",e); if (e) bad = true;
         } else {
-          const ex0 = S.inboxes.find(i => mailboxKey(i.email) === mailboxKey(val(panel,"i_email")));
+          const ex0 = savedInboxFor(val(panel,"i_email"));
           const r = readImap(panel, ex0 ? ex0.password : null, {email:"Enter the inbox's email.", password:`Enter this inbox's app password${us ? ", or tick Use a saved inbox" : ""}. Not sure how? Press Set it up step by step.`, provider:"Choose the inbox's email provider."});
           // Required from 1.9.112 (the owner's request): a store login can't be saved without its inbox.
           if (r.empty){ setErr(panel, "i_email", "Add the inbox this account's emails go to. Not sure how? Press Set it up step by step."); bad = true; }
@@ -9728,7 +9742,7 @@ function openLoginEditor(existing, onSaved, opts){
           else if (r.inbox){
             // An inbox already saved is linked, and only gets a password typed here: its provider and server stay as they
             // were set up (the new inbox's fields only guess them from the address).
-            const ex = S.inboxes.find(i => mailboxKey(i.email) === mailboxKey(r.inbox.email));
+            const ex = savedInboxFor(r.inbox.email);
             const typedPw = cleanAppPw(r.inbox.provider, $('[name="i_password"]', panel).value);
             if (ex){ inboxId = ex.id; if (typedPw && typedPw !== ex.password) newInbox = {update:ex, data:{password:typedPw, syncError:""}}; } else newInbox = {data:r.inbox};
           } else inboxId = null;

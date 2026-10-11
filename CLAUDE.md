@@ -882,14 +882,16 @@ From 1.9.112 a store login needs its inbox (the owner's request, with a screensh
 "Make this a required step. Guide seller through if they don't know how to set up their inbox"). Save login says to add one
 (`readImap`'s `empty`, in the editor's own words, `say`), also when editing a login that has none. The inbox follows the
 account email until it's picked or anything in it is typed by hand, its password too (`followEmail`): a saved inbox with
-that mailbox is ticked for you (`#l-ibx-auto`; `mailboxKey`: a +tag never counts, nor a Gmail address's dots, so the dot and
-+tag versions sellers make accounts with find their one inbox), otherwise the new inbox's email is filled in without its
+that mailbox is ticked for you (`#l-ibx-auto`; `savedInboxFor`: the same address first, then `mailboxKey`, where a +tag never
+counts, nor a Gmail address's dots, so the dot and +tag versions sellers make accounts with find their one inbox), otherwise the new inbox's email is filled in without its
 +tag (`baseMailAddr`). A new inbox typed with a saved one's address links to it and only gives it a password typed there,
 never the provider and server the fields guessed. **Set it up step by step** (`data-ig-start`, on a new inbox's
 fields in the store login editor and in Add inbox; `openInboxGuide`) walks through it: Your inbox (the address and its
 provider; an inbox already saved with it is offered, or refused in Add inbox), App password (`APP_PW`'s steps and links,
 `appPwGuideHTML`'s `paste`), then Paste it, which the desktop app checks by signing in (`testInbox`, Check and use; a failure
-says why with `mailError` and offers Use it anyway) before filling in the editor's fields (`#i-ready`). A browser can't sign in
+says why with `mailError` and offers Use it anyway) before filling in the editor's fields (`#i-ready`). A double tap
+can't skip a step (clicks within 400 ms of one are dropped) or, when a click closes the guide, press the store login
+editor's button underneath (a closing window is inert, so clicks fall through: `eatClick`). A browser can't sign in
 to email, so the web version says the desktop app checks it when it syncs. Import accounts, login Mass edit and imports still
 save logins without an inbox. Nothing gains a field.
 
