@@ -952,7 +952,7 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .ig-steps li.is-on .ig-n,.ig-steps li.is-done .ig-n{background:var(--accent);color:var(--on-accent)}
 .ig-n svg{width:13px;height:13px;stroke-width:2.6}
 .ig-steps li > span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-@media (max-width:520px){.ig-steps li:not(.is-on) > span:last-child{display:none}}
+@media (max-width:520px){.ig-steps li:not(.is-on) > span:last-child{display:none}.ig-steps li.is-on{flex:3 1 0}}
 .ig-lead{margin:0 0 14px;color:var(--ink-2)}
 .ig-lead strong{color:var(--ink)}
 .ibx-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px}
@@ -9582,7 +9582,7 @@ function openInboxGuide(o){
         const n = e.target.name;
         if (n === "g_email"){
           g.email = e.target.value.trim();
-          if (!provHand){ g.provider = detect(g.email) || ""; const sel = $('[name="g_provider"]', panel); if (sel) sel.value = g.provider; }
+          if (!provHand){ g.provider = detect(g.email) || ""; const sel = $('[name="g_provider"]', panel); if (sel) sel.value = g.provider; if (g.provider) setErr(panel, "g_provider", ""); }
           setErr(panel, "g_email", ""); notes();
         } else if (n === "g_password"){ setErr(panel, "g_password", ""); checkPw(); }
       });
