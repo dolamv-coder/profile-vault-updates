@@ -878,6 +878,18 @@ other tab's. A sign-in picked up as the page loads (a reload, or FAFO opened in 
 "Checking your Discord sign-in…", with Continue with Discord held back until the answer, so it isn't started again. Nothing
 gains a field.
 
+From 1.9.112 a store login needs its inbox (the owner's request, with a screenshot of Add store login's "Inbox (optional)":
+"Make this a required step. Guide seller through if they don't know how to set up their inbox"). Save login says to add one
+(`readImap`'s `empty`, in the editor's own words, `say`), also when editing a login that has none. The inbox follows the
+account email until it's picked or typed by hand (`followEmail`): a saved inbox with that email is ticked for you
+(`#l-ibx-auto`), otherwise the new inbox's email is filled in. **Set it up step by step** (`data-ig-start`, on a new inbox's
+fields in the store login editor and in Add inbox; `openInboxGuide`) walks through it: Your inbox (the address and its
+provider; an inbox already saved with it is offered, or refused in Add inbox), App password (`APP_PW`'s steps and links,
+`appPwGuideHTML`'s `paste`), then Paste it, which the desktop app checks by signing in (`testInbox`, Check and use; a failure
+says why with `mailError` and offers Use it anyway) before filling in the editor's fields (`#i-ready`). A browser can't sign in
+to email, so the web version says the desktop app checks it when it syncs. Import accounts, login Mass edit and imports still
+save logins without an inbox. Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
