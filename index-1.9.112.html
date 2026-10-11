@@ -9625,12 +9625,13 @@ function openLoginEditor(existing, onSaved, opts){
       const form = $("#l-form", panel), store = $('[name="store"]', panel), us = $('[name="useSaved"]', panel);
       // 1.9.112: the inbox is required. It follows the account email until it's picked or typed by hand: a saved inbox with
       // that email is picked, and otherwise the new inbox's email is filled in. The step-by-step setup fills it in too.
+      // A new inbox typed (or set up) by hand isn't swapped for a saved one afterwards.
       const iEm = $('[name="i_email"]', panel), ibxSel = $('[name="inboxId"]', panel), ibxAuto = $("#l-ibx-auto", panel);
       let ibxHand = false, usHand = !!inbox0, usAuto = false;
       const showSaved = (on) => { if (us) us.checked = on; $("#l-saved", panel).hidden = !on; $("#l-new", panel).hidden = on; };
       const followEmail = () => {
         const em = val(panel, "email");
-        if (us && !usHand){
+        if (us && !usHand && !ibxHand){
           const m = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em) && inboxes.find(i => norm(i.email) === norm(em));
           if (m){ ibxSel.value = m.id; showSaved(true); usAuto = true; setErr(panel, "inboxId", ""); }
           else if (usAuto){ showSaved(false); usAuto = false; }
