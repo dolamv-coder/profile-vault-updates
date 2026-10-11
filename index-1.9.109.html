@@ -3706,13 +3706,14 @@ function ccHTML(c, reveal){
 // 1.9.109 (the owner's choice): in a browser with no vault yet, FAFO opens on Continue with Discord (webDiscordStart);
 // "Use this browser only" goes back to making a vault here without signing in.
 let LOCK_LOCAL = false;
+const erasedMsg = () => !DESK && !ON_CLAUDE && !LOCK_LOCAL ? "Vault erased. Sign in with Discord, or choose Use this browser only to start a new vault here." : "Vault erased. Create a new master password to start over.";
 function renderLock(msg){
   closeAllLayers();
   MODE = "vault"; SUB = null;
   const rec = readStore();
   const creating = !validRecord(rec);
   const noCrypto = !(window.crypto && crypto.subtle);
-  const webStart = creating && !DESK && !noCrypto && !LOCK_LOCAL;
+  const webStart = creating && !DESK && !ON_CLAUDE && !noCrypto && !LOCK_LOCAL;
   $("#app").innerHTML = `<main class="lock"><div class="lock-inner">
     <div class="lock-upd" id="lock-upd" hidden></div>
     <div class="lock-upd" id="lock-done" hidden></div>
@@ -3830,7 +3831,7 @@ function renderLock(msg){
   $("#lock-submit").addEventListener("click", openSubmitStart);
   const ls = $("#lock-sync"); if (ls) ls.addEventListener("click", openSyncSignIn);
   const lk = $("#lock-key"); if (lk) lk.addEventListener("click", openSyncSignIn);
-  const ll = $("#lock-local"); if (ll) ll.addEventListener("click", () => { LOCK_LOCAL = true; webDc.gen++; clearTimeout(webDc.timer); renderLock(); });
+  const ll = $("#lock-local"); if (ll) ll.addEventListener("click", () => { LOCK_LOCAL = true; webDc.gen++; clearTimeout(webDc.timer); webDc.lic = ""; webDc.info = null; webKeyreq(null); renderLock(); });
   const ld = $("#lock-dc"); if (ld) ld.addEventListener("click", () => { LOCK_LOCAL = false; renderLock(); });
   if (webStart) webDiscordStart();
   const li = $("#lock-inbox");
@@ -3838,7 +3839,7 @@ function renderLock(msg){
   const er = $("#lock-erase");
   if (er) er.addEventListener("click", async () => {
     const ok = await confirmDialog({title:"Erase vault?", body:"This deletes every profile, address and card stored on this device. It can't be undone.", confirm:"Erase vault", danger:true, typeWord:"ERASE"});
-    if (ok){ clearStore(); syncHintWrite(null); renderLock("Vault erased. Create a new master password to start over."); }
+    if (ok){ clearStore(); syncHintWrite(null); renderLock(erasedMsg()); }
   });
 }
 
@@ -3923,9 +3924,9 @@ function render(){ document.documentElement.dataset.jigfor = jigFor(); renderSid
 function movedHTML(how){
   const host = esc(WEB_URL.replace(/^https:\/\//, ""));
   const go = `<a class="btn btn-primary btn-sm" href="${esc(WEB_URL)}/">Open ${host}</a>`;
-  const say = how === "synced" ? `Your vault is synced, so it's there too: open it and choose <strong>Open my synced vault</strong>.`
+  const say = how === "synced" ? `Your vault is synced, so it's there too: open it and choose <strong>Continue with Discord</strong> (or, with your license key, <strong>Enter it instead</strong>).`
     : how === "new" ? `Open it there instead.`
-    : how === "pending" ? `Some changes in this browser haven't reached your synced vault yet. Unlock it here so they sync, then open the new address and choose <strong>Open my synced vault</strong>.`
+    : how === "pending" ? `Some changes in this browser haven't reached your synced vault yet. Unlock it here so they sync, then open the new address and choose <strong>Continue with Discord</strong> (or, with your license key, <strong>Enter it instead</strong>).`
     : how === "stuck" ? `Sync isn't working right now, so your synced vault may not have this browser's latest changes. Fix it in Settings, then Web version &amp; sync, or download a backup, before you open the new address.`
     : `This browser's vault isn't synced, so it isn't there yet. Unlock it here, turn on sync (Settings, then Web version &amp; sync) or download a backup, then open the new address.`;
   return `<span><strong>FAFO has a new address: ${host}.</strong> ${say}</span>${go}`;
@@ -8689,7 +8690,7 @@ function openSettings(){
       });
       $("#st-erase", panel).addEventListener("click", async () => {
         if (await confirmDialog({title:"Erase vault?", body:"This deletes every profile, address and card on this device. It can't be undone.", confirm:"Erase vault", danger:true, typeWord:"ERASE"})){
-          clearStore(); syncHintWrite(null); VAULT = null; S = null; KEY = null; SYNC_AUTH = null; renderLock("Vault erased. Create a new master password to start over.");
+          clearStore(); syncHintWrite(null); VAULT = null; S = null; KEY = null; SYNC_AUTH = null; renderLock(erasedMsg());
         }
       });
     }
@@ -12785,7 +12786,7 @@ function syncSectionHTML(){
       <div class="set-actions" style="margin-top:14px">${SYNC.state === "password" ? `<button class="btn btn-sm btn-primary" data-act="sync-password">Enter password</button>` : `<button class="btn btn-sm" data-act="sync-now" ${SYNC.state === "syncing" ? "disabled" : ""}>${ic("refresh")}Sync now</button>`}${DESK ? `<a class="btn btn-sm" href="${WEB_URL}" target="_blank" rel="noopener">${ic("ext")}Open the web version</a>` : ""}<button class="btn btn-sm" data-act="sync-copy-link">${ic("copy")}Copy web address</button></div>
       <p class="item-sub" style="margin:12px 0 0">License ${esc(licFormat(L.lic).replace(/^(PVLT-)[A-Z0-9-]+(-[A-Z0-9]{4})$/, "$1••••-••••-••••$2"))}</p>
     </div>
-    <p class="set-note" style="margin-top:14px">On another device, go to <strong>${esc(WEB_HOST)}</strong> (or open the FAFO desktop app) and choose <strong>Open my synced vault</strong>. You'll need your license key${DESK ? " (under License, below)" : ""} and this vault's master password.</p>
+    <p class="set-note" style="margin-top:14px">On another device, go to <strong>${esc(WEB_HOST)}</strong> and choose <strong>Continue with Discord</strong>, or <strong>Enter it instead</strong> with your license key${DESK ? " (under License, below)" : ""}; in the FAFO desktop app, choose <strong>Open my synced vault</strong>. Then this vault's master password opens it.</p>
     <details class="adv"><summary>Turn off or delete</summary><div class="adv-body">
       <p class="set-note">Turning sync off keeps this ${dev}'s vault as it is, and the online copy stays for your other devices.</p>
       <div class="set-actions"><button class="btn" data-act="sync-off">Turn off sync ${SYNC_HERE}</button></div>
@@ -13073,7 +13074,7 @@ async function discordKeyFill(panel, onKey){
 // is kept in WEB_KEYREQ, so it goes on after the page is closed and opened again). With the key, the master password
 // opens the synced vault, or, with none online yet, makes a new vault that syncs from the start.
 const WEB_KEYREQ = "orbit-web-keyreq";
-const webDc = {gen:0, timer:null, tick:null, busy:false, lic:"", info:null};
+const webDc = {gen:0, timer:null, tick:null, busy:0, lic:"", info:null};
 function webKeyreq(v){
   try {
     if (v === undefined) return JSON.parse(localStorage.getItem(WEB_KEYREQ) || "null");
@@ -13093,7 +13094,7 @@ function webDiscordStart(){
     webDcSay(review ? reviewText : "Finish signing in with Discord in the tab that opened, then come back here.");
     let heard = review;
     const tick = webDc.tick = async () => {
-      if (gen !== webDc.gen || !$("#wd-msg") || webDc.busy) return;
+      if (gen !== webDc.gen || !$("#wd-msg") || webDc.busy === gen) return;
       clearTimeout(webDc.timer);
       if (Date.now() - started > (review ? REVIEW_WAIT : SIGNIN_WAIT)){
         webKeyreq(null);
@@ -13101,9 +13102,9 @@ function webDiscordStart(){
         return;
       }
       let s = null;
-      webDc.busy = true;
+      webDc.busy = gen;
       try { const res = await relayFetch("/discord/status/" + r, {cache:"no-store"}); s = res.status >= 500 ? null : await res.json(); } catch(e){}
-      finally { webDc.busy = false; }
+      finally { if (webDc.busy === gen) webDc.busy = 0; }
       if (gen !== webDc.gen || !$("#wd-msg")) return;
       if (s && s.status && s.status !== "unknown") heard = true;
       // Until the browser has opened the sign-in page, the worker doesn't know this request yet.
@@ -13112,8 +13113,9 @@ function webDiscordStart(){
         webDc.timer = setTimeout(tick, review ? 30000 : 3000);
         return;
       }
-      webKeyreq(null);
+      // An issued key stays asked for (WEB_KEYREQ) until the vault opens, so a reload meanwhile picks it up again.
       if (s.status === "issued" && s.key) return webGotKey(licFormat(s.key));
+      webKeyreq(null);
       webDcSay(s.error || "Sign-in didn't finish. Continue with Discord to try again.", "err");
     };
     webDc.timer = setTimeout(tick, review ? 800 : 3000);
@@ -13141,7 +13143,7 @@ async function webGotKey(lic){
   webDcSay("Signed in. Looking for your synced vault…", "ok");
   let info;
   try { info = await syncInfo(lic); }
-  catch(m){ webDcSay(typeof m === "string" ? m : SYNC_ERR.server, "err"); return; }
+  catch(m){ webDcSay((typeof m === "string" ? m : SYNC_ERR.server) + " Continue with Discord to try again.", "err"); return; }
   if (!$("#wd-pw")) return;
   webDc.lic = lic; webDc.info = info;
   webShowPassword();
@@ -13170,7 +13172,7 @@ async function webVaultSubmit(){
     try {
       const o = await syncFetchWith(lic, info, pw);
       if (S) return;
-      webDc.lic = ""; webDc.info = null;
+      webDc.lic = ""; webDc.info = null; webKeyreq(null);
       await syncStartFrom(lic, info, o);
       toast("Your synced vault is open");
     } catch(m){
@@ -13193,7 +13195,7 @@ async function webVaultSubmit(){
     VAULT = await sealState(KEY, {iter:ITER, salt:toB64(salt)}, S);
     writeStore(VAULT);
     syncHintWrite({lic, dirty:true});
-    webDc.lic = ""; webDc.info = null;
+    webDc.lic = ""; webDc.info = null; webKeyreq(null);
     startApp();
     toast("Your vault is ready. It syncs, so it opens wherever you sign in.");
   } catch(ex){ S = null; KEY = null; SYNC_AUTH = null; go.disabled = false; go.textContent = "Create vault"; err.textContent = "Couldn't create the vault in this browser."; }
@@ -13504,6 +13506,7 @@ function webReloadOnLock(){
   if (!WEB_SELF || S || MODE !== "vault" || stack.length || !WEB_UPD.seen) return false;
   const form = $("#lock-form");
   if (!form || $$("input[type=password]", form).some(i => i.value)) return false;
+  if ($("#wd-pw") && !$("#wd-pw").hidden) return false;   // signed in with Discord, about to open the vault (1.9.109)
   try {
     if (Date.now() - (+sessionStorage.getItem(WEB_RELOADED) || 0) < WEB_RELOAD_GAP) return false;
     sessionStorage.setItem(WEB_RELOADED, String(Date.now())); sessionStorage.setItem(WEB_UPD_DONE, WEB_UPD.seen);
@@ -15373,7 +15376,7 @@ document.addEventListener("click", async (e) => {
     case "settings-backup": { await saveChain; saveFile(`fafo-backup-${new Date().toISOString().slice(0,10)}.json`, JSON.stringify(VAULT)); break; }
     case "settings-backup-copy": { await saveChain; copyText(JSON.stringify(VAULT), "encrypted backup"); break; }
     case "settings-restore": openRestore(true); break;
-    case "settings-erase": { if (await confirmDialog({title:"Erase vault?", body:"This deletes everything on this device. It can't be undone." + (syncOn() ? " The online copy (sync) stays, for your other devices." : ""), confirm:"Erase vault", danger:true, typeWord:"ERASE"})){ clearStore(); syncHintWrite(null); VAULT=null; S=null; KEY=null; SYNC_AUTH=null; renderLock("Vault erased. Create a new master password to start over."); } break; }
+    case "settings-erase": { if (await confirmDialog({title:"Erase vault?", body:"This deletes everything on this device. It can't be undone." + (syncOn() ? " The online copy (sync) stays, for your other devices." : ""), confirm:"Erase vault", danger:true, typeWord:"ERASE"})){ clearStore(); syncHintWrite(null); VAULT=null; S=null; KEY=null; SYNC_AUTH=null; renderLock(erasedMsg()); } break; }
     case "sync-on": openSyncOn(); break;
     case "sync-now": { SYNC.fails = 0; SYNC.retryAt = 0; await syncRun(true); if (SYNC.state === "ok") toast("Synced"); else if (SYNC.state === "waiting") toast("Close the open window first, then sync."); else if (SYNC.state && SYNC.state !== "syncing") toast(syncStatus().text, "err"); break; }
     case "sync-off": syncTurnOff(); break;
