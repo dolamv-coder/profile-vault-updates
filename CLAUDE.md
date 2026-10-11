@@ -36,6 +36,11 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   posted to `DISCORD_WEBHOOK_URL`, approved or denied at `/review/:discord_id`;
   `/discord/status` then answers `review` until decided. 1.9.42+ keeps waiting on
   `review`; 1.9.41 shows the message and asks the user to try again later.
+  Since 2026-10-11 (the owner's request: buyers should go on to make profiles online) a sign-in started by the web
+  version (page 1.9.111+ sends its address as `web` with `/discord/start`; only `WEB_APPS`, kept in the sign-in's
+  `state` as `.w<n>`, nothing new stored) ends on a page with **Back to FAFO** (`backToWeb`): it closes that tab, which
+  goes back to the FAFO tab, now at the master password, or where the browser won't, opens FAFO in it, which picks the
+  sign-in up by itself. The desktop app's sign-in pages are as before.
   It also keeps each license's slot limit (default 20 switched on at once on the
   Submit page, app 1.9.46+): `/slots/limit` and `/slots/request` take the license
   key as `Authorization: Bearer`, and requests are approved at `/slots/review/:id`.
@@ -857,6 +862,13 @@ so a phone whose own network blocks the new domain (newly registered domains, fo
 link while the computer can; the same id works on the old address. The phone page itself is the relay's and still says Orbit; its
 own scanner refuses a code for another address ("a different tracker address"), so a phone already on the old address scans a
 new tracker's code with the Camera app. Nothing gains a field.
+
+From 1.9.111 the web version's Continue with Discord sends its address (`web`) with the sign-in, so Discord's last page has
+Back to FAFO (the worker section above; the owner's request, 2026-10-11: buyers signed in, saw "Go back to FAFO" in the tab
+Discord had opened, and didn't find their way on to make profiles). Back to FAFO can open FAFO in a second tab of the same
+browser, and both tabs reach the master password, so a vault made or opened in one stops the other making one over it: a
+`storage` event, or a check before and after Create vault's and Open vault's slow steps (`webVaultTaken`), shows the lock
+screen for it instead, with "FAFO was set up in another tab of this browser" (`WEB_TAKEN_MSG`). Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

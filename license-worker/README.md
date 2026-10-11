@@ -102,6 +102,9 @@ Run these in a terminal inside this `license-worker` folder.
    The worker gives Discord the callback on the address the sign-in started from, and FAFO 1.9.109+ starts it on
    `license.fafoaco.com` whenever that answers: without the second redirect, Continue with Discord ends on Discord's
    "Invalid OAuth2 redirect_uri". Add it before a page that uses the new address is released.
+   Add them to the application whose Client ID is `DISCORD_CLIENT_ID` (its Application ID on **General Information**;
+   the sign-in link shows it as `client_id=`), not another one on the same Discord account: on 2026-10-11 they went to the
+   web dashboard's application first, and Discord kept answering "Invalid OAuth2 redirect_uri".
 
 6. **Check it.** Open https://orbit-license.orbit-app.workers.dev/discord/ready in a
    browser. It should say `{"ready":true}`. Until it does, FAFO hides the Discord

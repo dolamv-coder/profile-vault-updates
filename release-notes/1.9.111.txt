@@ -1,0 +1,1 @@
+On the web, signing in with Discord now ends with a Back to FAFO button that takes you straight to choosing your master password, so you can start making profiles right away.

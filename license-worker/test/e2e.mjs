@@ -304,6 +304,52 @@ try {
     const a = await getJson("/licenses"), b = await getJson("/licenses");
     assert.equal(a.body, b.body); assert.equal(a.sig, b.sig);
   });
+  // From page 1.9.111 the web version sends its address (`web`), so the page Discord sends the buyer back to takes them
+  // back to FAFO there; any other value is ignored, and the desktop app's sign-in is as before.
+  const webSignIn = async (r, code, web, extra = "") => {
+    const start = await get("/discord/start?r=" + r + "&web=" + encodeURIComponent(web));
+    assert.equal(start.status, 302);
+    const loc = new URL(start.headers.get("location"));
+    const state = loc.searchParams.get("state");
+    return { loc, state, page: await get(`/discord/callback?state=${encodeURIComponent(state)}${code ? "&code=" + code : ""}${extra}`) };
+  };
+  await test("a sign-in from the web version offers Back to FAFO on its address", async () => {
+    const r = rid();
+    const { loc, state, page } = await webSignIn(r, "alice", "https://app.fafoaco.com");
+    assert.equal(loc.searchParams.get("redirect_uri"), BASE + "/discord/callback", "Discord sends it back as before");
+    assert.match(state, /\.w0$/);
+    assert.equal(page.status, 200);
+    const html = await page.text();
+    assert.match(html, /You&#39;re all set/); assert.match(html, /choose your master password/);
+    assert.match(html, /<button class="go" id="back" type="button">Back to FAFO<\/button>/);
+    assert.ok(html.includes('location.href = "https://app.fafoaco.com/"'), "opens the web version it came from");
+    assert.ok(html.includes(aliceKey), "still shows the key");
+    const s = await getJson("/discord/status/" + r);
+    assert.equal(s.status, "issued"); assert.equal(s.key, aliceKey);
+    const again = await (await get(`/discord/callback?state=${encodeURIComponent(state)}&code=alice`)).text();
+    assert.match(again, /Back to FAFO/); assert.match(again, /FAFO has your key/);
+  });
+  await test("the old web address gets its own way back, and anything else is ignored", async () => {
+    const old = await webSignIn(rid(), "alice", "https://app.orbit-app.workers.dev");
+    assert.match(old.state, /\.w1$/);
+    assert.ok((await old.page.text()).includes('location.href = "https://app.orbit-app.workers.dev/"'));
+    for (const web of ["https://evil.example", "https://app.fafoaco.com.evil.example", "javascript:alert(1)", ""]) {
+      const x = await webSignIn(rid(), "alice", web);
+      assert.doesNotMatch(x.state, /\./, web);
+      const html = await x.page.text();
+      assert.doesNotMatch(html, /Back to FAFO/, web); assert.match(html, /Go back to FAFO\. It activates by itself/, web);
+    }
+    const desk = await signIn(rid(), "alice");
+    assert.doesNotMatch(await desk.page.text(), /Back to FAFO|<script/, "the desktop app's page is as before");
+  });
+  await test("a cancelled web sign-in also offers the way back", async () => {
+    const r = rid();
+    const { page } = await webSignIn(r, "", "https://app.fafoaco.com", "&error=access_denied");
+    assert.equal(page.status, 400);
+    const html = await page.text();
+    assert.match(html, /Sign-in cancelled/); assert.match(html, /Back to FAFO/);
+    assert.equal((await getJson("/discord/status/" + r)).status, "error");
+  });
   await test("cancelled sign-in reports an error to the app", async () => {
     const r = rid();
     const { page } = await signIn(r, "", "&error=access_denied");
@@ -387,6 +433,20 @@ try {
     assert.equal(s.status, "review"); assert.match(s.error, /approves/);
     assert.equal(s.key, undefined);
     assert.deepEqual((await verifyList(await getJson("/licenses"))).keys, []);
+  });
+  await test("a web sign-in waiting for approval says so, with the way back", async () => {
+    await new Promise((r) => setTimeout(r, 300));
+    const before = webhookPosts.length, r = rid();
+    const start = await get("/discord/start?r=" + r + "&web=" + encodeURIComponent("https://app.fafoaco.com"));
+    const state = new URL(start.headers.get("location")).searchParams.get("state");
+    const html = await (await get(`/discord/callback?state=${encodeURIComponent(state)}&code=carol`)).text();
+    assert.match(html, /Request sent/); assert.match(html, /approves new accounts by hand/); assert.match(html, /Back to FAFO/);
+    assert.equal((await getJson("/discord/status/" + r)).status, "review");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(webhookPosts.length, before, "asking again doesn't post again");
+    // Later tests on this database use up the hour's sign-ins from this address: this one doesn't count toward them.
+    execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command",
+      `UPDATE requests SET created_at = created_at - 7200000 WHERE r = '${r}'`], { cwd: root, env, stdio: "pipe" });
   });
   await test("the request is posted to the owner's channel with a review link", async () => {
     await new Promise((r) => setTimeout(r, 300));
