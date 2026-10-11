@@ -881,8 +881,11 @@ gains a field.
 From 1.9.112 a store login needs its inbox (the owner's request, with a screenshot of Add store login's "Inbox (optional)":
 "Make this a required step. Guide seller through if they don't know how to set up their inbox"). Save login says to add one
 (`readImap`'s `empty`, in the editor's own words, `say`), also when editing a login that has none. The inbox follows the
-account email until it's picked or typed by hand (`followEmail`): a saved inbox with that email is ticked for you
-(`#l-ibx-auto`), otherwise the new inbox's email is filled in. **Set it up step by step** (`data-ig-start`, on a new inbox's
+account email until it's picked or anything in it is typed by hand, its password too (`followEmail`): a saved inbox with
+that mailbox is ticked for you (`#l-ibx-auto`; `mailboxKey`: a +tag never counts, nor a Gmail address's dots, so the dot and
++tag versions sellers make accounts with find their one inbox), otherwise the new inbox's email is filled in without its
++tag (`baseMailAddr`). A new inbox typed with a saved one's address links to it and only gives it a password typed there,
+never the provider and server the fields guessed. **Set it up step by step** (`data-ig-start`, on a new inbox's
 fields in the store login editor and in Add inbox; `openInboxGuide`) walks through it: Your inbox (the address and its
 provider; an inbox already saved with it is offered, or refused in Add inbox), App password (`APP_PW`'s steps and links,
 `appPwGuideHTML`'s `paste`), then Paste it, which the desktop app checks by signing in (`testInbox`, Check and use; a failure

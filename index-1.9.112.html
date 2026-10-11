@@ -8789,6 +8789,17 @@ const APP_PW = {
     steps:["Use the password your email provider gives for mail apps. Their help pages may call it an app password or IMAP password.", "The same help pages list the IMAP server name. The port is almost always 993."],
     links:[]},
 };
+// 1.9.112: the mailbox an address reaches, to match a store login's email to a saved inbox: a +tag never changes the
+// mailbox, and Gmail also ignores dots (and googlemail.com is gmail.com). baseMailAddr is the address without its +tag,
+// which mail servers take as the username.
+function mailboxKey(email){
+  const e = norm(email), at = e.lastIndexOf("@"); if (at < 1) return e;
+  let local = e.slice(0, at).replace(/\+.*$/, ""), dom = e.slice(at + 1);
+  if (dom === "googlemail.com") dom = "gmail.com";
+  if (dom === "gmail.com") local = local.replace(/\./g, "");
+  return local + "@" + dom;
+}
+const baseMailAddr = (email) => String(email || "").trim().replace(/^([^@+]+)\+[^@]*@/, "$1@");
 const cleanAppPw = (provider, pw) => APP_PW[provider] && APP_PW[provider].strip ? String(pw || "").replace(/\s+/g, "") : String(pw || "");
 // o.email: the inbox's address, if typed yet. o.typed: an address has been typed (no provider
 // detected). o.help: shown in the help dialog, which has no password box of its own. o.paste: where to paste it, in the
@@ -9389,7 +9400,7 @@ function wireImap(panel, o = {}){
     host: val(panel, "i_host"), port: val(panel, "i_port"), saved: o.useSaved,
     done: (r) => {
       if (r.saved){ o.useSaved(r.saved); return; }
-      em.value = r.email; pv.value = r.provider; touched = true; custom.style.display = r.provider === "custom" ? "contents" : "none";
+      em.value = r.email; pv.value = r.provider; touched = touched || !!r.provHand; custom.style.display = r.provider === "custom" ? "contents" : "none";
       pw.value = r.password;
       if (r.provider === "custom"){ $('[name="i_host"]', panel).value = r.host; $('[name="i_port"]', panel).value = r.port; }
       ["i_email", "i_password", "i_provider", "i_host", "i_port"].forEach(n => setErr(panel, n, ""));
@@ -9426,18 +9437,18 @@ function readImap(panel, existingPw, say = {}){
 function openInboxGuide(o){
   const canTest = !!(DESK && window.pvDesktop.testInbox);
   const detect = (email) => PROVIDER_BY_DOMAIN[(String(email).split("@")[1] || "").toLowerCase().trim()] || "";
-  const g = {email:(o.email || "").trim(), provider:o.provider || "", password:"", host:o.host || "", port:o.port || "993"};
+  const g = {email:baseMailAddr(o.email), provider:o.provider || "", password:"", host:o.host || "", port:o.port || "993"};
   if (!g.provider) g.provider = detect(g.email);
-  let step = 0, provHand = !!o.provider, busy = false, failed = false;
+  let step = 0, provHand = !!o.provider, busy = false, failed = false, pwFor = "", paintedAt = 0;
   const emailOk = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
-  const savedFor = (e) => emailOk(e) && S.inboxes.find(i => norm(i.email) === norm(e)) || null;
+  const savedFor = (e) => emailOk(e) && S.inboxes.find(i => mailboxKey(i.email) === mailboxKey(e)) || null;
   const NAMES = ["Your inbox", "App password", "Paste it"];
   const stepsHTML = () => `<ol class="ig-steps">${NAMES.map((n, k) => `<li class="${k < step ? "is-done" : k === step ? "is-on" : ""}"${k === step ? ' aria-current="step"' : ""}><span class="ig-n">${k < step ? ic("check") : k + 1}</span><span>${n}</span></li>`).join("")}</ol>`;
   const pvName = () => g.provider === "custom" ? "Your email provider" : providerName(g.provider);
   const bodyHTML = () => {
     if (step === 0) return `<p class="ig-lead">Which inbox gets this account's emails? Its sign-in codes and order emails arrive there, and FAFO reads them${DESK ? "" : " (in the desktop app)"}.</p>
       <div class="form-grid">
-        ${fieldHTML({name:"g_email", label:"Inbox email", value:g.email, type:"email", placeholder:"you@gmail.com", showOpt:false, attrs:'inputmode="email"', hint:"Usually the account's own email. If its emails are forwarded somewhere else (Hide My Email, a catch-all domain), enter the inbox they land in."})}
+        ${fieldHTML({name:"g_email", label:"Inbox email", value:g.email, type:"email", placeholder:"you@gmail.com", showOpt:false, attrs:'inputmode="email"', hint:"Usually the account's own email, without any +tag. If its emails are forwarded somewhere else (Hide My Email, a catch-all domain), enter the inbox they land in."})}
         ${fieldHTML({type:"select", name:"g_provider", label:"Email provider", options:opt(PROVIDERS.map(p => [p[0], p[1]]), g.provider, "Choose your provider"), showOpt:false})}
       </div>
       <p class="item-sub" id="ig-prov" style="margin:8px 0 0"></p>
@@ -9492,8 +9503,10 @@ function openInboxGuide(o){
       };
       const paint = (focus) => {
         $("#ig-steps", panel).innerHTML = stepsHTML();
-        body.innerHTML = bodyHTML(); foot.innerHTML = footHTML();
+        body.innerHTML = bodyHTML(); foot.innerHTML = footHTML(); paintedAt = performance.now();
         if (step === 0) notes();
+        // A password pasted before going Back comes back (as the box's value, never in the markup).
+        if (step === 2 && g.password){ $('[name="g_password"]', panel).value = g.password; checkPw(); }
         if (focus){
           const f = step === 1 ? $("#ig-go", panel) : $("input:not([type=hidden]),select", body);
           if (f) setTimeout(() => f.focus(), 30);
@@ -9502,12 +9515,12 @@ function openInboxGuide(o){
       };
       // What's typed is kept when moving between steps.
       const keep = () => {
-        if (step === 0){ g.email = val(panel, "g_email"); g.provider = val(panel, "g_provider"); }
-        if (step === 2){ g.password = $('[name="g_password"]', panel).value; if (g.provider === "custom"){ g.host = val(panel, "g_host"); g.port = val(panel, "g_port"); } }
+        if (step === 0){ g.email = val(panel, "g_email"); g.provider = val(panel, "g_provider"); if (mailboxKey(g.email) + "|" + g.provider !== pwFor) g.password = ""; }
+        if (step === 2){ g.password = $('[name="g_password"]', panel).value; pwFor = mailboxKey(g.email) + "|" + g.provider; if (g.provider === "custom"){ g.host = val(panel, "g_host"); g.port = val(panel, "g_port"); } }
       };
       const finish = (checked) => {
         const p = PROVIDERS.find(x => x[0] === g.provider);
-        const r = {email:g.email, provider:g.provider, password:cleanAppPw(g.provider, g.password), host:g.provider === "custom" ? g.host : (p ? p[2] : ""), port:g.provider === "custom" ? g.port : "993", checked};
+        const r = {email:g.email, provider:g.provider, password:cleanAppPw(g.provider, g.password), host:g.provider === "custom" ? g.host : (p ? p[2] : ""), port:g.provider === "custom" ? g.port : "993", checked, provHand};
         close(); o.done(r);
       };
       const next = async () => {
@@ -9563,6 +9576,8 @@ function openInboxGuide(o){
         if (e.target.name === "g_provider"){ provHand = true; g.provider = e.target.value; setErr(panel, "g_provider", ""); notes(); }
         else if (e.target.name === "g_password") checkPw();
       });
+      // A double tap would press the next step's button in the same place (on a phone, Next skipped App password).
+      foot.addEventListener("click", (e) => { if (performance.now() - paintedAt < 400){ e.stopPropagation(); e.preventDefault(); } }, true);
       foot.addEventListener("click", (e) => {
         const b = e.target.closest("[data-ig]"); if (!b) return;
         if (b.dataset.ig === "next") next();
@@ -9625,21 +9640,25 @@ function openLoginEditor(existing, onSaved, opts){
       const form = $("#l-form", panel), store = $('[name="store"]', panel), us = $('[name="useSaved"]', panel);
       // 1.9.112: the inbox is required. It follows the account email until it's picked or typed by hand: a saved inbox with
       // that email is picked, and otherwise the new inbox's email is filled in. The step-by-step setup fills it in too.
-      // A new inbox typed (or set up) by hand isn't swapped for a saved one afterwards.
+      // A new inbox typed (or set up) by hand isn't swapped for a saved one afterwards. Saved inboxes match by mailbox
+      // (mailboxKey: a Gmail address's dot and +tag versions are the same inbox), so those don't become a second copy.
       const iEm = $('[name="i_email"]', panel), ibxSel = $('[name="inboxId"]', panel), ibxAuto = $("#l-ibx-auto", panel);
       let ibxHand = false, usHand = !!inbox0, usAuto = false;
       const showSaved = (on) => { if (us) us.checked = on; $("#l-saved", panel).hidden = !on; $("#l-new", panel).hidden = on; };
       const followEmail = () => {
         const em = val(panel, "email");
         if (us && !usHand && !ibxHand){
-          const m = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em) && inboxes.find(i => norm(i.email) === norm(em));
+          const m = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em) && inboxes.find(i => mailboxKey(i.email) === mailboxKey(em));
           if (m){ ibxSel.value = m.id; showSaved(true); usAuto = true; setErr(panel, "inboxId", ""); }
           else if (usAuto){ showSaved(false); usAuto = false; }
           ibxAuto.hidden = !usAuto;
         }
-        if (!ibxHand && iEm.value.trim() !== em){ iEm.value = em; iEm.dispatchEvent(new Event("input", {bubbles:true})); }
+        const want = baseMailAddr(em);   // a +tag isn't part of the mail server's username
+        if (!ibxHand && iEm.value.trim() !== want){ iEm.value = want; iEm.dispatchEvent(new Event("input", {bubbles:true})); }
       };
-      iEm.addEventListener("input", (e) => { if (e.isTrusted) ibxHand = true; });
+      // Anything typed in the new inbox's fields (its password too) keeps it as it is, so a password never moves to another address.
+      ["i_email", "i_password", "i_provider", "i_host", "i_port"].forEach(n => ["input", "change"].forEach(ev =>
+        $(`[name="${n}"]`, panel).addEventListener(ev, (e) => { if (e.isTrusted) ibxHand = true; })));
       if (ibxSel) ibxSel.addEventListener("change", (e) => { if (e.isTrusted){ usHand = true; usAuto = false; ibxAuto.hidden = true; } });
       wireImap(panel, {account:() => val(panel, "email"),
         useSaved: us ? (inbox) => { ibxSel.value = inbox.id; showSaved(true); usHand = true; usAuto = false; ibxAuto.hidden = true; setErr(panel, "inboxId", ""); } : null,
@@ -9701,14 +9720,17 @@ function openLoginEditor(existing, onSaved, opts){
         if (us && us.checked){
           inboxId = val(panel,"inboxId"); e = inboxId ? "" : "Choose an inbox."; setErr(panel,"inboxId",e); if (e) bad = true;
         } else {
-          const ex0 = S.inboxes.find(i => norm(i.email) === norm(val(panel,"i_email")));
-          const r = readImap(panel, ex0 ? ex0.password : null, {email:"Enter the inbox's email.", password:"Enter this inbox's app password. Not sure how? Press Set it up step by step.", provider:"Choose the inbox's email provider."});
+          const ex0 = S.inboxes.find(i => mailboxKey(i.email) === mailboxKey(val(panel,"i_email")));
+          const r = readImap(panel, ex0 ? ex0.password : null, {email:"Enter the inbox's email.", password:`Enter this inbox's app password${us ? ", or tick Use a saved inbox" : ""}. Not sure how? Press Set it up step by step.`, provider:"Choose the inbox's email provider."});
           // Required from 1.9.112 (the owner's request): a store login can't be saved without its inbox.
           if (r.empty){ setErr(panel, "i_email", "Add the inbox this account's emails go to. Not sure how? Press Set it up step by step."); bad = true; }
           else if (r.bad) bad = true;
           else if (r.inbox){
-            const ex = S.inboxes.find(i => norm(i.email) === norm(r.inbox.email));
-            if (ex){ inboxId = ex.id; newInbox = {update:ex, data:r.inbox}; } else newInbox = {data:r.inbox};
+            // An inbox already saved is linked, and only gets a password typed here: its provider and server stay as they
+            // were set up (the new inbox's fields only guess them from the address).
+            const ex = S.inboxes.find(i => mailboxKey(i.email) === mailboxKey(r.inbox.email));
+            const typedPw = cleanAppPw(r.inbox.provider, $('[name="i_password"]', panel).value);
+            if (ex){ inboxId = ex.id; if (typedPw && typedPw !== ex.password) newInbox = {update:ex, data:{password:typedPw, syncError:""}}; } else newInbox = {data:r.inbox};
           } else inboxId = null;
         }
         if (bad){ const f = $(".has-err input,.has-err select", panel); if (f) f.focus(); return; }
@@ -9747,7 +9769,8 @@ function openInboxEditor(existing){
         const r = readImap(panel, existing.password);
         if (!r.inbox){ setErr(panel,"i_email","Enter the IMAP email."); return; }
         if (r.bad) return;
-        if (S.inboxes.some(i => i.id !== existing.id && norm(i.email) === norm(r.inbox.email))){ setErr(panel,"i_email","You already saved this inbox."); return; }
+        // A new inbox matches saved ones by mailbox (1.9.112), as the step-by-step setup does: a Gmail address's dot and +tag versions are one inbox.
+        if (S.inboxes.some(i => i.id !== existing.id && (isNew ? mailboxKey(i.email) === mailboxKey(r.inbox.email) : norm(i.email) === norm(r.inbox.email)))){ setErr(panel,"i_email","You already saved this inbox."); return; }
         let saved;
         const newPw = !isNew && r.inbox.password !== existing.password;
         if (isNew){ saved = Object.assign({id:uid(), createdAt:Date.now(), auto:true}, r.inbox); S.inboxes.push(saved); } else { Object.assign(existing, r.inbox, {syncError:""}); saved = existing; }
