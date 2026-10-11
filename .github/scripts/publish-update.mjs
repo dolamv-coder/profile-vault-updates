@@ -102,16 +102,24 @@ function checkLive(current, file = "update.json") {
   if (!appAccepts(current)) fail(`${file} (${current.version}) isn't signed with the key the app trusts, so it's refused. Publish it again, from this Action or by signing on the desktop.`);
 }
 
-// channels.json: {"desktop": "paused"} holds installed apps at the release update.json has; "follow" (or no file) lets
-// them follow each release. The web version always follows.
-function desktopPaused() {
+// channels.json, required: {"desktop": "paused", "version": "1.9.112", "sha256": "…"} holds installed apps on that release
+// (update.json has to stay exactly it, so a copied or hand-signed feed can't reach them either), and {"desktop":
+// "follow"} lets them follow each release. Anything else fails, rather than taking a typo for "follow". The web version
+// always follows. Returns null when following, else the held {version, sha256}.
+const CHANNEL_KEYS = new Set(["desktop", "version", "sha256", "note"]);
+function desktopHold() {
+  const shape = 'It holds {"desktop": "paused", "version": "X.Y.Z", "sha256": "<that release\'s sha256 in update.json>"} or {"desktop": "follow"}.';
   let raw = null;
-  try { raw = git("show", "HEAD:channels.json").toString("utf8"); } catch { return false; }
+  try { raw = git("show", "HEAD:channels.json").toString("utf8"); } catch { fail(`channels.json isn't on main. ${shape}`); }
   let c;
-  try { c = JSON.parse(raw); } catch { fail("channels.json isn't valid JSON. It holds {\"desktop\": \"paused\"} or {\"desktop\": \"follow\"}."); }
-  if (c.desktop === "paused") return true;
-  if (c.desktop === "follow" || c.desktop === undefined) return false;
-  fail(`channels.json's "desktop" is ${JSON.stringify(c.desktop)}; it has to be "paused" or "follow".`);
+  try { c = JSON.parse(raw); } catch { fail(`channels.json isn't valid JSON. ${shape}`); }
+  if (!c || typeof c !== "object" || Array.isArray(c)) fail(`channels.json isn't a JSON object. ${shape}`);
+  const extra = Object.keys(c).filter((k) => !CHANNEL_KEYS.has(k));
+  if (extra.length) fail(`channels.json has ${extra.map((k) => JSON.stringify(k)).join(", ")}, which it doesn't know. ${shape}`);
+  if (c.desktop === "follow") return null;
+  if (c.desktop !== "paused") fail(`channels.json's "desktop" is ${JSON.stringify(c.desktop)}; it has to be "paused" or "follow".`);
+  if (!VERSION_RE.test(String(c.version || "")) || !/^[0-9a-f]{64}$/.test(String(c.sha256 || ""))) fail(`channels.json pauses desktop updates without saying which release installed apps stay on. ${shape}`);
+  return { version: c.version, sha256: c.sha256 };
 }
 
 function sign_(dryRun) {
@@ -122,7 +130,11 @@ function sign_(dryRun) {
   const desk = read("update.json");
   let web;
   try { web = read("web-update.json"); } catch { fail("web-update.json isn't on main. The web version (app.fafoaco.com) reads it: start it as a copy of update.json."); }
-  const paused = desktopPaused();
+  const hold = desktopHold(), paused = !!hold;
+  // While paused, update.json is exactly the held release: a copied or hand-signed feed would reach installed apps.
+  if (hold && (desk.version !== hold.version || String(desk.sha256 || "").toLowerCase() !== hold.sha256)) {
+    fail(`Desktop updates are paused (channels.json), so update.json has to stay on ${hold.version} (sha256 ${hold.sha256}), but it names ${desk.version} (sha256 ${desk.sha256}). Put update.json back. Installed apps get a new version only once the owner sets "desktop" to "follow" in channels.json; until then releases go to web-update.json alone.`);
+  }
   const files = git("ls-tree", "-r", "--name-only", "HEAD").toString("utf8").split("\n");
   const pages = new Set(files.map((f) => (f.match(/^index-(\d+\.\d+\.\d+)\.html$/) || [])[1]).filter(Boolean));
   const noted = new Set(files.map((f) => (f.match(/^release-notes\/(\d+\.\d+\.\d+)\.txt$/) || [])[1]).filter(Boolean));
@@ -131,7 +143,7 @@ function sign_(dryRun) {
   const notesOf = (v) => git("show", `HEAD:release-notes/${v}.txt`).toString("utf8").replace(/\s+/g, " ").trim();
 
   if (!pages.has(version)) fail(`index-${version}.html isn't on main.`);
-  const held = paused ? ` Desktop updates are paused (channels.json), so installed apps stay on ${desk.version}.` : "";
+  const held = paused ? ` Desktop updates are paused (channels.json), so installed apps stay on ${hold.version}.` : "";
   const toDesk = !paused && cmp(version, desk.version) > 0, toWeb = cmp(version, web.version) > 0;
   // A feed this run doesn't replace has to still describe what main serves, as it was signed (a newer release fixes the
   // one it replaces). So a paused update.json is checked on every run.

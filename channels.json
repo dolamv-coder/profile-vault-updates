@@ -1,4 +1,6 @@
 {
   "desktop": "paused",
-  "note": "The owner paused desktop updates on 2026-10-11, until further notice. While \"desktop\" is \"paused\", the Publish Orbit update Action signs new pages into web-update.json only (the web version, app.fafoaco.com) and leaves update.json, which installed apps read, on the release it has. Set \"desktop\" to \"follow\" to let installed apps follow releases again: the next run brings them up to the newest page."
+  "version": "1.9.112",
+  "sha256": "600d70ec8840041c9801291d025c45384e139f8661b7ec2f1220a85541b8366d",
+  "note": "The owner paused desktop updates on 2026-10-11, until further notice. While \"desktop\" is \"paused\", update.json (installed apps) has to stay exactly on this version and sha256, and the Publish Orbit update Action signs new pages into web-update.json only (the web version, app.fafoaco.com). To let installed apps follow releases again, set \"desktop\" to \"follow\" (only the owner decides that): the next run brings them up to the newest page."
 }

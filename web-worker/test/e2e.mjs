@@ -96,7 +96,7 @@ try {
     const site = `http://localhost:${WORKER_PORT}`;
     const r = await fetch(site + "/", { redirect: "manual" });
     const body = await r.text();
-    assert.equal(r.status, 200); assert.match(body, /Your slots in\. Your orders tracked\./); assert.match(body, /Version 1\.9\.0 /);
+    assert.equal(r.status, 200); assert.match(body, /Your slots in\. Your orders tracked\./); assert.match(body, /or any browser · Web version 1\.9\.0</);
     assert.match(body, /href="\/download"/); assert.match(body, /href="https:\/\/app\.fafoaco\.com"/);
     assert.equal(r.headers.get("content-type"), "text/html; charset=utf-8"); assert.equal(r.headers.get("x-frame-options"), "DENY");
     assert.equal(r.headers.get("x-orbit-version"), null);
