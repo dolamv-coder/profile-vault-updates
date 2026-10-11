@@ -1,0 +1,33 @@
+name: Check the Discord sign-in (one-off)
+
+# Temporary, at the owner's request (2026-10-11: Discord answers "Invalid OAuth2 redirect_uri" to Continue with Discord):
+# shows which Discord application the license worker signs in with (its client ID is public, it's in every sign-in link)
+# and the address it asks Discord to send people back to, on both of its addresses. Removed again once it has run.
+on:
+  push:
+    branches: [claude/elegant-shannon-wp2xrc]
+    paths: [".github/workflows/check-discord-app.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: What the sign-in sends to Discord
+        run: |
+          for base in https://license.fafoaco.com https://orbit-license.orbit-app.workers.dev; do
+            r="check$(date +%s)$RANDOM$RANDOM"
+            loc="$(curl -sS -m 15 -o /dev/null -w '%{redirect_url}' "$base/discord/start?r=$r")"
+            echo "--- $base"
+            echo "goes to: ${loc%%\?*}"
+            id="$(printf '%s' "$loc" | sed -n 's/.*[?&]client_id=\([0-9]*\).*/\1/p')"
+            uri="$(printf '%s' "$loc" | sed -n 's/.*[?&]redirect_uri=\([^&]*\).*/\1/p' | python3 -c 'import sys,urllib.parse;print(urllib.parse.unquote(sys.stdin.read().strip()))')"
+            echo "client_id: $id"
+            echo "redirect_uri: $uri"
+            if [ -n "$id" ]; then
+              echo "Discord application:"
+              curl -sS -m 15 "https://discord.com/api/v10/applications/$id/rpc" | jq '{id, name, description}' 2>/dev/null || echo "(couldn't read its public name)"
+            fi
+          done
