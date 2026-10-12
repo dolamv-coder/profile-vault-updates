@@ -876,8 +876,9 @@ goes on after the page is closed or reloaded; coming back to the tab checks at o
 release waits while the password step shows); with the key, `webGotKey` asks `/vault/info`, and the master password
 either opens the synced vault (`syncStartFrom`) or makes a new vault that syncs from the start (`webVaultSubmit`: `_local`
 set as Turn on sync sets it for a vault with no online copy). The master password stays: it's the key the vault is
-encrypted with, which Discord can't stand in for. Have your license key? Enter it instead opens Open my synced vault, and
-Use this browser only (`LOCK_LOCAL`) makes a vault in the browser as before; a browser that has a vault unlocks with its
+encrypted with, which Discord can't stand in for. Have your license key? Enter it instead opens Open my synced vault (which
+from 1.9.113 makes one for a license with none online yet, below), and Use this browser only (`LOCK_LOCAL`) makes a vault in
+the browser as before; a browser that has a vault unlocks with its
 password, and the desktop app and a claude.ai copy (`ON_CLAUDE`, which can't reach the license server) are unchanged. The
 moved note and Settings → Web version & sync say Continue with Discord or Enter it instead, and Erase vault's message names
 them (`erasedMsg`). The line under the wordmark on the lock, license and sign-in screens is "Cop it. Track it. FAFO." (the
@@ -959,6 +960,17 @@ Name column shows them), address lines 1 or 2, or cities, one per line (CRLF) in
 one leaves an empty line, so the lines match the drafts row for row, and the toast counts them. Nothing gains a field. The
 Send accounts window says one person gets as many as their slot limit (the worker's `accountLimit`, 2026-10-12), where
 1.9.101 to 1.9.112 say 20.
+Also from 1.9.113 (the owner's request, 2026-10-12: a buyer who entered their license key in the web version was told to
+turn on sync in a desktop app they didn't have), Open your synced vault (`openSyncSignIn`: the web version's Enter it instead,
+and Open my synced vault after Use this browser only or in the desktop app) makes a synced vault for a license with none
+online yet: the dialog becomes Create your synced vault, by the key's last four, asks for the password once more (`making`),
+and makes a new vault that syncs from the start, as Continue with Discord does (`makeSyncedVault`, which both use: nothing is
+written when this browser has a vault by then, checked again right before writing). Every press asks `/vault/info` again: a
+vault another device made meanwhile is opened if the password is its own, and otherwise the dialog says another device just
+made one; another tab's vault shows its lock screen (`WEB_TAKEN_MSG`); a key the server doesn't know is refused as before.
+Changing the key goes back to opening, the boxes hold still while a request is out, and Enter in a box goes ahead (its button
+is outside the form, so a browser never submitted it). A Continue with Discord left waiting behind the dialog is cleared once
+the vault opens. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

@@ -13528,40 +13528,93 @@ async function syncDeleteOnline(){
 }
 
 // ---- the lock screen ----
-// "Open my synced vault": a new device (or a browser that never had this vault) opens the online copy.
+// "Open my synced vault" (the web version's Enter it instead): a new device (or a browser that never had this vault)
+// opens the online copy. From 1.9.113 a license with none yet makes one here (the owner's request, 2026-10-12: a buyer who
+// entered their key was told to turn on sync in a desktop app they didn't have): the dialog asks for the password once
+// more, then makes a vault that syncs from the start, as Continue with Discord does (`makeSyncedVault`).
 function openSyncSignIn(){
   const known = DESK ? (licRead() || {}).key || "" : "";
   let saved = ""; try { saved = (syncHint() || {}).lic || ""; } catch(e){}
+  const intro = "Opens the vault you sync from your other devices. Turn sync on there first: Settings, then Web version &amp; sync. No synced vault yet? FAFO makes one for your license here.";
   openLayer({
     title:"Open your synced vault", small:true, dismiss:false,
-    body:`<form id="ss-form" autocomplete="on"><p style="margin:0 0 12px;color:var(--ink-2)">Opens the vault you sync from your other devices. Turn sync on there first: Settings, then Web version &amp; sync.</p>
+    body:`<form id="ss-form" autocomplete="on"><div id="ss-say" aria-live="polite" style="margin:0 0 12px;color:var(--ink-2)"><p style="margin:0">${intro}</p></div>
       ${known ? `<input type="hidden" id="ss-lic" value="${esc(known)}">` : `<div class="field" style="margin-bottom:12px"><label for="ss-lic">License key</label><input id="ss-lic" class="lic-input" spellcheck="false" autocomplete="off" placeholder="PVLT-XXXX-XXXX-XXXX-XXXX" value="${esc(saved)}"><span class="hint">In the FAFO desktop app, it's under Settings, then License.</span></div>`}
       <input class="sr" type="text" name="username" autocomplete="username" value="Profile Vault" tabindex="-1" aria-hidden="true">
       <div class="field"><label for="ss-pw">Master password</label><input id="ss-pw" type="password" autocomplete="current-password"></div>
+      <div class="field" id="ss-pw2-f" style="margin-top:12px" hidden><label for="ss-pw2">Confirm password</label><input id="ss-pw2" type="password" autocomplete="new-password"></div>
       <div class="field" style="margin-top:10px"><span class="err" id="ss-err" role="alert"></span></div>
       ${known ? "" : `<div id="ss-dc" hidden><div class="lic-sep"><span>Got your key with Discord?</span></div><button class="btn btn-discord" type="button" id="ss-dc-go">${DISCORD_ICON}Fill it in with Discord</button><p class="lic-dc-msg" id="ss-dc-msg" role="status"></p></div>`}</form>`,
     foot:`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="ss-go">Open vault</button>`,
     mount:(panel, close) => {
-      const go = $("#ss-go", panel), err = $("#ss-err", panel);
+      const go = $("#ss-go", panel), err = $("#ss-err", panel), lin = $("#ss-lic", panel), pw1 = $("#ss-pw", panel), pw2 = $("#ss-pw2", panel);
+      // The license, with no synced vault yet, that the dialog makes one for ("" while it opens one).
+      let making = "";
+      const label = () => making ? "Create vault" : "Open vault";
+      const mode = (lic) => {
+        making = lic || "";
+        $(".panel-head h2", panel).textContent = making ? "Create your synced vault" : "Open your synced vault";
+        $("#ss-say", panel).innerHTML = making
+          ? `<p style="margin:0">There's no synced vault for the license ending ${esc(making.slice(-4))} yet. Enter the password again to make one. Everything you add is encrypted with it before it's synced, so it can't be recovered: store it in your password manager.</p>
+            <p class="item-sub" style="margin:8px 0 0">Already use FAFO on another device? Turn on sync there instead (Settings, then Web version &amp; sync), then open it here.</p>`
+          : `<p style="margin:0">${intro}</p>`;
+        $("#ss-pw2-f", panel).hidden = !making; pw2.value = "";
+        pw1.setAttribute("autocomplete", making ? "new-password" : "current-password");
+        const dc = $("#ss-dc", panel); if (dc) dc.style.display = making ? "none" : "";
+        if (!go.disabled) go.textContent = label();
+      };
+      // Nothing to change while a request is out: a vault is made or opened for what was there when it was clicked.
+      const busy = (on, text) => {
+        go.disabled = on; go.textContent = on ? text : label();
+        panel.querySelectorAll("input:not([type=hidden])").forEach((i) => { i.readOnly = on; });
+      };
+      // Another tab of this browser made or opened a vault meanwhile: its lock screen instead (as on Continue with Discord).
+      const taken = () => { if (S || !validRecord(readStore())) return false; renderLock(WEB_TAKEN_MSG); return true; };
+      // The vault is open: a Continue with Discord left waiting on the screen behind is done with.
+      const settled = () => { webDc.gen++; clearTimeout(webDc.timer); webDc.lic = ""; webDc.info = null; webKeyreq(null); };
       const run = async () => {
+        if (go.disabled) return;
         err.textContent = "";
-        const lic = licFormat($("#ss-lic", panel).value);
+        const lic = licFormat(lin.value);
         if (!/^PVLT(-[A-Z0-9]{4}){4}$/.test(lic)){ err.textContent = "Enter your license key. It starts with PVLT-."; return; }
-        const pw = $("#ss-pw", panel).value;
-        if (!pw){ err.textContent = "Enter the vault's master password."; return; }
-        go.disabled = true; go.textContent = "Opening…";
+        if (making && lic !== making) mode("");
+        const pw = pw1.value;
+        if (!pw){ err.textContent = making ? "Enter a password." : "Enter the vault's master password."; return; }
+        if (making && pw !== pw2.value){ err.textContent = "The passwords don't match."; pw2.focus(); return; }
+        const was = making;
+        busy(true, making ? "Creating…" : "Opening…");
         try {
           const info = await syncInfo(lic);
-          if (!info.exists) throw "There's no synced vault for this license yet. In the FAFO desktop app, go to Settings, then Web version & sync, and turn on sync.";
-          const o = await syncFetchWith(lic, info, pw);
           if (S) return;
+          if (!info.exists){
+            if (making !== lic){ busy(false); mode(lic); setTimeout(() => pw2.focus(), 30); return; }
+            if (!(await makeSyncedVault(lic, pw))){ if (!S && !taken()) busy(false); return; }
+            closeAllLayers(); startApp(); settled();
+            toast("Your vault is ready. It syncs, so it opens wherever you sign in.");
+            return;
+          }
+          // Made on another device since the dialog asked: opened with this password, if it's that vault's.
+          if (making) mode("");
+          const o = await syncFetchWith(lic, info, pw);
+          if (S || taken()) return;
           await syncStartFrom(lic, info, o);
+          settled();
           toast("Your synced vault is open");
-        } catch(m){ err.textContent = typeof m === "string" ? m : "Your synced vault couldn't be opened."; go.disabled = false; go.textContent = "Open vault"; }
+        } catch(m){
+          if (S) return;
+          err.textContent = was && !making && m === SYNC_ERR.password ? "Another device just made a synced vault for this license. Enter its master password to open it."
+            : typeof m === "string" ? m : was ? "Couldn't create the vault in this browser." : "Your synced vault couldn't be opened.";
+          busy(false);
+        }
       };
       go.addEventListener("click", run);
       $("#ss-form", panel).addEventListener("submit", (e) => { e.preventDefault(); run(); });
-      if (!known) discordKeyFill(panel, (key) => { $("#ss-lic", panel).value = key; $("#ss-pw", panel).focus(); });
+      // Enter in a box goes ahead: with several boxes and its button outside the form, a browser wouldn't submit it.
+      $("#ss-form", panel).addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing && e.target.matches("input")){ e.preventDefault(); run(); } });
+      if (!known){
+        lin.addEventListener("input", () => { if (making && licFormat(lin.value) !== making) mode(""); });
+        discordKeyFill(panel, (key) => { lin.value = key; if (making && key !== making) mode(""); pw1.focus(); });
+      }
     }
   });
 }
@@ -13731,20 +13784,29 @@ async function webVaultSubmit(){
   if (pw !== $("#pw2").value){ err.textContent = "The passwords don't match."; return; }
   go.disabled = true; go.textContent = "Creating…";
   try {
-    const salt = crypto.getRandomValues(new Uint8Array(16));
-    const dk = await deriveKeys(pw, salt, ITER);
-    if (S || webDc.lic !== lic || validRecord(readStore())){ webVaultTaken(); return; }   // another tab got there first
-    KEY = dk.key; SYNC_AUTH = dk.auth;
-    S = blankState();
-    // Synced from the start, as Turn on sync does for a vault with no online copy yet: its first round puts it online.
-    S._local = {on:true, lic, rev:0, vid:0, base:{}, seen:{}, mt:{}};
-    VAULT = await sealState(KEY, {iter:ITER, salt:toB64(salt)}, S);
-    writeStore(VAULT);
-    syncHintWrite({lic, dirty:true});
+    if (!(await makeSyncedVault(lic, pw, () => webDc.lic === lic))){ webVaultTaken(); return; }   // another tab got there first
     webDc.lic = ""; webDc.info = null; webKeyreq(null);
     startApp();
     toast("Your vault is ready. It syncs, so it opens wherever you sign in.");
   } catch(ex){ S = null; KEY = null; SYNC_AUTH = null; go.disabled = false; go.textContent = "Create vault"; err.textContent = "Couldn't create the vault in this browser."; }
+}
+// A new, empty vault for license `lic` that syncs from the start, as Turn on sync does for a vault with no online copy
+// yet: its first round puts it online. Continue with Discord makes one, and from 1.9.113 Enter it instead too. False,
+// with nothing written, when this browser has a vault by then (another tab made or opened one) or `still()` says the
+// screen asking for it has moved on.
+async function makeSyncedVault(lic, pw, still){
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const dk = await deriveKeys(pw, salt, ITER);
+  const taken = () => !!S || validRecord(readStore()) || (!!still && !still());
+  if (taken()) return false;
+  const st = blankState();
+  st._local = {on:true, lic, rev:0, vid:0, base:{}, seen:{}, mt:{}};
+  const rec = await sealState(dk.key, {iter:ITER, salt:toB64(salt)}, st);
+  if (taken()) return false;   // checked again right before writing: sealing took a moment
+  KEY = dk.key; SYNC_AUTH = dk.auth; S = st; VAULT = rec;
+  writeStore(VAULT);
+  syncHintWrite({lic, dirty:true});
+  return true;
 }
 // This device's password didn't open its vault, but it syncs: the password may have been changed on
 // another device. If the online copy opens with it, this device's vault moves onto it: merged, once the
