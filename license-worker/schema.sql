@@ -301,3 +301,21 @@ CREATE TABLE IF NOT EXISTS alert_webhooks (
   last_ok    INTEGER,
   last_error TEXT
 );
+
+-- Product pictures (app 1.9.113): the lists the worker read from TCGplayer's catalog (tcgcsv.com), each kept a day
+-- ("groups", and "g:<groupId>" for a group's sealed products), and what each order name found (its words, sorted): the
+-- product and its picture for a week, nothing for 6 hours. Nothing about who asked. Rows go after 30 days.
+CREATE TABLE IF NOT EXISTS picture_lists (
+  id    TEXT PRIMARY KEY,
+  body  TEXT NOT NULL,                          -- JSON
+  until INTEGER NOT NULL,                       -- read again after this
+  at    INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS picture_finds (
+  q          TEXT PRIMARY KEY,
+  product_id INTEGER,                           -- null: nothing found
+  name       TEXT,
+  image      TEXT,                              -- the picture as a data: address
+  until      INTEGER NOT NULL,
+  at         INTEGER NOT NULL
+);

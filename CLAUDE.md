@@ -202,6 +202,14 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   posts a plain list (store, profile name, account email, card brand and last 4) to the same
   channel, only for keys that license already sent submissions to. Pull alerts never carry card
   numbers or passwords.
+  From page 1.9.113 it also finds product pictures for orders (`GET /pictures/find?q=`, license Bearer; 1.9.113 below):
+  the sealed Pokémon TCG product in TCGplayer's catalog, as tcgcsv.com publishes it daily (category 3's groups and each
+  group's products), whose name has the same words as the order's once both are written the same way (`pictureWords`,
+  `pictureFits`: ETB, Pokémon Center's own edition, Booster Display = Booster Box, set codes and series names off), with
+  its picture as a `data:` address from TCGplayer's image servers. Never a near match: a word either side lacks, or two
+  products that fit, is no answer. Lists are kept a day (D1 `picture_lists`, read at most `PIC_BUILDS` per ask, answering
+  `more` until done) and answers a week, nothing found 6 hours (`picture_finds`), nothing about who asked;
+  `/admin/pictures?q=` shows what a name finds and why.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 
@@ -920,6 +928,26 @@ can't skip a step (clicks within 400 ms of one are dropped) or, when a click clo
 editor's button underneath (a closing window is inert, so clicks fall through: `eatClick`). A browser can't sign in
 to email, so the web version says the desktop app checks it when it syncs. Import accounts, login Mass edit and imports still
 save logins without an inbox. Nothing gains a field.
+
+From 1.9.113 an order with no picture gets its product's picture by itself (the owner's request, 2026-10-12: "make FAFO put
+the picture on automatically after every order completion"; Target's pre-orders show a gray bag and Pokémon Center's emails
+have no photos). `autoPictures` asks the license worker's `/pictures/find` (above) about each item (`pictureKey`) whose orders
+have no picture and none taken off on purpose (`noPic`), newest first, `AUTO_PIC_PER_RUN` at a time, with `sellerLic()`; a
+found picture is kept like one added by hand (a WebP copy in `itemPics`, with `from` and `name`, which the Picture window
+shows as "Found on TCGplayer: …") and goes on every order of the item (`autoPicApply`), and later orders of it get it from
+`shareOrderPictures`, which `autoPictures` runs first. It runs after unlocking (`scheduleAutoPictures`, then every 30
+minutes), after a sync round that changed something, after orders are added (the order editor, pasted emails, the own
+server, the desktop's email sync), never before this device's first merge (`SYNC.oneStoreDue`), during a sync round, with a
+window open (an open order editor would save over it) or out of sight. Items that found nothing are asked again after 12
+hours, doubling to a week (`orbit-autopic` in localStorage, per device, hashes of the names only). The toast on Orders has
+Undo, which marks the orders `noPic` so they aren't looked up again. Settings → Preferences → Find product pictures
+(`settings.autoPics`, shared) turns it off. A browser vault with no license key (Use this browser only, never synced) asks
+nothing. Orders gain nothing and `itemPics` entries gain `from` and `name`, which 1.9.112 keeps; the desktop app gets the
+pictures through sync, and finds them itself once desktop updates follow again.
+Also from 1.9.113 (the owner's request: "copy all just name, address line 1, address line 2, or city"), Generate's selection
+bar has **Copy**, and the right-click menu the same items (`draftCopyItems`, `copyDrafts`): the selected drafts' names (as the
+Name column shows them), address lines 1 or 2, or cities, one per line (CRLF) in the order shown, as jigged; a draft without
+one leaves an empty line, so the lines match the drafts row for row, and the toast counts them. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

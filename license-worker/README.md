@@ -587,6 +587,33 @@ fetched, and everything in them is signed (updates with your update key, `licens
 license key), so the copy can't change anything. Pages are kept for a day, the other two for a
 minute.
 
+## Product pictures for orders
+
+From FAFO 1.9.113, an order whose email had no product photo (Target's pre-orders show a gray bag,
+Pokémon Center's emails have none) gets its product's picture by itself. FAFO sends the item's name
+to `GET /pictures/find?q=…` with its license key, and this worker looks it up among the sealed
+Pokémon TCG products in TCGplayer's catalog, as [tcgcsv.com](https://tcgcsv.com) publishes it each
+day: the Pokémon category's groups (one per set or kind of product) and each group's products. It
+answers only a product whose name has the same words as the order's, written the same way
+("Elite Trainer Box" is ETB, Pokémon Center's own edition isn't the store's, a Booster Display is
+the Booster Box), with its picture from TCGplayer's image servers. A name with a word the product's
+lacks, or the other way round, or two products that fit, gets nothing: no picture is better than
+another product's. FAFO keeps a small copy and puts it on every order of the item.
+
+Nothing to set up. The catalog's lists are read here about once a day each and kept in the
+`picture_lists` table; what a name found is kept a week (nothing found, 6 hours) in
+`picture_finds`, so a name is looked up once for everyone. Rows go after 30 days. Nothing about who
+asked is kept. `npm run db:init` (and the deploy Action) adds both tables. `PICTURES_CATALOG` and
+`PICTURES_IMAGES` (unset: tcgcsv.com and TCGplayer's servers) point the tests at a stand-in.
+
+To see what a name finds, and why:
+
+```
+curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" "https://orbit-license.orbit-app.workers.dev/admin/pictures?q=Delta%20Reign%20Elite%20Trainer%20Box"
+```
+
+It shows the name's words, the groups searched, every product that fit and the answer.
+
 ## Limiting who gets a key
 
 By default, any Discord account except bots gets a key. To limit it, edit `[vars]` in
@@ -638,6 +665,7 @@ Runs the worker in Wrangler's local runtime with a local database and a mock Dis
 once handing out keys straight away and once with approval on. It goes through sign-in,
 key pickup, repeat sign-in, cancelled and refused sign-ins, the account-age and server
 checks, revoke and restore, the rate limit, requests being posted, approved, denied
-and changed, slot limits, submissions and collecting keys, pulled slots, and synced
-vaults (revisions, two devices saving at once, large vaults, a new password, and the lock
+and changed, slot limits, submissions and collecting keys, pulled slots, product pictures
+(against a stand-in catalog: exact names only, never a case, another edition or two that fit),
+and synced vaults (revisions, two devices saving at once, large vaults, a new password, and the lock
 after wrong passwords).
