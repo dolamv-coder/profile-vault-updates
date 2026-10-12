@@ -596,15 +596,19 @@ Pokémon TCG products in TCGplayer's catalog, as [tcgcsv.com](https://tcgcsv.com
 day: the Pokémon category's groups (one per set or kind of product) and each group's products. It
 answers only a product whose name has the same words as the order's, written the same way
 ("Elite Trainer Box" is ETB, Pokémon Center's own edition isn't the store's, a Booster Display is
-the Booster Box), with its picture from TCGplayer's image servers. A name with a word the product's
-lacks, or the other way round, or two products that fit, gets nothing: no picture is better than
-another product's. FAFO keeps a small copy and puts it on every order of the item.
+the Booster Box, a series' name like Mega Evolution is one word), with its picture from TCGplayer's
+image servers. A name with a word the product's lacks, or the other way round, another series'
+product, or two products that fit, gets nothing: no picture is better than another product's. FAFO
+keeps a small copy and puts it on every order of the item.
 
 Nothing to set up. The catalog's lists are read here about once a day each and kept in the
-`picture_lists` table; what a name found is kept a week (nothing found, 6 hours) in
-`picture_finds`, so a name is looked up once for everyone. Rows go after 30 days. Nothing about who
-asked is kept. `npm run db:init` (and the deploy Action) adds both tables. `PICTURES_CATALOG` and
-`PICTURES_IMAGES` (unset: tcgcsv.com and TCGplayer's servers) point the tests at a stand-in.
+`picture_lists` table (one that can't be read is tried again an hour later, and its last copy is
+used meanwhile); what a name found is kept a week (nothing found, 6 hours) in `picture_finds`, so a
+name is looked up once for everyone. Rows go after 30 days. Each license can make 300 lookups a day
+that aren't answered from what's kept (`picture_asks` counts them per day, for two days); that's
+all that's kept about who asked. `npm run db:init` (and the deploy Action) adds the tables.
+`PICTURES_CATALOG`, `PICTURES_IMAGES`, `PICTURES_LIST_MS` and `PICTURES_ASKS_PER_DAY` point the
+tests at a stand-in catalog and shorten its times.
 
 To see what a name finds, and why:
 

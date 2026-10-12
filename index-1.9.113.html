@@ -3579,7 +3579,8 @@ function writeStore(rec){
   try { localStorage.setItem(STORE_KEY, JSON.stringify(rec)); STORAGE_OK = true; return true; }
   catch(e){ STORAGE_OK = false; return false; }
 }
-function clearStore(){ try { localStorage.removeItem(STORE_KEY); } catch(e){} }
+// Erase vault: the vault, and what this device noted about its items (the picture finder's list, hashes of item names).
+function clearStore(){ try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(AUTO_PIC_STORE); } catch(e){} }
 
 // The vault key and the sync token (1.9.65+) come from one PBKDF2 run: the key is its 256 bits, the
 // same key deriveKey made before, and the token an HMAC of them, which the sync service can check
@@ -4290,7 +4291,15 @@ function renderMain(){
   if (UI.view === "orders") renderBulk();   // the selection follows the filters
 }
 
+// The selection bar, and room under the page for it: on a narrow phone it can take several rows (1.9.113, with Copy on
+// Generate), taller than the page's own 120px at the bottom, so the last row could sit under it.
 function renderBulk(){
+  renderBulkBar();
+  const bar = $("#bulkbar"), main = $("main.main"); if (!main) return;
+  const h = bar && !bar.hidden ? bar.getBoundingClientRect().height : 0;
+  main.style.paddingBottom = h > 100 ? Math.ceil(h + 24) + "px" : "";
+}
+function renderBulkBar(){
   const bar = $("#bulkbar"); if (!bar) return;
   if (UI.view === "orders"){
     const n = UI.orderSel.size, shown = ORDERS_SHOWN.length;
@@ -11516,9 +11525,15 @@ async function pictureFromBlob(blob){
       const k = Math.min(1, side / Math.max(bmp.width, bmp.height));
       const c = document.createElement("canvas");
       c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
-      c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-      const d = c.toDataURL("image/webp", q);
-      if (/^data:image\/(webp|png);base64,/.test(d) && d.length <= PIC_MAX) return d;
+      const g = c.getContext("2d");
+      g.drawImage(bmp, 0, 0, c.width, c.height);
+      let d = c.toDataURL("image/webp", q);
+      // Safari and every iPhone browser can't write WebP and give a PNG, many times bigger (1.9.113): a JPEG on white then.
+      if (!/^data:image\/webp;base64,/.test(d)){
+        g.globalCompositeOperation = "destination-over"; g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+        d = c.toDataURL("image/jpeg", q);
+      }
+      if (/^data:image\/(webp|jpeg|png);base64,/.test(d) && d.length <= PIC_MAX) return d;
     }
   } finally { if (bmp.close) bmp.close(); }
   throw new Error("too big");
@@ -11682,10 +11697,11 @@ function orderThumb(o){
 // small copy in itemPics, noted with where it came from) and goes on every order of the item, and on the item's later
 // orders as they come (shareOrderPictures). Runs after unlocking, after a merge brings orders and after orders are
 // added, a few items at a time, while no window is open (an open order editor would save over it). An item with an
-// order whose picture was taken off on purpose (noPic) is left alone; Undo on the toast takes them off that way. What
-// found nothing is asked again after 12 hours, then less often, up to once a week: this device's list of those
-// (orbit-autopic) keeps only hashes of the names. Settings → Preferences → Find product pictures turns it off
-// (settings.autoPics, shared). Only the item's name is sent, with the license key.
+// order whose picture was taken off on purpose (noPic) is left alone, and so is one turned down with Undo on the toast
+// (the shared setting autoPicsNo, hashes of the items). What found nothing is asked again after 12 hours, then less
+// often, up to once a week: this device's list of those (orbit-autopic, cleared by Erase vault) keeps only hashes of the
+// names. Settings → Preferences → Find product pictures turns it off (settings.autoPics, shared). Only the item's name is
+// sent, with the license key; the server answers so many a day per license (429: then an hour later).
 const AUTO_PIC_STORE = "orbit-autopic", AUTO_PIC_PER_RUN = 6, AUTO_PIC_RETRY_MS = 12 * 3600000, AUTO_PIC_RETRY_MAX = 7 * 86400000;
 const AUTO_PIC = {timer:null, busy:false, at:0, holdUntil:0};
 const autoPicsOn = () => !!S && S.settings.autoPics !== false;
@@ -11700,10 +11716,13 @@ function autoPicRemember(m){
   for (const [h, x] of Object.entries(m.tried)) if (!x || now - (x.at || 0) > 30 * 86400000) delete m.tried[h];
   try { localStorage.setItem(AUTO_PIC_STORE, JSON.stringify(m)); } catch(e){}
 }
-const autoPicWait = (n) => Math.min(AUTO_PIC_RETRY_MAX, AUTO_PIC_RETRY_MS * Math.pow(2, Math.max(0, (n || 1) - 1)));
-// Items to look up, newest first: each item (pictureKey) whose orders have no picture, none taken off on purpose.
+// When an item that found nothing is asked about again: 12 hours, doubling up to a week; one the server was still reading
+// the catalog for, in half an hour.
+const autoPicWait = (t) => t.soon ? 30 * 60000 : Math.min(AUTO_PIC_RETRY_MAX, AUTO_PIC_RETRY_MS * Math.pow(2, Math.max(0, (t.n || 1) - 1)));
+// Items to look up, newest first: each item (pictureKey) whose orders have no picture, none taken off on purpose (noPic),
+// and not one turned down with Undo (autoPicsNo).
 function autoPicItems(m, now){
-  const items = new Map(), off = new Set();
+  const items = new Map(), off = new Set(), no = S.settings.autoPicsNo || {};
   for (const o of S.orders || []){
     const k = pictureKey(o);
     if (!k) continue;
@@ -11714,9 +11733,10 @@ function autoPicItems(m, now){
     items.set(k, x);
   }
   return [...items.values()].filter(x => {
-    if (off.has(x.key)) return false;
-    const t = m.tried[picHash(x.key)];
-    return !t || now - (t.at || 0) >= autoPicWait(t.n);
+    const h = picHash(x.key);
+    if (off.has(x.key) || no[h]) return false;
+    const t = m.tried[h];
+    return !t || now - (t.at || 0) >= autoPicWait(t);
   }).sort((a, b) => b.at - a.at);
 }
 // Soon, once: `ms` from now (a later call doesn't push an earlier one back).
@@ -11742,54 +11762,71 @@ async function autoPictures(){
   const todo = autoPicItems(m, now).slice(0, AUTO_PIC_PER_RUN);
   if (!todo.length) return;
   AUTO_PIC.busy = true;
-  const found = [];   // [key, picture id]
-  let stop = false, more = false, full = false;
+  const found = [];   // {key, data, name}: written with the orders' references by autoPicApply
+  let hold = 0, gone = false;
+  const live = () => S === vault && autoPicsOn();   // locked, another vault open, or turned off meanwhile: stop there
   try {
     for (const x of todo){
-      let d = null;
-      for (let i = 0; i < 6; i++){
+      const h = picHash(x.key);
+      let d = null, status = 0;
+      for (let i = 0; i < 4; i++){
         try {
           const r = await relayFetch("/pictures/find?q=" + encodeURIComponent(decodeHtml(x.name).slice(0, 200)), {headers:{authorization:"Bearer " + sellerLic()}, cache:"no-store", signal:typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(30000) : undefined});
-          d = r.ok ? await r.json() : null;
-        } catch(e){ d = null; }
-        if (S !== vault) return;
+          status = r.status; d = r.ok ? await r.json() : null;
+        } catch(e){ d = null; status = 0; }
+        if (!live()){ gone = true; break; }
         if (!d || !d.more) break;
-        await new Promise(res => setTimeout(res, 20000));   // the server is still reading the catalog
-        if (S !== vault) return;
+        await new Promise(res => setTimeout(res, 15000));   // the server is still reading the catalog
+        if (!live()){ gone = true; break; }
       }
-      if (!d || d.more){ stop = true; break; }   // no answer: the server or the network, so later
-      const h = picHash(x.key);
+      if (gone) break;
+      if (status === 429){ hold = 60 * 60000; break; }   // this license's lookups for today are used up
+      if (!d){ hold = 10 * 60000; break; }               // no answer (the server or the network): later
+      // Still being read: this one again in half an hour, and the next one now.
+      if (d.more){ m.tried[h] = {at:Date.now(), n:(m.tried[h] || {}).n || 0, soon:true}; continue; }
       if (!d.found || typeof d.image !== "string" || !DATA_PIC.test(d.image)){ m.tried[h] = {at:Date.now(), n:((m.tried[h] || {}).n || 0) + 1}; continue; }
       let data;
       try { data = await pictureFromBlob(await (await fetch(d.image)).blob()); }
-      catch(e){ m.tried[h] = {at:Date.now(), n:((m.tried[h] || {}).n || 0) + 1}; continue; }
-      if (S !== vault) return;
-      const id = picHash(data), pics = S.settings.itemPics || {};
-      if (!pics[id] && picsSize(pics) + data.length > PIC_TOTAL){ full = true; m.tried[h] = {at:Date.now(), n:4}; break; }
-      if (!pics[id]) S.settings.itemPics = Object.assign({}, pics, {[id]: {data, at:Date.now(), from:"TCGplayer", name:String(d.name || "").slice(0, 200)}});
+      catch(e){ m.tried[h] = {at:Date.now(), n:1}; continue; }   // couldn't be read here: again in 12 hours, not later
+      if (!live()){ gone = true; break; }
       delete m.tried[h];
-      found.push([x.key, id]);
+      found.push({key:x.key, data, name:String(d.name || "").slice(0, 200)});
     }
-    more = !stop && !full && autoPicItems(m, Date.now()).length > found.length;
   } finally {
     AUTO_PIC.busy = false;
-    autoPicRemember(m);
+    if (S === vault) autoPicRemember(m);
   }
-  if (S !== vault) return;
-  if (stop) AUTO_PIC.holdUntil = Date.now() + 10 * 60000;
+  if (gone || S !== vault) return;
+  if (hold) AUTO_PIC.holdUntil = Date.now() + hold;
   if (found.length) autoPicApply(found);
-  if (more || stop) autoPicturesSoon(stop ? 10 * 60000 : 2 * 60000);
+  const more = !hold && autoPicItems(m, Date.now()).some(x => !found.some(f => f.key === x.key));
+  if (more || hold) autoPicturesSoon(hold || 2 * 60000);
 }
-// Puts the pictures found on their items' orders, once no window is open, and says so on Orders (Undo takes them off,
-// on purpose, so they aren't looked up again).
+// Keeps the pictures found (itemPics, with where they came from) and puts them on their items' orders, together and once
+// no window is open, and says so on Orders. Undo takes them off and notes the items in the shared setting autoPicsNo, so
+// they aren't looked up again; a photo from the store's email, another order of the item or Picture can still go on.
 function autoPicApply(found){
-  if (!S) return;
-  if (stack.length || syncBlocked()){ setTimeout(() => autoPicApply(found), 3000); return; }
-  const by = new Map(found), off = new Set(), changed = [], now = Date.now();
+  if (!S || !autoPicsOn()) return;
+  if (stack.length || syncBlocked()){ const vault = S; setTimeout(() => { if (S === vault) autoPicApply(found); }, 3000); return; }
+  const off = new Set(), no = S.settings.autoPicsNo || {}, ids = new Map(), changed = [], now = Date.now();
   (S.orders || []).forEach(o => { const k = pictureKey(o); if (k && o.noPic) off.add(k); });
+  let pics = S.settings.itemPics || {};
+  for (const f of found){
+    if (off.has(f.key) || no[picHash(f.key)]) continue;
+    if (!(S.orders || []).some(o => pictureKey(o) === f.key && !hasPicture(o))) continue;   // it got one meanwhile
+    const id = picHash(f.data);
+    if (!pics[id]){
+      // As many pictures as FAFO can keep: this item again in a few days, when unused ones have gone.
+      if (picsSize(pics) + f.data.length > PIC_TOTAL){ const m = autoPicMemory(); m.tried[picHash(f.key)] = {at:now, n:4}; autoPicRemember(m); continue; }
+      pics = Object.assign({}, pics, {[id]: {data:f.data, at:now, from:"TCGplayer", name:f.name}});
+    }
+    ids.set(f.key, id);
+  }
+  if (!ids.size) return;
+  S.settings.itemPics = pics;
   (S.orders || []).forEach(o => {
-    const k = pictureKey(o), id = by.get(k);
-    if (!id || off.has(k) || hasPicture(o) || o.noPic || !picData(id)) return;
+    const id = ids.get(pictureKey(o));
+    if (!id || hasPicture(o) || o.noPic) return;
     changed.push([o, o.image || ""]);
     o.image = "pic:" + id; o.updatedAt = now;
   });
@@ -11797,10 +11834,11 @@ function autoPicApply(found){
   persist();
   if (UI.view === "orders") syncRender(); else renderSide();
   if (UI.view !== "orders" || document.hidden) return;
-  const items = new Set(changed.map(([o]) => pictureKey(o))).size;
-  toast(`Found ${items === 1 ? "the picture" : "pictures"} for ${plural(items, "item")} (${plural(changed.length, "order")})`, "", {label:"Undo", run:() => {
-    changed.forEach(([o, was]) => { if (S.orders.includes(o) && o.image !== was){ o.image = was; o.noPic = true; o.updatedAt = Date.now(); } });
-    persist(); render(); toast("Pictures taken off. Set one with Picture.");
+  const keys = [...new Set(changed.map(([o]) => pictureKey(o)))];
+  toast(`Found ${keys.length === 1 ? "the picture" : "pictures"} for ${plural(keys.length, "item")} (${plural(changed.length, "order")})`, "", {label:"Undo", run:() => {
+    changed.forEach(([o, was]) => { if (S.orders.includes(o) && o.image !== was){ o.image = was; o.updatedAt = Date.now(); } });
+    S.settings.autoPicsNo = Object.assign({}, S.settings.autoPicsNo || {}, Object.fromEntries(keys.map(k => [picHash(k), Date.now()])));
+    persist(); render(); toast(`FAFO won't look ${keys.length === 1 ? "this item" : "these items"} up again. Set a picture with Picture.`);
   }});
 }
 let autoPicTimer = null;
@@ -14533,7 +14571,7 @@ function renderSettingsView(){
           <div class="set-eyebrow">Preferences</div>
           <h2 class="set-title">Preferences</h2>
           <div class="form-grid" style="max-width:420px">${fieldHTML({type:"select", name:"set-theme", label:"Theme", options:opt([["space-blue","Deep space blue (default)"],["default","Dark"],["light","Light"],["space","Space – dark, with stars"],["space-light","Space – light, with stars"],["space-auto","Space – match my computer"]], currentTheme()), showOpt:false})}${fieldHTML({type:"select", name:"set-autolock", label:"Lock automatically after", options:opt([["5","5 minutes idle"],["15","15 minutes idle"],["30","30 minutes idle"],["60","1 hour idle"],["0","Never"]], String(S.settings.autoLockMin)), showOpt:false})}</div>
-          <label class="check check-box" style="margin:18px 0 0;max-width:560px"><input type="checkbox" name="set-autopics" ${autoPicsOn() ? "checked" : ""}><span><strong>Find product pictures</strong><br><span class="item-sub">An order with no picture (Target's pre-orders, Pokémon Center's orders) gets its product's picture from TCGplayer's catalog of Pokémon cards and products, on all its orders. Only a product with exactly the same name counts. FAFO sends the item's name, nothing else.${(WEB_SELF || DESK) && !sellerLic() ? " Works once this browser has your license key: turn on Web version &amp; sync." : ""}</span></span></label>
+          <label class="check check-box" style="margin:18px 0 0;max-width:560px"><input type="checkbox" name="set-autopics" ${autoPicsOn() ? "checked" : ""}><span><strong>Find product pictures</strong><br><span class="item-sub">An order with no picture (Target's pre-orders, Pokémon Center's orders) gets its product's picture from TCGplayer's catalog of Pokémon cards and products, on all its orders. Only a product with exactly the same name counts. Only the item's name is sent, with your license key.${(WEB_SELF || DESK) && !sellerLic() ? " Works once this browser has your license key: turn on Web version &amp; sync." : ""}</span></span></label>
           ${DESK ? `<label class="check check-box" style="margin:18px 0 0;max-width:560px"><input type="checkbox" name="set-rescue" ${S.settings.rescueSpam !== false ? "checked" : ""}><span><strong>Move order emails out of Spam</strong><br><span class="item-sub">Each sync checks Spam for order, shipping and delivery emails and moves them to your Inbox. Only emails that your mail server confirmed really came from the store are moved; look-alike scam emails stay in Spam.${window.pvDesktop && window.pvDesktop.rescueSpam ? "" : " Needs the newest app download."}</span></span></label>` : ""}
           <div class="hazard" style="margin-top:20px"><h3>Erase vault</h3><p>Deletes every order, profile, card and login on this device. Download a backup first if you might need them.</p><button class="btn btn-danger" data-act="settings-erase">${ic("trash")}Erase vault</button></div>
         </section>

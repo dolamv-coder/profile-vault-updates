@@ -2639,7 +2639,7 @@ async function admin(request, env, path) {
   if (request.method === "GET" && path === "/admin/pictures") {
     const q = String(new URL(request.url).searchParams.get("q") || "").slice(0, 300), words = pictureWords(q), trace = { groups: [], fits: [] };
     const cached = await env.DB.prepare("SELECT q, product_id, name, until, at FROM picture_finds WHERE q = ?").bind(picKeyOf(words)).first();
-    const r = new Set(words).size < 2 ? { product: null, short: true } : await pictureSearch(env, words, Date.now(), trace);
+    const r = new Set(words.filter((w) => !isSeries(w))).size < 2 ? { product: null, short: true } : await pictureSearch(env, words, Date.now(), trace);
     return json({ q, words, cached, result: r, ...trace }, 200, NO_STORE);
   }
   if (request.method === "GET" && path === "/admin/licenses") {
@@ -2781,20 +2781,26 @@ async function mirror(env, name) {
 // TCGplayer's catalog, as tcgcsv.com publishes it each day (the Pokémon category's groups, one per set or kind of
 // product, and each group's products), and answers the one whose name has the same words, written the same way
 // (pictureWords: "Elite Trainer Box" is ETB, Pokémon Center's own edition is not the store's, a Booster Display is
-// the Booster Box), with its picture. Never a near match: an order without a picture shows its store's mark, while
-// another product's picture would be wrong, so a name with a word the product's lacks, or the other way round, or
-// two products that fit, gets nothing. Lists read from the catalog are kept a day and what a name found a week
-// (nothing found, 6 hours) in D1, so the catalog is asked about once a day per list whoever asks, and its pictures
-// once a week per product. Asks need a license key. Nothing about who asked is kept.
+// the Booster Box, a series' name is one word), with its picture. Never a near match: an order without a picture shows
+// its store's mark, while another product's picture would be wrong, so a name with a word the product's lacks, or the
+// other way round, another series' product, or two products that fit, gets nothing. Lists read from the catalog are
+// kept a day and what a name found a week (nothing found, 6 hours) in D1, so the catalog is asked about once a day per
+// list whoever asks, and its pictures once a week per product. A list that can't be read is tried again after an hour,
+// and its last copy is used meanwhile. Asks need a license key; what's kept about who asked is a count per license per
+// day, for the daily limit (PIC_ASKS_PER_DAY, asks not answered from what's kept), for two days.
 const PIC_CATALOG = "https://tcgcsv.com/tcgplayer/3/";   // 3 is Pokémon
-const PIC_IMAGES = ["https://product-images.tcgplayer.com/fit-in/400x400/{id}.jpg", "https://tcgplayer-cdn.tcgplayer.com/product/{id}_200w.jpg"];
-const PIC_LIST_MS = 86400000, PIC_FOUND_MS = 7 * 86400000, PIC_MISS_MS = 6 * 3600000, PIC_NO_IMAGE_MS = 3600000;
+const PIC_IMAGES = ["https://product-images.tcgplayer.com/fit-in/200x200/{id}.jpg", "https://product-images.tcgplayer.com/fit-in/400x400/{id}.jpg",
+  "https://tcgplayer-cdn.tcgplayer.com/product/{id}_200w.jpg"];
+const PIC_LIST_MS = 86400000, PIC_RETRY_MS = 3600000, PIC_FOUND_MS = 7 * 86400000, PIC_MISS_MS = 6 * 3600000;
 const PIC_KEEP_MS = 30 * 86400000;      // rows older than this go
 const PIC_NEWEST = 10;                  // the newest groups are searched for every name (new sets, pre-orders)
-const PIC_NAMED = 6;                    // and up to this many more that share a word with it ("Delta Reign")
+const PIC_NAMED = 6;                    // and up to this many more that share a word with it ("Delta Reign", a series)
 const PIC_BUILDS = 3;                   // groups read from the catalog in one ask; the rest on the next (the app asks again)
+const PIC_ASKS_PER_DAY = 300;
 const PIC_LIST_MAX = 8_000_000, PIC_IMAGE_MAX = 600_000;
 const PIC_UA = "FAFO license worker (+https://fafoaco.com)";
+const picListMs = (env) => Number(env.PICTURES_LIST_MS) > 0 ? Number(env.PICTURES_LIST_MS) : PIC_LIST_MS;   // tests set it
+const picAsksPerDay = (env) => Number(env.PICTURES_ASKS_PER_DAY) > 0 ? Number(env.PICTURES_ASKS_PER_DAY) : PIC_ASKS_PER_DAY;
 // Written the same way on both sides, on the lowercase name without accents or punctuation, in this order.
 const PIC_PHRASES = [
   [/(?<= )pokemon center(?= )/g, "pkc"],
@@ -2803,10 +2809,14 @@ const PIC_PHRASES = [
   [/(?<= )ultra premium collection(?= )/g, "upc"],
   [/(?<= )super premium collection(?= )/g, "spc"],
   [/(?<= )(3|three) (booster |pack )?blister(?= )/g, "blister3"],
+  [/(?<= )booster bundle box(es)?(?= )/g, "booster bundle"],      // Target's name for the Booster Bundle
   [/(?<= )(booster )?display( box)?(?= )|(?<= )booster box(?= )/g, "boosterbox"],
   [/(?<= )\d+ (booster )?packs?(?= )/g, ""],      // what's inside: "(36 Packs)", "6 Booster Packs"
-  // A series' name, which the catalog keeps in its group names ("Mega Evolution—Delta Reign" is its "Delta Reign")
-  [/(?<= )(scarlet and violet|sword and shield|sun and moon|mega evolution|black and white|x and y)(?= )/g, ""],
+  // A series' name is one word (s_…): a store writes "Mega Evolution—Delta Reign" where the catalog writes "Delta Reign"
+  // (its group is "ME03: Delta Reign"), but a series' own set is named after it ("Mega Evolution Booster Bundle"), so
+  // it's not dropped (pictureFits).
+  [/(?<= )scarlet and violet(?= )/g, "s_sv"], [/(?<= )sword and shield(?= )/g, "s_swsh"],
+  [/(?<= )sun and moon(?= )/g, "s_sm"], [/(?<= )mega evolution(?= )/g, "s_me"],
   [/(?<= )pre ?order(?= )|(?<= )only at(?= )/g, ""],
 ];
 const PIC_STOP = new Set(["the", "and", "a", "an", "of", "for", "with", "by", "in", "on", "new", "english", "sealed", "exclusive",
@@ -2816,8 +2826,9 @@ const PIC_KIND = new Set(["pkc", "etb", "upc", "spc", "blister3", "blister", "bo
   "tin", "case", "premium", "figure", "poster", "binder", "build", "battle", "stadium", "deck", "sleeved", "mini", "pin", "kit", "calendar",
   "chest", "portfolio", "playmat", "sleeve", "theme", "starter", "trainer", "toolkit", "accessory", "pouch", "holiday", "special", "card",
   "product", "miscellaneou", "promo"]);
+const isSeries = (w) => w.startsWith("s_");
 function pictureWords(name) {
-  let s = String(name || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/&/g, " and ").replace(/['’`]/g, "");
+  let s = String(name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/&/g, " and ").replace(/['’`]/g, "");
   s = s.replace(/\b(sv|swsh|sm|xy|bw|me|s)\d{1,2}(\.\d|pt\d)?[a-z]?\b/g, " ");   // set codes: "S8.5", "SV8.5", "ME03"
   s = " " + s.replace(/[^a-z0-9]+/g, " ").trim() + " ";
   for (const [re, to] of PIC_PHRASES) s = s.replace(re, to).replace(/ {2,}/g, " ");
@@ -2825,14 +2836,17 @@ function pictureWords(name) {
     .map((w) => w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w)
     .filter((w) => !PIC_STOP.has(w));
 }
-// A product fits a name when every word of the name is in its name (or its group's: an "Elite Trainer Box" in the
-// group "Delta Reign"), and its name has no word the name lacks. `exact`: the product's name alone has them all.
+// A product fits a name when every word of its name is in the name, its series too, and every word of the name is in
+// its name (or its group's: an "Elite Trainer Box" in the group "Delta Reign"), but for the name's series, which the
+// catalog leaves to its group's code. Never another series' product. `exact`: the product's name alone has them all.
 function pictureFits(q, words, groupWords) {
-  if (words.length < 2) return null;
   const c = new Set(words);
+  if ([...c].filter((w) => !isSeries(w)).length < 2) return null;
   for (const w of c) if (!q.has(w)) return null;
+  const its = [...c, ...groupWords].filter(isSeries);
+  if (its.length && [...q].some(isSeries) && !its.some((w) => q.has(w))) return null;
   let fromGroup = 0;
-  for (const w of q) if (!c.has(w)) { if (groupWords.has(w)) fromGroup++; else return null; }
+  for (const w of q) if (!c.has(w) && !isSeries(w)) { if (groupWords.has(w)) fromGroup++; else return null; }
   return { exact: fromGroup === 0 };
 }
 const picKeyOf = (words) => [...new Set(words)].sort().join(" ");
@@ -2844,57 +2858,81 @@ async function catalogGet(env, path) {
   const text = await r.text();
   if (text.length > PIC_LIST_MAX) throw new Error("catalog list too big");
   const j = JSON.parse(text);
-  return Array.isArray(j) ? j : Array.isArray(j && j.results) ? j.results : [];
+  const list = Array.isArray(j) ? j : j && j.success !== false && Array.isArray(j.results) ? j.results : null;
+  if (!list) throw new Error("catalog answer without a list");
+  return list;
 }
-// A list kept in D1: the one there while it's fresh; otherwise read again, or (the catalog not answering) the old one.
-async function pictureList(env, id, now, read) {
-  const row = await env.DB.prepare("SELECT body, until FROM picture_lists WHERE id = ?").bind(id).first();
-  if (row && row.until > now) return { list: JSON.parse(row.body) };
-  let list;
-  try { list = await read(); }
-  catch (e) { console.error("picture catalog", id, e && e.message); return row ? { list: JSON.parse(row.body), stale: true } : { failed: true }; }
-  await env.DB.prepare("INSERT INTO picture_lists (id, body, until, at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET body = excluded.body, until = excluded.until, at = excluded.at")
-    .bind(id, JSON.stringify(list), now + PIC_LIST_MS, now).run();
-  return { list, read: true };
+// A list kept in D1 (`body`: the list as JSON, or {"unread":1} for one that couldn't be read and has no copy yet).
+const picBody = (row) => { try { const v = JSON.parse(row.body); return Array.isArray(v) ? v : null; } catch (e) { return null; } };
+async function picRows(env, ids) {
+  const out = new Map();
+  for (let i = 0; i < ids.length; i += 50) {
+    const part = ids.slice(i, i + 50);
+    const { results } = await env.DB.prepare(`SELECT id, body, until, at FROM picture_lists WHERE id IN (${part.map(() => "?").join(", ")})`).bind(...part).all();
+    for (const r of results) out.set(r.id, r);
+  }
+  return out;
+}
+const PIC_PUT = "INSERT INTO picture_lists (id, body, until, at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET body = excluded.body, until = excluded.until, at = excluded.at";
+// Reads a list from the catalog and keeps it. One that can't be read keeps its last copy (used meanwhile), or an
+// "unread" mark, for an hour, so the next asks don't try it again straight away. {list} or {list: null}.
+async function picRead(env, id, read, now, row) {
+  try {
+    const list = await read();
+    await env.DB.prepare(PIC_PUT).bind(id, JSON.stringify(list), now + picListMs(env), now).run();
+    return { list, read: true };
+  } catch (e) {
+    console.error("picture catalog", id, e && e.message);
+    await env.DB.prepare(PIC_PUT).bind(id, row ? row.body : '{"unread":1}', now + PIC_RETRY_MS, row ? row.at : now).run();
+    return { list: row ? picBody(row) : null };
+  }
 }
 // The groups, newest first: {id, name, at}.
-const pictureGroups = (env, now) => pictureList(env, "groups", now, async () => (await catalogGet(env, "groups"))
+const picGroupsRead = (env) => async () => (await catalogGet(env, "groups"))
   .filter((g) => g && Number.isInteger(g.groupId) && g.name)
   .map((g) => ({ id: g.groupId, name: String(g.name).slice(0, 200), at: String(g.publishedOn || g.modifiedOn || "") }))
-  .sort((a, b) => b.at.localeCompare(a.at) || b.id - a.id));
+  .sort((a, b) => b.at.localeCompare(a.at) || b.id - a.id);
 // A group's sealed products (no card number or rarity, which cards have): {id, name}.
-const pictureSealed = (env, gid, now) => pictureList(env, "g:" + gid, now, async () => (await catalogGet(env, gid + "/products"))
+const picSealedRead = (env, gid) => async () => (await catalogGet(env, gid + "/products"))
   .filter((p) => p && Number.isInteger(p.productId) && (p.name || p.cleanName)
     && !(Array.isArray(p.extendedData) && p.extendedData.some((e) => e && /^(number|rarity)$/i.test(String(e.name || "")))))
-  .map((p) => ({ id: p.productId, name: String(p.name || p.cleanName).slice(0, 300) })));
-// The product a name is, or none. `more`: groups were left for the next ask and nothing was found yet. `trace`
-// (admin) lists the groups searched and every product that fit.
+  .map((p) => ({ id: p.productId, name: String(p.name || p.cleanName).slice(0, 300) }));
+// The product a name is, or none. Groups are searched from what's kept: a fresh copy, or one read now (PIC_BUILDS an
+// ask), or a day-old copy past that. `more`: a group never read yet was left for the next ask, and nothing was found.
+// `incomplete`: a group couldn't be read (so nothing found isn't kept long). `trace` (admin) lists the groups searched and
+// every product that fit.
 async function pictureSearch(env, words, now, trace) {
   const q = new Set(words);
-  const g = await pictureGroups(env, now);
-  if (g.failed) return { failed: true };
-  const groups = g.list.map((x) => ({ ...x, words: new Set(pictureWords(x.name)) }));
+  const gRows = await picRows(env, ["groups"]), gRow = gRows.get("groups");
+  let groupList = gRow && gRow.until > now ? picBody(gRow) : null;
+  if (!groupList) groupList = (await picRead(env, "groups", picGroupsRead(env), now, gRow && picBody(gRow) ? gRow : null)).list;
+  if (!groupList) return { failed: true };
+  const groups = groupList.map((x) => ({ ...x, words: new Set(pictureWords(x.name)) }));
   const shares = (x) => [...x.words].filter((w) => q.has(w) && !PIC_KIND.has(w)).length;
   const named = groups.map((x) => [x, shares(x)]).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, PIC_NAMED).map(([x]) => x);
   const pick = [...new Set([...named, ...groups.slice(0, PIC_NEWEST)])];
-  let builds = 0, more = false, failed = 0;
+  const rows = await picRows(env, pick.map((x) => "g:" + x.id));
+  let builds = 0, more = false, unread = 0;
   const fits = [];
   for (const x of pick) {
-    const fresh = await env.DB.prepare("SELECT 1 AS ok FROM picture_lists WHERE id = ? AND until > ?").bind("g:" + x.id, now).first();
-    if (!fresh) { if (builds >= PIC_BUILDS) { more = true; continue; } builds++; }
-    const s = await pictureSealed(env, x.id, now);
-    if (s.failed) { failed++; continue; }
+    const id = "g:" + x.id, row = rows.get(id);
+    let list;
+    if (row && row.until > now) list = picBody(row);
+    else if (builds < PIC_BUILDS) { builds++; list = (await picRead(env, id, picSealedRead(env, x.id), now, row && picBody(row) ? row : null)).list; }
+    else if (row && picBody(row)) list = picBody(row);
+    else { more = true; continue; }
+    if (!list) { unread++; continue; }
     if (trace) trace.groups.push(x.name);
-    for (const p of s.list) {
+    for (const p of list) {
       const f = pictureFits(q, pictureWords(p.name), x.words);
       if (f) fits.push({ id: p.id, name: p.name, group: x.name, exact: f.exact });
     }
   }
   if (trace) trace.fits = fits;
-  if (!fits.length) return more ? { more: true } : failed && failed === pick.length ? { failed: true } : { product: null };
+  if (!fits.length) return more ? { more: true } : { product: null, incomplete: unread > 0 };
   const exact = fits.filter((f) => f.exact), pool = exact.length ? exact : fits;
-  // Two different products fit (the same product in two groups is one): neither.
-  if (new Set(pool.map((f) => picKeyOf(pictureWords(f.name)))).size > 1) return { product: null, ambiguous: true };
+  // Two different products fit: neither (the same product found in two groups is one).
+  if (new Set(pool.map((f) => f.id)).size > 1) return { product: null, ambiguous: true };
   return { product: pool[0] };
 }
 // The product's picture as a data: address, from TCGplayer's image servers (only its own addresses, by number).
@@ -2919,27 +2957,33 @@ const pictureOut = (row) => row && row.product_id && row.image
   ? { found: true, name: row.name, product: row.product_id, source: "TCGplayer", image: row.image }
   : { found: false };
 // GET /pictures/find?q=NAME (license Bearer): {found, name, product, source, image} or {found:false}, {more:true} (ask
-// again in a minute: the catalog's lists are still being read), 502 when the catalog can't be reached.
+// again in a minute: the catalog's lists are still being read), 502 when the catalog can't be reached, 429 past the
+// day's asks.
 async function pictureFind(request, env, ctx, url) {
   const lic = await slotLicense(request, env);
   if (!lic) return json({ error: "license not recognized" }, 401);
   const words = pictureWords(String(url.searchParams.get("q") || "").slice(0, 300));
-  if (new Set(words).size < 2) return json({ found: false }, 200, NO_STORE);
+  if (new Set(words.filter((w) => !isSeries(w))).size < 2) return json({ found: false }, 200, NO_STORE);
   const key = picKeyOf(words), now = Date.now();
   const row = await env.DB.prepare("SELECT * FROM picture_finds WHERE q = ?").bind(key).first();
   if (row && row.until > now) return json(pictureOut(row), 200, NO_STORE);
+  const asked = await env.DB.prepare(`INSERT INTO picture_asks (key_hash, day, n) VALUES (?, ?, 1)
+    ON CONFLICT (key_hash, day) DO UPDATE SET n = n + 1 RETURNING n`).bind(lic.hash, day(now)).first();
+  if (asked && asked.n > picAsksPerDay(env)) return json({ error: "too many lookups today" }, 429, NO_STORE);
+  // Old rows go now and then (indexed, so it's cheap).
+  if (Math.random() < 0.05) ctx.waitUntil(env.DB.batch([
+    env.DB.prepare("DELETE FROM picture_finds WHERE at < ?").bind(now - PIC_KEEP_MS),
+    env.DB.prepare("DELETE FROM picture_lists WHERE at < ?").bind(now - PIC_KEEP_MS),
+    env.DB.prepare("DELETE FROM picture_asks WHERE day < ?").bind(day(now - 2 * 86400000)),
+  ]).catch((e) => console.error("picture purge", e)));
   const r = await pictureSearch(env, words, now);
   if (r.failed) return json({ error: "the catalog didn't answer" }, 502, NO_STORE);
   if (r.more) return json({ found: false, more: true }, 200, NO_STORE);
   const p = r.product, image = p ? await pictureImage(env, p.id) : null;
   const out = { q: key, product_id: p && image ? p.id : null, name: p && image ? p.name : null, image,
-    until: now + (p ? (image ? PIC_FOUND_MS : PIC_NO_IMAGE_MS) : PIC_MISS_MS), at: now };
+    until: now + (p ? (image ? PIC_FOUND_MS : PIC_RETRY_MS) : r.incomplete ? PIC_RETRY_MS : PIC_MISS_MS), at: now };
   await env.DB.prepare("INSERT INTO picture_finds (q, product_id, name, image, until, at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(q) DO UPDATE SET product_id = excluded.product_id, name = excluded.name, image = excluded.image, until = excluded.until, at = excluded.at")
     .bind(out.q, out.product_id, out.name, out.image, out.until, out.at).run();
-  ctx.waitUntil(env.DB.batch([
-    env.DB.prepare("DELETE FROM picture_finds WHERE at < ?").bind(now - PIC_KEEP_MS),
-    env.DB.prepare("DELETE FROM picture_lists WHERE at < ?").bind(now - PIC_KEEP_MS),
-  ]).catch((e) => console.error("picture purge", e)));
   return json(pictureOut(out), 200, NO_STORE);
 }
 
