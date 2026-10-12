@@ -968,8 +968,9 @@ and makes a new vault that syncs from the start, as Continue with Discord does (
 written when this browser has a vault by then, checked again right before writing). Every press asks `/vault/info` again: a
 vault another device made meanwhile is opened if the password is its own, and otherwise the dialog says another device just
 made one; another tab's vault shows its lock screen (`WEB_TAKEN_MSG`); a key the server doesn't know is refused as before.
-Changing the key goes back to opening, the boxes hold still while a request is out, and Enter in a box goes ahead (its button
-is outside the form, so a browser never submitted it). A Continue with Discord left waiting behind the dialog is cleared once
+Changing the key goes back to opening, the boxes hold still while a request is out, Cancel then stops it (nothing is made or
+opened after the dialog closes), and Enter in a box goes ahead (its button is outside the form, so a browser never submitted
+it). A Continue with Discord left waiting behind the dialog is cleared once
 the vault opens. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the

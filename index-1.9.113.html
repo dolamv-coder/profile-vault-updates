@@ -13536,8 +13536,9 @@ function openSyncSignIn(){
   const known = DESK ? (licRead() || {}).key || "" : "";
   let saved = ""; try { saved = (syncHint() || {}).lic || ""; } catch(e){}
   const intro = "Opens the vault you sync from your other devices. Turn sync on there first: Settings, then Web version &amp; sync. No synced vault yet? FAFO makes one for your license here.";
+  let gone = false;   // the dialog was closed (Cancel, or the lock screen drawn again): nothing is made or opened after that
   openLayer({
-    title:"Open your synced vault", small:true, dismiss:false,
+    title:"Open your synced vault", small:true, dismiss:false, onClose:() => { gone = true; },
     body:`<form id="ss-form" autocomplete="on"><div id="ss-say" aria-live="polite" style="margin:0 0 12px;color:var(--ink-2)"><p style="margin:0">${intro}</p></div>
       ${known ? `<input type="hidden" id="ss-lic" value="${esc(known)}">` : `<div class="field" style="margin-bottom:12px"><label for="ss-lic">License key</label><input id="ss-lic" class="lic-input" spellcheck="false" autocomplete="off" placeholder="PVLT-XXXX-XXXX-XXXX-XXXX" value="${esc(saved)}"><span class="hint">In the FAFO desktop app, it's under Settings, then License.</span></div>`}
       <input class="sr" type="text" name="username" autocomplete="username" value="Profile Vault" tabindex="-1" aria-hidden="true">
@@ -13585,10 +13586,10 @@ function openSyncSignIn(){
         busy(true, making ? "Creating…" : "Opening…");
         try {
           const info = await syncInfo(lic);
-          if (S) return;
+          if (S || gone) return;
           if (!info.exists){
             if (making !== lic){ busy(false); mode(lic); setTimeout(() => pw2.focus(), 30); return; }
-            if (!(await makeSyncedVault(lic, pw))){ if (!S && !taken()) busy(false); return; }
+            if (!(await makeSyncedVault(lic, pw, () => !gone))){ if (!S && !gone && !taken()) busy(false); return; }
             closeAllLayers(); startApp(); settled();
             toast("Your vault is ready. It syncs, so it opens wherever you sign in.");
             return;
@@ -13596,7 +13597,7 @@ function openSyncSignIn(){
           // Made on another device since the dialog asked: opened with this password, if it's that vault's.
           if (making) mode("");
           const o = await syncFetchWith(lic, info, pw);
-          if (S || taken()) return;
+          if (S || gone || taken()) return;
           await syncStartFrom(lic, info, o);
           settled();
           toast("Your synced vault is open");
