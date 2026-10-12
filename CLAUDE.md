@@ -947,7 +947,9 @@ pictures through sync, and finds them itself once desktop updates follow again.
 Also from 1.9.113 (the owner's request: "copy all just name, address line 1, address line 2, or city"), Generate's selection
 bar has **Copy**, and the right-click menu the same items (`draftCopyItems`, `copyDrafts`): the selected drafts' names (as the
 Name column shows them), address lines 1 or 2, or cities, one per line (CRLF) in the order shown, as jigged; a draft without
-one leaves an empty line, so the lines match the drafts row for row, and the toast counts them. Nothing gains a field.
+one leaves an empty line, so the lines match the drafts row for row, and the toast counts them. Nothing gains a field. The
+Send accounts window says one person gets as many as their slot limit (the worker's `accountLimit`, 2026-10-12), where
+1.9.101 to 1.9.112 say 20.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
