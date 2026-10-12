@@ -416,7 +416,7 @@ list you keep here:
   Pokémon Center slot gets that account, with its email on the slot's AYCD profile, so the profile
   checks out with one email at both stores. The store line says so:
   "Pokémon Center 3 (3 assigned accounts, 2 reused from Target)". It doesn't count toward
-  `ASSIGNED_LIMIT` or join your Pokémon Center list (`/admin/accounts` shows it with `reused: 1`). If
+  the license's limit or join your Pokémon Center list (`/admin/accounts` shows it with `reused: 1`). If
   that email is on your Pokémon Center list too, the account from the list is used, with its own
   password, unless another buyer has it; then the slot gets a free account as usual. The slot keeps
   that account if it's sent again in a new batch (and gets it back if that batch doesn't reach your channel), and declining
@@ -471,8 +471,11 @@ list you keep here:
   new batch doesn't reach your channel, the account goes back to the batch it came from, and declining
   the batch it came from leaves it with the new one. Older FAFOs don't say which slots are out, so
   theirs get new accounts as before.
-- **Each license can be given `ASSIGNED_LIMIT` accounts in all** (20 from 2026-10-07, when it was 10;
-  change it in `[vars]` in `wrangler.toml`). An account given back (above) isn't a new one. Slots past
+- **Each license can be given as many accounts in all as its slot limit** (from 2026-10-12): 20
+  (`DEFAULT_SLOT_LIMIT`), or the number you approved when it asked for more slots, so a buyer you
+  approved 50 slots can be given 50 accounts. Before, it was a fixed `ASSIGNED_LIMIT` for everyone (20
+  from 2026-10-07, 10 before that), which still sets the default if you put it back in `[vars]`. An
+  account given back (above) isn't a new one. Slots past
   that, or past the end of the list, come last with no login line, and the store line says how many
   and why, so you can assign those by hand: "(1 needs an account: this license is at its limit of 20)"
   or "(1 needs an account: your list has none)". With no login for any of a store's slots, there's no
