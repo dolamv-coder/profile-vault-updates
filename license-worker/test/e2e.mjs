@@ -1479,6 +1479,28 @@ try {
     assert.deepEqual(emailsOf(aycdOf(m)[0]), [hal.email, "hal9@example.com"]); assert.deepEqual(plain(m)[0].text.split("\r\n").map((l) => l.split(":")[0]), [hal.email]);
     assert.equal((await accounts()).given.filter((a) => a.key_last4 === ginaKey.slice(-4)).length, 10, "still 10"); assert.equal((await accounts()).stores[0].free, free);
   });
+  await test("a license whose slots were raised can be given that many accounts (2026-10-12)", async () => {
+    // At its limit of 10 (the tests' ASSIGNED_LIMIT) until the owner approves more slots: then as many as those.
+    assert.equal((await slots("/slots/request", ginaKey, { requested: 21, name: "Gina" })).status, 200);
+    const link = slotLink(await new Promise((ok) => setTimeout(() => ok(webhookPosts.at(-1).content), 300)));
+    await slotPost(link, "approve");
+    assert.equal((await (await slots("/slots/limit", ginaKey)).json()).limit, 21);
+    const before = webhookPosts.length;
+    const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Jo J0", "jo0@example.com"), slotRow("Jo J1", "jo1@example.com")]), assigned: 2 }];
+    const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 2, batch: "asg5c" + rid(), stores: [{ name: "Target", n: 2, seller: 2 }] })).json();
+    assert.deepEqual(r.accounts, { Target: { asked: 2, got: 2 } }, "past 10 now");
+    const m = webhookPosts.slice(before).find((x) => x.content.startsWith("📦"));
+    assert.match(m.content, /\nTarget 2 \(2 assigned accounts\)\n/);
+    const mine = (await accounts()).given.filter((a) => a.key_last4 === ginaKey.slice(-4));
+    assert.equal(mine.length, 12);
+    // As it was for the tests after: those two back on the list, and the slot limit back to the default.
+    for (const a of mine.filter((x) => /^Jo J/.test(x.profile))) assert.equal((await admin("/admin/accounts/free", { email: a.email })).status, 200);
+    await slotPost(link, "deny");
+    assert.equal((await accounts()).given.filter((a) => a.key_last4 === ginaKey.slice(-4)).length, 10);
+    // Back at 10: nothing more for it.
+    const r2 = await (await slots("/submissions", ginaKey, { files: [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Jo J2", "jo2@example.com")]), assigned: 1 }], name: "Gina", slots: 1, batch: "asg5d" + rid(), stores: [{ name: "Target", n: 1, seller: 1 }] })).json();
+    assert.deepEqual(r2.accounts, { Target: { asked: 1, got: 0 } });
+  });
   await test("the list running out: the rest wait for an account", async () => {
     assert.equal((await accounts()).stores[0].free, 3);
     const rows = Array.from({ length: 4 }, (_, i) => slotRow(`Ida I${i}`, `ida${i}@example.com`));

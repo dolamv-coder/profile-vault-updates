@@ -959,7 +959,7 @@ async function submission(request, env, url) {
   const who = [s.name ? `**${md(s.name)}**` : "", s.username ? `@${md(s.username)}` : "", `license …${s.key_last4}`].filter(Boolean).join(" · ");
   // `seller` slots that got an account from the list, and ones still waiting for the owner to assign one.
   const short = (x) => Math.max(0, x.seller - ((picks.get(x.name) || {}).got || 0));
-  const limit = assignLimit(env);
+  const limit = await accountLimit(env, lic.hash);
   const accts = (x) => {
     const p = picks.get(x.name) || {}, got = p.got || 0, need = short(x);
     // Pokémon Center slots given their profile's Target account again (reuseAccount) say so, as do slots given back the
@@ -1142,8 +1142,8 @@ async function submissionBatches(request, env, url) {
 // each such slot gets a random free account for its store: its email goes in the slot's row (the
 // `email` column, and on its AYCD profile) and email:password is added to that store's logins file (posted for every
 // store but Pokémon Center), so line N still goes with
-// row N. An account goes to one slot only; the buyer never sees it. A license gets ASSIGNED_LIMIT at
-// most in all, and an account picked for a batch that never reached the channel goes back to the list.
+// row N. An account goes to one slot only; the buyer never sees it. A license gets as many in all as its slot limit
+// (accountLimit), and an account picked for a batch that never reached the channel goes back to the list.
 
 const ACCOUNT_OFFERS_PER_DAY = 5;
 const ACCOUNT_OFFER_MAX = 1000;
@@ -1152,7 +1152,15 @@ const ACCOUNT_OFFER_MAX = 1000;
 const offerTtlMs = (env) => Number(env.ACCOUNT_OFFER_TTL_MS) > 0 ? Number(env.ACCOUNT_OFFER_TTL_MS) : 7 * 86400000;
 const expireOffers = (env, now) => env.DB.prepare("UPDATE account_offers SET status = 'expired', accounts = '[]', decided_at = ? WHERE status = 'pending' AND created_at < ?")
   .bind(now, now - offerTtlMs(env)).run();
-const assignLimit = (env) => { const n = Math.floor(Number(env.ASSIGNED_LIMIT)); return String(env.ASSIGNED_LIMIT ?? "").trim() !== "" && n >= 0 ? n : 10; };
+// How many of the owner's accounts a license can be given in all: as many as the slots it can have on at once (2026-10-12,
+// the owner's request: they approved a buyer 50 slots, but that buyer's accounts stopped at the fixed 20 of ASSIGNED_LIMIT). A license
+// on the default slot limit (none approved, or an approval taken back) gets the default: ASSIGNED_LIMIT if it's set (the
+// tests set it), else DEFAULT_SLOT_LIMIT.
+const assignLimit = (env) => { const n = Math.floor(Number(env.ASSIGNED_LIMIT)); return String(env.ASSIGNED_LIMIT ?? "").trim() !== "" && n >= 0 ? n : slotDefault(env); };
+async function accountLimit(env, hash) {
+  const row = await env.DB.prepare("SELECT slot_limit FROM slot_limits WHERE key_hash = ?").bind(hash).first();
+  return row && row.slot_limit !== slotDefault(env) ? row.slot_limit : assignLimit(env);
+}
 // A pick whose batch never reached the channel is freed after this (ASSIGN_STALE_MS overrides it for tests).
 const assignStaleMs = (env) => Number(env.ASSIGN_STALE_MS) > 0 ? Number(env.ASSIGN_STALE_MS) : 60 * 60 * 1000;
 const FREE_ACCOUNT = "key_hash = NULL, key_last4 = NULL, batch = NULL, store_name = NULL, profile = NULL, assigned_at = NULL, sent_at = NULL";
@@ -1384,7 +1392,7 @@ async function assignAccounts(env, lic, batch, files, now, moves, active) {
   const want = files.filter((f) => f.kind === "profiles" && f.assigned > 0).sort((a, b) => (REUSE_FROM[a.storeKey] ? 1 : 0) - (REUSE_FROM[b.storeKey] ? 1 : 0));
   if (!want.length) return picks;
   await freeAccounts(env, "sent_at IS NULL AND key_hash IS NOT NULL AND assigned_at < ?", now - assignStaleMs(env));
-  const limit = assignLimit(env);
+  const limit = await accountLimit(env, lic.hash);
   for (const f of want) {
     const logins = files.find((x) => x.kind === "logins" && x.store === f.store);
     const eol = /\r\n/.test(f.text) ? "\r\n" : "\n";

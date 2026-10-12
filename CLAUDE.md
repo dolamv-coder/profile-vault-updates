@@ -143,8 +143,9 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   Assigned Account), and `/submissions` gives each such row a random free account: its email in the
   row's `email` column (and on both addresses of its AYCD profile) and `email:password` on the matching
   line of the logins file. Buyers never
-  see them; each account goes to one slot; a license gets `ASSIGNED_LIMIT` (20 since 2026-10-07, when it was 10) in
-  all; an account picked for a batch that never reached the channel goes back. Rows left without one come last, and
+  see them; each account goes to one slot; a license gets as many in all as its slot limit (`accountLimit`, from 2026-10-12,
+  the owner's request: they'd approved a buyer 50 slots, whose accounts stopped at the fixed `ASSIGNED_LIMIT` of 20;
+  20 since 2026-10-07, 10 before; `ASSIGNED_LIMIT` is now only the default if set, else `DEFAULT_SLOT_LIMIT`); an account picked for a batch that never reached the channel goes back. Rows left without one come last, and
   since 2026-10-07 the store line says why ("N need an account: this license is at its limit of N", or "your list has
   none"; the owner couldn't tell what happened to a batch's Target logins). Also since 2026-10-07 (the owner's request)
   a profile sent again whose slot isn't out any more gets back the account it had, while it's still that license's,
