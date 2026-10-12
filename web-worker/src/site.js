@@ -8,7 +8,8 @@ export const DOWNLOAD_URL = "https://github.com/dolamv-coder/profile-vault-updat
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-// `version`: the release the web version serves now ("" when it isn't known yet).
+// `version`: the release the web version serves now ("" when it isn't known yet). It's labelled the web version's: the
+// Windows download stays on the release installed apps have while desktop updates are paused (channels.json).
 export function sitePage(version, appUrl = APP_URL) {
   const v = /^[0-9.]{1,20}$/.test(version || "") ? version : "";
   return `<!doctype html>
@@ -96,7 +97,7 @@ footer a{color:var(--ink-2)}
         <a class="btn btn-primary" href="/download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Download for Windows</a>
         <a class="btn" href="${esc(appUrl)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>Open in your browser</a>
       </div>
-      <p class="small">${v ? `Version ${esc(v)} · ` : ""}Windows 10 and 11, or any browser</p>
+      <p class="small">Windows 10 and 11, or any browser${v ? ` · Web version ${esc(v)}` : ""}</p>
     </section>
     <section class="grid" aria-label="What FAFO does">
       <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><h2>Profiles, cards and logins</h2><p>One profile per store, for Target and Pokémon Center. Generate, jig and edit them in bulk. Everything is encrypted with your master password.</p></div>

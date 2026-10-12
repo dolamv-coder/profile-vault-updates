@@ -1,23 +1,32 @@
 # Orbit on the web
 
 `https://app.fafoaco.com` (from 2026-10-10; still `https://app.orbit-app.workers.dev` for older pages and bookmarks)
-opens FAFO in any browser. This worker serves the newest released page, the same `index-X.Y.Z.html` installed apps
-update to:
+opens FAFO in any browser. This worker serves the newest released page, an `index-X.Y.Z.html` from this repo:
 
-1. It reads `update.json` (at most once a minute per worker instance).
+1. It reads `web-update.json` (at most once a minute per worker instance): the web version's own feed, signed like
+   installed apps' `update.json`.
 2. It downloads the page that file names.
-3. It serves the page only if its SHA-256 matches and `update.json`'s signature checks out
+3. It serves the page only if its SHA-256 matches and the feed's signature checks out
    against the publisher key built into the apps. Anything else keeps the last good page.
 
 New releases need nothing here: once the "Publish Orbit update" Action ships one, the web version
 serves it within a minute or so. The address it reads is `UPDATE_URL` in `wrangler.toml`.
 
+## Its own feed (since 2026-10-11)
+
+The owner paused desktop updates on 2026-10-11, until further notice, and asked for work on the fafoaco website only.
+Until then this worker read `update.json`, the same feed installed apps read, so any release reached both. Now it reads
+`web-update.json`. The "Publish Orbit update" Action signs each new page into it, and into `update.json` only while the
+repo's `channels.json` doesn't say `"desktop": "paused"`. So releases reach the web while installed apps stay where
+they are (1.9.112). See the Releases section of the repo's `CLAUDE.md`.
+
 ## Paused at 1.9.67 until 1.9.106
 
 From 2026-10-01, at the owner's request, the web version stayed on Orbit 1.9.67 for one big update: `UPDATE_URL`
 pointed at `update.json` in the "Release 1.9.67" commit, so releases reached installed apps but not the web. With
-1.9.106 (2026-10-10) the owner had it follow releases again: `UPDATE_URL` is main's `update.json`. To hold the web
-version at one release again, point `UPDATE_URL` at `update.json` in that release's commit and merge.
+1.9.106 (2026-10-10) the owner had it follow releases again: `UPDATE_URL` was main's `update.json` (main's
+`web-update.json` since 2026-10-11, below). To hold the web version at one release again, point `UPDATE_URL` at a feed in
+that release's commit and merge.
 
 The page keeps its vault in the browser, encrypted, as the desktop app does. With sync on (Orbit
 1.9.65+), it opens the same vault as the desktop app through the license worker's `/vault`

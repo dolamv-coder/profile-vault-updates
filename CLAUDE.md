@@ -20,6 +20,15 @@ The release feed for installed copies of Orbit. It is not the full source tree.
 - `update.json`: points installed apps at the current release (`version`,
   `url`, `sha256`, `signature`, `notes`, `publishedAt`). Apps accept an update
   only if the signature verifies against the publisher key built into them.
+- `web-update.json`: the same, signed the same way, for the web version (app.fafoaco.com, `web-worker/`): its own
+  feed since 2026-10-11, so the web gets releases while desktop updates are paused.
+- `channels.json`: `{"desktop": "paused", "version", "sha256", "feedSha256"}` keeps `update.json` (installed apps)
+  byte for byte on that release (`feedSha256` is the sha256 of `update.json` itself; the checks refuse any other
+  `update.json`, a copied, re-signed or edited one too); `{"desktop": "follow"}` lets installed apps follow releases
+  again. It's required, and anything else in it fails the checks. **Desktop updates are paused since 2026-10-11, until further notice** (the
+  owner: "paused desktop updates until further notice. work only on fafoaco website"): work only on the fafoaco
+  website (the web version and the front page), and don't set `channels.json` to `follow`, publish a desktop download
+  ("Release desktop app") or change `desktop/` unless the owner asks.
 - `licenses.json`: signed list of SHA-256 hashes of license keys made by hand,
   fetched by the app from
   `raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/licenses.json`.
@@ -210,33 +219,38 @@ The release feed for installed copies of Orbit. It is not the full source tree.
 the desktop wrapper checks
 `raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/update.json`
 (its `update-config.json`; users can point it elsewhere under Settings → Updates),
-and the publish Action below updates that file as soon as a new page and its
-notes reach `main`.
+the web version reads `web-update.json` beside it, and the publish Action below
+updates both as soon as a new page and its notes reach `main` (only
+`web-update.json` while `channels.json` pauses desktop updates).
 
 ## Releases
 
-One commit per release, titled `Release X.Y.Z`, updates `update.json`. The
-"Publish Orbit update" Action (`.github/workflows/publish-update.yml`) makes it:
+One commit per release, titled `Release X.Y.Z`, updates `web-update.json` (the web version) and `update.json`
+(installed apps). While `channels.json` says `"desktop": "paused"` (since 2026-10-11) it updates `web-update.json`
+only and is titled `Release X.Y.Z (web only)`; set back to `"follow"`, the next run brings installed apps up to the
+newest page (`Release X.Y.Z (installed apps)`), with that page's notes, so write them for desktop users catching up
+on everything since 1.9.112. The "Publish Orbit update" Action (`.github/workflows/publish-update.yml`) makes it:
 
 1. Copy the latest `index-*.html` to `index-X.Y.Z.html` and make the change.
 2. Add `release-notes/X.Y.Z.txt`: a sentence or two for the app's update notice.
    Customers read it, so write it for them.
-3. Merge both into `main`. The Action signs `update.json` over the committed
+3. Merge both into `main`. The Action signs the feeds over the committed
    page with the `UPDATE_SIGNING_KEY` secret, checks the signature against the
-   key built into the app, commits it as `Release X.Y.Z`, and waits until
-   raw.githubusercontent.com serves it. Apps check at startup and every 6
+   key built into the app, commits them as `Release X.Y.Z`, and waits until
+   raw.githubusercontent.com serves them (and app.fafoaco.com answers the new
+   version, a warning only). Apps check at startup and every 6
    hours (the page every 30 minutes too), and install it when they restart,
    which from 1.9.100 FAFO does by itself once it's locked and no one is at the
    computer (1.9.100 below). It first waits for the newest
    "Deploy license worker" run on `main` and doesn't publish unless that
    succeeded, since a page may need a worker change merged with it or before it.
 
-**So merging a new page with its notes ships it to every installed app.** Pull
-requests that touch pages, notes or `update.json` run the same checks without
-the key (and the publisher's tests, `.github/scripts/publish-update.test.mjs`).
-The Action fails instead of publishing when a page newer than `update.json` has
-no notes, and when the released page was changed or removed after release (apps
-would refuse it): put changes in a new version instead. It can also be run by
+**So merging a new page with its notes ships it to the web version, and to every installed app unless desktop
+updates are paused.** Pull requests that touch pages, notes, either feed, `channels.json` or the web worker's
+`wrangler.toml` run the same checks without the key (and the publisher's tests,
+`.github/scripts/publish-update.test.mjs`). The Action fails instead of publishing when a page newer than a feed has
+no notes, and when a page either feed points to was changed or removed after release (apps would refuse it), a paused
+`update.json`'s included: put changes in a new version instead. It can also be run by
 hand from the Actions tab, optionally for one version. Don't edit `sha256` or
 `signature` by hand: an unsigned or mis-signed update is rejected by every
 installed app. A page that needs a newer desktop app can't go out this way: sign
@@ -263,7 +277,10 @@ over that copy is rejected by every app. Sign a copy taken from git instead:
       --html /path/outside/repo/index-X.Y.Z.html --notes "What changed"
 
 (`tools/release.mjs` is the signing tool in the publisher's project folder.)
-Copy its `release/update.json` here and commit it as `Release X.Y.Z`. Before
+Copy its `release/update.json` here as both `update.json` and `web-update.json` and commit them as `Release X.Y.Z`.
+**While `channels.json` pauses desktop updates, copy it to `web-update.json` only** (`Release X.Y.Z (web only)`) and
+leave `update.json` exactly as it is: the checks refuse an `update.json` that isn't byte for byte the one
+`channels.json` holds (its `feedSha256`). Before
 pushing, check that the `sha256` matches
 `git show HEAD:index-X.Y.Z.html | sha256sum`. After pushing, raw.githubusercontent.com
 can keep serving the old `update.json` for about 5 minutes.
@@ -323,7 +340,7 @@ who never restarts still sees mail a newer page would clear.
 ## Web version and sync
 
 `web-worker/` serves the newest released page to any browser: it reads
-`update.json` (at most once a minute), downloads the page it names, and serves
+`web-update.json` (at most once a minute; `update.json` until 2026-10-11), downloads the page it names, and serves
 it only if the SHA-256 matches and the signature checks out against the
 publisher key built into the apps; otherwise it keeps the last good page. So a
 release reaches the web the same way it reaches installed apps, and the
@@ -338,10 +355,18 @@ this update"). From 2026-10-01 it was paused at 1.9.67, at the owner's request, 
 `UPDATE_URL` pointed at `update.json` in the "Release 1.9.67" commit, and pages in the meantime kept new data where 1.9.67 would
 sync it as it was (new fields on existing items, new shared settings such as `genDrafts`, `loginGroups`, `itemPics`,
 `canceledGone`) and added no top-level vault keys or store modes, which a 1.9.67 device would have undone. That's why the notes
-from 1.9.68 to 1.9.105 say "the paused web version is unaffected". `UPDATE_URL` is main's `update.json` again, so a browser
-gets each release when it opens or reloads the page. A tab left open on an older page keeps running it until reloaded, like a
+from 1.9.68 to 1.9.105 say "the paused web version is unaffected". From 1.9.106 `UPDATE_URL` was main's `update.json`
+again, and since 2026-10-11 it's main's `web-update.json`, so a browser gets each release when it opens or reloads the page,
+also while desktop updates are paused. A tab left open on an older page keeps running it until reloaded, like a
 desktop app that hasn't restarted, so a release that adds top-level vault keys or store modes still has to expect older
 devices syncing for a while.
+
+**Desktop updates are paused since 2026-10-11** (the owner's request, until further notice; `channels.json`): installed
+apps stay on 1.9.112 while the web version gets each release from `web-update.json`. A desktop on 1.9.112 syncs the same
+vault as a browser on a newer page, so pages in the meantime follow the rule the web kept while it was paused at 1.9.67,
+the other way round: new data goes where 1.9.112 syncs it as it is (new fields on existing items, new shared settings),
+and no new top-level vault keys or store modes, which a 1.9.112 device would undo. Features that need the desktop app
+(email sync, Clean emails, a new `pvDesktop` call) don't reach anyone until desktop updates follow again.
 
 From 1.9.71, **Generate** (sidebar, under Cards) makes profiles in bulk: one address, a name prefix
 (`<name> #n`, numbered after the highest in use), how many, and pasted emails (the first word of each

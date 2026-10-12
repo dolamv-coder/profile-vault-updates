@@ -5,7 +5,8 @@ compatibility_date = "2025-09-01"
 workers_dev = true
 
 [vars]
-# Where the page comes from: installed apps' update address, main's update.json, so the web version follows each
-# release. (From 2026-10-01 to 1.9.106 it was paused at 1.9.67, at the owner's request, with this set to update.json in the
-# "Release 1.9.67" commit; the owner had it follow releases again with 1.9.106.)
-UPDATE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/update.json"
+# Where the page comes from: main's web-update.json, the web version's own feed (since 2026-10-11), signed like installed
+# apps' update.json, so the web version follows each release even while desktop updates are paused (channels.json).
+# (From 2026-10-01 to 1.9.106 the web was paused at 1.9.67, at the owner's request, with this set to update.json in the
+# "Release 1.9.67" commit; from 1.9.106 to 1.9.112 it read main's update.json, as installed apps do.)
+UPDATE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/web-update.json"

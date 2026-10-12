@@ -60,8 +60,9 @@ const block = [];
 for (let i = runAt + 1; i < yml.length && (yml[i].trim() === "" || yml[i].match(/^\s*/)[0].length >= indent); i++) block.push(yml[i].slice(indent));
 const RUN = block.join("\n");
 
-// "origin": a bare repo seeded with this checkout's files, with update.json re-signed by the
-// throwaway key so the test can publish on top of it.
+// "origin": a bare repo seeded with this checkout's files, with both feeds (update.json, web-update.json) re-signed by
+// the throwaway key so the test can publish on top of it, and installed apps following releases (channels.json) until
+// section 11 pauses them.
 const ORIGIN = path.join(T, "origin.git"), SEED = path.join(T, "seed");
 sh("git", ["init", "-q", "--bare", "-b", "main", ORIGIN]);
 sh("git", ["--git-dir", ORIGIN, "config", "uploadpack.allowAnySHA1InWant", "true"]);
@@ -79,6 +80,8 @@ const [a, b, c] = NEW.split(".").map(Number), NEXT = `${a}.${b}.${c + 1}`;
 const baseM = { ...realManifest, version: BASE, url: `index-${BASE}.html`, sha256: sha(readFileSync(path.join(SEED, `index-${BASE}.html`))), notes: "Base." };
 baseM.signature = (await import("node:crypto")).sign(null, Buffer.from(["profile-vault-update", baseM.version, baseM.sha256, baseM.minAppVersion || "0"].join("\n")), good.privateKey).toString("base64");
 writeFileSync(path.join(SEED, "update.json"), JSON.stringify(baseM, null, 2) + "\n");
+writeFileSync(path.join(SEED, "web-update.json"), JSON.stringify(baseM, null, 2) + "\n");
+writeFileSync(path.join(SEED, "channels.json"), JSON.stringify({ desktop: "follow" }, null, 2) + "\n");
 mkdirSync(path.join(SEED, "release-notes"), { recursive: true });
 if (!existsSync(path.join(SEED, `release-notes/${NEW}.txt`))) writeFileSync(path.join(SEED, `release-notes/${NEW}.txt`), `Test notes for ${NEW}.\n`);
 gitc(SEED, "add", "-A"); gitc(SEED, "commit", "-q", "-m", "seed"); gitc(SEED, "push", "-q", ORIGIN, "main:main");
@@ -87,6 +90,7 @@ console.log(`Publishing ${NEW} over ${BASE} (live update.json is ${liveVersion})
 
 const originSha = () => sh("git", ["--git-dir", ORIGIN, "rev-parse", "main"]).trim();
 const originJSON = () => JSON.parse(sh("git", ["--git-dir", ORIGIN, "show", "main:update.json"]));
+const originWeb = () => JSON.parse(sh("git", ["--git-dir", ORIGIN, "show", "main:web-update.json"]));
 const originHead = () => sh("git", ["--git-dir", ORIGIN, "log", "-1", "--format=%s%n%an <%ae>", "main"]).trim();
 // Pages are over a megabyte from 1.9.100, past execFileSync's default buffer; the publisher allows 64 MB too.
 const blob = (v, ref = "main") => execFileSync("git", ["--git-dir", ORIGIN, "show", `${ref}:index-${v}.html`], { maxBuffer: 64 * 1024 * 1024 });
@@ -136,7 +140,7 @@ console.log("2. No key: a clear message, nothing pushed");
 {
   const r = runStep({});
   ok(r.code !== 0 && /UPDATE_SIGNING_KEY secret isn't set up/.test(r.log) && /Environments/.test(r.log), "asks for the environment secret");
-  ok(originJSON().version === BASE, "origin untouched");
+  ok(originJSON().version === BASE && originWeb().version === BASE, "origin untouched");
 }
 
 console.log("3. Wrong key, public key, garbage: refused before writing");
@@ -169,7 +173,9 @@ let published;
   const raw = sh("git", ["--git-dir", ORIGIN, "show", "main:update.json"]);
   ok(raw === JSON.stringify(published, null, 2) + "\n", "2-space JSON with a trailing newline");
   ok(new RegExp(`^Release ${NEW.replace(/\./g, "\\.")}\\ngithub-actions\\[bot\\]`).test(originHead()), `commit "Release ${NEW}" by github-actions[bot]`);
-  ok(sh("git", ["--git-dir", ORIGIN, "show", "--name-only", "--format=", "main"]).trim() === "update.json", "the release commit changes only update.json");
+  ok(sh("git", ["--git-dir", ORIGIN, "show", "--name-only", "--format=", "main"]).trim() === "update.json\nweb-update.json", "the release commit changes the two feeds only");
+  ok(sh("git", ["--git-dir", ORIGIN, "show", "main:web-update.json"]) === raw, "web-update.json is the same signed release");
+  ok(/channels=web,desktop/.test(r.out), "outputs channels=web,desktop");
   ok(!/PRIVATE KEY|test-token/.test(r.log + r.sum), "key and token never in the log or summary");
   ok(new RegExp(`Signed Orbit ${NEW.replace(/\./g, "\\.")}`).test(r.sum), "job summary written");
 }
@@ -213,7 +219,18 @@ console.log("7. A released page changed or removed afterwards fails loudly (apps
     writeFileSync(path.join(C, "update.json"), JSON.stringify(j, null, 2) + "\n");
   });
   r = runStep({});
-  ok(r.code !== 0 && /isn't signed with the key the app trusts/.test(r.log), "mis-signed update.json pushed by hand: fails");
+  ok(r.code !== 0 && /update\.json \(.*isn't signed with the key the app trusts/.test(r.log), "mis-signed update.json pushed by hand: fails");
+  gitc(ORIGIN, "update-ref", "refs/heads/main", before);
+  commitToOrigin("hand-signed web-update.json with a bad signature", (C) => {
+    const j = JSON.parse(readFileSync(path.join(C, "web-update.json"), "utf8")); j.signature = Buffer.alloc(64).toString("base64");
+    writeFileSync(path.join(C, "web-update.json"), JSON.stringify(j, null, 2) + "\n");
+  });
+  r = runStep({});
+  ok(r.code !== 0 && /web-update\.json \(.*isn't signed with the key the app trusts/.test(r.log), "mis-signed web-update.json pushed by hand: fails");
+  gitc(ORIGIN, "update-ref", "refs/heads/main", before);
+  commitToOrigin("remove web-update.json", (C) => rmSync(path.join(C, "web-update.json")));
+  r = runStep({});
+  ok(r.code !== 0 && /web-update\.json isn't on main/.test(r.log), "web-update.json removed: fails, saying the web version reads it");
   gitc(ORIGIN, "update-ref", "refs/heads/main", before);
 }
 
@@ -287,26 +304,32 @@ console.log("9. Key formats");
 
 console.log("10. --check against a local server");
 {
-  const served = { manifest: baseM, page: blob(BASE), fail: 0 };
+  const served = { manifest: baseM, web: null, page: blob(BASE), fail: 0, app: BASE };
+  const hits = { desk: 0, web: 0, app: 0 };
   const srv = http.createServer((q, s) => {
     const u = new URL(q.url, "http://x");
+    if (u.pathname === "/r/update.json") hits.desk++;
+    if (u.pathname === "/r/web-update.json") hits.web++;
+    if (u.pathname === "/app/") hits.app++;
     if (u.pathname === "/r/update.json") { s.setHeader("content-type", "application/json"); return s.end(JSON.stringify(served.manifest)); }
-    if (u.pathname === "/r/" + served.manifest.url) {
+    if (u.pathname === "/r/web-update.json") { s.setHeader("content-type", "application/json"); return s.end(JSON.stringify(served.web || served.manifest)); }
+    if (u.pathname === "/app/") { s.setHeader("x-orbit-version", served.app); return s.end(); }
+    if (u.pathname === "/r/" + served.manifest.url || (served.web && u.pathname === "/r/" + served.web.url)) {
       if (served.fail > 0) { served.fail--; s.statusCode = 429; return s.end("429: Too Many Requests"); }
       return s.end(served.page);
     }
     s.statusCode = 404; s.end("nope");
   });
   await new Promise((r) => srv.listen(0, "127.0.0.1", r));
-  const base = `http://127.0.0.1:${srv.address().port}/r/update.json`;
-  const check = (v) => new Promise((res) => {
-    const p = spawn("node", [SCRIPT, "--check", v], { env: { PATH: process.env.PATH, ORBIT_MANIFEST_URL: base, ORBIT_UPDATE_PUBLIC_KEY: pubB64, CHECK_TRIES: "6", CHECK_WAIT_MS: "300" } });
+  const origin = `http://127.0.0.1:${srv.address().port}`, base = `${origin}/r/update.json`;
+  const check = (v, ch) => new Promise((res) => {
+    const p = spawn("node", [SCRIPT, "--check", v, ...(ch ? [ch] : [])], { env: { PATH: process.env.PATH, ORBIT_MANIFEST_URL: base, ORBIT_WEB_MANIFEST_URL: `${origin}/r/web-update.json`, ORBIT_WEB_APP_URL: `${origin}/app/`, ORBIT_UPDATE_PUBLIC_KEY: pubB64, CHECK_TRIES: "6", CHECK_WAIT_MS: "300" } });
     let o = ""; p.stdout.on("data", (d) => (o += d)); p.stderr.on("data", (d) => (o += d));
     p.on("close", (code) => res({ code, o }));
   });
-  setTimeout(() => { served.manifest = published; served.page = blob(NEW); }, 700);
+  setTimeout(() => { served.manifest = published; served.page = blob(NEW); served.app = NEW; }, 700);
   let r = await check(NEW);
-  ok(r.code === 0 && /Apps are now served Orbit/.test(r.o), "waits for the new version, then confirms it");
+  ok(r.code === 0 && /Apps are now served Orbit/.test(r.o) && /web-update\.json now names Orbit/.test(r.o) && /The web version .* now serves Orbit/.test(r.o), "waits for the new version in both feeds and on the web, then confirms it");
   served.fail = 2;
   r = await check(NEW);
   ok(r.code === 0 && /Apps are now served Orbit/.test(r.o), "rides out a 429 on the page");
@@ -319,7 +342,124 @@ console.log("10. --check against a local server");
   served.manifest = baseM; served.page = blob(BASE);
   r = await check(NEW);
   ok(r.code === 0 && /::warning::.*still serves/.test(r.o), "not served in time: a warning, not a failure");
+  // Web only: the desktop feed isn't looked at, and a web version that hasn't caught up is a warning.
+  served.manifest = baseM; served.web = published; served.page = blob(NEW); served.app = BASE;
+  Object.assign(hits, { desk: 0, web: 0, app: 0 });
+  r = await check(NEW, "web");
+  ok(r.code === 0 && /web-update\.json now names Orbit/.test(r.o) && !/Apps are now served|in update\.json/.test(r.o) && /::warning::The web version .* still answers/.test(r.o) && hits.desk === 0 && hits.app > 0, "web only: checks web-update.json and the web version, never update.json; warns while the web version hasn't caught up");
+  served.manifest = published; served.web = baseM; served.app = BASE;
+  Object.assign(hits, { desk: 0, web: 0, app: 0 });
+  r = await check(NEW, "desktop");
+  ok(r.code === 0 && /Apps are now served Orbit/.test(r.o) && hits.web === 0 && hits.app === 0, "installed apps only: checks update.json, never the web feed or the web version");
+  served.web = null;
+  r = await check(NEW, "phone");
+  ok(r.code !== 0 && /--check takes web, desktop/.test(r.o), "an unknown channel: fails");
   srv.close();
+}
+
+console.log("11. Desktop updates paused (channels.json): new pages go to the web only, then follow again");
+{
+  const [x, y, z] = NEXT.split(".").map(Number), WEB1 = `${x}.${y}.${z + 1}`;
+  const deskBefore = originJSON();
+  const deskBytes = sh("git", ["--git-dir", ORIGIN, "show", "main:update.json"]);
+  const pauseJSON = JSON.stringify({ desktop: "paused", version: deskBefore.version, sha256: deskBefore.sha256, feedSha256: sha(deskBytes), note: "test" }, null, 2) + "\n";
+  commitToOrigin(`pause; page ${WEB1}`, (C) => {
+    writeFileSync(path.join(C, "channels.json"), pauseJSON);
+    writeFileSync(path.join(C, `index-${WEB1}.html`), readFileSync(path.join(C, `index-${NEXT}.html`), "utf8").replace("</body>", `<!-- ${WEB1} --></body>`));
+    writeFileSync(path.join(C, `release-notes/${WEB1}.txt`), `Web notes for ${WEB1}.\n`);
+  });
+  const v = script(["--verify"]);
+  ok(v.code === 0 && /Ready to publish Orbit .* to the web version only/.test(v.log) && new RegExp(`installed apps stay on ${deskBefore.version.replace(/\./g, "\\.")}`).test(v.log), "pull request check: web only, says installed apps stay");
+  // While that web release is pending, the paused update.json is still checked: its page edited, or its signature broken, fails and nothing goes out.
+  const pending = originSha();
+  commitToOrigin("edit the paused desktop page", (C) => writeFileSync(path.join(C, deskBefore.url), readFileSync(path.join(C, deskBefore.url), "utf8") + "<!-- later -->"));
+  let r = runStep({ UPDATE_SIGNING_KEY: KEY });
+  ok(r.code !== 0 && /changed after it was released/.test(r.log) && originWeb().version !== WEB1, "the paused update.json's page edited while a web release is pending: fails, nothing published");
+  gitc(ORIGIN, "update-ref", "refs/heads/main", pending);
+  commitToOrigin("break the paused update.json's signature", (C) => {
+    const j = JSON.parse(readFileSync(path.join(C, "update.json"), "utf8")); j.signature = Buffer.alloc(64).toString("base64");
+    writeFileSync(path.join(C, "update.json"), JSON.stringify(j, null, 2) + "\n");
+  });
+  r = runStep({ UPDATE_SIGNING_KEY: KEY });
+  ok(r.code !== 0 && /has to stay exactly as it was|update\.json \(.*isn't signed/.test(r.log) && originWeb().version !== WEB1, "the paused update.json mis-signed while a web release is pending: fails, nothing published");
+  gitc(ORIGIN, "update-ref", "refs/heads/main", pending);
+  r = runStep({ UPDATE_SIGNING_KEY: KEY });
+  ok(r.code === 0 && new RegExp(`version=${WEB1.replace(/\./g, "\\.")}`).test(r.out) && /channels=web\n/.test(r.out), `published ${WEB1}, channels=web`);
+  const w = originWeb();
+  ok(w.version === WEB1 && appAccepts(w, blob(WEB1)) === null && w.notes === `Web notes for ${WEB1}.`, "web-update.json names it, signed, with its notes");
+  ok(JSON.stringify(originJSON()) === JSON.stringify(deskBefore), "update.json (installed apps) unchanged");
+  ok(/^Release .* \(web only\)$/.test(originHead().split("\n")[0]) && sh("git", ["--git-dir", ORIGIN, "show", "--name-only", "--format=", "main"]).trim() === "web-update.json", `commit "Release ${WEB1} (web only)" changes web-update.json only`);
+  r = runStep({});
+  ok(r.code === 0 && /published=false/.test(r.out) && /Desktop updates are paused/.test(r.sum), "running again: nothing, and the summary says installed apps are held");
+  r = runStep({ UPDATE_SIGNING_KEY: KEY, VERSION: WEB1 });
+  ok(r.code === 0 && /published=false/.test(r.out), "asking for that version again while paused: nothing");
+
+  // A page the web feed points to, changed afterwards, still fails.
+  const pausedAt = originSha();
+  commitToOrigin("edit web-only page", (C) => writeFileSync(path.join(C, `index-${WEB1}.html`), readFileSync(path.join(C, `index-${WEB1}.html`), "utf8") + "<!-- later -->"));
+  r = runStep({});
+  ok(r.code !== 0 && /changed after it was released/.test(r.log), "the web feed's page edited later: fails");
+  gitc(ORIGIN, "update-ref", "refs/heads/main", pausedAt);
+
+  // While paused, update.json can't move: a copy of web-update.json (validly signed: both feeds sign the same message) or a
+  // hand-signed one fails the pull request check and the Action, so it never reaches installed apps.
+  commitToOrigin("copy the web feed over update.json", (C) => writeFileSync(path.join(C, "update.json"), readFileSync(path.join(C, "web-update.json"))));
+  r = runStep({});
+  ok(r.code !== 0 && /Desktop updates are paused .* update\.json has to stay exactly as it was/.test(r.log), "paused: web-update.json copied over update.json fails");
+  ok(script(["--verify"]).code !== 0, "…and the pull request check fails too");
+  gitc(ORIGIN, "update-ref", "refs/heads/main", pausedAt);
+  // The same release, re-signed with another minAppVersion and installerUrl (what --min-app/--installer-url make), or
+  // edited without signing (an absolute url, other notes): installed apps would see it, so it fails too.
+  const { sign: signM } = await import("node:crypto");
+  const resigned = { ...deskBefore, minAppVersion: "99.0.0", installerUrl: "https://example.test/other.zip" };
+  resigned.signature = signM(null, Buffer.from(["profile-vault-update", resigned.version, resigned.sha256, resigned.minAppVersion].join("\n")), good.privateKey).toString("base64");
+  for (const [name, m] of [["re-signed with another minAppVersion and installerUrl", resigned], ["an absolute url, not re-signed", { ...deskBefore, url: "https://example.test/index.html" }], ["other notes", { ...deskBefore, notes: "Something else." }], ["the same, reformatted", null]]) {
+    commitToOrigin(`paused update.json: ${name}`, (C) => writeFileSync(path.join(C, "update.json"), m ? JSON.stringify(m, null, 2) + "\n" : JSON.stringify(deskBefore) + "\n"));
+    r = runStep({});
+    ok(r.code !== 0 && /has to stay exactly as it was/.test(r.log), `paused update.json ${name}: fails`);
+    gitc(ORIGIN, "update-ref", "refs/heads/main", pausedAt);
+  }
+
+  // channels.json that's missing, says something else, or isn't a JSON object: fails rather than taking it for "follow".
+  const badChannels = [
+    ["deleted", null, /channels\.json isn't on main/],
+    ["an unknown value", JSON.stringify({ desktop: "Paused", version: deskBefore.version, sha256: deskBefore.sha256 }), /has to be "paused" or "follow"/],
+    ["a misspelled key", JSON.stringify({ Desktop: "paused" }), /doesn't know/],
+    ["no desktop key", JSON.stringify({ note: "x" }), /has to be "paused" or "follow"/],
+    ["not JSON", "{desktop: paused}", /isn't valid JSON/],
+    ["null", "null", /isn't a JSON object/],
+    ["an array", "[]", /isn't a JSON object/],
+    ["a bare string", JSON.stringify("paused"), /isn't a JSON object/],
+    ["paused without the release it holds", JSON.stringify({ desktop: "paused" }), /without saying which release/],
+    ["paused without the feed's own sha256", JSON.stringify({ desktop: "paused", version: deskBefore.version, sha256: deskBefore.sha256 }), /without saying which release/],
+    ["paused on another release", JSON.stringify({ desktop: "paused", version: BASE, sha256: baseM.sha256, feedSha256: sha(deskBytes) }), /has to stay exactly as it was/],
+  ];
+  for (const [name, body, re] of badChannels) {
+    commitToOrigin(`channels: ${name}`, (C) => body === null ? rmSync(path.join(C, "channels.json")) : writeFileSync(path.join(C, "channels.json"), body));
+    r = runStep({ UPDATE_SIGNING_KEY: KEY });
+    ok(r.code !== 0 && re.test(r.log) && JSON.stringify(originJSON()) === JSON.stringify(deskBefore), `channels.json ${name}: fails, installed apps untouched`);
+    gitc(ORIGIN, "update-ref", "refs/heads/main", pausedAt);
+  }
+
+  // Following again: installed apps catch up to the newest page; the web feed stays as it is.
+  const webBefore = sh("git", ["--git-dir", ORIGIN, "show", "main:web-update.json"]);
+  commitToOrigin("follow", (C) => writeFileSync(path.join(C, "channels.json"), JSON.stringify({ desktop: "follow" }, null, 2) + "\n"));
+  r = runStep({ UPDATE_SIGNING_KEY: KEY });
+  const d = originJSON();
+  ok(r.code === 0 && /channels=desktop\n/.test(r.out) && d.version === WEB1 && appAccepts(d, blob(WEB1)) === null, `following again: update.json catches up to ${WEB1}, signed`);
+  ok(d.minAppVersion === deskBefore.minAppVersion && d.installerUrl === deskBefore.installerUrl, "…keeping update.json's own minAppVersion and installerUrl");
+  ok(/^Release .* \(installed apps\)$/.test(originHead().split("\n")[0]) && sh("git", ["--git-dir", ORIGIN, "show", "main:web-update.json"]) === webBefore, `commit "Release ${WEB1} (installed apps)", web-update.json untouched`);
+}
+
+console.log("12. The web version reads web-update.json");
+{
+  const toml = readFileSync(path.join(REPO, "web-worker/wrangler.toml"), "utf8");
+  ok(/^UPDATE_URL = "https:\/\/raw\.githubusercontent\.com\/dolamv-coder\/profile-vault-updates\/main\/web-update\.json"$/m.test(toml), "wrangler.toml's UPDATE_URL is main's web-update.json");
+  const idx = readFileSync(path.join(REPO, "web-worker/src/index.js"), "utf8");
+  ok(/const UPDATE_URL = "https:\/\/raw\.githubusercontent\.com\/dolamv-coder\/profile-vault-updates\/main\/web-update\.json";/.test(idx), "…and so is the worker's own default");
+  const real = appVerifier("MCowBQYDK2VwAyEAjMqbFzE6HEjJ+PZAxJdcRPQutn4Eh6YjedtapiYe48o=");
+  const wm = JSON.parse(readFileSync(path.join(REPO, "web-update.json"), "utf8"));
+  ok(real(wm, readFileSync(path.join(REPO, wm.url))) === null, `this checkout's web-update.json (${wm.version}) verifies with the real key`);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
