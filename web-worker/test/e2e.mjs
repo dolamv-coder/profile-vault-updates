@@ -96,10 +96,13 @@ try {
     const site = `http://localhost:${WORKER_PORT}`;
     const r = await fetch(site + "/", { redirect: "manual" });
     const body = await r.text();
-    assert.equal(r.status, 200); assert.match(body, /Your slots in\. Your orders tracked\./); assert.match(body, /<p class="small">Web version 1\.9\.0<\/p>/);
-    // Since 2026-10-13 (the owner's request): one button, Login with Discord, to the app; no Windows download on the page.
-    assert.match(body, /<a class="btn btn-discord" href="https:\/\/app\.fafoaco\.com"><svg[^>]*>.*<\/svg>Login with Discord<\/a>/);
-    for (const gone of [/Download for Windows/, /Open in your browser/, /Windows 10 and 11/, /any browser/, /href="\/download"/]) assert.doesNotMatch(body, gone);
+    assert.equal(r.status, 200); assert.match(body, /<h1 class="display"><span>Your slots in\.<\/span><span class="grad">Your orders tracked\.<\/span><\/h1>/);
+    assert.match(body, /Web version 1\.9\.0 · Encrypted with your master password/);
+    // Since 2026-10-13 (the owner's request): Login with Discord, to the app, is the page's button; no Windows download on it.
+    const logins = [...body.matchAll(/<a class="btn btn-primary[^"]*" href="([^"]+)"[^>]*><svg class="dc"[^>]*>.*?<\/svg><span[^>]*>Login with Discord<\/span>/g)];
+    assert.ok(logins.length >= 3, "Login with Discord in the header, the hero and the last call");
+    for (const m of logins) assert.equal(m[1], "https://app.fafoaco.com");
+    for (const gone of [/Download for Windows/, /Open in your browser/, /Windows 10 and 11/, /any browser/, /href="\/download"/, /<script[^>]+src=/]) assert.doesNotMatch(body, gone);
     assert.equal(r.headers.get("content-type"), "text/html; charset=utf-8"); assert.equal(r.headers.get("x-frame-options"), "DENY");
     assert.equal(r.headers.get("x-orbit-version"), null);
     const d = await fetch(site + "/download", { redirect: "manual" });
