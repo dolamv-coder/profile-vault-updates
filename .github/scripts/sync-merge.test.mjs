@@ -226,6 +226,23 @@ test("an order deleted on one side doesn't come back from the other side's email
   assert.deepEqual(ids(merge(local, manual, base).state.orders), ["o1c"], "one added by hand stays");
 });
 
+if (/u\.v\.fromSeller/.test(html.slice(start, end))) test("an order from the seller deleted on one side doesn't come back from the other side's alerts (1.9.115)", () => {
+  // A device whose copy was behind (it never had the order) heard of it from the seller's order alerts, after another
+  // device had added it, synced and deleted it.
+  const base = blank();
+  const sold = { id: "sa-0123456789abcdef0123", store: "target", storeName: "", orderNo: "912003760001", item: "Box", inbox: "", fromSeller: true, profile: "Target #3", stage: "placed" };
+  const stale = clone(base); stale.orders.push(clone(sold));
+  const online = clone(base); online.deletedOrders = { [orderKey(sold)]: 1000 };
+  for (const [l, r] of [[stale, online], [online, stale]]) {
+    const m = merge(l, r, base);
+    assert.deepEqual(m.state.orders, []);
+    assert.deepEqual(m.state.deletedOrders, online.deletedOrders);
+  }
+  const manual = clone(stale); manual.orders[0] = { id: "o9", store: "target", orderNo: "912003760001", item: "Box" };
+  assert.deepEqual(ids(merge(manual, online, base).state.orders), ["o9"], "one added by hand stays");
+  assert.deepEqual(ids(merge(stale, base, base).state.orders), [sold.id], "with nothing deleted, it's kept");
+});
+
 test("items without an id, or with the same id twice, aren't lost", () => {
   const base = blank(); base.checkouts.push({ store: "target", n: 1 }, { id: "dup", n: 2 }, { id: "dup", n: 3 });
   const local = clone(base), remote = clone(base);

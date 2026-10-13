@@ -10718,14 +10718,18 @@ function orderStuck(o){
 const recentlyCanceled = (o) => { if (o.stage !== "canceled") return false; const n = daysSince((o.dates && o.dates.canceled) || o.statusAt); return n >= 0 && n <= 7; };
 const needsAttention = (o) => !!orderStuck(o) || recentlyCanceled(o);
 
+// Android's browsers only show notifications through a service worker (`new Notification` throws there): none is asked for
+// or tried there.
+const ANDROID = /Android/i.test(navigator.userAgent || "");
 // Shows a Windows notification (and flashes the taskbar) plus sends the same alert to the phone app.
 function sendAlert(title, body, tag){
   try {
-    if ("Notification" in window){
-      // Opens Orders on the ones needing attention (an order from the seller: every order), over all time, since a
-      // shorter Showing period could hide them.
-      // Android's browsers only show notifications through a service worker, and `new Notification` throws there.
-      const show = () => { try { const n = new Notification(title, {body, tag}); n.onclick = () => { try { window.focus(); if (window.pvDesktop && window.pvDesktop.focusApp) window.pvDesktop.focusApp(); UI.view = "orders"; UI.orderStage = tag === "pv-seller" ? "all" : "attention"; if (S && orderPeriodCfg().p !== "all"){ S.settings.orderPeriod = Object.assign(orderPeriodCfg(), {p:"all"}); persist(); } render(); } catch(e){} n.close(); }; } catch(e){} };
+    if ("Notification" in window && !ANDROID){
+      // Opens Orders on the ones needing attention (an order from the seller: every order, whatever inbox, store or
+      // search was picked), over all time, since a shorter Showing period could hide them.
+      const show = () => { try { const n = new Notification(title, {body, tag}); n.onclick = () => { try { window.focus(); if (window.pvDesktop && window.pvDesktop.focusApp) window.pvDesktop.focusApp(); UI.view = "orders";
+        if (tag === "pv-seller"){ UI.orderStage = "all"; UI.orderInbox = "all"; UI.store = "all"; UI.q = ""; const qb = $("#q"); if (qb) qb.value = ""; } else UI.orderStage = "attention";
+        if (S && orderPeriodCfg().p !== "all"){ S.settings.orderPeriod = Object.assign(orderPeriodCfg(), {p:"all"}); persist(); } render(); } catch(e){} n.close(); }; } catch(e){} };
       if (Notification.permission === "granted") show(); else if (Notification.permission !== "denied") Notification.requestPermission().then(p => { if (p === "granted") show(); });
     }
     if (window.pvDesktop && window.pvDesktop.attention) window.pvDesktop.attention().catch(() => {});
@@ -10859,8 +10863,26 @@ function orderAlertsSectionHTML(){
 }
 
 // In the desktop app, and in the web version on its own address (not claude.ai or a file) once the vault has
-// a license key: synced, or given on Submit.
-const sellerAlertsCan = () => !!S && (DESK || WEB_SELF) && !!sellerLic();
+// a license key: synced, or given on Submit. Never in a vault made to fill in a code.
+const sellerAlertsCan = () => !!S && MODE === "vault" && (DESK || WEB_SELF) && !!sellerLic();
+// How long to wait before asking (0: now). Not with a window open (an open order editor would save its step over a newer
+// one) or email syncing. Synced, only on a copy that has just caught up with the online one: an older copy (before this
+// device's first merge, a tab back in view, a hidden one) would add again orders deleted on another device, undo edits
+// made there and alert again about orders other devices already added. While sync is in trouble (offline, a password to
+// type, an error), not until it's back.
+// `got`: the alerts are in, asked on a copy that had just caught up.
+function sellerAlertsWait(got){
+  if (syncBlocked()) return 15000;
+  if (!syncOn()) return 0;
+  if (SYNC.busy) return 3000;
+  if (got) return 0;
+  if (!SYNC.oneStoreDue && Date.now() - (+S._local.okAt || 0) <= 30000) return 0;
+  if (["offline", "error", "password", "license", "locked"].includes(SYNC.state)) return 60000;
+  syncSoon(0);
+  return 3000;
+}
+// A browser shows a notification from a hidden tab only with permission (and not on Android).
+const webCanNotify = () => "Notification" in window && !ANDROID && Notification.permission === "granted";
 function scheduleSellerAlerts(){
   clearInterval(sellerTimer); clearTimeout(sellerSoonTimer);
   if (!S || !(DESK || WEB_SELF)) return;
@@ -10877,10 +10899,11 @@ document.addEventListener("visibilitychange", sellerAlertsBack);
 window.addEventListener("online", sellerAlertsBack);
 async function pollSellerAlerts(){
   if (!sellerAlertsCan() || sellerBusy) return;
-  // Not before this device's first merge with the online copy, whose orders and newest alert seen are likely
-  // newer than this copy's, nor with a window open (an open order editor would save its step over a newer one)
-  // or email syncing: shortly after.
-  if (SYNC.oneStoreDue || syncBlocked()) return sellerAlertsSoon(15000);
+  // A hidden browser tab that can't show a notification leaves the alert to the buyer's other devices (a desktop then
+  // notifies, and tells their phone), and asks once it's shown again (sellerAlertsBack).
+  if (!DESK && document.hidden && !webCanNotify()) return;
+  const wait = sellerAlertsWait();
+  if (wait) return sellerAlertsSoon(wait);
   sellerBusy = true; sellerAskedAt = Date.now();
   const vault = S;
   try {
@@ -10889,7 +10912,7 @@ async function pollSellerAlerts(){
     const was = +S.settings.sellerSince || 0, all = [];
     let since = was;
     for (let page = 0; page < 5; page++){
-      const r = await alertApi("/alerts?since=" + Math.max(0, since - (page ? 0 : 120000)));
+      const r = await alertApi("/alerts?since=" + Math.max(0, since - (page ? 0 : 120000)), {signal:typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(20000) : undefined});
       if (!r.ok) break;
       const list = (await r.json()).alerts || [];
       all.push(...list);
@@ -10897,12 +10920,16 @@ async function pollSellerAlerts(){
       if (list.length < 200) break;
     }
     if (S !== vault) return;   // locked meanwhile
+    // A window opened, or a sync round started, while it asked: nothing goes in now (nor does the newest seen move), so
+    // the next ask gets the same alerts.
+    const again = sellerAlertsWait(true);
+    if (again) return sellerAlertsSoon(again);
     const news = applySellerAlerts(all);
     // A merge meanwhile may have brought a newer one from another device.
     if (since > was) S.settings.sellerSince = Math.max(since, +S.settings.sellerSince || 0);
     if (since > was || news.length) persist();
     if (!news.length) return;
-    render(); autoPicturesSoon();   // the product's picture for a new one (1.9.113)
+    syncRender(); autoPicturesSoon();   // the product's picture for a new one (1.9.113)
     const what = ([o, a]) => `${a.profile ? a.profile + ": " : ""}${o.item || "Order"}${(+o.qty || 1) > 1 ? " ×" + o.qty : ""}`;
     const head = ([o, a]) => `${orderStoreLabel(o)} ${ALERT_STEP_TEXT[a.stage]}`;
     const title = news.length === 1 ? head(news[0]) : `${news.length} order updates from your seller`;
@@ -13029,8 +13056,8 @@ function syncMerge(L, R, base, lmt, rmt, keyOf, orig){
       let ok; try { ok = keyOf(u.v); } catch(e){ continue; }
       // Deleted on one side (it was there when they agreed): the deletion stands.
       if (D[ok] && one(k) && base[k] !== undefined){ pick.delete(k); delete mt[k]; continue; }
-      // Imported from email on one side after the other deleted it.
-      if (D[ok] && fresh(k) && u.v.inbox){ pick.delete(k); delete mt[k]; continue; }
+      // Imported from email, or from the seller's order alerts (1.9.115), on one side after the other deleted it.
+      if (D[ok] && fresh(k) && (u.v.inbox || u.v.fromSeller)){ pick.delete(k); delete mt[k]; continue; }
       if (!u.v.orderNo || !fresh(k)) continue;
       if (!same.has(ok)) same.set(ok, []);
       same.get(ok).push(k);

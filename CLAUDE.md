@@ -1039,15 +1039,24 @@ the worker section above; the owner's request, 2026-10-13, once the front page s
 out): `scheduleSellerAlerts` and `pollSellerAlerts` ran only in the desktop app, with its license, so a buyer who only used
 app.fafoaco.com never saw one. They now run where `sellerAlertsCan`: the desktop app, or the web version on its own address
 (`WEB_SELF`, not claude.ai or a file) once the vault has a license key (`sellerLic()`, which `alertApi` now uses for every
-call; the seller's side stays in the desktop app). It doesn't ask before this device's first merge with the online copy
-(`SYNC.oneStoreDue`: a browser's copy can be days behind, its `sellerSince` too, and would alert again about orders another
-device already added), nor while a window is open or email syncs (`syncBlocked()`: the order editor saves its Status over a
-newer step), trying again 15 seconds later. A tab coming back into view (a phone's browser stops a background tab's timers)
-or back online asks at once, at most once a minute (`sellerAlertsBack`). `sellerSince` never goes back when a merge brought
-a newer one meanwhile, nothing is applied to a vault locked meanwhile, a new order gets its picture right away
-(`autoPicturesSoon`), a notification Android's browsers can't show (`new Notification` throws there) no longer throws, and
-clicking one about an order from the seller opens Orders on All, not Needs attention. The web version has no Settings →
-Alerts, so the buyer's own Discord webhook for these is still set in the desktop app. Only slots on Use Assigned Account
+call; the seller's side stays in the desktop app), and only in the vault itself (`MODE`, not a code being filled in).
+`sellerAlertsWait` holds an ask back while a window is open or email syncs (`syncBlocked()`: the order editor saves its
+Status over a newer step), checked again once the answer is in (nothing goes in and `sellerSince` doesn't move, so the next
+ask gets the same alerts), and, with sync on, until the copy has just caught up with the online one (a round under way, or
+none ended well in the last 30 seconds, `S._local.okAt`: it starts one) and not while sync is in trouble: on an older copy
+(before this device's first merge, a tab back in view, a hidden one) the alerts would add again orders deleted on another
+device, undo edits made there and alert again about orders other devices already had (the review's repro, 2026-10-13). As a
+backstop, `syncMerge` treats a seller's order added on one side after the other deleted it like an email import: it stays
+deleted (`u.v.fromSeller`; `sync-merge.test.mjs` tests it), which also covers a 1.9.112 desktop asking before its first
+merge. A browser tab in the background asks only if it can show a notification (`webCanNotify`: permission given, not
+Android); otherwise the buyer's desktop gets the alert, with its Windows notification and the phone's, and the tab asks
+once it's shown again, as it does back online (`sellerAlertsBack`, at most once a minute; a phone's browser stops a
+background tab's timers). Each request gives up after 20 seconds, `sellerSince` never goes back when a merge brought a
+newer one meanwhile, nothing is applied to a vault locked meanwhile, and a new order gets its picture right away
+(`autoPicturesSoon`). Android's browsers only show notifications through a service worker (`new Notification` throws
+there), so FAFO neither asks for permission nor tries there (`ANDROID`). Clicking a notification about an order from the
+seller opens Orders on All, with every inbox and store and no search, not Needs attention. The web version has no Settings
+→ Alerts, so the buyer's own Discord webhook for these is still set in the desktop app. Only slots on Use Assigned Account
 get these: an order on the buyer's own store login reaches FAFO through that login's inbox, which only the desktop app
 syncs. Nothing gains a field.
 
