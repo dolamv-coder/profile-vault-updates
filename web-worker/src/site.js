@@ -27,7 +27,6 @@ const ICONS = {
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
-  sparkle: '<path d="M12 3l1.8 4.7 4.7 1.8-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.7 1.8 1.8.7-1.8.7L19 20l-.7-1.8-1.8-.7 1.8-.7z"/>',
   eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   send: '<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/>',
@@ -326,7 +325,7 @@ section.sec#features{background:var(--band);margin-top:120px;padding:104px 0 112
 /* Bento */
 .bento{margin-top:56px;display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:20px}
 .cell{grid-column:span 6;border-radius:26px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow);padding:14px 14px 22px;display:flex;flex-direction:column;overflow:hidden}
-.cell.w7{grid-column:span 7}.cell.w5{grid-column:span 5}
+.cell.w7{grid-column:span 7}.cell.w5{grid-column:span 5}.cell.w12{grid-column:1/-1}
 .cell .art{min-height:250px;height:auto;border-radius:18px;--tint-bg:rgba(14,165,233,.09)}
 .cell .art{border:0;background:none;padding:22px;overflow:visible}
 .cell .art::before{content:"";position:absolute;inset:0;background:radial-gradient(circle,var(--dot) 1px,transparent 1.3px) 0 0/18px 18px;-webkit-mask-image:radial-gradient(75% 85% at 50% 45%,#000 35%,transparent 100%);mask-image:radial-gradient(75% 85% at 50% 45%,#000 35%,transparent 100%)}
@@ -348,12 +347,6 @@ section.sec#features{background:var(--band);margin-top:120px;padding:104px 0 112
 .big strong{display:block;font:800 64px/1 "Inter",sans-serif;letter-spacing:-.04em;color:var(--ok)}
 .big .meter{max-width:250px;height:10px;margin:16px auto 10px}
 .big small{color:var(--ink-3);font-size:13px}
-.pics{display:grid;grid-template-columns:repeat(3,64px);gap:12px}
-.pics .thumb{width:64px;height:64px;border-radius:16px;font-size:26px;box-shadow:var(--shadow)}
-.pics .thumb.e{background:linear-gradient(135deg,#BAE6FD,#0284C7)}.pics .thumb.f{background:linear-gradient(135deg,#FBCFE8,#DB2777)}
-.pics .found{position:relative}
-.pics .found::after{content:"";position:absolute;inset:-5px;border-radius:20px;border:2px solid #0EA5E9}
-.pics .spark{position:absolute;right:-9px;top:-9px;width:24px;height:24px;border-radius:50%;background:#0EA5E9;color:#fff;font-size:13px;display:flex;align-items:center;justify-content:center;z-index:1}
 .devices{display:flex;align-items:center;gap:18px}
 .dev{background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--ink-2);font-size:12.5px;font-weight:600}
 .dev .i{font-size:28px;color:var(--ink)}
@@ -435,7 +428,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
   .step{padding:22px;border-radius:24px}
   .art{min-height:340px;padding:18px;border-radius:18px}
   .bento{grid-template-columns:minmax(0,1fr);gap:16px}
-  .cell,.cell.w7,.cell.w5{grid-column:auto;padding:16px}
+  .cell,.cell.w7,.cell.w5,.cell.w12{grid-column:auto;padding:16px}
   .qs details p{margin-right:0}
   .devices{gap:10px}
   .dev.pc{width:120px;height:96px}.dev.ph{width:68px;height:116px}
@@ -563,8 +556,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
           <div class="steps-line"><span class="d">Placed</span><span class="d">Shipped</span><span class="d">Arriving</span><span>Delivered</span></div>
         </div></div><h3>Every order in one place.</h3><p>Paste your order confirmation emails into Orders and each one becomes an order. Mark it shipped, arriving, delivered or canceled as it goes.</p></div>
         <div class="cell w5"><div class="art" aria-hidden="true"><div class="big"><strong>92%</strong><span class="meter"><i style="flex:23"></i><i style="flex:2"></i></span><small>23 items stuck · 2 canceled</small></div></div><h3>Your stick rate, on your success card.</h3><p>Generate success shows how many of your items weren't canceled, for today, this week or any dates you pick.</p></div>
-        <div class="cell w5"><div class="art" aria-hidden="true"><div class="pics"><span class="thumb a">${ic("box")}</span><span class="thumb e">${ic("box")}</span><span class="thumb b">${ic("box")}</span><span class="thumb c">${ic("box")}</span><span class="thumb found f"><span class="spark">${ic("sparkle")}</span>${ic("image")}</span><span class="thumb d">${ic("box")}</span></div></div><h3>Pictures, found for you.</h3><p>Pokémon products get their picture on their own, from TCGplayer's catalog. Paste or drop your own any time.</p></div>
-        <div class="cell w7"><div class="art" aria-hidden="true"><div class="devices"><span class="dev pc">${ic("monitor")}Computer</span><span class="syncdot"><span class="t ok">${ic("sync")}</span>Synced</span><span class="dev ph">${ic("phone")}Phone</span></div></div><h3>One vault, every screen.</h3><p>Log in with Discord on your computer and your phone, and the same vault opens on both. It's encrypted before it leaves either one.</p></div>
+        <div class="cell w12"><div class="art" aria-hidden="true"><div class="devices"><span class="dev pc">${ic("monitor")}Computer</span><span class="syncdot"><span class="t ok">${ic("sync")}</span>Synced</span><span class="dev ph">${ic("phone")}Phone</span></div></div><h3>One vault, every screen.</h3><p>Log in with Discord on your computer and your phone, and the same vault opens on both. It's encrypted before it leaves either one.</p></div>
       </div>
     </div>
   </section>
