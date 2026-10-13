@@ -991,6 +991,30 @@ on or over a vault another tab saved meanwhile. The desktop dialog and Enter you
 their password box (`autofocus`; openLayer's first focus was the hidden username box for password managers). The release note
 doesn't mention it: only desktop users read notes, and updating one already has a vault. Nothing gains a field.
 
+From 1.9.114 a vault that never synced no longer says the master password was changed on another device when another device
+made the license's synced vault first (a review of 1.9.113 found it, 2026-10-13). Turn on sync (`openSyncOn`), Continue with
+Discord (`webVaultSubmit`) and Enter it instead (`openSyncSignIn`; both `makeSyncedVault`) make such a vault (`_local` with
+`rev:0, vid:0`, and its own random salt) and leave making the online copy to its first round (`syncCycle` → `syncPush`, `PUT
+/vault?base=0`). A copy another device made after the last `/vault/info` (which 1.9.113 asks right before making one on the web)
+or while that first upload was offline or failing wins: this vault's token comes from its own salt, so it never opens that
+copy, even with the same password, and its 403 read as a password changed elsewhere, sent again at every unlock (`syncStart`
+resets the state), each counting toward that copy's lockout (`VAULT_FAILS`: ten, each within 15 minutes of the last, and the
+other device gets 429 with its right password). Now a 403 for a vault with no `vid`, on that GET or the PUT, goes to
+`syncRefused`, which asks `/vault/info` (that never counts): a copy with another salt turns sync off here as Turn off sync does
+(`syncElsewhere`: `S._local.on = false`, keeping `lic` for `sellerLic()` and the change times; the sync hint goes), so the token
+isn't sent again, and the banner says another device made the synced vault first and points to Settings → Web version & sync,
+with Turn on sync (`sync-elsewhere`, `openSyncOn(true)`, which checks at once and so opens on that copy's password, to merge with
+it, or replace it); that section says so too, until FAFO locks (`SYNC.state` `"elsewhere"`, nothing stored). A 403 saying
+"password changed" (this vault's token is that copy's previous password's: it was this vault's own copy) and a copy with this
+vault's own salt and rounds (its own upload, whose answer was lost) stay as before, and a copy deleted meanwhile is made by this
+device after all ("again"). Turn on sync's own first upload (or replace) losing that race goes on to its step 2, which no longer
+says the copy has a different master password (it can be the same one, chosen on another device), and a password change that
+finds it changes only this vault (sync is off by then). `PUT base=0` only inserts, so nothing was lost either way. Tested end to
+end with the license worker under `wrangler dev` and a second Chromium making the copy first: on 1.9.113 ten unlocks locked the
+other device out; on 1.9.114 one try, then none. Installed apps stay on 1.9.112 while desktop updates are paused, so they still
+show the old message. Its release note repeats 1.9.113's (installed apps will catch up from 1.9.112 in one go). Nothing gains a
+field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
