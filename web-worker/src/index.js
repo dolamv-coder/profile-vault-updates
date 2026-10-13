@@ -10,7 +10,7 @@
 // Since 2026-10-10 the owner's domain points here too (custom domains added in the Cloudflare dashboard, not in
 // wrangler.toml, so a deploy needs no access to the domain): app.fafoaco.com is the app, as app.orbit-app.workers.dev
 // still is for older pages and bookmarks; fafoaco.com is FAFO's front page (site.js), with /download for the newest
-// Windows download; www.fafoaco.com goes to fafoaco.com.
+// Windows download (since 2026-10-13 the page itself doesn't link it); www.fafoaco.com goes to fafoaco.com.
 import { sitePage, SITE_HOST, DOWNLOAD_URL, APP_URL } from "./site.js";
 
 const UPDATE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/web-update.json";
@@ -31,7 +31,7 @@ const HEADERS = {
 let current = null;   // {version, sha256, html, checkedAt}: the last page that checked out
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method !== "GET" && request.method !== "HEAD") return text(405, "Method not allowed.");
     // Only over HTTPS: a .com isn't HTTPS-only in browsers as .dev is, and the page needs a secure context (crypto.subtle)
@@ -39,7 +39,7 @@ export default {
     if (url.protocol === "http:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname)) { url.protocol = "https:"; return Response.redirect(url.toString(), 301); }
     const site = env.SITE_HOST || SITE_HOST;
     if (url.hostname === "www." + site) return Response.redirect(`${url.protocol}//${site}${url.pathname}${url.search}`, 301);
-    if (url.hostname === site) return frontPage(request, env, url);
+    if (url.hostname === site) return frontPage(request, env, url, ctx);
     if (url.pathname === "/robots.txt") return text(200, "User-agent: *\nDisallow: /\n");
     if (url.pathname !== "/" && url.pathname !== "/index.html") return Response.redirect(url.origin + "/", 302);
     try { await refresh(env); } catch (e) { console.error("refresh", e && e.message || e); }
@@ -54,13 +54,16 @@ export default {
 };
 
 // The front page (fafoaco.com): the page, /download (the newest Windows download), /app (the web version); anything
-// else goes to the front page. It shows the release the web version serves, when that's known.
-async function frontPage(request, env, url) {
+// else goes to the front page. It shows the release the web version serves, when that's known: it waits for the feed at
+// most 800 ms (and lets it finish in the background), so a slow GitHub never holds up the page for its version line.
+async function frontPage(request, env, url, ctx) {
   if (url.pathname === "/robots.txt") return text(200, "User-agent: *\nAllow: /\n");
   if (url.pathname === "/download" || url.pathname === "/download/") return Response.redirect(DOWNLOAD_URL, 302);
   if (url.pathname === "/app" || url.pathname === "/app/") return Response.redirect((env.APP_URL || APP_URL) + "/", 302);
   if (url.pathname !== "/" && url.pathname !== "/index.html") return Response.redirect(url.origin + "/", 302);
-  try { await refresh(env); } catch (e) { console.error("refresh", e && e.message || e); }
+  const r = refresh(env).catch((e) => console.error("refresh", e && e.message || e));
+  if (ctx && ctx.waitUntil) ctx.waitUntil(r);
+  await Promise.race([r, new Promise((ok) => setTimeout(ok, 800))]);
   return new Response(request.method === "HEAD" ? null : sitePage(current ? current.version : "", env.APP_URL || APP_URL), {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300", ...HEADERS },
   });
