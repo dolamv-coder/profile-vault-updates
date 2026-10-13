@@ -3942,6 +3942,7 @@ function startApp(){
   <div class="bulkbar" id="bulkbar" hidden></div>`;
   $("#q").addEventListener("input", (e) => { UI.q = e.target.value; renderMain(); });
   render();
+  if (SYNC.state === "elsewhere") syncShow("elsewhere");   // its banner (1.9.114, syncStart)
   webUpdBar();
 }
 
@@ -13132,7 +13133,7 @@ async function syncCycle(opts){
       if (got.status === 200 && L.vid && got.data.rev < (L.rev || 0)) return syncShow("error", "The sync service sent an older copy of your vault, so it was ignored. FAFO tries again on its own.");
       let mustSend = !!opts.rekey;
       if (got.status === 404 && got.data.error === "no vault" && !L.vid) mustSend = true;   // not made yet: this device makes it
-      else if (got.status === 403 && !L.vid){ const s = await syncRefused(got, lic, alive); if (s === "again") continue; return s; }
+      else if (got.status === 403){ const s = await syncRefused(got, lic, alive); if (s === "again") continue; return s; }
       else if (got.status !== 200) return syncTrouble(got);
       else if (!got.data.same){
         if (syncBlocked() && !opts.now){ SYNC.waiting = true; syncShow("waiting"); return "waiting"; }
@@ -13201,7 +13202,7 @@ async function syncPush(key, auth, lic, rekey, alive){
   }
   if (r.status === 409) return "again";
   if (r.status === 429 && r.data.error === "too fast"){ await syncSleep(1200); return "again"; }
-  if (r.status === 403 && !L.vid) return syncRefused(r, lic, alive);
+  if (r.status === 403) return syncRefused(r, lic, alive);
   return syncTrouble(r);
 }
 function syncTrouble(r){
@@ -13216,28 +13217,37 @@ function syncTrouble(r){
   SYNC.fails++;
   return syncShow("error", "The sync service had a problem. FAFO tries again on its own.");
 }
-// 1.9.114: the online copy refused (403) a vault that has never synced (no vid). Its token comes from its own salt, so
-// when another device made the license's synced vault first (after this vault last asked /vault/info, or while its first
-// upload couldn't go through), it never opens that copy, even with the same password, and each try counts toward that
-// copy's lockout: sync stops here (`syncElsewhere`) rather than asking for a "changed" password at every unlock. Not when
-// the token is that copy's previous password's (it was this vault's own copy, and its password was changed since), nor
+// 1.9.114: the online copy refused (403) this vault's token. A vault that has never synced (no vid) makes its token from its
+// own salt, so when another device made the license's synced vault first (after this vault last asked /vault/info, or while
+// its first upload couldn't go through), it never opens that copy, even with the same password, and each try counts toward
+// that copy's lockout: sync stops here (`syncElsewhere`) rather than asking for a "changed" password at every unlock. Not
+// when the token is that copy's previous password's (it was this vault's own copy, and its password was changed since), nor
 // when the copy has this vault's own salt (its own upload, whose answer was lost): those stay as they were. A copy deleted
-// meanwhile makes "again", and this device makes it after all.
+// meanwhile makes "again", and this device makes it after all; with /vault/info unreadable, the 403 alone decides, so no
+// round sends the token again. A vault that has synced, refused by a copy made since (its own deleted and another made, as
+// Replace does), stops as for a copy replaced (`syncGone`), where it asked for a password at every unlock.
 async function syncRefused(r, lic, alive){
   if (r.data.error === "password changed") return syncTrouble(r);
   const i = await syncCall("GET", "/vault/info", lic);
   if (!alive()) return "stopped";
-  if (i.status !== 200) return syncTrouble(i);
-  if (!i.data.exists) return "again";
-  if (i.data.salt === VAULT.salt && (i.data.iter || ITER) === (VAULT.iter || ITER)) return syncTrouble(r);
+  const L = S._local, ok = i.status === 200;
+  if (L.vid){
+    if (ok && !i.data.exists){ syncGone(); return "gone"; }
+    if (ok && i.data.created !== L.vid){ syncGone(true); return "gone"; }
+    return syncTrouble(r);
+  }
+  if (i.status === 401) return syncTrouble(i);
+  if (ok && !i.data.exists) return "again";
+  if (ok && i.data.salt === VAULT.salt && (i.data.iter || ITER) === (VAULT.iter || ITER)) return syncTrouble(r);
   syncElsewhere();
   return "elsewhere";
 }
-// Sync goes off as Turn off sync does, keeping the license (sellerLic) and what this vault noted, and says why: Turn on sync
-// merges it into that copy with the master password used there, or replaces the copy.
+// Sync goes off as Turn off sync does, keeping the license (sellerLic) and what this vault noted, and says why until it's on
+// again: `_local.elsewhere` (when; it stays on this device, as all of _local does) brings the banner back at every unlock
+// (syncStart). Turn on sync merges it into that copy with the master password used there, or replaces the copy.
 function syncElsewhere(){
   if (!S || !S._local) return;
-  S._local.on = false;
+  S._local.on = false; S._local.elsewhere = Date.now();
   syncHintWrite(null); syncPersist();
   syncShow("elsewhere");
 }
@@ -13277,6 +13287,8 @@ window.addEventListener("online", () => syncSoon(500));
 // Unlocked: catch up with the other devices first thing.
 function syncStart(){
   SYNC.state = ""; SYNC.msg = ""; SYNC.fails = 0; SYNC.retryAt = 0; SYNC.ranAt = 0; SYNC.baseC = new Map();
+  // (1.9.114) Off since another device made the synced vault first (syncElsewhere): it says so again, until sync is on.
+  if (S && S._local && S._local.elsewhere){ if (syncOn()) delete S._local.elsewhere; else SYNC.state = "elsewhere"; }
   if (S && S._local && S._local.base){ SYNC.unitsGen = -1; syncNote(); SYNC.baseC = syncBaseFrom(SYNC.units, S._local.base); }
   if (syncOn()){ const h = syncHint(); if (!h || h.lic !== S._local.lic) syncHintWrite({lic:S._local.lic, dirty:!!S._local.pending}); syncSoon(300); }
 }
@@ -13299,7 +13311,7 @@ function syncStatus(){
     case "password": return {pill:"pill-warn", tag:"Needs password", text:"The master password was changed on another device. Enter it here to keep syncing."};
     case "license": return {pill:"pill-warn", tag:"Paused", text:"Your license key wasn't accepted, so sync is paused. If it was renewed or replaced, contact the seller."};
     case "locked": return {pill:"pill-warn", tag:"Paused", text:"Too many wrong passwords were tried for the online copy. Sync starts again by itself in a few minutes."};
-    case "elsewhere": return {pill:"pill-warn", tag:"Off", text:syncElsewhereText()};
+    case "elsewhere": return {pill:"pill-warn", tag:"Off", text:syncElsewhereText(true)};   // Sync now's toast, in Settings
     case "error": return {pill:"pill-warn", tag:"Problem", text:SYNC.msg || "Sync had a problem. FAFO tries again on its own."};
   }
   const when = L && L.okAt ? "Synced " + syncAgo(L.okAt) : "Not synced yet";
@@ -13324,7 +13336,7 @@ function syncShow(state, msg){
   }
   const ban = $("#sync-banner");
   if (ban){
-    // (1.9.114) Another device made the synced vault first: sync is off, and this says so until it's turned on or FAFO locks.
+    // (1.9.114) Another device made the synced vault first: sync is off, and this says so until it's turned on (syncStart).
     const need = state === "elsewhere" ? !syncOn() : syncOn() && (state === "password" || state === "license");
     ban.hidden = !need;
     ban.innerHTML = !need ? "" : state === "elsewhere"
@@ -13471,6 +13483,7 @@ function openSyncOn(auto){
         if (!i.exists){
           await syncExclusive(async () => {
             S._local = Object.assign({}, S._local || {}, {on:true, lic, rev:0, vid:0, base:{}, seen:{}, mt:(S._local || {}).mt || {}});
+            delete S._local.elsewhere;
             syncHintWrite({lic, dirty:true}); syncPersist();
             return syncCycle({now:true});
           });
@@ -13560,10 +13573,10 @@ function openSyncPassword(){
 // Change password with sync on: the online copy moves to the new password first (so other devices are
 // asked for it), then this vault. Returns "" when done, or a message.
 async function syncChangePassword(key, auth, salt, iter){
-  // 1.9.114: sync can go off before or during this round (another device's synced vault, syncElsewhere): then only this
-  // vault changes, and its token isn't sent again.
+  // 1.9.114: sync can go off before or during this round (another device's synced vault, the copy deleted or replaced):
+  // then only this vault changes, and its token isn't sent again.
   const r = await syncExclusive(() => syncOn() ? syncCycle({now:true, rekey:{key, auth, salt, iter}}) : "off");
-  if (r === "off" || r === "elsewhere") return "";
+  if (!syncOn()) return "";
   if (r !== "ok") return SYNC.state === "offline" ? "Connect to the internet to change the password: sync is on, so the online copy changes with it." : (SYNC.msg || syncStatus().text);
   return "";
 }

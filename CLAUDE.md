@@ -999,22 +999,28 @@ Discord (`webVaultSubmit`) and Enter it instead (`openSyncSignIn`; both `makeSyn
 or while that first upload was offline or failing wins: this vault's token comes from its own salt, so it never opens that
 copy, even with the same password, and its 403 read as a password changed elsewhere, sent again at every unlock (`syncStart`
 resets the state), each counting toward that copy's lockout (`VAULT_FAILS`: ten, each within 15 minutes of the last, and the
-other device gets 429 with its right password). Now a 403 for a vault with no `vid`, on that GET or the PUT, goes to
-`syncRefused`, which asks `/vault/info` (that never counts): a copy with another salt turns sync off here as Turn off sync does
+other device gets 429 with its right password). Now every 403 on that GET or the PUT goes to `syncRefused`, which asks
+`/vault/info` (that never counts). For a vault with no `vid`, a copy with another salt turns sync off here as Turn off sync does
 (`syncElsewhere`: `S._local.on = false`, keeping `lic` for `sellerLic()` and the change times; the sync hint goes), so the token
 isn't sent again, and the banner says another device made the synced vault first and points to Settings → Web version & sync,
 with Turn on sync (`sync-elsewhere`, `openSyncOn(true)`, which checks at once and so opens on that copy's password, to merge with
-it, or replace it); that section says so too, until FAFO locks (`SYNC.state` `"elsewhere"`, nothing stored). A 403 saying
-"password changed" (this vault's token is that copy's previous password's: it was this vault's own copy) and a copy with this
-vault's own salt and rounds (its own upload, whose answer was lost) stay as before, and a copy deleted meanwhile is made by this
-device after all ("again"). Turn on sync's own first upload (or replace) losing that race goes on to its step 2, which no longer
-says the copy has a different master password (it can be the same one, chosen on another device), and a master password change
-whose round finds it, or that waited on a round that did, changes only this vault (`syncChangePassword`: no round once sync is
-off). `PUT base=0` only inserts, so nothing was lost either way. Tested end to
-end with the license worker under `wrangler dev` and a second Chromium making the copy first: on 1.9.113 ten unlocks locked the
-other device out; on 1.9.114 one try, then none. Installed apps stay on 1.9.112 while desktop updates are paused, so they still
-show the old message. Its release note repeats 1.9.113's (installed apps will catch up from 1.9.112 in one go). Nothing gains a
-field.
+it, or replace it); that section says so too. It comes back at every unlock until sync is on again (`_local.elsewhere`, when,
+read by `syncStart` and painted at the end of `startApp`; turning sync on drops it): Continue with Discord had said the vault
+syncs, and sync going off unnoticed after a lock was the review's worry. A 403 saying "password changed" (this vault's token is
+that copy's previous password's: it was this vault's own copy) and a copy with this vault's own salt and rounds (its own upload,
+whose answer was lost) stay as before, a copy deleted meanwhile is made by this device after all ("again"), and with
+`/vault/info` unreadable the 403 alone decides, so no automatic round sends the token again. A vault that has synced (`vid`),
+refused by a copy made since (its own deleted and another made, as Replace does, which the banner's dialog offers), stops as
+for a copy replaced or deleted (`syncGone`) where it asked for a "changed" password at every unlock; one refused by its own copy
+(created = `vid`: its password changed twice since, say) still asks. Turn on sync's own first upload (or replace) losing that
+race goes on to its step 2, which no longer says the copy has a different master password (it can be the same one, chosen on
+another device), and a master password change finding sync off after its round, or before it (it waited on a round that turned
+it off), changes only this vault (`syncChangePassword`). `PUT base=0` only inserts, so nothing was lost either way. Tested end
+to end with the license worker under `wrangler dev` and a second Chromium making the copy first: on 1.9.113 ten unlocks locked
+the other device out; on 1.9.114 one try, then none, and a browser stuck on 1.9.113's message is put right at its first unlock
+on 1.9.114. Installed apps stay on 1.9.112 while desktop updates are paused, so they still show the old message. Its release
+note repeats 1.9.113's (installed apps will catch up from 1.9.112 in one go). `_local` gains `elsewhere`, which stays on the
+device as all of `_local` does; nothing synced gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
