@@ -963,15 +963,28 @@ Send accounts window says one person gets as many as their slot limit (the worke
 Also from 1.9.113 (the owner's request, 2026-10-12: a buyer who entered their license key in the web version was told to
 turn on sync in a desktop app they didn't have), Open your synced vault (`openSyncSignIn`: the web version's Enter it instead,
 and Open my synced vault after Use this browser only or in the desktop app) makes a synced vault for a license with none
-online yet: the dialog becomes Create your synced vault, by the key's last four, asks for the password once more (`making`),
-and makes a new vault that syncs from the start, as Continue with Discord does (`makeSyncedVault`, which both use: nothing is
-written when this browser has a vault by then, checked again right before writing). Every press asks `/vault/info` again: a
-vault another device made meanwhile is opened if the password is its own, and otherwise the dialog says another device just
-made one; another tab's vault shows its lock screen (`WEB_TAKEN_MSG`); a key the server doesn't know is refused as before.
-Changing the key goes back to opening, the boxes hold still while a request is out, Cancel then stops it (nothing is made or
-opened after the dialog closes), and Enter in a box goes ahead (its button is outside the form, so a browser never submitted
-it). A Continue with Discord left waiting behind the dialog is cleared once
-the vault opens. Nothing gains a field.
+online yet. Its first step says so and its button is Continue, which asks `/vault/info` (the key alone is enough; Enter in the
+key box with no password just moves on to it): with no synced vault the dialog becomes Create your synced vault, by the key's
+last four, which takes a master password twice (`making`) and makes a new vault that syncs from the start, as Continue with
+Discord does (`makeSyncedVault`, which both use: nothing is written when this browser has a vault by then, checked again right
+before writing). Every press asks `/vault/info` again before refusing anything, so a vault another device made meanwhile is
+opened if the password is its own (also following the create step's own advice, "turn on sync there, then open it here",
+whose link goes back to opening), and otherwise the dialog says another device just made one; another tab's vault shows its
+lock screen (`WEB_TAKEN_MSG`), checked before each request too; a key the server doesn't know is refused as before. Changing
+the key goes back to opening, the boxes hold still while a request is out, Cancel then stops it (nothing is made or opened
+after the dialog closes: `syncStartFrom` now takes a `still` callback, asked once the vault is sealed, right before anything is
+written), a press within 400 ms of the switch to creating is ignored, and Enter in a box goes ahead (its button is outside the
+form, so a browser never submitted it; not keyCode 229, Safari's Return that picks an input method's word, nor a held key).
+Messages are scrolled into view (on a small phone the dialog scrolls, with Confirm password last). Its Fill it in with Discord
+sends the web version's address (`web`) and keeps the sign-in in `orbit-web-keyreq`, as Continue with Discord does, and a key it
+brings while a press is out, or that's already in the box, is left alone. A Continue with Discord left waiting behind the
+dialog is cleared once the vault opens, and one that finishes behind it no longer takes the cursor (`webShowPassword` leaves it
+while a window is open). Continue with Discord's Create asks `/vault/info` again too (`webVaultSubmit`): a vault another device
+made since the sign-in is opened with that password if it's its own, and otherwise its password step asks for that one; its
+open step asks again right before writing (`syncStartFrom`'s `still`). Another tab's vault also redraws Use this browser only's
+screen (`webVaultTaken`), and a window's first focus skips the hidden username box for password managers (`.sr`; the desktop
+dialog and Enter your new master password started there). The release note doesn't mention it: only desktop users read notes,
+and updating one already has a vault. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
