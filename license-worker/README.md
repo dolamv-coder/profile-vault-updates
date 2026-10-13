@@ -291,10 +291,11 @@ Since 2026-10-06 (your requests) each batch's message ends with **Pending your a
 page with who sent it, how many slots per store and when, and **Approve** and **Decline** buttons.
 Approving edits the message to **✅ Approved** with the time. Declining asks once more (**Keep it
 waiting** goes back), then edits it to **⛔ Declined**, and any of your accounts given to that batch's
-slots go back on your list, except a Target account that the same profile's Pokémon Center slot in another
-batch still checks out with (since 2026-10-07): it stays with that buyer, the page says so, and it goes back
-once you decline the batch that slot was last sent in (or free it by hand). If they send the declined Target
-slot again, it gets that same account back. Until you decide, the sender's FAFO (1.9.91 and later) shows those slots as
+slots go back on your list, except one that the same profile's slot at the other store, in another batch,
+still checks out with (since 2026-10-07, both ways since the one list of 2026-10-13): it stays with that
+buyer, the page says so ("1 account stays with them…"), and it goes back once you decline the batch that
+slot was last sent in (or give it back, or free it by hand). If they send the declined slot again, it gets
+that same account back. Until you decide, the sender's FAFO (1.9.91 and later) shows those slots as
 **Pending approval**, then **Success**, or from 1.9.92 **Declined** (they can switch a declined slot off
 and on, and send it again in a new batch). FAFO asks this worker about every 30 seconds while its Submit
 page is open, and every 5 minutes otherwise (`GET /submissions/status`, with the license key, only about
@@ -391,62 +392,69 @@ a `.txt` file, with a count per store in the message.
 
 A store on a buyer's profile can be set to **Use Assigned Account** (Orbit 1.9.57+): they add no
 login, and you provide one of your own accounts. From Orbit 1.9.58 this worker hands them out from a
-list you keep here:
+list you keep here. Since 2026-10-13 (your request) it's **one list for Target and Pokémon Center both**:
+an account goes to one buyer's profile and covers its Target and its Pokémon Center slot, and no other
+buyer gets it while they have it.
 
-1. In your own FAFO, open **Settings → Accounts to assign → Send accounts**. Pick the store, then
-   paste `email:password` lines, or just emails with the password in the box below (for a list that
-   all uses one password), or click **Add my Target logins that no profile uses**.
+1. In your own FAFO, open **Settings → Accounts to assign → Send accounts**. FAFO asks for a store:
+   Target or Pokémon Center, it doesn't matter, they go on your one list. Paste `email:password` lines,
+   or just emails with the password in the box below (for a list that all uses one password), or click
+   **Add my Target logins that no profile uses**. The password is the store account's: Target's
+   logins file gets it, and Pokémon Center checks out as a guest with the email. An email already on
+   the list keeps the password it came with first.
 2. Your channel gets a message with the count and a review link. Open it, check the emails, and
    choose **Add to my list**. Only add accounts you sent yourself: anyone with a license can send
    some, but only you can add them. The channel never shows the accounts; the review page shows the
    emails, never the passwords.
 3. When a batch with slots on Use Assigned Account reaches your channel, each of those slots gets a
-   random free account from the list for its store: its email goes in the slot's row (the `email`
-   column, and on both addresses of its AYCD profile) and `email:password` goes in that store's logins
-   file, on the line that matches the row (Pokémon Center has no logins file: just the email).
-   The store line says how many: "Target 3 (2 assigned accounts)".
+   random free account from your list: its email goes in the slot's row (the `email` column, and on
+   both addresses of its AYCD profile) and `email:password` goes in that store's logins file, on the
+   line that matches the row (Pokémon Center has no logins file: just the email). The store line says
+   how many: "Target 3 (2 assigned accounts)".
 
 - **Buyers never see the accounts.** They go only to your channel. The app is told how many slots
   got one, never which.
-- **Each account goes to one slot only.** One picked for a batch that never reached your channel
+- **Each account goes to one buyer only.** One picked for a batch that never reached your channel
   (the post failed) goes back to the list. If part of a batch went out, its accounts stay with it,
   and sending the batch again posts the same ones.
-- **A Pokémon Center slot gets its profile's Target account again** (from 2026-10-06): when the same
-  profile (by its name) already has a Target account from you, in that batch or one sent before, its
-  Pokémon Center slot gets that account, with its email on the slot's AYCD profile, so the profile
-  checks out with one email at both stores. The store line says so:
-  "Pokémon Center 3 (3 assigned accounts, 2 reused from Target)". It doesn't count toward
-  the license's limit or join your Pokémon Center list (`/admin/accounts` shows it with `reused: 1`). If
-  that email is on your Pokémon Center list too, the account from the list is used, with its own
-  password, unless another buyer has it; then the slot gets a free account as usual. The slot keeps
-  that account if it's sent again in a new batch (and gets it back if that batch doesn't reach your channel), and declining
-  the Target batch doesn't put the account back on your Target list while the Pokémon Center slot still
-  uses it (see Approving or declining a batch), so it never goes to two buyers. Freeing the Target
-  account by hand (below) frees its reuse too.
+- **A profile's slots at both stores get the same account**: when the same profile (by its name)
+  already has an account from your list, given for its slot at the other store in that batch or one sent
+  before, its slot here gets that account, so the profile checks out with one email at both stores
+  (Pokémon Center's slots used to reuse Target's, from 2026-10-06; now it works both ways). The store
+  line says so: "Pokémon Center 3 (3 assigned accounts, 2 reused from Target)", or "Target 1 (1 assigned
+  account, 1 reused from Pokémon Center)". It counts once toward the license's limit. It stays with that
+  buyer while any of their slots uses it: declining a batch keeps it while their slot at the other store,
+  in another batch, still uses it (the decline page says "1 account stays with them…"), and it goes back
+  once you decline the last batch that uses it, give it back, or free it by hand. A slot sent again in a
+  new batch takes its account along ("1 they had before"), and gets it back if that batch doesn't reach
+  your channel. In `/admin/accounts` the account is under store `*`, and each slot that uses it has a row
+  of its own at its store, shown with `reused: 1`.
+- **Other stores keep lists of their own**: accounts an older FAFO sent for another store go on that
+  store's list, for its slots only. Target or Pokémon Center accounts on their own lists from before the
+  one list (there were none on yours) still work as they did.
 - **Taking accounts off the list** (FAFO 1.9.90+): in your FAFO, **Settings → Accounts to assign →
   Remove accounts**, paste the emails (one per line; `email:password` lines work too, and only the
   email is sent) and choose **Ask to remove**. Your channel gets the count and a review link, never
   the emails; the review page shows where each one is (free, or given to which license and profile)
-  and **Remove from my list** takes each off every store's list it's on. One already given to a
+  and **Remove from my list** takes each off your list (and any store's own list it's on), with every
+  slot's use of it. One already given to a
   buyer's slot goes too, so order alerts on it stop reaching them. **Keep them** removes nothing, and
   an ask nobody decided on expires after a week. Anyone with a license can ask, but only you can
   confirm, so only remove ones you asked for. The `/admin/accounts/remove` command below still works.
 - **Seeing and editing the list** (FAFO 1.9.102+): in your FAFO, **Settings → Accounts to assign → See
   my list**. Your channel gets a link ("📋 Your list for Use Assigned Account", with who asked), and the
-  page shows every store's accounts as they are when you open it: how many are free, and for each
-  account Free, Given to license …XXXX with the profile and when it was sent, Held for a buyer's Pokémon
-  Center slot, or Reused from Target at Pokémon Center. Passwords are never shown. There you can:
-  - **Edit** an account: a new password (empty keeps it; a Target account's reuse at Pokémon Center gets
-    it too), and its email while it's free. One given to a buyer keeps its email, as it was posted, and
-    has **Give it back to my list**: it's free again for the next slot, the buyer stops getting order
-    alerts for it, and its reuse at Pokémon Center goes with it (as `/admin/accounts/free` does). The
-    page says when the buyer's slot at the other store checks out with the same email, and giving back a
-    Pokémon Center account frees the Target account held for it too. A reuse itself follows its Target
-    account, so it's edited there.
-  - **Remove** an account: it asks first, saying where it is, then takes it off every store's list it's
-    on (one given to a buyer too, so order alerts on it stop reaching them); **Keep it** goes back.
+  page shows your list (Target and Pokémon Center) as it is when you open it, and any store's own list:
+  how many are free, and each account once, Free or Given to license …XXXX with the profile, and a line
+  for each of its slots that uses it, with when it was sent ("Target, sent …", "Pokémon Center, sent …").
+  Passwords are never shown. There you can:
+  - **Edit** an account: a new password (empty keeps it; the slots that use it get it too), and its email
+    while it's free. One given to a buyer keeps its email, as it was posted, and has **Give it back to my
+    list**: it's free again for the next slot, the buyer stops getting order alerts for it, and their
+    Target and Pokémon Center slots lose it (as `/admin/accounts/free` does).
+  - **Remove** an account: it asks first, saying where it is, then takes it off the list (one given to a
+    buyer too, so order alerts on it stop reaching them); **Keep it** goes back.
   - **Tick** accounts to work on several at once (Shift+click ticks every one between, the box by a
-    store's name ticks all of its accounts, and Tick all ticks the whole list). The bar that shows
+    list's name ticks all of its accounts, and Tick all ticks the whole list). The bar that shows
     then has **Copy emails** and **Copy email:password** (one per line, in the order shown, onto your
     clipboard; the passwords come from the worker when you click and never go in the page) and
     **Remove**, which asks first, naming each one, as Remove does for one. One Copy or Remove takes up
@@ -456,21 +464,22 @@ list you keep here:
     finds Pokémon Center), and hides a store with none. While searching, Tick all (Tick shown), a
     store's box and Shift+click tick only what's shown; ticks on accounts the search hides stay, and the
     bar counts them. The search stays in that tab after a change or a reload; Escape clears it.
-  - **Add accounts**: pick the store and paste them one per line (`email:password`, or the CSV lines
-    FAFO's Send accounts takes, quoted cells too; for Pokémon Center, the email's inbox password). They're on the list at once, with no
-    review link. One already on that store's list keeps its password (Edit changes it), and the page
-    says which lines it couldn't read.
+  - **Add accounts**: paste them one per line (`email:password`, or the CSV lines FAFO's Send accounts
+    takes, quoted cells too). They go on your list, for Target and Pokémon Center both (with a store's own
+    list on the page too, you pick which), at once, with no review link. One already on the list keeps its
+    password (Edit changes it), and the page says which lines it couldn't read.
 
   The link works for 24 hours, and a license can ask 10 times a day. Anyone with a license can ask, but
   the link only goes to your channel, so only someone who can read your channel can change the list.
 - **A slot sent again gets back the account it had** (FAFO 1.9.99+, from 2026-10-07): when a buyer
   switches a slot off and sends it again, or sends it again after you declined it, its profile gets the
-  account it went out with before, while that's still theirs, instead of a new one. FAFO says which of
-  its slots are still out, so a profile whose slot is still out (or another with the same name) never
-  gets that account. The store line says so: "Target 9 (9 assigned accounts, 7 they had before)". If the
-  new batch doesn't reach your channel, the account goes back to the batch it came from, and declining
-  the batch it came from leaves it with the new one. Older FAFOs don't say which slots are out, so
-  theirs get new accounts as before.
+  account it went out with before, while that's still theirs, instead of a new one. The store line says
+  so: "Target 9 (9 assigned accounts, 7 they had before)". If the new batch doesn't reach your channel,
+  the account goes back to the batch it came from, and declining the batch it came from leaves it with
+  the new one. For a store's own list, FAFO says which of its slots are still out, so a profile whose
+  slot is still out (or another with the same name) never gets that account, and older FAFOs, which
+  don't say, get new accounts as before. An account from your list stays with its buyer's profile
+  whichever FAFO sent it.
 - **Each license can be given as many accounts in all as its slot limit** (from 2026-10-12): 20
   (`DEFAULT_SLOT_LIMIT`), or the number you approved when it asked for more slots, so a buyer you
   approved 50 slots can be given 50 accounts. Before, it was a fixed `ASSIGNED_LIMIT` for everyone (20
@@ -480,10 +489,10 @@ list you keep here:
   and why, so you can assign those by hand: "(1 needs an account: this license is at its limit of 20)"
   or "(1 needs an account: your list has none)". With no login for any of a store's slots, there's no
   logins file for that store.
-- **When the list runs low**, your channel is told: once when a store is down to `ACCOUNTS_LOW_AT` free
-  accounts (15), "⚠️ Only 15 Target accounts left…", and once more when it runs out, "🚫 No Target
-  accounts left…". Sending more and adding them, or freeing some, sets these up again. Change the
-  number in `[vars]` in `wrangler.toml`.
+- **When the list runs low**, your channel is told: once when it's down to `ACCOUNTS_LOW_AT` free
+  accounts (15), "⚠️ Only 15 accounts left…", and once more when it runs out, "🚫 No accounts left…" (a
+  store's own list is named: "No Kohl's accounts left…"). Sending more and adding them, or freeing some,
+  sets these up again. Change the number in `[vars]` in `wrangler.toml`.
 - **Pulling** such a slot names the account it had: "Target · Kim Lee · acct7@example.com (assigned
   account)". The account stays with that buyer (it isn't put back on your list), so the slot gets it
   again if it's sent again; free it by hand to give it to someone else.
@@ -492,11 +501,11 @@ list you keep here:
   `npm run db:init` (and the deploy Action) adds. With `ADMIN_TOKEN` set:
 
 ```
-# The list: how many are free per store, who got which, and each offer with its review link
+# The list: how many are free (your list is store "*"), who got which, and each offer with its review link
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/accounts
 
-# Give an account back to the list (add "store":"target" if it's on more than one store's list).
-# A Target account's reuse at Pokémon Center is dropped with it.
+# Give an account back to the list, with every slot's use of it. With "store":"target" only that
+# slot's goes, and the account goes back once none of its slots uses it.
 curl.exe -X POST -H "Authorization: Bearer YOUR_ADMIN_TOKEN" -d "{\"email\":\"someone@outlook.com\"}" https://orbit-license.orbit-app.workers.dev/admin/accounts/free
 
 # Give back every account one license has (lets them get more)

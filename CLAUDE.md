@@ -143,7 +143,7 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   Assigned Account), and `/submissions` gives each such row a random free account: its email in the
   row's `email` column (and on both addresses of its AYCD profile) and `email:password` on the matching
   line of the logins file. Buyers never
-  see them; each account goes to one slot; a license gets as many in all as its slot limit (`accountLimit`, from 2026-10-12,
+  see them; each account goes to one slot (since 2026-10-13, one profile's slots at both stores, below); a license gets as many in all as its slot limit (`accountLimit`, from 2026-10-12,
   the owner's request: they'd approved a buyer 50 slots, whose accounts stopped at the fixed `ASSIGNED_LIMIT` of 20;
   20 since 2026-10-07, 10 before; `ASSIGNED_LIMIT` is now only the default if set, else `DEFAULT_SLOT_LIMIT`); an account picked for a batch that never reached the channel goes back. Rows left without one come last, and
   since 2026-10-07 the store line says why ("N need an account: this license is at its limit of N", or "your list has
@@ -157,6 +157,26 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   Pokémon Center row with `offer_id` `reuse:target`, which `freeAccounts` deletes where others are freed and
   `OWN_ACCOUNT` leaves out of stock counts and the limit; an offered account with that email takes it over. If the
   email is on the Pokémon Center list too, that account is used (with its password) unless another license has it.
+  Since 2026-10-13 (the owner's request, with a screenshot of See my list: "Make this a master list for both target and
+  pokemon center, not just Target or Pokemon Center"; they chose one buyer per account) Target and Pokémon Center share
+  **one list**: its accounts are rows with store `*` (`MASTER`, `MASTER_STORES`, `listStoreOf`), and offers and Add for
+  either store go on it (`addToList`, which also drops a free row with that email from those stores' own lists; an email
+  already there keeps its first password). One goes to a buyer's profile (the `*` row holds the license, the profile, the
+  batch it was first given in and `sent_at`), and each of that profile's slots that uses it, at either store, has a row of
+  its own at its store with `offer_id` `reuse:*` (`USE`: a reuse, so `freeAccounts` drops it with the list's row, and it
+  never counts toward the limit or stock), which pulls, order alerts, declines and slots sent again go by. A slot whose
+  profile has one gets it (`listAccount`: "reused from Target" or "from Pokémon Center", or its own row moved from the
+  batch it was in, "they had before", whatever `active` says); otherwise `claimListAccount` gives it a free one, never an
+  email that's a buyer's anywhere (the stores' own lists' picker checks that too now). It goes back once no slot's row of it
+  is left (`sweepParked`, for one that was sent; one that wasn't, as a stale pick or by `settleAccounts`), when the owner
+  gives it back, or when it's freed by email (`/admin/accounts/free` with a store drops only that slot's row). Declining
+  keeps it while the buyer's slot at the other store, in another batch, uses it (`declineEffect`'s `listKept` and
+  `listBack`; the old parking rule only looks at the stores' own rows, `OWN_ACCOUNT`). The limit counts it once. The
+  channel's stock messages for it name no store, and See my list shows it once, with a line for each slot that uses it
+  (`statusCell`: "Given to license …XXXX, Profile:", then "Target, sent …"; a slot's row is edited on the list's), and its Add has
+  no store to pick unless a store's own list is on the page. Other stores keep lists of their own, and the stores' own rows
+  from before (`REUSE_FROM`, parked accounts) work as they did. FAFO's Send accounts (1.9.112) still asks for a store:
+  Target or Pokémon Center both go on the one list.
   From 1.9.90 the owner can take accounts off the list from FAFO (Settings → Accounts to assign → Remove accounts,
   `openRemoveAccounts`): `POST /accounts/remove {emails, name}` posts the count and a review link (never the emails,
   D1 `account_removals`), and `/accounts/removal/:id` shows where each email is and removes it from every store's

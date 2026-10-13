@@ -1405,6 +1405,9 @@ try {
   // The account each row checks out with, from its store's AYCD list (the CSV isn't posted since 2026-10-06).
   const emailsOf = (list) => list.map((x) => x.shippingAddress.email);
   const accounts = async () => (await (await admin("/admin/accounts")).json());
+  // Accounts from the one list given out (store "*"): one each, however many of the profile's slots use it (those have rows
+  // of their own at their stores, shown as reused).
+  const listGiven = (d) => d.given.filter((a) => a.store === "*");
   await test("two licenses for these tests", async () => { ginaKey = await newKey("gina"); bobKey = await newKey("bob"); });
   await test("sending accounts needs a license, a store and email:password pairs", async () => {
     assert.equal((await slots("/accounts/offer", null, { store: "target", accounts: pool })).status, 401);
@@ -1420,7 +1423,7 @@ try {
     await new Promise((ok) => setTimeout(ok, 400));
     assert.equal(webhookPosts.length, before + 1);
     const m = webhookPosts.at(-1).content;
-    assert.match(m, /Add 13 Target accounts to your list for Use Assigned Account\?/); assert.match(m, /Sent by \*\*Owner\*\* · @gina/);
+    assert.match(m, /Add 13 accounts to your list for Use Assigned Account\?/, "for Target: on the one list, so no store named"); assert.match(m, /Sent by \*\*Owner\*\* · @gina/);
     assert.doesNotMatch(m, /pool1@|Test-Pw-1/, "no emails or passwords in the channel");
     reviewLink = offerLink(m); assert.ok(reviewLink, m);
     const html = await (await fetch(reviewLink)).text();
@@ -1439,8 +1442,8 @@ try {
     assert.match(await (await offerPost(reviewLink, "add")).text(), /Added 13 to your list\./);
     await new Promise((ok) => setTimeout(ok, 300));
     const d = await accounts();
-    assert.deepEqual(d.stores, [{ store: "target", total: 13, free: 13, sent: 0 }]); assert.equal(d.limit, 10);
-    assert.match(webhookEdits.at(-1).content, /Added 13 Target accounts to your list/);
+    assert.deepEqual(d.stores, [{ store: "*", total: 13, free: 13, sent: 0 }], "on the one list"); assert.equal(d.limit, 10);
+    assert.match(webhookEdits.at(-1).content, /Added 13 accounts to your list/);
     assert.match(await (await offerPost(reviewLink, "refuse")).text(), /Added 13 to your list/, "decided: stays added");
     assert.equal(d.offers[0].status, "added"); assert.equal(d.offers[0].accounts, undefined, "the offer no longer holds them");
   });
@@ -1470,8 +1473,10 @@ try {
     assert.equal(wA[0].billingAddress.email, "dee@example.com", "Walmart's, made from its CSV, as sent");
     first = [em[1], em[2]];
     const d = await accounts();
-    assert.deepEqual(d.stores, [{ store: "target", total: 13, free: 11, sent: 2 }]);
-    assert.deepEqual(d.given.map((a) => [a.email, a.key_last4, a.profile, a.store_name]).sort(), [[em[1], ginaKey.slice(-4), "Ann One", "Target"], [em[2], ginaKey.slice(-4), "Bo Two", "Target"]].sort());
+    assert.deepEqual(d.stores, [{ store: "*", total: 13, free: 11, sent: 2 }]);
+    assert.deepEqual(listGiven(d).map((a) => [a.email, a.key_last4, a.profile, a.store_name]).sort(), [[em[1], ginaKey.slice(-4), "Ann One", "Target"], [em[2], ginaKey.slice(-4), "Bo Two", "Target"]].sort());
+    assert.deepEqual(d.given.filter((a) => a.store !== "*").map((a) => [a.store, a.email, a.profile, a.reused]).sort(), [["target", em[1], "Ann One", 1], ["target", em[2], "Bo Two", 1]].sort(),
+      "and each slot a row of its own at its store");
   });
   await test("a store with no logins file gets one for its accounts", async () => {
     const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Eve Five", "eve@example.com")]), assigned: 1 }];
@@ -1505,21 +1510,21 @@ try {
     assert.equal(emailsOf(aycdOf(webhookPosts.at(-2))[0])[0], sentFirst, "the same account");
   });
   await test("a license gets 10 accounts in all; the rest of its slots wait for the owner", async () => {
-    const held = (await accounts()).given.filter((a) => a.key_last4 === ginaKey.slice(-4)).length;
+    const held = listGiven(await accounts()).filter((a) => a.key_last4 === ginaKey.slice(-4)).length;
     assert.equal(held, 5);
     const rows = Array.from({ length: 6 }, (_, i) => slotRow(`Hal H${i}`, `hal${i}@example.com`));
     const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv(rows), assigned: 6 }];
     const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 6, batch: "asg5" + rid(), stores: [{ name: "Target", n: 6, seller: 6 }] })).json();
     assert.deepEqual(r.accounts, { Target: { asked: 6, got: 5 } });
     const m = webhookPosts.at(-2), em = emailsOf(aycdOf(m)[0]);
-    assert.match(webhookPosts.at(-1).content, /^⚠️ \*\*Only 3 Target accounts left\*\* on your list for Use Assigned Account\. Send more from FAFO/, "down to ACCOUNTS_LOW_AT (3 here): the owner is told");
+    assert.match(webhookPosts.at(-1).content, /^⚠️ \*\*Only 3 accounts left\*\* on your list for Use Assigned Account\. Send more from FAFO/, "down to ACCOUNTS_LOW_AT (3 here): the owner is told");
     assert.match(m.content, /\nTarget 6 \(5 assigned accounts, 1 needs an account: this license is at its limit of 10\)\n/, "and why");
     assert.equal(em[5], "hal5@example.com", "the last one keeps its own email");
     assert.equal(plain(m)[0].text.split("\r\n").length, 5, "five login lines, for the first five rows");
     assert.deepEqual(plain(m)[0].text.split("\r\n").map((l) => l.split(":")[0]), em.slice(0, 5), "the logins file has the same emails, row for row");
   });
   await test("at its limit, a profile sent again with its slot switched off still gets back the account it had (app 1.9.99+)", async () => {
-    const mine = (await accounts()).given.filter((a) => a.key_last4 === ginaKey.slice(-4)), free = (await accounts()).stores[0].free;
+    const mine = listGiven(await accounts()).filter((a) => a.key_last4 === ginaKey.slice(-4)), free = (await accounts()).stores[0].free;
     assert.equal(mine.length, 10);
     const hal = mine.find((a) => a.profile === "Hal H0"), before = webhookPosts.length;
     const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Hal H0", "hal0@example.com"), slotRow("Hal H9", "hal9@example.com")]), assigned: 2 }];
@@ -1528,7 +1533,7 @@ try {
     const m = webhookPosts.slice(before).find((x) => x.content.startsWith("📦"));
     assert.match(m.content, /\nTarget 2 \(1 assigned account, 1 they had before, 1 needs an account: this license is at its limit of 10\)\n/);
     assert.deepEqual(emailsOf(aycdOf(m)[0]), [hal.email, "hal9@example.com"]); assert.deepEqual(plain(m)[0].text.split("\r\n").map((l) => l.split(":")[0]), [hal.email]);
-    assert.equal((await accounts()).given.filter((a) => a.key_last4 === ginaKey.slice(-4)).length, 10, "still 10"); assert.equal((await accounts()).stores[0].free, free);
+    assert.equal(listGiven(await accounts()).filter((a) => a.key_last4 === ginaKey.slice(-4)).length, 10, "still 10"); assert.equal((await accounts()).stores[0].free, free);
   });
   await test("a license whose slots were raised can be given that many accounts (2026-10-12)", async () => {
     // At its limit of 10 (the tests' ASSIGNED_LIMIT) until the owner approves more slots: then as many as those.
@@ -1542,12 +1547,12 @@ try {
     assert.deepEqual(r.accounts, { Target: { asked: 2, got: 2 } }, "past 10 now");
     const m = webhookPosts.slice(before).find((x) => x.content.startsWith("📦"));
     assert.match(m.content, /\nTarget 2 \(2 assigned accounts\)\n/);
-    const mine = (await accounts()).given.filter((a) => a.key_last4 === ginaKey.slice(-4));
+    const mine = listGiven(await accounts()).filter((a) => a.key_last4 === ginaKey.slice(-4));
     assert.equal(mine.length, 12);
     // As it was for the tests after: those two back on the list, and the slot limit back to the default.
     for (const a of mine.filter((x) => /^Jo J/.test(x.profile))) assert.equal((await admin("/admin/accounts/free", { email: a.email })).status, 200);
     await slotPost(link, "deny");
-    assert.equal((await accounts()).given.filter((a) => a.key_last4 === ginaKey.slice(-4)).length, 10);
+    assert.equal(listGiven(await accounts()).filter((a) => a.key_last4 === ginaKey.slice(-4)).length, 10);
     // Back at 10: nothing more for it.
     const r2 = await (await slots("/submissions", ginaKey, { files: [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Jo J2", "jo2@example.com")]), assigned: 1 }], name: "Gina", slots: 1, batch: "asg5d" + rid(), stores: [{ name: "Target", n: 1, seller: 1 }] })).json();
     assert.deepEqual(r2.accounts, { Target: { asked: 1, got: 0 } });
@@ -1559,9 +1564,9 @@ try {
     const r = await (await slots("/submissions", bobKey, { files, name: "Bob", slots: 4, batch: "asg6" + rid(), stores: [{ name: "Target", n: 4, seller: 4 }] })).json();
     assert.deepEqual(r.accounts, { Target: { asked: 4, got: 3 } });
     assert.equal((await accounts()).stores[0].free, 0);
-    assert.match(webhookPosts.at(-1).content, /^🚫 \*\*No Target accounts left\*\*/, "and told again when it runs out");
+    assert.match(webhookPosts.at(-1).content, /^🚫 \*\*No accounts left\*\*/, "and told again when it runs out");
     assert.match(webhookPosts.at(-2).content, /^📦 /, "not told it's low a second time");
-    const all = (await accounts()).given.map((a) => a.email);
+    const all = listGiven(await accounts()).map((a) => a.email);
     assert.equal(new Set(all).size, all.length, "no account given twice"); assert.equal(all.length, 13);
   });
   await test("pulling a slot tells the owner which account it had", async () => {
@@ -1579,7 +1584,8 @@ try {
     assert.equal((await accounts()).stores[0].free, 1);
     assert.deepEqual(await (await admin("/admin/accounts/free", { key: bobKey })).json(), { ok: true, changed: 3 });
     assert.deepEqual(await (await admin("/admin/accounts/remove", { email: first[0] })).json(), { ok: true, changed: 1 });
-    assert.deepEqual((await accounts()).stores, [{ store: "target", total: 12, free: 3, sent: 9 }]);
+    assert.deepEqual((await accounts()).stores, [{ store: "*", total: 12, free: 3, sent: 9 }]);
+    assert.ok(!(await accounts()).given.some((a) => a.email === first[0] || a.key_last4 === bobKey.slice(-4)), "nor any slot's row of those");
     assert.equal((await fetch(BASE + "/admin/accounts")).status, 401);
   });
   await test("apps before 1.9.58 (no assigned count) are posted as before", async () => {
@@ -1615,32 +1621,45 @@ try {
     assert.match(await (await offerPost(link, "refuse")).text(), /Refused\. Nothing was added\./);
     assert.ok(!(await accounts()).stores.some((x) => x.store === "walmart"));
   });
-  console.log("\nPokémon Center reuses a profile's Target account (2026-10-06)");
-  // Ivan sends the owner's accounts; Hana is a buyer. Slots on Use Assigned Account come with no email of their own.
+  console.log("\nOne list for Target and Pokémon Center (2026-10-13)");
+  // Ivan sends the owner's accounts; Hana is a buyer. Slots on Use Assigned Account come with no email of their own. The
+  // tests above left the list with none free, so the accounts sent here are the ones given out.
   let hanaKey, ivanKey;
-  const offerAdd = async (key, store, storeName, list) => {
+  const offerAdd = async (key, store, storeName, list, added) => {
     assert.equal((await slots("/accounts/offer", key, { store, storeName, accounts: list })).status, 200);
     await new Promise((ok) => setTimeout(ok, 400));
     const link = offerLink(webhookPosts.at(-1).content); assert.ok(link, webhookPosts.at(-1).content);
-    assert.match(await (await offerPost(link, "add")).text(), /Added \d+ to your list/);
+    const html = await (await offerPost(link, "add")).text();
+    assert.match(html, new RegExp(`Added ${added ?? "\\d+"} to your list`));
+    return html;
   };
   const batchPost = (from) => webhookPosts.slice(from).find((m) => m.content.startsWith("📦"));
   const pcFile = (names, assigned) => ({ store: "Pokémon Center", storeKey: "pokemoncenter", kind: "profiles", text: slotCsv(names.map((n) => slotRow(n, ""))), assigned: assigned ?? names.length });
   const tgFile = (names) => ({ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv(names.map((n) => slotRow(n, ""))), assigned: names.length });
   const given = async () => (await accounts()).given.filter((a) => a.key_last4 === hanaKey.slice(-4));
-  const pcStock = async () => (await accounts()).stores.find((x) => x.store === "pokemoncenter");
+  const stockOf = async () => (await accounts()).stores.find((x) => x.store === "*");
+  // Each account's password, whichever store it was sent for: it's what Target's logins file gets.
+  const PW = { "tgt1@outlook.com": "Tgt-Pw-1!", "tgt2@outlook.com": "Tgt-Pw-2!", "pc1@outlook.com": "Pc-Pw-1!", "pc2@outlook.com": "Pc-Pw-2!", "pc3@outlook.com": "Pc-Pw-3!" };
+  const ours = /^(tgt[12]|pc[123]|lia\.tgt)@outlook\.com$/;
   let tA, tB;
-  await test("setup: a buyer, and the owner's Target and Pokémon Center accounts", async () => {
+  await test("accounts sent for Target or for Pokémon Center go on one list, for both", async () => {
     hanaKey = await newKey("hana"); ivanKey = await newKey("ivan");
-    await offerAdd(ivanKey, "target", "Target", [{ email: "tgt1@outlook.com", password: "Tgt-Pw-1!" }, { email: "tgt2@outlook.com", password: "Tgt-Pw-1!" }]);
-    await offerAdd(ivanKey, "pokemoncenter", "Pokémon Center", [1, 2, 3].map((i) => ({ email: `pc${i}@outlook.com`, password: "Pc-Pw-1!" })));
-    assert.deepEqual(await pcStock(), { store: "pokemoncenter", total: 3, free: 3, sent: 0 });
+    const s0 = await stockOf();
+    assert.equal(s0.free, 0, "none free from the tests above");
+    await offerAdd(ivanKey, "target", "Target", ["tgt1", "tgt2"].map((n) => ({ email: `${n}@outlook.com`, password: PW[`${n}@outlook.com`] })), 2);
+    const html = await offerAdd(ivanKey, "pokemoncenter", "Pokémon Center", ["pc1", "pc2", "pc3"].map((n) => ({ email: `${n}@outlook.com`, password: PW[`${n}@outlook.com`] })), 3);
+    assert.match(html, /3 accounts for Use Assigned Account at Target and Pokémon Center/);
+    assert.match(html, /Your list: \d+ accounts, 5 free\./);
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.match(webhookEdits.at(-1).content, /^✅ \*\*Added 3 accounts to your list\*\* for Use Assigned Account/, "no store named");
+    assert.deepEqual((await accounts()).stores.map((x) => x.store), ["*"], "no store's own list for them");
+    assert.deepEqual(await stockOf(), { ...s0, total: s0.total + 5, free: 5 });
   });
-  await test("in one batch, a profile's Pokémon Center slot gets the Target account it was given; others get their own", async () => {
+  await test("in one batch, a profile's slots at both stores get one account; another profile gets its own", async () => {
     const before = webhookPosts.length;
     // The app sends Pokémon Center before Target; Hana C has no Target slot.
     const files = [pcFile(["Hana A", "Hana C", "Hana B"]), tgFile(["Hana A", "Hana B"])];
-    const r = await (await slots("/submissions", hanaKey, { files, name: "Hana", slots: 5, batch: "pcr1" + rid(),
+    const r = await (await slots("/submissions", hanaKey, { files, name: "Hana", slots: 5, batch: "one1" + rid(),
       stores: [{ name: "Pokémon Center", n: 3, seller: 3 }, { name: "Target", n: 2, seller: 2 }] })).json();
     assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 3, got: 3, reused: 2 }, Target: { asked: 2, got: 2 } });
     const m = batchPost(before);
@@ -1648,109 +1667,119 @@ try {
     const [tgLog, ...more] = plain(m), [pcA, tgA] = aycdOf(m);
     assert.equal(more.length, 0, "only Target's logins file: Pokémon Center's email is on its AYCD profiles");
     [tA, tB] = emailsOf(tgA);
-    assert.ok(/^tgt[12]@outlook\.com$/.test(tA) && /^tgt[12]@outlook\.com$/.test(tB) && tA !== tB, [tA, tB]);
-    assert.equal(tgLog.text, `${tA}:Tgt-Pw-1!\r\n${tB}:Tgt-Pw-1!`);
+    assert.ok(ours.test(tA) && ours.test(tB) && tA !== tB, [tA, tB]);
+    assert.equal(tgLog.text, `${tA}:${PW[tA]}\r\n${tB}:${PW[tB]}`, "each with its own password");
     const pc = emailsOf(pcA);
     assert.deepEqual(pcA.map((x) => x.name), ["Hana A", "Hana C", "Hana B"], "rows in the order sent");
-    assert.equal(pc[0], tA); assert.equal(pc[2], tB); assert.match(pc[1], /^pc[123]@outlook\.com$/);
-    assert.deepEqual(aycdOf(m)[0].map((x) => [x.name, x.shippingAddress.email, x.billingAddress.email]), [["Hana A", tA, tA], ["Hana C", pc[1], pc[1]], ["Hana B", tB, tB]]);
-    assert.deepEqual(await pcStock(), { store: "pokemoncenter", total: 3, free: 2, sent: 1 }, "the reused ones aren't on the Pokémon Center list");
+    assert.equal(pc[0], tA); assert.equal(pc[2], tB); assert.ok(ours.test(pc[1]) && ![tA, tB].includes(pc[1]), pc);
+    assert.deepEqual(pcA.map((x) => [x.name, x.shippingAddress.email, x.billingAddress.email]), [["Hana A", tA, tA], ["Hana C", pc[1], pc[1]], ["Hana B", tB, tB]]);
+    assert.equal((await stockOf()).free, 2, "three accounts given: one each for Hana A, B and C");
     const g = await given();
-    assert.deepEqual(g.filter((a) => a.store === "pokemoncenter").map((a) => [a.email, a.profile, a.store_name, a.reused]).sort(),
-      [[tA, "Hana A", "Pokémon Center", 1], [tB, "Hana B", "Pokémon Center", 1], [pc[1], "Hana C", "Pokémon Center", 0]].sort());
+    assert.deepEqual(listGiven({ given: g }).map((a) => [a.email, a.profile]).sort(), [[tA, "Hana A"], [tB, "Hana B"], [pc[1], "Hana C"]].sort(), "each profile has one");
+    assert.deepEqual(g.filter((a) => a.store !== "*").map((a) => [a.store, a.email, a.profile, a.reused]).sort(),
+      [["pokemoncenter", tA, "Hana A", 1], ["pokemoncenter", tB, "Hana B", 1], ["pokemoncenter", pc[1], "Hana C", 1], ["target", tA, "Hana A", 1], ["target", tB, "Hana B", 1]].sort(),
+      "and each slot a row of its own, which isn't one of the owner's accounts");
   });
-  await test("a later batch reuses a Target account sent before, and pulling the slot finds it at Pokémon Center", async () => {
-    const before = webhookPosts.length;
-    const r = await (await slots("/submissions", hanaKey, { files: [pcFile(["Hana A"])], name: "Hana", slots: 1, batch: "pcr2" + rid(), stores: [{ name: "Pokémon Center", n: 1, seller: 1 }] })).json();
-    assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 1, got: 1, reused: 1 } });
+  await test("a profile's Target slot sent after its Pokémon Center slot gets the same account", async () => {
+    // Hana C's account came for her Pokémon Center slot above.
+    const c = listGiven({ given: await given() }).find((a) => a.profile === "Hana C").email, before = webhookPosts.length, free = (await stockOf()).free;
+    const r = await (await slots("/submissions", hanaKey, { files: [tgFile(["Hana C"])], name: "Hana", slots: 1, batch: "one2" + rid(), stores: [{ name: "Target", n: 1, seller: 1 }] })).json();
+    assert.deepEqual(r.accounts, { Target: { asked: 1, got: 1, reused: 1 } });
     const m = batchPost(before);
+    assert.match(m.content, /\nTarget 1 \(1 assigned account, 1 reused from Pokémon Center\)\n/);
+    assert.equal(emailsOf(aycdOf(m)[0])[0], c); assert.equal(plain(m)[0].text, `${c}:${PW[c]}`, "its own password, in Target's logins file");
+    assert.equal((await stockOf()).free, free, "no second account taken from the list");
+  });
+  await test("a slot sent again takes its account along, and pulling it finds the account at its store", async () => {
+    const before = webhookPosts.length;
+    const r = await (await slots("/submissions", hanaKey, { files: [pcFile(["Hana A"])], name: "Hana", slots: 1, batch: "one3" + rid(), stores: [{ name: "Pokémon Center", n: 1, seller: 1 }] })).json();
+    assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 1, got: 1 } });
+    const m = batchPost(before);
+    assert.match(m.content, /\nPokémon Center 1 \(1 assigned account, 1 they had before\)\n/);
     assert.equal(emailsOf(aycdOf(m)[0])[0], tA); assert.deepEqual(plain(m), [], "no logins file");
     const p0 = webhookPosts.length;
     await pull(hanaKey, { keyId: "CSV", name: "Hana", slots: [{ store: "Pokémon Center", profile: "Hana A", email: "Assigned account", card: "Visa 4242" }] });
     assert.ok(webhookPosts[p0].content.includes(`Pokémon Center · Hana A · ${tA} \\(assigned account\\)`), webhookPosts[p0].content);
-    assert.doesNotMatch(webhookPosts[p0].content, /Tgt-Pw-1/);
+    assert.doesNotMatch(webhookPosts[p0].content, /Pw-/);
   });
-  await test("an email on the Pokémon Center list too is used from there", async () => {
-    await offerAdd(ivanKey, "target", "Target", [{ email: "lia.tgt@outlook.com", password: "Tgt-Pw-2!" }]);
-    await offerAdd(ivanKey, "pokemoncenter", "Pokémon Center", [{ email: "LIA.TGT@outlook.com", password: "Inbox-Pw-2!" }]);
-    const before = webhookPosts.length;
-    const r = await (await slots("/submissions", hanaKey, { files: [tgFile(["Lia Moss"]), pcFile(["Lia Moss"])], name: "Hana", slots: 2, batch: "pcr3" + rid(),
-      stores: [{ name: "Target", n: 1, seller: 1 }, { name: "Pokémon Center", n: 1, seller: 1 }] })).json();
-    assert.deepEqual(r.accounts, { Target: { asked: 1, got: 1 }, "Pokémon Center": { asked: 1, got: 1, reused: 1 } });
-    const [tgLog, ...more] = plain(batchPost(before)), [tg, pc] = aycdOf(batchPost(before));
-    assert.equal(more.length, 0);
-    assert.equal(emailsOf(tg)[0], "lia.tgt@outlook.com"); assert.equal(tgLog.text, "lia.tgt@outlook.com:Tgt-Pw-2!");
-    assert.equal(emailsOf(pc)[0], "LIA.TGT@outlook.com", "the list's own row (its spelling)");
-    assert.deepEqual(await pcStock(), { store: "pokemoncenter", total: 4, free: 2, sent: 2 }, "taken from the list like any other");
+  await test("an email sent for both stores is one account on the list, with the password it came with first", async () => {
+    const s0 = await stockOf();
+    await offerAdd(ivanKey, "target", "Target", [{ email: "lia.tgt@outlook.com", password: "Tgt-Pw-3!" }], 1);
+    const html = await offerAdd(ivanKey, "pokemoncenter", "Pokémon Center", [{ email: "LIA.TGT@outlook.com", password: "Inbox-Pw-3!" }], 0);
+    assert.match(html, /Added 0 to your list\. 1 was already on it\./);
+    assert.deepEqual(await stockOf(), { ...s0, total: s0.total + 1, free: s0.free + 1 });
+    PW["lia.tgt@outlook.com"] = "Tgt-Pw-3!";
   });
-  await test("a batch that doesn't reach the channel drops its reused accounts; nothing joins the Pokémon Center list", async () => {
-    await offerAdd(ivanKey, "target", "Target", [{ email: "tgt3@outlook.com", password: "Tgt-Pw-1!" }]);
-    const batch = "pcr4" + rid(), stock = await pcStock();
+  await test("a batch that doesn't reach the channel gives nothing out; sent again, it picks again", async () => {
+    const batch = "one4" + rid(), s0 = await stockOf(), g0 = (await given()).length;
+    const send = () => slots("/submissions", hanaKey, { files: [pcFile(["Hana D"]), tgFile(["Hana D"])], name: "Hana", slots: 2, batch,
+      stores: [{ name: "Pokémon Center", n: 1, seller: 1 }, { name: "Target", n: 1, seller: 1 }] });
     webhookFail.push(500);
-    assert.equal((await slots("/submissions", hanaKey, { files: [pcFile(["Hana D"]), tgFile(["Hana D"])], name: "Hana", slots: 2, batch,
-      stores: [{ name: "Pokémon Center", n: 1, seller: 1 }, { name: "Target", n: 1, seller: 1 }] })).status, 502);
-    assert.deepEqual(await pcStock(), stock);
-    assert.ok(!(await accounts()).given.some((a) => a.email === "tgt3@outlook.com"), "neither the Target account nor its reuse is held");
+    assert.equal((await send()).status, 502);
+    assert.deepEqual(await stockOf(), s0, "back on the list");
+    assert.equal((await given()).length, g0, "and no slot's row of it is left");
     const before = webhookPosts.length;
-    const r = await (await slots("/submissions", hanaKey, { files: [pcFile(["Hana D"]), tgFile(["Hana D"])], name: "Hana", slots: 2, batch,
-      stores: [{ name: "Pokémon Center", n: 1, seller: 1 }, { name: "Target", n: 1, seller: 1 }] })).json();
-    assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 1, got: 1, reused: 1 }, Target: { asked: 1, got: 1 } }, "sending again reuses it again");
-    assert.equal(emailsOf(aycdOf(batchPost(before))[0])[0], "tgt3@outlook.com");
-    assert.deepEqual(await pcStock(), stock);
+    const r = await (await send()).json();
+    assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 1, got: 1, reused: 1 }, Target: { asked: 1, got: 1 } }, "Target first, then Pokémon Center reuses it");
+    const [pcL, tgL] = aycdOf(batchPost(before)).map(emailsOf);
+    assert.equal(pcL[0], tgL[0], "one account for both"); assert.ok(ours.test(pcL[0]));
+    assert.equal((await stockOf()).free, s0.free - 1);
   });
-  await test("with the Pokémon Center list out, a reused account still goes out, and slots left without one come last", async () => {
+  await test("with the list out, a profile's account still goes to its slots, and slots left without one come last", async () => {
+    assert.equal((await stockOf()).free, 2);
     const before = webhookPosts.length;
-    const r = await (await slots("/submissions", hanaKey, { files: [pcFile(["Hana E", "Hana F", "Hana G", "Hana B"])], name: "Hana", slots: 4, batch: "pcr5" + rid(),
+    const r = await (await slots("/submissions", hanaKey, { files: [pcFile(["Hana E", "Hana F", "Hana G", "Hana B"])], name: "Hana", slots: 4, batch: "one5" + rid(),
       stores: [{ name: "Pokémon Center", n: 4, seller: 4 }] })).json();
-    assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 4, got: 3, reused: 1 } });
+    assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 4, got: 3 } });
     const m = batchPost(before), list = aycdOf(m)[0], em = emailsOf(list);
     assert.deepEqual(plain(m), [], "no logins file");
-    assert.match(m.content, /\nPokémon Center 4 \(3 assigned accounts, 1 reused from Target, 1 needs an account: your list has none\)\n/);
+    assert.match(m.content, /\nPokémon Center 4 \(3 assigned accounts, 1 they had before, 1 needs an account: your list has none\)\n/);
     assert.deepEqual(list.map((x) => x.name), ["Hana E", "Hana F", "Hana B", "Hana G"]);
-    assert.ok(/^pc[123]@outlook\.com$/.test(em[0]) && /^pc[123]@outlook\.com$/.test(em[1]), em); assert.equal(em[2], tB); assert.equal(em[3], "");
-    assert.deepEqual(aycdOf(m)[0].map((x) => [x.name, x.shippingAddress.email]), [["Hana E", em[0]], ["Hana F", em[1]], ["Hana B", tB], ["Hana G", ""]], "the AYCD list in the same order");
+    assert.ok(ours.test(em[0]) && ours.test(em[1]) && em[0] !== em[1], em); assert.equal(em[2], tB); assert.equal(em[3], "");
+    assert.equal((await stockOf()).free, 0);
+    assert.match(webhookPosts.at(-1).content, /^🚫 \*\*No accounts left\*\* on your list for Use Assigned Account\./, "the owner is told");
   });
-  await test("sending the owner's list an email given out as a reused account puts it on the list, still with its slot", async () => {
-    await offerAdd(hanaKey, "pokemoncenter", "Pokémon Center", [{ email: tA.toUpperCase(), password: "Inbox-Pw-3!" }]);
-    assert.deepEqual(await pcStock(), { store: "pokemoncenter", total: 5, free: 0, sent: 5 });
-    assert.equal((await given()).find((a) => a.store === "pokemoncenter" && a.email === tA).reused, 0);
+  await test("an account given to one buyer never goes to another, at either store", async () => {
     const before = webhookPosts.length;
-    await slots("/submissions", hanaKey, { files: [pcFile(["Hana A"])], name: "Hana", slots: 1, batch: "pcr6" + rid(), stores: [{ name: "Pokémon Center", n: 1, seller: 1 }] });
-    const m = batchPost(before);
-    assert.equal(emailsOf(aycdOf(m)[0])[0], tA, "Hana A keeps it"); assert.deepEqual(plain(m), []);
+    const r = await (await slots("/submissions", bobKey, { files: [pcFile(["Bob P"]), tgFile(["Bob P"])], name: "Bob", slots: 2, batch: "one6" + rid(),
+      stores: [{ name: "Pokémon Center", n: 1, seller: 1 }, { name: "Target", n: 1, seller: 1 }] })).json();
+    assert.deepEqual(r.accounts, { "Pokémon Center": { asked: 1, got: 0 }, Target: { asked: 1, got: 0 } });
+    assert.match(batchPost(before).content, /\nPokémon Center 1 \(1 needs an account: your list has none\) · Target 1 \(1 needs an account: your list has none\)\n/);
+    const all = (await accounts()).given, owner = new Map(listGiven({ given: all }).map((a) => [a.email, a.key_last4]));
+    assert.ok(all.every((a) => owner.get(a.email) === a.key_last4), "every slot's row is its account's buyer's");
+    assert.equal(new Set(listGiven({ given: all }).map((a) => a.email)).size, listGiven({ given: all }).length, "and each account is given once");
   });
-  await test("freeing a license's accounts drops its reused ones", async () => {
+  await test("a license's limit counts an account once, however many of its slots use it", async () => {
+    const g = await given();
+    assert.equal(listGiven({ given: g }).length, 6, "Hana A to F");
+    assert.ok(g.length > 6, "with more slots' rows than that");
+  });
+  await test("freeing a license's accounts by hand puts them back, and drops every slot's row of them", async () => {
+    const s0 = await stockOf();
     assert.equal((await admin("/admin/accounts/free", { key: hanaKey })).status, 200);
     assert.deepEqual(await given(), []);
+    assert.deepEqual(await stockOf(), { ...s0, free: s0.free + 6, sent: s0.sent - 6 });
     const d = await accounts();
-    assert.deepEqual(d.stores.find((x) => x.store === "pokemoncenter"), { store: "pokemoncenter", total: 5, free: 5, sent: 0 });
-    assert.ok(!d.given.some((a) => a.reused), "no reused rows left");
+    assert.ok(!d.given.some((a) => a.reused && !listGiven(d).some((m) => m.email === a.email)), "no slot's row left without its account");
   });
-  await test("declining a batch puts the accounts given to its slots back on the list, and drops its reused ones", async () => {
-    const tStock = async () => (await accounts()).stores.find((x) => x.store === "target");
-    const t0 = await tStock(), p0 = await pcStock(), before = webhookPosts.length;
+  await test("declining a batch puts its accounts back on the list, with every slot's row of them", async () => {
+    const s0 = await stockOf(), before = webhookPosts.length;
     const r = await (await slots("/submissions", hanaKey, { files: [tgFile(["Hana Q"]), pcFile(["Hana Q"])], name: "Hana", slots: 2, batch: "dcl" + rid(),
       stores: [{ name: "Target", n: 1, seller: 1 }, { name: "Pokémon Center", n: 1, seller: 1 }] })).json();
     assert.deepEqual(r.accounts, { Target: { asked: 1, got: 1 }, "Pokémon Center": { asked: 1, got: 1, reused: 1 } });
-    const g = await given();
-    assert.equal(g.length, 2, "the Target account, and its reuse at Pokémon Center");
-    // Usually 1 of the owner's own: the Pokémon Center one is a reuse, unless that email is on the Pokémon Center list too.
-    const own = g.filter((a) => !a.reused).length, n = `${own} account${own === 1 ? "" : "s"}`;
+    assert.equal((await given()).length, 3, "the account, and its Target and Pokémon Center slots' rows");
     const link = approveLink(batchPost(before).content);
-    assert.match(await (await approvePost(link, "decline-ask")).text(), new RegExp(`The ${n} given to them go${own === 1 ? "es" : ""} back on your list\\.`));
-    assert.match(await (await approvePost(link, "decline")).text(), new RegExp(`Declined\\. Their FAFO now shows these slots as Declined\\. ${n} given to them ${own === 1 ? "is" : "are"} back on your list\\.`));
+    assert.match(await (await approvePost(link, "decline-ask")).text(), /The 1 account given to them goes back on your list\./);
+    assert.match(await (await approvePost(link, "decline")).text(), /Declined\. Their FAFO now shows these slots as Declined\. 1 account given to them is back on your list\./);
     assert.deepEqual(await given(), []);
-    assert.deepEqual(await tStock(), t0); assert.deepEqual(await pcStock(), p0);
-    assert.ok(!(await accounts()).given.some((a) => a.reused), "no reused rows left");
+    assert.deepEqual(await stockOf(), s0);
   });
-  // 2026-10-07, the owner's request: a Target account its profile's Pokémon Center slot (in another batch) still checks
-  // out with doesn't go back on the list, where another buyer's Target slot could get it.
-  const tStock = async () => (await accounts()).stores.find((x) => x.store === "target");
-  // Quinn is the buyer here (Hana has sent close to the hourly limit of batches).
+  // The account stays with the buyer while any of their slots uses it (2026-10-07, the owner's request, for the one list),
+  // so the list can't give it to a second buyer. Quinn is the buyer here (Hana has sent close to the hourly limit of batches).
   let quinnKey;
-  const held = async (email) => (await accounts()).given.filter((a) => a.key_last4 === quinnKey.slice(-4) && a.email === email).map((a) => [a.store, a.batch, a.reused]).sort();
+  const slotsOf = async (email) => (await accounts()).given.filter((a) => a.key_last4 === quinnKey.slice(-4) && a.email === email && a.store !== "*").map((a) => [a.store, a.batch]).sort();
+  const owns = async (email) => listGiven(await accounts()).some((a) => a.key_last4 === quinnKey.slice(-4) && a.email === email);
   const pcPull = (batch, profile) => pull(quinnKey, { keyId: "CSV", name: "Quinn", batch, slots: [{ store: "Pokémon Center", profile, email: "Assigned account", card: "Visa 4242" }] });
-  let owenKey, fillLink;
   const sendBatch = async (files, stores) => {
     const batch = "kp" + rid(), before = webhookPosts.length;
     const r = await (await slots("/submissions", quinnKey, { files, name: "Quinn", slots: stores.reduce((n, x) => n + x.n, 0), batch, stores })).json();
@@ -1758,59 +1787,45 @@ try {
     return { batch, r, m, link: approveLink(m.content), emails: aycdOf(m).map(emailsOf) };
   };
   const TG1 = [{ name: "Target", n: 1, seller: 1 }], PC1 = [{ name: "Pokémon Center", n: 1, seller: 1 }];
+  const KEPT = "1 account stays with them: their slot at the other store in another batch uses it too.";
   await test("declining a Target batch keeps its account while the profile's Pokémon Center slot in another batch uses it", async () => {
-    // Owen holds every free Target account until the last of these tests, so Hana's come from keep1 and keep2 (each test
-    // gives its own back), neither of which is on the Pokémon Center list too.
-    owenKey = await newKey("owen"); quinnKey = await newKey("quinn");
-    const free = (await tStock()).free, names = Array.from({ length: free }, (_, i) => `Owen ${i + 1}`), before = webhookPosts.length;
-    const f = await (await slots("/submissions", owenKey, { files: [tgFile(names)], name: "Owen", slots: free, batch: "fill" + rid(), stores: [{ name: "Target", n: free, seller: free }] })).json();
-    assert.deepEqual(f.accounts, { Target: { asked: free, got: free } }, "Owen holds them all");
-    fillLink = approveLink(batchPost(before).content);
-    await offerAdd(owenKey, "target", "Target", [{ email: "keep1@outlook.com", password: "Tgt-Pw-4!" }, { email: "keep2@outlook.com", password: "Tgt-Pw-4!" }]);
+    quinnKey = await newKey("quinn");
     const t = await sendBatch([tgFile(["Quinn K"])], TG1);
     const [[tk]] = t.emails;
     const p = await sendBatch([pcFile(["Quinn K"])], PC1);
     assert.deepEqual(p.r.accounts, { "Pokémon Center": { asked: 1, got: 1, reused: 1 } });
-    assert.equal(p.emails[0][0], tk, "the Pokémon Center slot checks out with the Target account");
-    const t0 = await tStock(), p0 = await pcStock();
+    assert.equal(p.emails[0][0], tk, "the Pokémon Center slot checks out with the same account");
+    const s0 = await stockOf();
     const ask = await (await approvePost(t.link, "decline-ask")).text();
-    assert.match(ask, /1 Target account stays with them: their Pokémon Center slot in another batch uses it too\./, ask);
-    assert.doesNotMatch(ask, /back on your list/, "nothing goes back");
+    assert.ok(ask.includes(KEPT), ask); assert.doesNotMatch(ask, /back on your list/, "nothing goes back");
     const done = await (await approvePost(t.link, "decline")).text();
-    assert.match(done, /Declined\. Their FAFO now shows these slots as Declined\. 1 Target account stays with them: their Pokémon Center slot in another batch uses it too\./, done);
-    assert.deepEqual(await tStock(), t0, "not back on the Target list");
-    assert.deepEqual(await held(tk), [["pokemoncenter", p.batch, 1], ["target", "parked:" + t.batch, 0]], "held by the buyer, parked");
-    // Declining the batch that uses it puts it back, and drops the reuse.
+    assert.ok(done.includes(`Declined. Their FAFO now shows these slots as Declined. ${KEPT}`), done);
+    assert.deepEqual(await stockOf(), s0, "not back on the list");
+    assert.ok(await owns(tk)); assert.deepEqual(await slotsOf(tk), [["pokemoncenter", p.batch]], "the buyer's, for the slot that uses it");
+    // Declining the batch that uses it puts it back.
     const ask2 = await (await approvePost(p.link, "decline-ask")).text();
-    assert.match(ask2, /The 1 account given to them goes back on your list\./, ask2);
-    assert.doesNotMatch(ask2, /stays with them/);
+    assert.match(ask2, /The 1 account given to them goes back on your list\./, ask2); assert.doesNotMatch(ask2, /stays with them/);
     assert.match(await (await approvePost(p.link, "decline")).text(), /Declined\. Their FAFO now shows these slots as Declined\. 1 account given to them is back on your list\./);
-    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
-    assert.deepEqual(await pcStock(), p0);
-    assert.deepEqual(await held(tk), []);
+    assert.deepEqual(await stockOf(), { ...s0, free: s0.free + 1, sent: s0.sent - 1 });
+    assert.ok(!(await owns(tk))); assert.deepEqual(await slotsOf(tk), []);
   });
-  await test("a Pokémon Center slot sent again takes its account along; declining a batch of only reuses drops them", async () => {
+  await test("a slot sent again takes its account along; declining the batch it left changes nothing", async () => {
     const t = await sendBatch([tgFile(["Quinn M"])], TG1);
     const [[tm]] = t.emails;
     const p1 = await sendBatch([pcFile(["Quinn M"])], PC1);
     await pcPull(p1.batch, "Quinn M");
     const p2 = await sendBatch([pcFile(["Quinn M"])], PC1);
     assert.equal(p2.emails[0][0], tm, "the same account again");
-    assert.deepEqual(await held(tm), [["pokemoncenter", p2.batch, 1], ["target", t.batch, 0]], "the reuse moved to the batch it's in now");
-    const t0 = await tStock();
-    // The batch it was in before: declining it leaves the account with the slot sent again.
+    assert.match(p2.m.content, /\nPokémon Center 1 \(1 assigned account, 1 they had before\)\n/);
+    assert.deepEqual(await slotsOf(tm), [["pokemoncenter", p2.batch], ["target", t.batch]], "its row moved to the batch it's in now");
+    const s0 = await stockOf();
     const d1 = await (await approvePost(p1.link, "decline")).text();
-    assert.match(d1, /Declined\. Their FAFO now shows these slots as Declined\./, d1);
-    assert.doesNotMatch(d1, /back on your list|stays with them/, "it held nothing");
-    assert.deepEqual(await held(tm), [["pokemoncenter", p2.batch, 1], ["target", t.batch, 0]]);
-    // Its batch holds only that reuse (the Target account is the Target batch's): declining it drops the reuse.
-    await approvePost(p2.link, "decline");
-    assert.deepEqual(await held(tm), [["target", t.batch, 0]], "the reuse is gone; the Target slot keeps its account");
-    assert.deepEqual(await tStock(), t0);
-    // With no reuse left, declining the Target batch puts its account back.
-    await approvePost(t.link, "decline");
-    assert.deepEqual(await held(tm), []);
-    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
+    assert.match(d1, /Declined\. Their FAFO now shows these slots as Declined\./, d1); assert.doesNotMatch(d1, /back on your list|stays with them/, "it held nothing");
+    assert.deepEqual(await slotsOf(tm), [["pokemoncenter", p2.batch], ["target", t.batch]]);
+    assert.ok((await (await approvePost(p2.link, "decline")).text()).includes(KEPT), "the Target slot still uses it");
+    assert.deepEqual(await slotsOf(tm), [["target", t.batch]]); assert.deepEqual(await stockOf(), s0);
+    assert.match(await (await approvePost(t.link, "decline")).text(), /1 account given to them is back on your list\./);
+    assert.deepEqual(await slotsOf(tm), []); assert.deepEqual(await stockOf(), { ...s0, free: s0.free + 1, sent: s0.sent - 1 });
   });
   await test("a slot sent again whose batch doesn't reach the channel leaves its account where it was", async () => {
     const t = await sendBatch([tgFile(["Quinn N"])], TG1);
@@ -1819,32 +1834,30 @@ try {
     await pcPull(p1.batch, "Quinn N");
     webhookFail.push(500);
     assert.equal((await slots("/submissions", quinnKey, { files: [pcFile(["Quinn N"])], name: "Quinn", slots: 1, batch: "kpf" + rid(), stores: PC1 })).status, 502);
-    assert.deepEqual(await held(tn), [["pokemoncenter", p1.batch, 1], ["target", t.batch, 0]], "still in the batch that reached the channel");
-    const t0 = await tStock();
-    // So declining the Target batch keeps it (that batch's slot uses it), and declining that one puts it back.
-    assert.match(await (await approvePost(t.link, "decline")).text(), /1 Target account stays with them/);
+    assert.deepEqual(await slotsOf(tn), [["pokemoncenter", p1.batch], ["target", t.batch]], "still in the batch that reached the channel");
+    const s0 = await stockOf();
+    assert.ok((await (await approvePost(t.link, "decline")).text()).includes(KEPT));
     assert.match(await (await approvePost(p1.link, "decline")).text(), /1 account given to them is back on your list\./);
-    assert.deepEqual(await held(tn), []);
-    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
+    assert.deepEqual(await slotsOf(tn), []); assert.deepEqual(await stockOf(), { ...s0, free: s0.free + 1, sent: s0.sent - 1 });
   });
   await test("a declined Target slot sent again gets back the account its Pokémon Center slot kept", async () => {
     const t = await sendBatch([tgFile(["Quinn R"])], TG1);
     const [[tr]] = t.emails;
     const p = await sendBatch([pcFile(["Quinn R"])], PC1);
     await approvePost(t.link, "decline");
-    const t0 = await tStock();
+    const s0 = await stockOf();
     const t2 = await sendBatch([tgFile(["Quinn R"])], TG1);
-    assert.deepEqual(t2.r.accounts, { Target: { asked: 1, got: 1 } });
+    assert.deepEqual(t2.r.accounts, { Target: { asked: 1, got: 1, reused: 1 } });
+    assert.match(t2.m.content, /\nTarget 1 \(1 assigned account, 1 reused from Pokémon Center\)\n/);
     assert.equal(t2.emails[0][0], tr, "the same email at both stores again");
-    assert.deepEqual(await tStock(), t0, "no second account taken from the list");
-    assert.deepEqual(await held(tr), [["pokemoncenter", p.batch, 1], ["target", t2.batch, 0]]);
+    assert.deepEqual(await stockOf(), s0, "no second account taken from the list");
+    assert.deepEqual(await slotsOf(tr), [["pokemoncenter", p.batch], ["target", t2.batch]]);
     await approvePost(p.link, "decline");
-    assert.deepEqual(await held(tr), [["target", t2.batch, 0]], "the Target slot sent again keeps it");
+    assert.deepEqual(await slotsOf(tr), [["target", t2.batch]], "the Target slot sent again keeps it");
     await approvePost(t2.link, "decline");
-    assert.deepEqual(await held(tr), []);
-    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
+    assert.deepEqual(await slotsOf(tr), []); assert.deepEqual(await stockOf(), { ...s0, free: s0.free + 1, sent: s0.sent - 1 });
   });
-  await test("approved, pulled and sent again: declining the new batch puts back the Target account kept for it", async () => {
+  await test("approved, pulled and sent again: declining the new batch puts the account back", async () => {
     const t = await sendBatch([tgFile(["Quinn S"])], TG1);
     const [[ts]] = t.emails;
     const p = await sendBatch([pcFile(["Quinn S"])], PC1);
@@ -1852,32 +1865,28 @@ try {
     await approvePost(p.link, "approve");
     await pcPull(p.batch, "Quinn S");
     const p3 = await sendBatch([pcFile(["Quinn S"])], PC1);
-    assert.deepEqual(await held(ts), [["pokemoncenter", p3.batch, 1], ["target", "parked:" + t.batch, 0]]);
-    const t0 = await tStock();
+    assert.deepEqual(await slotsOf(ts), [["pokemoncenter", p3.batch]]);
+    const s0 = await stockOf();
     assert.match(await (await approvePost(p3.link, "decline-ask")).text(), /The 1 account given to them goes back on your list\./);
     assert.match(await (await approvePost(p3.link, "decline")).text(), /1 account given to them is back on your list\./);
-    assert.deepEqual(await held(ts), []);
-    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
+    assert.deepEqual(await slotsOf(ts), []); assert.deepEqual(await stockOf(), { ...s0, free: s0.free + 1, sent: s0.sent - 1 });
   });
-  await test("freeing a Target account by hand drops its reuse at Pokémon Center too", async () => {
+  await test("freeing an account by hand: by its email, every slot's row goes; with a store, that slot's only", async () => {
     const t = await sendBatch([tgFile(["Quinn P"]), pcFile(["Quinn P"])], [...TG1, ...PC1]);
     const [[tp], [pp]] = t.emails;
     assert.equal(pp, tp);
-    assert.equal((await held(tp)).length, 2);
-    assert.equal((await admin("/admin/accounts/free", { email: tp, store: "target" })).status, 200);
-    assert.deepEqual(await held(tp), [], "neither is held");
-  });
-  await test("freeing the Pokémon Center account by hand puts back the Target account kept for it", async () => {
-    const t = await sendBatch([tgFile(["Quinn T"])], TG1);
-    const [[tt]] = t.emails;
-    const p = await sendBatch([pcFile(["Quinn T"])], PC1);
+    assert.equal((await slotsOf(tp)).length, 2);
+    assert.equal((await admin("/admin/accounts/free", { email: tp })).status, 200);
+    assert.deepEqual(await slotsOf(tp), [], "neither slot has it"); assert.ok(!(await owns(tp)));
     await approvePost(t.link, "decline");
-    assert.deepEqual(await held(tt), [["pokemoncenter", p.batch, 1], ["target", "parked:" + t.batch, 0]]);
-    const t0 = await tStock();
-    assert.equal((await admin("/admin/accounts/free", { email: tt, store: "pokemoncenter" })).status, 200);
-    assert.deepEqual(await held(tt), [], "the reuse is gone, and the Target account it kept is back");
-    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
-    await approvePost(p.link, "decline");
+    const u = await sendBatch([tgFile(["Quinn V"]), pcFile(["Quinn V"])], [...TG1, ...PC1]);
+    const [[tv]] = u.emails, s0 = await stockOf();
+    assert.equal((await admin("/admin/accounts/free", { email: tv, store: "target" })).status, 200);
+    assert.deepEqual(await slotsOf(tv), [["pokemoncenter", u.batch]], "only the Target slot's row goes"); assert.ok(await owns(tv)); assert.deepEqual(await stockOf(), s0);
+    assert.equal((await admin("/admin/accounts/free", { email: tv, store: "pokemoncenter" })).status, 200);
+    assert.deepEqual(await slotsOf(tv), []); assert.ok(!(await owns(tv)), "with no slot left, it's back on the list");
+    assert.deepEqual(await stockOf(), { ...s0, free: s0.free + 1, sent: s0.sent - 1 });
+    await approvePost(u.link, "decline");
   });
   await test("declining the old batch while the slot sent again is posting leaves the account with the new one", async () => {
     const t = await sendBatch([tgFile(["Quinn U"])], TG1);
@@ -1890,60 +1899,19 @@ try {
     assert.match(await (await approvePost(p1.link, "decline")).text(), /Declined\./);
     const p2 = await sending;
     assert.equal(p2.emails[0][0], tu);
-    assert.deepEqual(await held(tu), [["pokemoncenter", p2.batch, 1], ["target", t.batch, 0]], "the posted batch has it; the declined one didn't free it");
+    assert.deepEqual(await slotsOf(tu), [["pokemoncenter", p2.batch], ["target", t.batch]], "the posted batch has it; the declined one didn't free it");
     // Same with a declined Target slot sent again while its Pokémon Center batch is declined.
     await approvePost(t.link, "decline");
-    assert.deepEqual(await held(tu), [["pokemoncenter", p2.batch, 1], ["target", "parked:" + t.batch, 0]]);
+    assert.deepEqual(await slotsOf(tu), [["pokemoncenter", p2.batch]]); assert.ok(await owns(tu));
     webhookHang = { ms: 2500 };
     const resend = sendBatch([tgFile(["Quinn U"])], TG1);
     await new Promise((ok) => setTimeout(ok, 1000));
     await approvePost(p2.link, "decline");
     const t2 = await resend;
     assert.equal(t2.emails[0][0], tu, "it gets its account back");
-    assert.deepEqual(await held(tu), [["target", t2.batch, 0]], "and keeps it, though its Pokémon Center slot was declined meanwhile");
+    assert.deepEqual(await slotsOf(tu), [["target", t2.batch]], "and keeps it, though its Pokémon Center slot was declined meanwhile"); assert.ok(await owns(tu));
     await approvePost(t2.link, "decline");
-    assert.deepEqual(await held(tu), []);
-  });
-  await test("a reuse the worker before 2026-10-07 left in a declined batch still counts as in use", async () => {
-    // That worker skipped declines of batches holding only reuses, and a slot sent again kept using the reuse where it
-    // was. Made here by marking the Pokémon Center batch declined in the database (this worker would drop its reuse).
-    const sql = (cmd) => execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", cmd], { cwd: root, env, stdio: "pipe" });
-    const t = await sendBatch([tgFile(["Quinn L"])], TG1);
-    const [[tl]] = t.emails;
-    const p = await sendBatch([pcFile(["Quinn L"])], PC1);
-    sql(`UPDATE submission_reviews SET status = 'declined', decided_at = 1 WHERE id = '${p.batch}'`);
-    assert.equal((await admin("/admin/accounts/free", { email: "nobody@example.com" })).status, 200);   // sweeps
-    assert.deepEqual(await held(tl), [["pokemoncenter", p.batch, 1], ["target", t.batch, 0]], "the reuse is kept");
-    const t0 = await tStock();
-    assert.match(await (await approvePost(t.link, "decline")).text(), /1 Target account stays with them/);
-    assert.deepEqual(await tStock(), t0, "the Target account isn't put back");
-    // The owner frees them by hand.
-    assert.equal((await admin("/admin/accounts/free", { email: tl })).status, 200);
-    assert.deepEqual(await held(tl), []);
-    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
-  });
-  await test("the same email on the Pokémon Center list: declining the Target batch keeps it, declining the other puts both back", async () => {
-    // Quinn holds keep1 and keep2, so the Target slot below gets both1, the one free Target account.
-    const hold = await sendBatch([tgFile(["Quinn X1", "Quinn X2"])], [{ name: "Target", n: 2, seller: 2 }]);
-    await offerAdd(owenKey, "target", "Target", [{ email: "both1@outlook.com", password: "Tgt-Pw-5!" }]);
-    await offerAdd(owenKey, "pokemoncenter", "Pokémon Center", [{ email: "both1@outlook.com", password: "Inbox-Pw-5!" }]);
-    const t = await sendBatch([tgFile(["Quinn W"])], TG1);
-    assert.equal(t.emails[0][0], "both1@outlook.com");
-    const p = await sendBatch([pcFile(["Quinn W"])], PC1);
-    assert.equal(p.emails[0][0], "both1@outlook.com");
-    assert.deepEqual(await held("both1@outlook.com"), [["pokemoncenter", p.batch, 0], ["target", t.batch, 0]], "the Pokémon Center list's own account");
-    const t0 = await tStock(), p0 = await pcStock();
-    assert.match(await (await approvePost(t.link, "decline")).text(), /1 Target account stays with them/);
-    assert.deepEqual(await tStock(), t0);
-    assert.match(await (await approvePost(p.link, "decline")).text(), /2 accounts given to them are back on your list\./);
-    assert.deepEqual(await held("both1@outlook.com"), []);
-    assert.deepEqual(await tStock(), { ...t0, free: t0.free + 1, sent: t0.sent - 1 });
-    assert.deepEqual(await pcStock(), { ...p0, free: p0.free + 1, sent: p0.sent - 1 });
-    assert.match(await (await approvePost(hold.link, "decline")).text(), /2 accounts given to them are back on your list\./);
-    // Off both lists again, as the tests after these expect them.
-    assert.equal((await admin("/admin/accounts/remove", { email: "both1@outlook.com" })).status, 200);
-    // Owen's go back for the tests after these.
-    assert.match(await (await approvePost(fillLink, "decline")).text(), /back on your list\./);
+    assert.deepEqual(await slotsOf(tu), []); assert.ok(!(await owns(tu)));
   });
   console.log("\nA profile sent again gets back the account it had (app 1.9.99+, 2026-10-07)");
   // Ivan is the buyer here (sign-ins are rate limited), with the owner's accounts for a store of their own (Kohl's), so
@@ -2029,72 +1997,71 @@ try {
     for (const body of [{}, { emails: [] }, { emails: "pc1@outlook.com" }, { emails: ["nope"] }, { emails: ["pc1@outlook.com", "x:y@outlook.com"] }])
       assert.equal((await slots("/accounts/remove", ivanKey, body)).status, 400, JSON.stringify(body));
   });
-  let rmLink, gone, both, gOnTarget;
+  let rmLink, gone, other;
   await test("asking posts the count and a review link, never the emails; the page shows where each one is", async () => {
-    // Hana gets a Pokémon Center account, so one of those asked about has been given out.
+    // Hana gets an account for a Pokémon Center slot, so one of those asked about has been given out.
     const before = webhookPosts.length;
     await slots("/submissions", hanaKey, { files: [pcFile(["Hana Z"])], name: "Hana", slots: 1, batch: "rmv1" + rid(), stores: [{ name: "Pokémon Center", n: 1, seller: 1 }] });
     assert.ok(batchPost(before));
-    const g = (await accounts()).given.find((a) => a.profile === "Hana Z");
-    assert.ok(g && g.store === "pokemoncenter", "Hana Z got one");
+    const g = listGiven(await accounts()).find((a) => a.profile === "Hana Z");
+    assert.ok(g && (await accounts()).given.some((a) => a.store === "pokemoncenter" && a.profile === "Hana Z"), "Hana Z got one, for her Pokémon Center slot");
     gone = g.email.toLowerCase();
-    // An email on both the Target and the Pokémon Center list.
-    both = ["lia.tgt@outlook.com", tA.toLowerCase()].find((e) => e !== gone);
-    gOnTarget = ["lia.tgt@outlook.com", tA.toLowerCase()].includes(gone);
-    const { status, body, m } = await askRemove([g.email.toUpperCase(), both, "nobody@example.com", both]);
+    // A free one.
+    other = ["lia.tgt@outlook.com", "tgt1@outlook.com"].find((e) => e !== gone);
+    const { status, body, m } = await askRemove([g.email.toUpperCase(), other, "nobody@example.com", other]);
     assert.equal(status, 200); assert.deepEqual(body, { status: "pending", count: 3 }, "each email counts once, whatever its case");
     assert.match(m.content, /^🗑️ \*\*Take 3 accounts off your list for Use Assigned Account\?\*\*\nAsked by \*\*Owner\*\* · @ivan · license …/);
-    assert.ok(![gone, both, "nobody@example.com"].some((e) => m.content.toLowerCase().includes(e)), "no emails in the channel");
+    assert.ok(![gone, other, "nobody@example.com"].some((e) => m.content.toLowerCase().includes(e)), "no emails in the channel");
     rmLink = removalLink(m.content); assert.ok(rmLink, m.content);
     const html = await (await fetch(rmLink)).text();
     assert.match(html, /3 accounts to take off your list for Use Assigned Account/); assert.match(html, /Only remove these if you asked/);
-    assert.ok(html.includes(`<strong>${gone}</strong>: `) && html.includes(`Pokémon Center: given to license …${hanaKey.slice(-4)} for Hana Z`), "the one given out says to whom");
-    assert.ok(html.includes(`<strong>${both}</strong>: Pokémon Center: free; Target: free`), "one on both lists shows both");
+    assert.ok(html.includes(`<strong>${gone}</strong>: Target and Pokémon Center: given to license …${hanaKey.slice(-4)} for Hana Z<br>`), "the one given out says to whom, once");
+    assert.ok(html.includes(`<strong>${other}</strong>: Target and Pokémon Center: free`), "a free one");
     assert.ok(html.includes("<strong>nobody@example.com</strong>: not on your list"));
     assert.match(html, /One given to a buyer's slot stops reporting its orders to them once it's removed\./);
     assert.doesNotMatch(html, /Pw-|Inbox-Pw|Tgt-Pw/, "never a password");
     assert.equal((await fetch(rmLink.replace(/t=[^&]+/, "t=wrong"))).status, 404);
   });
   await test("Keep removes nothing", async () => {
-    const pc = await stock("pokemoncenter");
+    const pc = await stock("*");
     const { m } = await askRemove(["pc3@outlook.com"]);
     const link = removalLink(m.content);
     assert.match(await (await removalPost(link, "keep")).text(), /Kept\. Nothing was removed\./);
     assert.match(await (await removalPost(link, "remove")).text(), /Kept\. Nothing was removed\./, "decided: stays kept");
-    assert.deepEqual(await stock("pokemoncenter"), pc);
+    assert.deepEqual(await stock("*"), pc);
     await new Promise((ok) => setTimeout(ok, 300));
     assert.match(webhookEdits.at(-1).content, /^↩️ \*\*Kept 1 account\*\* on your list\nAsked by/); assert.doesNotMatch(webhookEdits.at(-1).content, /Review/);
   });
-  await test("Remove takes each off every store's list it's on, given out or not", async () => {
-    const pc = await stock("pokemoncenter"), tg = await stock("target");
+  await test("Remove takes each off the list, given out or not, with every slot's row of it", async () => {
+    const pc = await stock("*");
     assert.match(await (await removalPost(rmLink, "remove")).text(), /Took 2 off your list\. 1 wasn&#39;t on it\./);
-    assert.deepEqual(await stock("pokemoncenter"), { store: "pokemoncenter", total: pc.total - 2, free: pc.free - 1, sent: pc.sent - 1 });
-    assert.equal((await stock("target")).total, tg.total - 1 - (gOnTarget ? 1 : 0));
-    assert.ok(!(await accounts()).given.some((a) => a.profile === "Hana Z"), "Hana Z's is gone");
+    assert.deepEqual(await stock("*"), { store: "*", total: pc.total - 2, free: pc.free - 1, sent: pc.sent - 1 });
+    assert.ok(!(await accounts()).given.some((a) => a.profile === "Hana Z"), "Hana Z's is gone, and so is her slot's row of it");
     await new Promise((ok) => setTimeout(ok, 300));
     assert.match(webhookEdits.at(-1).content, /^🗑️ \*\*Took 2 accounts off your list\*\* for Use Assigned Account/);
     const again = await (await fetch(rmLink)).text();
-    assert.match(again, /Took 2 off your list/); assert.doesNotMatch(again, new RegExp(both.replace(/\./g, "\\.")), "once decided, the page no longer lists them");
+    assert.match(again, /Took 2 off your list/); assert.doesNotMatch(again, new RegExp(other.replace(/\./g, "\\.")), "once decided, the page no longer lists them");
     const d = await accounts();
     assert.deepEqual(d.removals.slice(0, 2).map((x) => [x.status, x.count, x.removed]), [["kept", 1, null], ["removed", 3, 2]]);
     assert.ok(d.removals.every((x) => /\/accounts\/removal\//.test(x.review_url) && x.emails === undefined), "the admin list has links, never the emails");
   });
   await test("an ask nobody decided on expires, and its emails are dropped", async () => {
-    const pc = await stock("pokemoncenter");
+    const pc = await stock("*");
     const { m } = await askRemove(["pc1@outlook.com"]);
     const link = removalLink(m.content);
     await new Promise((ok) => setTimeout(ok, 8200));   // ACCOUNT_OFFER_TTL_MS is 8000 here
     const html = await (await removalPost(link, "remove")).text();
     assert.match(html, /Expired before you decided/); assert.doesNotMatch(html, /pc1@outlook\.com/);
-    assert.deepEqual(await stock("pokemoncenter"), pc, "nothing removed");
+    assert.deepEqual(await stock("*"), pc, "nothing removed");
   });
 
   console.log("\nSee my list (app 1.9.102+)");
   const dbRows = (cmd) => JSON.parse(execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", cmd, "--json"], { cwd: root, env, stdio: "pipe" }).toString())[0].results;
   const listLink = (content) => (content.match(/\((http[^)]+\/accounts\/list\/[^)]+)\)/) || [])[1];
   // wrangler dev closes a connection left idle while a test reads the database (dbRows takes a few seconds), and fetch
-  // can reuse it just as it closes: tried once more then, as the request never reached the worker.
-  const fetchOnce = async (url, opts) => { try { return await fetch(url, opts); } catch (e) { if (e.cause && e.cause.code === "UND_ERR_SOCKET") return fetch(url, opts); throw e; } };
+  // can reuse it just as it closes: tried again then (up to three times, as more than one can be left idle), as the request
+  // never reached the worker.
+  const fetchOnce = async (url, opts, tries = 3) => { try { return await fetch(url, opts); } catch (e) { if (tries > 1 && e.cause && e.cause.code === "UND_ERR_SOCKET") return fetchOnce(url, opts, tries - 1); throw e; } };
   const listStatus = async (url, opts) => { const r = await fetchOnce(url, opts); await r.text(); return r.status; };
   // Each body is read, so the connection is free for the next request.
   const view = async (link, q) => { const r = await fetchOnce(`${link}&${new URLSearchParams(q)}`); const body = await r.text(); return { status: r.status, text: async () => body }; };
@@ -2106,16 +2073,27 @@ try {
   const askList = async (key = ivanKey) => { const r = await fetchOnce(BASE + "/accounts/list", { method: "POST", headers: { authorization: "Bearer " + key, "content-type": "application/json" }, body: JSON.stringify({ name: "Owner" }) }); return { status: r.status, body: await r.json(), m: webhookPosts.at(-1) }; };
   const unescape = (h) => h.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
   const sqlRun = (cmd) => execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", cmd], { cwd: root, env, stdio: "pipe" });
-  // A buyer's Pokémon Center slot that got their Target account again, as reuseAccount keeps it (made if there's none).
-  const ensureReuse = () => {
-    const rows = dbRows("SELECT store, email_norm, key_hash, batch, offer_id FROM accounts");
-    if (rows.some((x) => x.offer_id === "reuse:target" && x.key_hash && rows.some((t) => t.store === "target" && t.key_hash === x.key_hash && t.email_norm === x.email_norm))) return;
-    const t = rows.find((x) => x.store === "target" && x.key_hash && !x.batch.startsWith("parked:") && !rows.some((p) => p.store === "pokemoncenter" && p.email_norm === x.email_norm));
-    sqlRun(`INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id, key_hash, key_last4, batch, store_name, profile, assigned_at, sent_at)
-      SELECT 'pokemoncenter', email, email_norm, password, added_at, 'reuse:target', key_hash, key_last4, batch, 'Pokémon Center', profile, assigned_at, sent_at
-      FROM accounts WHERE store = 'target' AND email_norm = '${t.email_norm}'`);
+  // The one list's accounts and their slots' rows, as the page reads them, and the status it shows for each.
+  const listRows = () => dbRows("SELECT store, email, email_norm, key_hash, key_last4, profile, batch, offer_id, sent_at, password FROM accounts");
+  const fold = (x) => x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const at = (x) => new Date(x).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+  const NAMES = { target: "Target", pokemoncenter: "Pokémon Center" };
+  const sentText = (x) => x.sent_at ? `, sent ${at(x.sent_at)}` : ", in a batch being sent";
+  const slotRowsOf = (rows, a) => rows.filter((u) => u.offer_id === "reuse:*" && u.email_norm === a.email_norm && u.key_hash === a.key_hash).sort((x, y) => (y.store > x.store) - (y.store < x.store));
+  const listStatusOf = (rows, a) => { if (!a.key_hash) return "Free"; const us = slotRowsOf(rows, a);
+    return `Given to license …${a.key_last4}${a.profile ? `, ${a.profile}` : ""}${us.length ? `: ${us.map((u) => NAMES[u.store] + sentText(u)).join("; ")}` : sentText(a)}`; };
+  // A profile of Hana's on both stores, so its account has two slots' rows.
+  const bothStores = async (name) => {
+    const before = webhookPosts.length;
+    const r = await fetchOnce(BASE + "/submissions", { method: "POST", headers: { authorization: "Bearer " + hanaKey, "content-type": "application/json" },
+      body: JSON.stringify({ files: [tgFile([name]), pcFile([name])], name: "Hana", slots: 2, batch: "ls" + rid(),
+        stores: [{ name: "Target", n: 1, seller: 1 }, { name: "Pokémon Center", n: 1, seller: 1 }] }) });
+    assert.equal(r.status, 200, await r.clone().text()); await r.text();
+    assert.ok(batchPost(before), "posted");
+    const a = listRows().find((x) => x.store === "*" && x.profile === name); assert.ok(a, name + " has one");
+    return a;
   };
-  let lsLink;
+  let lsLink, yEmail;
   await test("asking for the list needs a license; it posts a link to the channel, never an email", async () => {
     assert.equal((await slots("/accounts/list", null, {})).status, 401);
     const before = webhookPosts.length;
@@ -2126,88 +2104,72 @@ try {
     assert.doesNotMatch(m.content, /@outlook\.com|@example\.com/, "no account in the channel");
     lsLink = listLink(m.content); assert.ok(lsLink);
   });
-  await test("the page lists every account on every store's list, free or given and to whom, never a password", async () => {
-    ensureReuse();
-    const rows = dbRows("SELECT store, email, key_hash, key_last4, profile, batch, offer_id, sent_at, password FROM accounts");
-    assert.ok(rows.length > 5 && rows.some((a) => !a.key_hash) && rows.some((a) => a.key_hash && a.sent_at), "a list with free and given accounts to show");
+  await test("the page lists each account on the one list once, free or given, to whom and on which slots, never a password", async () => {
+    const y = await bothStores("Hana Y"); yEmail = y.email;
+    const rows = listRows(), mine = rows.filter((a) => a.offer_id !== "reuse:*");
+    assert.ok(mine.length > 5 && mine.every((a) => a.store === "*") && mine.some((a) => !a.key_hash) && mine.some((a) => a.key_hash && a.sent_at), "a list with free and given accounts to show");
     const r = await fetchOnce(lsLink), html = await r.text(), text = unescape(html);
     assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store");
-    for (const a of rows) assert.ok(text.includes(`<td class="em">${a.email}</td>`), "listed: " + a.email);
+    for (const a of mine) assert.equal(text.split(`<td class="em">${a.email}</td>`).length - 1, 1, "listed once, its slots' rows with it: " + a.email);
     assert.ok(text.includes('<input type="search" id="find"'), "a search box");
-    // What the search looks in: the email, the store and the status as the page writes it, lowercase, accents off.
-    const fold = (x) => x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const at = (x) => new Date(x).toISOString().replace("T", " ").slice(0, 16) + " UTC", who = (a) => `license …${a.key_last4}${a.profile ? `, ${a.profile}` : ""}`;
-    for (const a of rows) {
-      const name = { target: "Target", pokemoncenter: "Pokémon Center" }[a.store] || a.store;
-      const st = !a.key_hash ? "Free" : String(a.offer_id || "").startsWith("reuse:") ? `Reused from Target for ${who(a)}`
-        : String(a.batch).startsWith("parked:") ? `Held for ${who(a)}: its Pokémon Center slot still uses it`
-        : `Given to ${who(a)}${a.sent_at ? `, sent ${at(a.sent_at)}` : ", in a batch being sent"}`;
-      assert.ok(text.includes(`data-q="${fold(`${a.email} ${name} ${st}`)}"`), "the search looks in its email, store and status: " + a.email);
-      if (a.store === "pokemoncenter") assert.ok(text.includes(`data-q="${fold(a.email)} pokemon center `), "pokemon (no accent) finds Pokémon Center");
-    }
+    // What the search looks in: the email, the stores and the status as the page writes it, lowercase, accents off.
+    for (const a of mine) assert.ok(text.includes(`data-q="${fold(`${a.email} Target and Pokémon Center ${listStatusOf(rows, a)}`)}"`), "the search looks in its email, stores and status: " + a.email);
+    assert.ok(text.includes(`data-q="${fold(yEmail)} target and pokemon center given to license`), "pokemon (no accent) finds it");
     for (const a of rows.filter((x) => x.password)) assert.ok(!text.includes(a.password), "never a password");
-    const own = rows.filter((a) => !String(a.offer_id || "").startsWith("reuse:"));
-    assert.ok(text.includes(`<p class="who">${own.length} accounts, ${own.filter((a) => !a.key_hash).length} free</p>`), "the total and how many are free");
-    for (const st of new Set(rows.map((a) => a.store))) {
-      const mine = own.filter((a) => a.store === st), name = { target: "Target", pokemoncenter: "Pokémon Center" }[st] || st;
-      assert.ok(text.includes(`aria-label="Tick every ${name} account"> ${name} <span class="count">${mine.filter((a) => !a.key_hash).length} free of ${mine.length}</span></h3>`), "each store's count: " + st);
-    }
-    const given = rows.find((a) => a.key_hash && a.sent_at && !String(a.batch || "").startsWith("parked:") && !String(a.offer_id || "").startsWith("reuse:"));
-    assert.ok(text.includes(`Given to license …${given.key_last4}${given.profile ? `, ${given.profile}` : ""}, sent `), "a given account says to whom");
-    const reused = rows.find((a) => String(a.offer_id || "").startsWith("reuse:") && a.key_hash);
-    assert.ok(text.includes(`Reused from Target for license …${reused.key_last4}${reused.profile ? `, ${reused.profile}` : ""}`), "a reuse says so");
-    // One held for a Pokémon Center slot (parked), and one whose batch is still being sent: shown so, then put back.
-    const [held, sending] = rows.filter((a) => a.store === "target" && a.key_hash && a.sent_at && !String(a.batch).startsWith("parked:") && a.email !== reused.email);
-    assert.ok(held && sending, "two more given Target accounts");
-    const hn = held.email.toLowerCase(), sn = sending.email.toLowerCase();
-    sqlRun(`UPDATE accounts SET batch = 'parked:' || batch WHERE store = 'target' AND email_norm = '${hn}'; UPDATE accounts SET sent_at = NULL WHERE store = 'target' AND email_norm = '${sn}'`);
+    const free = mine.filter((a) => !a.key_hash).length;
+    assert.ok(text.includes(`<p class="who">${mine.length} accounts, ${free} free</p>`), "the total and how many are free");
+    assert.ok(text.includes(`aria-label="Tick every Target and Pokémon Center account"> Target and Pokémon Center <span class="count">${free} free of ${mine.length}</span></h3>`), "the one list's count");
+    const yt = rows.find((u) => u.offer_id === "reuse:*" && u.email_norm === y.email_norm && u.store === "target"), yp = rows.find((u) => u.offer_id === "reuse:*" && u.email_norm === y.email_norm && u.store === "pokemoncenter");
+    assert.ok(text.includes(`Given to license …${hanaKey.slice(-4)}, Hana Y:<br>Target, sent ${at(yt.sent_at)}<br>Pokémon Center, sent ${at(yp.sent_at)}</td>`), "a given account says to whom, and which slots use it, a line each");
+    assert.ok(text.includes("One list for Target and Pokémon Center: a buyer's slots at both stores for one profile get the same account, and no other buyer gets it while they have it."), "the page says how the list works");
+    sqlRun(`UPDATE accounts SET sent_at = NULL WHERE store = 'pokemoncenter' AND email_norm = '${y.email_norm}'`);
     try {
       const t2 = unescape(await (await fetchOnce(lsLink)).text());
-      assert.ok(t2.includes(`Held for license …${held.key_last4}${held.profile ? `, ${held.profile}` : ""}: its Pokémon Center slot still uses it`), "a held one says so");
-      assert.ok(t2.includes(`Given to license …${sending.key_last4}${sending.profile ? `, ${sending.profile}` : ""}, in a batch being sent`), "one in a batch being sent says so");
+      assert.ok(t2.includes(`Hana Y:<br>Target, sent ${at(yt.sent_at)}<br>Pokémon Center, in a batch being sent</td>`), "a slot in a batch being sent says so");
     } finally {
-      sqlRun(`UPDATE accounts SET batch = substr(batch, 8) WHERE store = 'target' AND email_norm = '${hn}' AND batch LIKE 'parked:%'; UPDATE accounts SET sent_at = ${sending.sent_at} WHERE store = 'target' AND email_norm = '${sn}'`);
+      sqlRun(`UPDATE accounts SET sent_at = ${yp.sent_at} WHERE store = 'pokemoncenter' AND email_norm = '${y.email_norm}'`);
     }
     assert.equal((await listStatus(lsLink.replace(/t=[^&]+/, "t=wrong"))), 404, "a wrong token");
     assert.equal((await listStatus(lsLink.replace(/\/accounts\/list\/[^?]+/, "/accounts/list/nope1234"))), 404, "a wrong id");
   });
-  await test("Remove asks first, then takes the email off every store's list, and the page says so", async () => {
-    const rows = dbRows("SELECT store, email, email_norm, key_hash FROM accounts");
-    const counts = new Map(); rows.forEach((a) => counts.set(a.email_norm, (counts.get(a.email_norm) || 0) + 1));
-    const target = rows.find((a) => counts.get(a.email_norm) > 1);
-    assert.ok(target, "an email on two stores' lists");
-    const ask = await (await listPost(lsLink, { action: "ask", email: target.email.toUpperCase() })).text();
-    assert.match(unescape(ask), /<h2>Remove an account<\/h2>/); assert.ok(unescape(ask).includes(target.email), "names it");
-    assert.match(unescape(ask), /It comes off every store's list it's on, so no more slots get it\./);
+  await test("Remove asks first, then takes the account off the list with its slots' rows, and the page says so", async () => {
+    const y = listRows().find((a) => a.store === "*" && a.email === yEmail), count = () => dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${y.email_norm}'`)[0].n;
+    const ask = unescape(await (await listPost(lsLink, { action: "ask", email: yEmail.toUpperCase() })).text());
+    assert.match(ask, /<h2>Remove an account<\/h2>/); assert.ok(ask.includes(yEmail), "names it");
+    assert.ok(ask.includes(`Target and Pokémon Center: Given to license …${hanaKey.slice(-4)}, Hana Y: Target, sent `), "says where it is");
+    assert.equal(ask.split("Pokémon Center:").length - 1, 1, "once: its slots' rows aren't listed apart");
+    assert.match(ask, /It comes off every store's list it's on, so no more slots get it\./);
     assert.match(ask, /value="remove">Remove from my list<\/button>/); assert.match(ask, />Keep it<\/button>/);
-    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${target.email_norm}'`)[0].n, counts.get(target.email_norm), "asking removes nothing");
-    await view(lsLink, { action: "remove", email: target.email });
-    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${target.email_norm}'`)[0].n, counts.get(target.email_norm), "a link (GET) removes nothing");
-    const rm = await sendRaw(lsLink, { action: "remove", email: target.email });
+    assert.equal(count(), 3, "the account and its two slots' rows; asking removes nothing");
+    await view(lsLink, { action: "remove", email: yEmail });
+    assert.equal(count(), 3, "a link (GET) removes nothing");
+    const rm = await sendRaw(lsLink, { action: "remove", email: yEmail });
     assert.equal(rm.status, 303); assert.match(rm.location, /\?t=[^&]+&done=Took\+/, "back to the list by its link");
     const done = unescape(await (await fetchOnce(new URL(rm.location, lsLink))).text());
-    assert.ok(done.includes(`<p>Took ${target.email} off your list.</p>`), "the page says it");
-    assert.ok(!done.includes(`<td class="em">${target.email}</td>`), "and no longer lists it");
-    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${target.email_norm}'`)[0].n, 0, "off every store's list");
-    const again = unescape(await (await listPost(lsLink, { action: "remove", email: target.email })).text());
-    assert.ok(again.includes(`<p>${target.email.toLowerCase()} isn't on your list any more.</p>`), "removing it twice changes nothing");
-    const wrong = await listPost(lsLink.replace(/t=[^&]+/, "t=wrong"), { action: "remove", email: rows[0].email });
+    assert.ok(done.includes(`<p>Took ${yEmail} off your list.</p>`), "the page says it");
+    assert.ok(!done.includes(`<td class="em">${yEmail}</td>`), "and no longer lists it");
+    assert.equal(count(), 0, "off the list, with its slots' rows");
+    const again = unescape(await (await listPost(lsLink, { action: "remove", email: yEmail })).text());
+    assert.ok(again.includes(`<p>${yEmail.toLowerCase()} isn't on your list any more.</p>`), "removing it twice changes nothing");
+    const wrong = await listPost(lsLink.replace(/t=[^&]+/, "t=wrong"), { action: "remove", email: yEmail });
     await wrong.text(); assert.equal(wrong.status, 404, "never without the token");
   });
   await test("Edit changes a free account's password, and never shows one", async () => {
-    const rows = dbRows("SELECT store, email, email_norm, password, key_hash, offer_id FROM accounts");
-    const a = rows.find((x) => !x.key_hash && x.store === "target");
+    const rows = listRows();
+    const a = rows.find((x) => !x.key_hash && x.store === "*");
     const ed = await view(lsLink, { action: "edit", store: a.store, email: a.email_norm });
     const html = await page2(ed);
     assert.equal(ed.status, 200); assert.match(html, /<h2>Edit an account<\/h2>/);
+    assert.ok(html.includes(`<p class="small">Target and Pokémon Center: Free</p>`), "where it is");
     assert.ok(html.includes(`name="new_email" value="${a.email}"`), "its email, to change");
     assert.doesNotMatch(html, /name="new_email"[^>]*readonly/, "a free one's email can change");
     assert.doesNotMatch(html, /Give it back/, "nothing to give back");
+    assert.ok(html.includes("The store account's password: Target's logins file gets it, and Pokémon Center checks out as a guest with the email."), "what the password is for");
     for (const x of rows) assert.ok(!html.includes(x.password), "never a password");
     const done = await page2(await send(lsLink, { action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: " Fresh-pass-1 " }));
-    assert.ok(done.includes(`<p>Changed the password of ${a.email} on your Target list.</p>`), done.slice(0, 600));
+    assert.ok(done.includes(`<p>Changed the password of ${a.email} on your list.</p>`), done.slice(0, 600));
     assert.ok(!done.includes("Fresh-pass-1"), "and doesn't show it");
-    const b = dbRows(`SELECT email, password, key_hash FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0];
+    const b = dbRows(`SELECT email, password, key_hash FROM accounts WHERE store = '*' AND email_norm = '${a.email_norm}'`)[0];
     assert.equal(b.password, "Fresh-pass-1"); assert.equal(b.email, a.email); assert.equal(b.key_hash, null);
     const raw = await fetchOnce(lsLink.split("?")[0], { method: "POST", redirect: "manual", body: new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: "" }) });
     await raw.text();
@@ -2215,143 +2177,130 @@ try {
     assert.match(raw.headers.get("location"), /^\/accounts\/list\/[^?]+\?t=[^&]+&done=Nothing\+changed\.$/);
     const nl = await page2(await send(lsLink, { action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: "two\nlines" }));
     assert.ok(nl.includes(`<p class="err">That password can't have a line break.</p>`), "a password with a line break would split the logins file");
-    const same = await page2(await send(lsLink, { action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: "" }));
-    assert.ok(same.includes("<p>Nothing changed.</p>"), "an empty password keeps it");
-    assert.equal(dbRows(`SELECT password FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].password, "Fresh-pass-1");
     const viaGet = await view(lsLink, { action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: "by-get" });
     assert.equal(viaGet.status, 200);
-    assert.equal(dbRows(`SELECT password FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].password, "Fresh-pass-1", "a link (GET) never changes anything");
+    assert.equal(dbRows(`SELECT password FROM accounts WHERE store = '*' AND email_norm = '${a.email_norm}'`)[0].password, "Fresh-pass-1", "a link (GET) never changes anything");
     assert.equal((await send(lsLink.replace(/t=[^&]+/, "t=wrong"), { action: "save", store: a.store, email: a.email_norm, new_email: a.email, password: "x" })).status, 404);
   });
-  await test("a free account's email can change; one already on that list, or not an email, is refused", async () => {
-    const all = dbRows("SELECT store, email, email_norm, key_hash FROM accounts"), rows = all.filter((x) => x.store === "target");
-    // A free Target account on no other store's list, so its old email is gone from the page once it changes.
-    const [a, other] = [rows.find((x) => !x.key_hash && !all.some((y) => y.store !== "target" && y.email_norm === x.email_norm)), rows.find((x) => x.key_hash)];
-    assert.ok(a && other, "a free Target account and a given one");
-    const dup = await page2(await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: other.email.toUpperCase(), password: "" }));
-    assert.ok(dup.includes(`<p class="err">${other.email.toUpperCase()} is already on your Target list.</p>`), dup.slice(0, 600));
-    const bad = await page2(await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: "not an email", password: "" }));
+  await test("a free account's email can change; one already on the list, or not an email, is refused", async () => {
+    const rows = listRows().filter((x) => x.store === "*");
+    const [a, other] = [rows.find((x) => !x.key_hash), rows.find((x) => x.key_hash)];
+    assert.ok(a && other, "a free account and a given one");
+    const dup = await page2(await send(lsLink, { action: "save", store: "*", email: a.email_norm, new_email: other.email.toUpperCase(), password: "" }));
+    assert.ok(dup.includes(`<p class="err">${other.email.toUpperCase()} is already on your list.</p>`), dup.slice(0, 600));
+    const bad = await page2(await send(lsLink, { action: "save", store: "*", email: a.email_norm, new_email: "not an email", password: "" }));
     assert.ok(bad.includes(`<p class="err">That isn't an email address.</p>`));
-    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].n, 1, "unchanged");
-    const done = await page2(await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: "Fixed.Name@example.com", password: "new-pw-2" }));
-    assert.ok(done.includes(`<p>Changed ${a.email} to Fixed.Name@example.com, with its new password, on your Target list.</p>`), done.slice(0, 600));
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE store = '*' AND email_norm = '${a.email_norm}'`)[0].n, 1, "unchanged");
+    const done = await page2(await send(lsLink, { action: "save", store: "*", email: a.email_norm, new_email: "Fixed.Name@example.com", password: "new-pw-2" }));
+    assert.ok(done.includes(`<p>Changed ${a.email} to Fixed.Name@example.com, with its new password, on your list.</p>`), done.slice(0, 600));
     assert.ok(done.includes(`<td class="em">Fixed.Name@example.com</td>`) && !done.includes(`<td class="em">${a.email}</td>`), "listed under its new email");
-    const b = dbRows("SELECT email, password, key_hash FROM accounts WHERE store = 'target' AND email_norm = 'fixed.name@example.com'")[0];
-    assert.deepEqual(b, { email: "Fixed.Name@example.com", password: "new-pw-2", key_hash: null });
-    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${a.email_norm}' AND store = 'target'`)[0].n, 0, "the old email is gone");
+    assert.deepEqual(dbRows("SELECT email, password, key_hash FROM accounts WHERE store = '*' AND email_norm = 'fixed.name@example.com'")[0], { email: "Fixed.Name@example.com", password: "new-pw-2", key_hash: null });
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${a.email_norm}'`)[0].n, 0, "the old email is gone");
   });
-  await test("a given account keeps its email and gets a new password (its reuse too), and can be given back to the list", async () => {
-    ensureReuse();
-    const rows = dbRows("SELECT store, email, email_norm, password, key_hash, key_last4, batch, offer_id FROM accounts");
-    const reuses = rows.filter((x) => x.offer_id === "reuse:target" && x.key_hash);
-    const a = rows.find((x) => x.store === "target" && x.key_hash && reuses.some((r) => r.email_norm === x.email_norm && r.key_hash === x.key_hash))
-      || rows.find((x) => x.store === "target" && x.key_hash);
-    const reused = reuses.filter((r) => r.email_norm === a.email_norm && r.key_hash === a.key_hash);
-    assert.ok(reused.length, "a Target account whose reuse at Pokémon Center goes with it");
-    const html = await page2(await view(lsLink, { action: "edit", store: "target", email: a.email_norm }));
+  await test("a given account keeps its email and gets a new password (its slots' rows too), and can be given back to the list", async () => {
+    const a = await bothStores("Hana X");
+    const uses = () => dbRows(`SELECT store, password FROM accounts WHERE email_norm = '${a.email_norm}' AND offer_id = 'reuse:*' ORDER BY store`);
+    assert.equal(uses().length, 2, "its Target and Pokémon Center slots' rows");
+    const html = await page2(await view(lsLink, { action: "edit", store: "*", email: a.email_norm }));
     assert.match(html, /name="new_email"[^>]*readonly/, "its email can't change");
-    assert.ok(html.includes("Give it back to my list") && html.includes(`License …${a.key_last4} keeps what was posted to your channel, and stops getting order alerts for it.`), html.slice(0, 900));
-    assert.ok(html.includes("Their Pokémon Center slot that uses it again loses it too."), "says its reuse goes too");
-    const ru = await page2(await view(lsLink, { action: "edit", store: "pokemoncenter", email: a.email_norm }));
-    assert.ok(ru.includes("It's your Target account, used again for this buyer's Pokémon Center slot, so it follows that one: change it on your Target list.") && !ru.includes('name="password"'), "the reuse itself is changed through its Target account");
-    const forgedReuse = await page2(await send(lsLink, { action: "save", store: "pokemoncenter", email: a.email_norm, new_email: a.email, password: "sneaky" }));
-    assert.ok(forgedReuse.includes("It follows your Target account: change that one."));
-    assert.notEqual(dbRows(`SELECT password FROM accounts WHERE store = 'pokemoncenter' AND email_norm = '${a.email_norm}'`)[0].password, "sneaky");
-    const forged = await page2(await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: "someone.else@example.com", password: "" }));
+    assert.ok(html.includes(`Target and Pokémon Center: Given to license …${a.key_last4}, Hana X: Target, sent `), html.slice(0, 900));
+    assert.ok(html.includes("Give it back to my list") && html.includes(`License …${a.key_last4} keeps what was posted to your channel, and stops getting order alerts for it. Their Target and Pokémon Center slots lose it too.`), html.slice(0, 1200));
+    const ru = await page2(await view(lsLink, { action: "edit", store: "target", email: a.email_norm }));
+    assert.ok(ru.includes("It's an account from your list, on this buyer's Target slot, so it follows that one: change it on your list.") && !ru.includes('name="password"'), "a slot's row is changed through its account");
+    const forgedUse = await page2(await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: a.email, password: "sneaky" }));
+    assert.ok(forgedUse.includes("It's an account from your list: change it there."));
+    assert.ok(uses().every((u) => u.password !== "sneaky"));
+    const forged = await page2(await send(lsLink, { action: "save", store: "*", email: a.email_norm, new_email: "someone.else@example.com", password: "" }));
     assert.ok(forged.includes("<p class=\"err\">It's on a buyer's slot, so its email can't change. Give it back to your list first.</p>"));
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts WHERE email_norm = 'someone.else@example.com'")[0].n, 0);
-    await send(lsLink, { action: "save", store: "target", email: a.email_norm, new_email: a.email, password: "given-pw-3" });
-    assert.equal(dbRows(`SELECT password FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].password, "given-pw-3");
-    for (const r of reused) assert.equal(dbRows(`SELECT password FROM accounts WHERE store = '${r.store}' AND email_norm = '${r.email_norm}'`)[0].password, "given-pw-3", "its reuse checks out with the new one too");
-    assert.equal(dbRows(`SELECT key_hash FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].key_hash, a.key_hash, "still the buyer's");
-    await view(lsLink, { action: "giveback", store: "target", email: a.email_norm });
-    assert.equal(dbRows(`SELECT key_hash FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0].key_hash, a.key_hash, "a link (GET) gives nothing back");
-    const gb = await sendRaw(lsLink, { action: "giveback", store: "target", email: a.email_norm });
+    const saved = await page2(await send(lsLink, { action: "save", store: "*", email: a.email_norm, new_email: a.email, password: "given-pw-3" }));
+    assert.ok(saved.includes(`<p>Changed the password of ${a.email} on your list.</p>`));
+    assert.equal(dbRows(`SELECT password FROM accounts WHERE store = '*' AND email_norm = '${a.email_norm}'`)[0].password, "given-pw-3");
+    assert.deepEqual(uses().map((u) => u.password), ["given-pw-3", "given-pw-3"], "its slots check out with the new one too");
+    await view(lsLink, { action: "giveback", store: "*", email: a.email_norm });
+    assert.equal(dbRows(`SELECT key_hash FROM accounts WHERE store = '*' AND email_norm = '${a.email_norm}'`)[0].key_hash, a.key_hash, "a link (GET) gives nothing back");
+    const gb = await sendRaw(lsLink, { action: "giveback", store: "*", email: a.email_norm });
     assert.equal(gb.status, 303); assert.match(gb.location, /\?t=[^&]+&done=Gave\+/, "back to the list, saying so");
     const done = await page2(await view(lsLink, Object.fromEntries(new URLSearchParams(gb.location.split("?")[1]).entries())));
-    assert.ok(done.includes(`<p>Gave ${a.email} back to your Target list. It's free for the next slot.</p>`), done.slice(0, 600));
-    const b = dbRows(`SELECT key_hash, batch, profile, password FROM accounts WHERE store = 'target' AND email_norm = '${a.email_norm}'`)[0];
-    assert.deepEqual(b, { key_hash: null, batch: null, profile: null, password: "given-pw-3" }, "free, with its password");
-    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${a.email_norm}' AND offer_id = 'reuse:target'`)[0].n, 0, "its reuse is dropped");
-    const again = await page2(await send(lsLink, { action: "giveback", store: "target", email: a.email_norm }));
-    assert.ok(again.includes(`<p>${a.email} is already free on your Target list.</p>`));
-    {
-      const r = await page2(await view(lsLink, { action: "edit", store: reused[0].store, email: reused[0].email_norm }));
-      assert.ok(r.includes(`isn't on your Pokémon Center list any more.`), "the reuse's own link says it's gone");
-    }
+    assert.ok(done.includes(`<p>Gave ${a.email} back to your list. It's free for the next slot.</p>`), done.slice(0, 600));
+    assert.deepEqual(dbRows(`SELECT key_hash, batch, profile, password FROM accounts WHERE store = '*' AND email_norm = '${a.email_norm}'`)[0],
+      { key_hash: null, batch: null, profile: null, password: "given-pw-3" }, "free, with its password");
+    assert.deepEqual(uses(), [], "its slots' rows are dropped");
+    const again = await page2(await send(lsLink, { action: "giveback", store: "*", email: a.email_norm }));
+    assert.ok(again.includes(`<p>${a.email} is already free on your list.</p>`));
+    const old = await page2(await view(lsLink, { action: "edit", store: "target", email: a.email_norm }));
+    assert.ok(old.includes(`isn't on your Target list any more.`), "its Target slot's old link says it's gone");
   });
-  await test("Add puts accounts on a store's list, says which lines it couldn't read, and never changes one already there", async () => {
-    const pc = dbRows("SELECT email, email_norm, password FROM accounts WHERE store = 'pokemoncenter' AND COALESCE(offer_id, '') NOT LIKE 'reuse:%'")[0];
+  await test("Add puts accounts on the one list, says which lines it couldn't read, and never changes one already there", async () => {
+    const page0 = await page2(await view(lsLink, {}));
+    assert.ok(page0.includes('<p class="small">They go on your list, for Target and Pokémon Center both.</p>') && !page0.includes('<select name="store">'), "nothing to pick: one list");
+    assert.ok(page0.includes("The store account's password: Target's logins file gets email:password, and Pokémon Center checks out as a guest with the email."));
+    const ex = dbRows("SELECT email, email_norm, password FROM accounts WHERE store = '*'")[0];
     const before = dbRows("SELECT COUNT(*) AS n FROM accounts")[0].n;
     const lines = ["added.one@example.com:pw-one", "added.two@example.com,pw-two", "broken line", "added.three@example.com",
-      `${pc.email}:other-pw`, "added.one@example.com:dup", "added.four@example.com:acct-pw:added.four.inbox@example.com:inbox-pw"].join("\n");
-    await view(lsLink, { action: "add", store: "pokemoncenter", accounts: lines, password: "" });
+      `${ex.email}:other-pw`, "added.one@example.com:dup", "added.four@example.com:acct-pw:added.four.inbox@example.com:inbox-pw"].join("\n");
+    await view(lsLink, { action: "add", accounts: lines, password: "" });
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts")[0].n, before, "a link (GET) adds nothing");
-    const ad = await sendRaw(lsLink, { action: "add", store: "pokemoncenter", accounts: lines, password: "" });
-    assert.equal(ad.status, 303); assert.match(ad.location, /\?t=[^&]+&done=Added\+3[^&]*&err=Line\+3[^&]*&store=pokemoncenter$/, "back to the list with what happened, and the store");
+    const ad = await sendRaw(lsLink, { action: "add", accounts: lines, password: "" });
+    assert.equal(ad.status, 303); assert.match(ad.location, /\?t=[^&]+&done=Added\+3[^&]*&err=Line\+3[^&]*$/, "back to the list with what happened");
     const html = await page2(await view(lsLink, Object.fromEntries(new URLSearchParams(ad.location.split("?")[1]).entries())));
-    assert.ok(html.includes('<option value="pokemoncenter" selected>Pokémon Center</option>'), "the store stays picked");
-    assert.ok(html.includes("<p>Added 3 to your Pokémon Center list. 1 was already on it, and kept its password (Edit changes one).</p>"), html.slice(0, 900));
+    assert.ok(html.includes("<p>Added 3 to your list. 1 was already on it, and kept its password (Edit changes one).</p>"), html.slice(0, 900));
     assert.ok(html.includes(`<p class="err">Line 3 couldn't be read: write each account as email:password. Line 4 has only an email: add it again with the password box filled in.</p>`), html.slice(0, 900));
     for (const pw of ["pw-one", "pw-two", "acct-pw", "inbox-pw", "other-pw"]) assert.ok(!html.includes(pw), "no password on the page: " + pw);
-    const got = dbRows("SELECT email, password, key_hash, offer_id FROM accounts WHERE store = 'pokemoncenter' AND email_norm LIKE 'added.%' ORDER BY email_norm");
     const id = lsLink.match(/\/accounts\/list\/([^?]+)/)[1];
-    assert.deepEqual(got, [
-      { email: "added.four@example.com", password: "acct-pw", key_hash: null, offer_id: "list:" + id },
-      { email: "added.one@example.com", password: "pw-one", key_hash: null, offer_id: "list:" + id },
-      { email: "added.two@example.com", password: "pw-two", key_hash: null, offer_id: "list:" + id }]);
-    assert.equal(dbRows(`SELECT password FROM accounts WHERE store = 'pokemoncenter' AND email_norm = '${pc.email_norm}'`)[0].password, pc.password, "one already there keeps its password");
+    assert.deepEqual(dbRows("SELECT store, email, password, key_hash, offer_id FROM accounts WHERE email_norm LIKE 'added.%' ORDER BY email_norm"), [
+      { store: "*", email: "added.four@example.com", password: "acct-pw", key_hash: null, offer_id: "list:" + id },
+      { store: "*", email: "added.one@example.com", password: "pw-one", key_hash: null, offer_id: "list:" + id },
+      { store: "*", email: "added.two@example.com", password: "pw-two", key_hash: null, offer_id: "list:" + id }]);
+    assert.equal(dbRows(`SELECT password FROM accounts WHERE store = '*' AND email_norm = '${ex.email_norm}'`)[0].password, ex.password, "one already there keeps its password");
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts")[0].n, before + 3);
     const shared = await page2(await send(lsLink, { action: "add", store: "target", accounts: "added.three@example.com\n", password: "shared-pw" }));
-    assert.ok(shared.includes("<p>Added 1 to your Target list.</p>"), "an email alone takes the password box's");
-    assert.equal(dbRows("SELECT password FROM accounts WHERE store = 'target' AND email_norm = 'added.three@example.com'")[0].password, "shared-pw");
-    assert.ok(shared.includes('<option value="target" selected>Target</option>'));
+    assert.ok(shared.includes("<p>Added 1 to your list.</p>"), "an email alone takes the password box's; Target's means the one list");
+    assert.deepEqual(dbRows("SELECT store, password FROM accounts WHERE email_norm = 'added.three@example.com'"), [{ store: "*", password: "shared-pw" }]);
     // Lines as FAFO's Send accounts writes them, or a spreadsheet exports them: quoted cells, empty inbox columns, a
     // first line naming the columns. A quoted email is never taken as one.
     const csvLines = ['email,password', '"quoted.one@example.com","p:ss"', 'quoted.two@example.com,"p,ss"', 'quoted.three@example.com,"a""b"',
       'trailing@example.com,pw-t,,', '"bad"@example.com:pw', 'stray@example.com,my"pass', 'tabbed@example.com\t"p""w"'].join("\r\n");
-    const qd = await page2(await send(lsLink, { action: "add", store: "target", accounts: csvLines, password: "" }));
-    assert.ok(qd.includes("<p>Added 5 to your Target list.</p>") && qd.includes(`<p class="err">Lines 6, 7 couldn't be read: write each account as email:password.</p>`), qd.slice(0, 900));
-    assert.deepEqual(dbRows("SELECT email, password FROM accounts WHERE store = 'target' AND (email_norm LIKE 'quoted.%' OR email_norm IN ('trailing@example.com', 'tabbed@example.com')) ORDER BY email_norm"), [
+    const qd = await page2(await send(lsLink, { action: "add", accounts: csvLines, password: "" }));
+    assert.ok(qd.includes("<p>Added 5 to your list.</p>") && qd.includes(`<p class="err">Lines 6, 7 couldn't be read: write each account as email:password.</p>`), qd.slice(0, 900));
+    assert.deepEqual(dbRows("SELECT email, password FROM accounts WHERE store = '*' AND (email_norm LIKE 'quoted.%' OR email_norm IN ('trailing@example.com', 'tabbed@example.com')) ORDER BY email_norm"), [
       { email: "quoted.one@example.com", password: "p:ss" }, { email: "quoted.three@example.com", password: 'a"b' },
       { email: "quoted.two@example.com", password: "p,ss" }, { email: "tabbed@example.com", password: 'p"w' }, { email: "trailing@example.com", password: "pw-t" }]);
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts WHERE email_norm = 'stray@example.com'")[0].n, 0, "a stray quote is reported, not read as another password");
     assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email LIKE '%"%'`)[0].n, 0, "no email with quotes in it");
     const nowhere = await page2(await send(lsLink, { action: "add", store: "nowhere", accounts: "added.five@example.com:pw" }));
     assert.ok(nowhere.includes(`<p class="err">Pick a store to add them to.</p>`));
-    const empty = await page2(await send(lsLink, { action: "add", store: "target", accounts: "  \n" }));
+    const empty = await page2(await send(lsLink, { action: "add", accounts: "  \n" }));
     assert.ok(empty.includes(`<p class="err">Paste the accounts to add, one per line.</p>`));
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts WHERE email_norm = 'added.five@example.com'")[0].n, 0);
   });
-  await test("Give it back says what happens to the buyer's account at the other store with the same email", async () => {
-    // A buyer whose Target slot and Pokémon Center slot both check out with one email, the owner's own account on each list.
-    const rows = dbRows("SELECT store, email, email_norm, key_hash, key_last4, batch, profile, sent_at FROM accounts");
-    const t = rows.find((x) => x.store === "target" && x.key_hash && x.sent_at && !x.batch.startsWith("parked:") && !rows.some((p) => p.store === "pokemoncenter" && p.email_norm === x.email_norm));
-    sqlRun(`INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id, key_hash, key_last4, batch, store_name, profile, assigned_at, sent_at)
-      SELECT 'pokemoncenter', email, email_norm, 'inbox-pw', added_at, 'own-pc', key_hash, key_last4, batch || '-pc', 'Pokémon Center', profile, assigned_at, sent_at
-      FROM accounts WHERE store = 'target' AND email_norm = '${t.email_norm}'`);
-    const tEdit = await page2(await view(lsLink, { action: "edit", store: "target", email: t.email_norm }));
-    assert.ok(tEdit.includes("Their Pokémon Center slot checks out with this email too, so another buyer's Target slot could get it while they use it."), tEdit.slice(0, 1200));
-    // The Target slot's batch declined: its account is held (parked) for the Pokémon Center slot.
-    sqlRun(`UPDATE accounts SET batch = 'parked:' || batch WHERE store = 'target' AND email_norm = '${t.email_norm}'`);
-    const pEdit = await page2(await view(lsLink, { action: "edit", store: "pokemoncenter", email: t.email_norm }));
-    assert.ok(pEdit.includes("Their Target account with this email, held for this slot, goes back on your Target list too."), pEdit.slice(0, 1200));
-    const done = await page2(await send(lsLink, { action: "giveback", store: "pokemoncenter", email: t.email_norm }));
-    assert.ok(done.includes(`<p>Gave ${t.email} back to your Pokémon Center list. It's free for the next slot. Your Target account with this email came free too.</p>`), done.slice(0, 900));
-    assert.deepEqual(dbRows(`SELECT store, key_hash, batch FROM accounts WHERE email_norm = '${t.email_norm}' ORDER BY store`),
-      [{ store: "pokemoncenter", key_hash: null, batch: null }, { store: "target", key_hash: null, batch: null }], "both free");
+  await test("with a store's own list on the page too, Add asks which list they go on", async () => {
+    sqlRun(`INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES ('walmart', 'Own.One@example.com', 'own.one@example.com', 'own-pw', 1, 'x')`);
+    try {
+      const p = await page2(await view(lsLink, {}));
+      assert.ok(p.includes(`<label>Add to<select name="store"><option value="*" selected>Your list (Target and Pokémon Center)</option><option value="walmart">Walmart's own list</option></select></label>`), p.slice(-2500));
+      assert.ok(p.includes('aria-label="Tick every Walmart account"> Walmart <span class="count">1 free of 1</span>'), "its own section");
+      const ad = await sendRaw(lsLink, { action: "add", store: "walmart", accounts: "own.two@example.com:pw2" });
+      assert.match(ad.location, /&store=walmart$/, "it stays picked");
+      const html = await page2(await view(lsLink, Object.fromEntries(new URLSearchParams(ad.location.split("?")[1]).entries())));
+      assert.ok(html.includes("<p>Added 1 to your Walmart list.</p>") && html.includes('<option value="walmart" selected>'), html.slice(0, 900));
+      assert.deepEqual(dbRows("SELECT store FROM accounts WHERE email_norm = 'own.two@example.com'"), [{ store: "walmart" }]);
+    } finally {
+      sqlRun("DELETE FROM accounts WHERE store = 'walmart'");
+    }
   });
-  await test("ticked accounts are removed together: it asks first, naming each, then takes them off every store's list", async () => {
+  await test("ticked accounts are removed together: it asks first, naming each once, then takes them off the list", async () => {
+    const g = await bothStores("Hana W");
     const page0 = await page2(await view(lsLink, {}));
-    const rows = dbRows("SELECT store, email, email_norm, key_hash, password FROM accounts ORDER BY store, email_norm");
-    for (const a of rows) assert.ok(page0.includes(`name="pick" form="bulk" value="${a.store} ${a.email_norm}"`), "a tick box for each: " + a.email);
+    const rows = listRows(), mine = rows.filter((a) => a.offer_id !== "reuse:*");
+    for (const a of mine) assert.ok(page0.includes(`name="pick" form="bulk" value="${a.store} ${a.email_norm}"`), "a tick box for each: " + a.email);
+    assert.ok(!rows.filter((a) => a.offer_id === "reuse:*").some((u) => page0.includes(`value="${u.store} ${u.email_norm}"`)), "none for a slot's row");
     assert.ok(page0.includes('<form id="bulk" method="post" class="bulk"') && page0.includes('value="ask-many">Remove</button>') && page0.includes("data-copy=\"logins\""), "the bar");
     for (const a of rows) assert.ok(!page0.includes(a.password), "never a password");
-    const counts = new Map(); rows.forEach((a) => counts.set(a.email_norm, (counts.get(a.email_norm) || 0) + 1));
-    const two = rows.find((a) => counts.get(a.email_norm) > 1);
-    const free = rows.filter((a) => !a.key_hash && counts.get(a.email_norm) === 1).slice(0, 2);
-    assert.ok(two && free.length === 2, "an email on two lists, and two free accounts");
-    const picked = [two, ...free].map((a) => `${a.store} ${a.email_norm}`).concat(["target nobody.here@example.com"]);
+    const count = (es) => dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm IN (${es.map((e) => `'${e}'`).join(", ")})`)[0].n;
+    const free = mine.filter((a) => !a.key_hash).slice(0, 2);
+    assert.equal(free.length, 2);
+    const picked = [g, ...free].map((a) => `* ${a.email_norm}`).concat(["* nobody.here@example.com"]), emails = [g, ...free].map((a) => a.email_norm);
     const noneRaw = await sendRaw(lsLink, { action: "ask-many" });
     assert.equal(noneRaw.status, 303, "nothing ticked goes back to the list by its link");
     const none = await page2(await send(lsLink, { action: "ask-many" }));
@@ -2360,17 +2309,17 @@ try {
     const ask = unescape(await (await fetchOnce(lsLink.split("?")[0], { method: "POST", body: askBody })).text());
     assert.ok(ask.includes("<h2>Remove accounts</h2>") && ask.includes('<p class="who">3 accounts</p>') && ask.includes("1 of the ones ticked isn't on your list any more.")
       && ask.includes('value="remove">Remove 3 from my list</button>') && ask.includes(">Keep them</button>"), ask.slice(0, 1500));
-    for (const a of [two, ...free]) assert.ok(ask.includes(`<input type="hidden" name="email" value="${a.email_norm}">`) && ask.includes(`${a.email} · `), "names " + a.email);
-    assert.ok(ask.includes(`${free[0].email} · ${{ target: "Target", pokemoncenter: "Pokémon Center" }[free[0].store]}: Free`), "and says where each one is", ask.slice(0, 1500));
-    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm IN ('${two.email_norm}', '${free[0].email_norm}', '${free[1].email_norm}')`)[0].n, counts.get(two.email_norm) + 2, "asking removes nothing");
+    for (const a of [g, ...free]) assert.ok(ask.includes(`<input type="hidden" name="email" value="${a.email_norm}">`) && ask.includes(`${a.email} · Target and Pokémon Center: `), "names " + a.email);
+    assert.ok(ask.includes(`${free[0].email} · Target and Pokémon Center: Free`) && ask.includes(`${g.email} · Target and Pokémon Center: Given to license …${g.key_last4}, Hana W: Target, sent `), "and says where each one is", ask.slice(0, 1500));
+    assert.equal(count(emails), 5, "asking removes nothing: the three, and Hana W's two slots' rows");
     await view(lsLink, { action: "remove", email: free[0].email_norm });
-    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${free[0].email_norm}'`)[0].n, 1, "a link (GET) removes nothing");
-    const rmBody = new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "remove" }); [two, ...free].forEach((a) => rmBody.append("email", a.email_norm)); rmBody.append("email", "nobody.here@example.com");
+    assert.equal(count([free[0].email_norm]), 1, "a link (GET) removes nothing");
+    const rmBody = new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "remove" }); emails.forEach((e) => rmBody.append("email", e)); rmBody.append("email", "nobody.here@example.com");
     const rm = await fetchOnce(lsLink.split("?")[0], { method: "POST", redirect: "manual", body: rmBody }); await rm.text();
     assert.equal(rm.status, 303);
     const done = unescape(await (await fetchOnce(new URL(rm.headers.get("location"), lsLink))).text());
     assert.ok(done.includes("<p>Took 3 accounts off your list. 1 wasn't on it any more.</p>"), done.slice(0, 600));
-    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm IN ('${two.email_norm}', '${free[0].email_norm}', '${free[1].email_norm}')`)[0].n, 0, "off every store's list");
+    assert.equal(count(emails), 0, "off the list, with Hana W's slots' rows");
     const empty = await page2(await send(lsLink, { action: "remove" }));
     assert.ok(empty.includes(`<p class="err">Tick the accounts to remove first.</p>`), "Remove with nothing ticked says so");
     const twice = await fetchOnce(lsLink.split("?")[0], { method: "POST", body: rmBody });
@@ -2380,7 +2329,7 @@ try {
     const rows = dbRows("SELECT store, email, email_norm, password FROM accounts WHERE COALESCE(offer_id, '') NOT LIKE 'reuse:%' ORDER BY store, email_norm").slice(0, 3);
     assert.equal(rows.length, 3);
     const body = new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "copy" });
-    [rows[2], rows[0], rows[1]].forEach((a) => body.append("pick", `${a.store} ${a.email_norm}`)); body.append("pick", "target nobody.here@example.com"); body.append("pick", `${rows[0].store} ${rows[0].email_norm}`);
+    [rows[2], rows[0], rows[1]].forEach((a) => body.append("pick", `${a.store} ${a.email_norm}`)); body.append("pick", "* nobody.here@example.com"); body.append("pick", `${rows[0].store} ${rows[0].email_norm}`);
     const r = await fetchOnce(lsLink.split("?")[0], { method: "POST", body }), d = await r.json();
     assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store"); assert.equal(r.headers.get("access-control-allow-origin"), null, "no other site can read it");
     assert.deepEqual(d, { lines: [rows[2], rows[0], rows[1]].map((a) => `${a.email}:${a.password}`), missing: 1, over: 0 }, "in the order ticked, once each");
