@@ -10,7 +10,7 @@
 // Since 2026-10-10 the owner's domain points here too (custom domains added in the Cloudflare dashboard, not in
 // wrangler.toml, so a deploy needs no access to the domain): app.fafoaco.com is the app, as app.orbit-app.workers.dev
 // still is for older pages and bookmarks; fafoaco.com is FAFO's front page (site.js), with /download for the newest
-// Windows download; www.fafoaco.com goes to fafoaco.com.
+// Windows download (since 2026-10-13 the page itself doesn't link it); www.fafoaco.com goes to fafoaco.com.
 import { sitePage, SITE_HOST, DOWNLOAD_URL, APP_URL } from "./site.js";
 
 const UPDATE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/web-update.json";

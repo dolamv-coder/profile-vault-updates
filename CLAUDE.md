@@ -240,7 +240,9 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   download. See "Desktop app" below and `desktop/README.md`.
 - `web-worker/`: the web version, a Cloudflare Worker (`app`) at
   `https://app.fafoaco.com` (and still `https://app.orbit-app.workers.dev`), and FAFO's front page at
-  `https://fafoaco.com`. See "Web version and sync" below.
+  `https://fafoaco.com`, whose one button since 2026-10-13 is Login with Discord, to the app (the owner's request: no
+  Windows download or "Windows 10 and 11, or any browser" on it; `/download` still redirects for old links). See "Web
+  version and sync" below.
 - GitHub Releases: the app links new users to
   `releases/latest/download/FAFO-Windows.zip` on this repo (`Orbit-Windows.zip`
   until 1.9.75; each release also carries the same zip as `Orbit-Windows.zip` and

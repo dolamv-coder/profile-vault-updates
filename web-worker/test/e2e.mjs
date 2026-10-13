@@ -96,8 +96,10 @@ try {
     const site = `http://localhost:${WORKER_PORT}`;
     const r = await fetch(site + "/", { redirect: "manual" });
     const body = await r.text();
-    assert.equal(r.status, 200); assert.match(body, /Your slots in\. Your orders tracked\./); assert.match(body, /or any browser · Web version 1\.9\.0</);
-    assert.match(body, /href="\/download"/); assert.match(body, /href="https:\/\/app\.fafoaco\.com"/);
+    assert.equal(r.status, 200); assert.match(body, /Your slots in\. Your orders tracked\./); assert.match(body, /<p class="small">Web version 1\.9\.0<\/p>/);
+    // Since 2026-10-13 (the owner's request): one button, Login with Discord, to the app; no Windows download on the page.
+    assert.match(body, /<a class="btn btn-discord" href="https:\/\/app\.fafoaco\.com"><svg[^>]*>.*<\/svg>Login with Discord<\/a>/);
+    for (const gone of [/Download for Windows/, /Open in your browser/, /Windows 10 and 11/, /any browser/, /href="\/download"/]) assert.doesNotMatch(body, gone);
     assert.equal(r.headers.get("content-type"), "text/html; charset=utf-8"); assert.equal(r.headers.get("x-frame-options"), "DENY");
     assert.equal(r.headers.get("x-orbit-version"), null);
     const d = await fetch(site + "/download", { redirect: "manual" });

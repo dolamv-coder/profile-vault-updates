@@ -1,15 +1,16 @@
-// FAFO's front page at https://fafoaco.com (the owner's domain, 2026-10-10): what FAFO is, the Windows download and the
-// web version. The same worker serves the app itself at app.fafoaco.com (and app.orbit-app.workers.dev); see index.js.
+// FAFO's front page at https://fafoaco.com (the owner's domain, 2026-10-10): what FAFO is, and Login with Discord, which
+// opens the web version (since 2026-10-13, the owner's request: no Windows download on it; /download still works for old
+// links). The same worker serves the app itself at app.fafoaco.com (and app.orbit-app.workers.dev); see index.js.
 
 export const SITE_HOST = "fafoaco.com";
 export const APP_URL = "https://app.fafoaco.com";
-// The newest Windows download (the "Release desktop app" Action attaches it to each GitHub release).
+// The newest Windows download (the "Release desktop app" Action attaches it to each GitHub release), for /download.
 export const DOWNLOAD_URL = "https://github.com/dolamv-coder/profile-vault-updates/releases/latest/download/FAFO-Windows.zip";
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-// `version`: the release the web version serves now ("" when it isn't known yet). It's labelled the web version's: the
-// Windows download stays on the release installed apps have while desktop updates are paused (channels.json).
+// `version`: the release the web version serves now ("" when it isn't known yet). It's labelled the web version's: installed
+// apps stay on their release while desktop updates are paused (channels.json).
 export function sitePage(version, appUrl = APP_URL) {
   const v = /^[0-9.]{1,20}$/.test(version || "") ? version : "";
   return `<!doctype html>
@@ -54,9 +55,9 @@ h1{font-family:"Cormorant Garamond",Georgia,serif;font-weight:700;font-size:clam
 .cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:30px}
 .btn{display:inline-flex;align-items:center;gap:10px;padding:13px 22px;border-radius:12px;font-weight:700;font-size:16px;text-decoration:none;border:1px solid var(--line);color:var(--ink);background:var(--sheet);transition:transform .15s ease,background .15s ease}
 .btn:hover{transform:translateY(-1px);background:rgba(24,44,92,.7)}
-.btn-primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);box-shadow:0 10px 30px -10px rgba(61,155,255,.7)}
-.btn-primary:hover{background:var(--accent-2)}
 .btn svg{width:18px;height:18px;flex:none}
+.btn-discord{background:#5865F2;border-color:#5865F2;color:#fff;box-shadow:0 10px 30px -10px rgba(88,101,242,.75)}
+.btn-discord:hover{background:#4752C4}
 .small{color:var(--ink-3);font-size:14px;margin-top:14px}
 .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:40px 0 0}
 .card{background:var(--sheet);border:1px solid var(--line);border-radius:16px;padding:22px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
@@ -75,7 +76,6 @@ footer a{color:var(--ink-2)}
 @media (max-width:760px){
   .grid{grid-template-columns:minmax(0,1fr)}
   .hero{padding:36px 0 24px}
-  .nav a.hide-sm{display:none}
   .btn{width:100%;justify-content:center}
   .cta{flex-direction:column;max-width:360px;margin-left:auto;margin-right:auto}
 }
@@ -85,7 +85,7 @@ footer a{color:var(--ink-2)}
 <div class="wrap">
   <header>
     <a class="wordmark" href="/" aria-label="FAFO home">FAFO</a>
-    <nav class="nav"><a class="hide-sm" href="/download">Download</a><a href="${esc(appUrl)}">Open FAFO</a></nav>
+    <nav class="nav"><a href="${esc(appUrl)}">Open FAFO</a></nav>
   </header>
   <main>
     <section class="hero">
@@ -94,10 +94,9 @@ footer a{color:var(--ink-2)}
       <h1>Your slots in. Your orders tracked.</h1>
       <p class="lead">FAFO keeps your checkout profiles, cards and store logins encrypted, sends your slots to the seller in one batch, and follows every order from your email.</p>
       <div class="cta">
-        <a class="btn btn-primary" href="/download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>Download for Windows</a>
-        <a class="btn" href="${esc(appUrl)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>Open in your browser</a>
+        <a class="btn btn-discord" href="${esc(appUrl)}"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.3 4.4A19.7 19.7 0 0 0 15.4 3l-.6 1.3a18.3 18.3 0 0 0-5.6 0L8.6 3a19.6 19.6 0 0 0-4.9 1.5C.6 9.1-.3 13.7.1 18.2a19.8 19.8 0 0 0 6 3l1.3-2.1a12.8 12.8 0 0 1-2-1l.5-.4a14.1 14.1 0 0 0 12.2 0l.5.4c-.6.4-1.3.7-2 1l1.3 2.1a19.7 19.7 0 0 0 6-3c.5-5.2-.8-9.8-3.6-13.8ZM8 15.4c-1.2 0-2.2-1.1-2.2-2.4S6.8 10.6 8 10.6s2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Zm8 0c-1.2 0-2.2-1.1-2.2-2.4s1-2.4 2.2-2.4 2.2 1.1 2.2 2.4-1 2.4-2.2 2.4Z"/></svg>Login with Discord</a>
       </div>
-      <p class="small">Windows 10 and 11, or any browser${v ? ` · Web version ${esc(v)}` : ""}</p>
+      ${v ? `<p class="small">Web version ${esc(v)}</p>` : ""}
     </section>
     <section class="grid" aria-label="What FAFO does">
       <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><h2>Profiles, cards and logins</h2><p>One profile per store, for Target and Pokémon Center. Generate, jig and edit them in bulk. Everything is encrypted with your master password.</p></div>
@@ -107,8 +106,8 @@ footer a{color:var(--ink-2)}
     <section class="steps">
       <h2>Getting started</h2>
       <ol>
-        <li><span><strong>Get FAFO.</strong> Download it for Windows, or open it in your browser.</span></li>
-        <li><span><strong>Get your license.</strong> Choose Continue with Discord in FAFO. Your key arrives once the seller approves you.</span></li>
+        <li><span><strong>Log in with Discord.</strong> Your license arrives once the seller approves you.</span></li>
+        <li><span><strong>Choose your master password.</strong> It encrypts your profiles, cards and logins, and only you know it.</span></li>
         <li><span><strong>Add your profiles and submit.</strong> Turn on sync to use the same vault on your computer and your phone.</span></li>
       </ol>
     </section>
