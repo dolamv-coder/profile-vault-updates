@@ -75,6 +75,12 @@
 //                              stage, at, createdAt}]}: this license's, newer than MS
 //   GET  /alerts/webhook       {set, lastOk, lastError}: this license's Discord webhook for its alerts
 //   PUT  /alerts/webhook       {url}: set it (it gets a test post first), or "" to remove it
+// The owner's webhook sorter (2026-10-13): their checkout bot posts here as it would to a Discord webhook.
+//   POST /api/webhooks/NUM/SECRET   a post as Discord takes it (JSON, or a form with payload_json and files): it goes on,
+//                              as it came, to the owner's webhook for its kind (by its embeds' titles), and Discord's
+//                              answer comes back as it was. GET answers as Discord does for a webhook; GET, PATCH and
+//                              DELETE on .../messages/ID reach the message wherever it went.
+//   GET/POST /hooks            a page to send a setup link to the owner's channel (5 a day)
 // Web version and sync (app 1.9.65+). The app seals its vault (AES-GCM, with a key from the vault's
 // password) before it leaves the device, so what's kept here can't be read here. Every call takes the
 // license key (Bearer); reading or saving also takes the vault's access token (x-vault-auth), which
@@ -104,6 +110,8 @@
 //                              several to copy or remove; POST action=copy answers the ticked ones' email:password as
 //                              JSON, the only place a password leaves the worker; 24 hours
 //   GET/POST /alerts/review/ID?t=TOKEN    allow or refuse a license sending order alerts to buyers
+//   GET/POST /hooks/setup/ID?t=TOKEN      the webhook sorter: its webhooks (each gets a test post first), its address (a new
+//                              one on request), what it has sorted; 24 hours
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/applications   every request and decision
 //   GET  /admin/submissions    collecting keys (with review links), submissions sent (whether approved or declined,
@@ -182,6 +190,9 @@ export default {
       if (path === "/alerts/webhook" && request.method === "PUT") return await alertWebhookPut(request, env);
       if (path === "/alerts" && request.method === "GET") return await alertsGet(request, env, url);
       if (path === "/alerts" && request.method === "POST") return await alertsPost(request, env, ctx);
+      if (path.startsWith("/api/webhooks/")) return await sortHook(request, env, ctx, url, path.slice("/api/webhooks/".length));
+      if (path === "/hooks") return await sortHome(request, env, url);
+      if (path.startsWith("/hooks/setup/")) return await sortSetup(request, env, url, path.slice("/hooks/setup/".length));
       if (path === "/vault/info" && request.method === "GET") return await vaultInfo(request, env);
       if (path === "/vault" && request.method === "GET") return await vaultGet(request, env, url);
       if (path === "/vault" && request.method === "PUT") return await vaultPut(request, env, url);
@@ -2528,6 +2539,239 @@ async function alertWebhookPut(request, env) {
   await env.DB.prepare(`INSERT INTO alert_webhooks (key_hash, url, set_at, last_ok) VALUES (?, ?, ?, ?)
     ON CONFLICT (key_hash) DO UPDATE SET url = excluded.url, set_at = excluded.set_at, last_ok = excluded.last_ok, last_error = NULL`).bind(lic.hash, u, now, now).run();
   return json({ set: true });
+}
+
+// ---- webhook sorter ------------------------------------------------------------------
+//
+// The owner's checkout bot (Shikari) posts every checkout, cancel and decline to one Discord webhook, and the owner wanted
+// them in channels of their own (2026-10-13: successes in one, "Canceled and Declined" in another). The bot posts here
+// instead, to an address shaped like a Discord webhook's (/api/webhooks/NUM/SECRET, as bots check for), and each post
+// goes on, exactly as it came, to the owner's webhook for its kind, by its embeds' titles (the message's text when none
+// has one): canceled or declined orders to one, successful checkouts to another, anything else to a third webhook, or
+// with the checkouts when there's none. Discord's answer goes back to the bot as it was, with its rate limits, so the
+// bot's own retries work as before. Nothing in a post is kept: only how many of each kind and when the last one went,
+// and a webhook's last error. Set up from a link posted to the owner's channel (/hooks): its webhooks are Discord's only
+// (each gets a test post first), and the address can be made new, which stops the old one. One sorter.
+const SORT_SETUP_TTL_MS = 24 * 3600 * 1000;
+const SORT_SETUPS_PER_DAY = 5;          // per address that asks
+const SORT_SETUPS_ALL_PER_DAY = 20;     // in all, so the owner's channel can't be flooded with them
+const SORT_MAX_BYTES = 25 * 1024 * 1024;   // what Discord takes in one post
+const SORT_KINDS = ["success", "cancel", "other"];
+const SORT_LABEL = { success: "Successful checkouts", cancel: "Canceled and declined orders", other: "Everything else" };
+const SORT_TEST = { success: "✅ FAFO's sorter will post successful checkouts here.", cancel: "✅ FAFO's sorter will post canceled and declined orders here.",
+  other: "✅ FAFO's sorter will post your bot's other posts here." };
+// Canceled or declined first, so a title with both words goes there.
+const sortKindOf = (titles) => /cancel|declin/i.test(titles) ? "cancel" : /success/i.test(titles) ? "success" : "other";
+// Discord's other addresses for a webhook (and the bot's own query) aren't the sorter's: only `wait` and
+// `with_components` go on; a thread is in the channel the bot's webhook was in, not these.
+const SORT_QUERY = ["wait", "with_components"];
+// The headers a bot reads from Discord's answer, its rate limits too.
+const SORT_PASS = ["content-type", "retry-after", "x-ratelimit-limit", "x-ratelimit-remaining", "x-ratelimit-reset", "x-ratelimit-reset-after",
+  "x-ratelimit-bucket", "x-ratelimit-global", "x-ratelimit-scope"];
+// The worker's two addresses: a bot on a network that blocks one can use the other.
+const SORT_ORIGINS = ["https://license.fafoaco.com", "https://orbit-license.orbit-app.workers.dev"];
+
+const discordError = (status, message, code = 0) => json({ message, code }, status, { "cache-control": "no-store" });
+// The titles of a post's embeds, or its text when none has one: as JSON, or a form (payload_json, maybe with files).
+async function sortTitles(raw, type) {
+  let p = null;
+  try {
+    if (/^application\/json/i.test(type)) p = JSON.parse(new TextDecoder().decode(raw));
+    else if (/^(multipart\/form-data|application\/x-www-form-urlencoded)/i.test(type)) {
+      const form = await new Response(raw, { headers: { "content-type": type } }).formData();
+      const pj = form.get("payload_json");
+      p = typeof pj === "string" ? JSON.parse(pj) : { content: form.get("content") };
+    }
+  } catch { p = null; }
+  if (!p || typeof p !== "object") return "";
+  const titles = (Array.isArray(p.embeds) ? p.embeds : []).map((e) => e && typeof e.title === "string" ? e.title : "").filter(Boolean);
+  return (titles.length ? titles : [typeof p.content === "string" ? p.content : ""]).join("\n").slice(0, 4000);
+}
+function sortPassBack(r) {
+  const h = new Headers({ "cache-control": "no-store" });
+  for (const k of SORT_PASS) { const v = r.headers.get(k); if (v) h.set(k, v); }
+  return new Response(r.status === 204 || r.status === 304 ? null : r.body, { status: r.status, headers: h });
+}
+const sortWhen = (ms) => new Date(ms).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+// What each post did: counted when Discord took it, and a webhook Discord refused is noted for the setup page (not a
+// rate limit, which the bot waits out).
+async function sortNote(env, kind, r) {
+  const now = Date.now();
+  if (r && r.ok) await env.DB.prepare(`UPDATE hook_sorter SET n_${kind} = n_${kind} + 1, last_at = ?, last_kind = ?, err_${kind} = NULL WHERE id = 'main'`)
+    .bind(now, kind).run();
+  else if (!r || r.status !== 429) await env.DB.prepare(`UPDATE hook_sorter SET err_${kind} = ? WHERE id = 'main'`)
+    .bind(`${r ? `Discord answered ${r.status}` : "Discord couldn't be reached"}, ${sortWhen(now)}`).run();
+}
+
+async function sortHook(request, env, ctx, url, rest) {
+  const m = /^(\d{5,30})\/([A-Za-z0-9_-]{20,120})(\/messages\/(?:@original|\d{5,30}))?$/.exec(rest);
+  const s = m ? await env.DB.prepare("SELECT * FROM hook_sorter WHERE id = 'main'").first() : null;
+  if (!s || s.num !== m[1] || !(await sameText(m[2], s.secret))) return discordError(404, "Unknown Webhook", 10015);
+  const to = (u, sub = "") => {
+    const t = new URL(u + sub);
+    for (const k of SORT_QUERY) if (url.searchParams.has(k)) t.searchParams.set(k, url.searchParams.get(k));
+    return t;
+  };
+  const type = request.headers.get("content-type") || "";
+  const reach = (u, init) => fetch(u, init).catch(() => null);
+  if (m[3]) {
+    // A message posted through the sorter is on one of the webhooks: read, edited or deleted there.
+    if (!["GET", "PATCH", "DELETE"].includes(request.method)) return discordError(405, "405: Method Not Allowed");
+    const body = request.method === "PATCH" ? await request.arrayBuffer() : undefined;
+    let r = null;
+    for (const u of [...new Set([s.success_url, s.cancel_url, s.other_url].filter(Boolean))]) {
+      r = await reach(to(u, m[3]), { method: request.method, headers: type && body ? { "content-type": type } : {}, body });
+      if (r && r.status !== 404) break;
+    }
+    return r ? sortPassBack(r) : discordError(502, "Discord couldn't be reached");
+  }
+  if (request.method === "GET") {
+    // As Discord answers for a webhook (a bot may check its link this way), with the sorter's own id and token.
+    const r = await reach(s.success_url);
+    const w = r && r.ok ? await r.json().catch(() => ({})) : {};
+    return json({ type: 1, name: "FAFO sorter", ...w, id: s.num, token: s.secret, ...(w.url ? { url: `${url.origin}/api/webhooks/${s.num}/${s.secret}` } : {}) },
+      200, { "cache-control": "no-store" });
+  }
+  if (request.method !== "POST") return discordError(405, "405: Method Not Allowed");
+  if (Number(request.headers.get("content-length") || 0) > SORT_MAX_BYTES) return discordError(413, "Request entity too large", 40005);
+  const raw = await request.arrayBuffer();
+  if (raw.byteLength > SORT_MAX_BYTES) return discordError(413, "Request entity too large", 40005);
+  const kind = sortKindOf(await sortTitles(raw, type));
+  const r = await reach(to(kind === "cancel" ? s.cancel_url : kind === "success" ? s.success_url : s.other_url || s.success_url),
+    { method: "POST", headers: type ? { "content-type": type } : {}, body: raw });
+  ctx.waitUntil(sortNote(env, kind, r).catch((e) => console.error("sorter", e)));
+  return r ? sortPassBack(r) : discordError(502, "Discord couldn't be reached");
+}
+
+// A page anyone can open, whose one button posts a setup link to the owner's channel: only the owner can open that.
+async function sortHome(request, env, url) {
+  const title = "Sort your bot's posts";
+  if (request.method === "POST") {
+    if (!env.DISCORD_WEBHOOK_URL) return page(503, title, "The Discord channel isn't set up on the license server.");
+    const now = Date.now();
+    const ip = request.headers.get("cf-connecting-ip") || "";
+    await env.DB.prepare("DELETE FROM hook_setups WHERE created_at < ?").bind(now - 7 * 86400000).run();
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n, SUM(CASE WHEN ip = ? THEN 1 ELSE 0 END) AS mine FROM hook_setups WHERE created_at > ?").bind(ip, now - 86400000).first();
+    if (n && (n.mine >= SORT_SETUPS_PER_DAY || n.n >= SORT_SETUPS_ALL_PER_DAY)) return page(429, title, `That's ${n.mine >= SORT_SETUPS_PER_DAY ? SORT_SETUPS_PER_DAY : SORT_SETUPS_ALL_PER_DAY} links today already. Use one of those, or try again tomorrow.`);
+    const o = { id: randomId(12), token: randomId(24) };
+    await env.DB.prepare("INSERT INTO hook_setups (id, token, ip, created_at) VALUES (?, ?, ?, ?)").bind(o.id, o.token, ip, now).run();
+    const posted = await webhookPost(env, { content: `🔀 **Your webhook sorter**\n[Set it up or change it](${url.origin}/hooks/setup/${o.id}?t=${o.token}) · the link works for 24 hours` });
+    if (!posted) {
+      await env.DB.prepare("DELETE FROM hook_setups WHERE id = ?").bind(o.id).run();
+      return page(502, title, "Couldn't post to your Discord channel. Try again in a minute.");
+    }
+    return page(200, title, "Sent. Open the link in your FAFO channel on Discord. It works for 24 hours.");
+  }
+  if (request.method !== "GET") return page(405, "Not allowed", "");
+  return page(200, title, "", `<p>Your checkout bot (Shikari, say) posts every checkout, cancel and decline to one Discord webhook. FAFO can sort them: the bot posts to FAFO instead, and each post goes on to the channel for its kind. Successful checkouts go to one channel, canceled and declined orders to another.</p>
+    <p>Setting it up takes a link, which goes to your FAFO channel on Discord, so only you can open it.</p>
+    <form method="post"><p class="go"><button class="go" type="submit">Send me a setup link</button></p></form>`);
+}
+
+async function sortSetup(request, env, url, id) {
+  const o = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM hook_setups WHERE id = ?").bind(id).first() : null;
+  let t = url.searchParams.get("t") || "", form = null;
+  if (request.method === "POST") {
+    form = await request.formData().catch(() => null);
+    t = form && String(form.get("t") || "") || t;
+  } else if (request.method !== "GET") {
+    return page(405, "Not allowed", "");
+  }
+  if (!o || !(await sameText(t, o.token))) return page(404, "Link not found", "This link isn't valid.");
+  const now = Date.now(), title = "Your webhook sorter";
+  if (o.created_at < now - SORT_SETUP_TTL_MS) return page(410, title, `This link has expired. Ask for a new one at ${url.origin}/hooks.`);
+  const get = (k) => form ? String(form.get(k) || "").trim() : "";
+  const action = get("action");
+  let s = await env.DB.prepare("SELECT * FROM hook_sorter WHERE id = 'main'").first();
+  let done = "", err = "";
+  if (action === "save") {
+    const urls = Object.fromEntries(SORT_KINDS.map((k) => [k, get(k)]));
+    const bad = SORT_KINDS.filter((k) => urls[k] && (urls[k].length > 300 || !okHookUrl(env, urls[k])));
+    if (bad.length) err = `${bad.map((k) => SORT_LABEL[k]).join(" and ")}: that isn't a Discord webhook link. In Discord, it's in the channel's settings, under Integrations → Webhooks (Copy Webhook URL).`;
+    else if (!s && (!urls.success || !urls.cancel)) err = "Paste a webhook for successful checkouts and one for canceled and declined orders.";
+    else if (!SORT_KINDS.some((k) => urls[k])) err = "Nothing changed: paste a webhook to change one.";
+    else {
+      // A test post to each webhook pasted, so a wrong or deleted one is caught now.
+      for (const k of SORT_KINDS) {
+        if (!urls[k]) continue;
+        const r = await hookPost(urls[k], SORT_TEST[k]);
+        if (!r.ok) { err = `${SORT_LABEL[k]}: ${r.error}. Check that webhook link, or make a new one in that channel.`; break; }
+      }
+      if (!err && !s) {
+        const num = "1" + Array.from(crypto.getRandomValues(new Uint8Array(18)), (b) => b % 10).join("");
+        await env.DB.prepare(`INSERT INTO hook_sorter (id, num, secret, success_url, cancel_url, other_url, set_at, n_success, n_cancel, n_other)
+          VALUES ('main', ?, ?, ?, ?, ?, ?, 0, 0, 0) ON CONFLICT (id) DO NOTHING`).bind(num, randomId(51), urls.success, urls.cancel, urls.other || null, now).run();
+        done = "Saved. A test post went to each channel. Now paste the sorter's address below into your bot, in place of its Discord webhook.";
+      } else if (!err) {
+        await env.DB.prepare(`UPDATE hook_sorter SET success_url = COALESCE(?, success_url), cancel_url = COALESCE(?, cancel_url), other_url = COALESCE(?, other_url),
+          err_success = CASE WHEN ? IS NULL THEN err_success END, err_cancel = CASE WHEN ? IS NULL THEN err_cancel END, err_other = CASE WHEN ? IS NULL THEN err_other END
+          WHERE id = 'main'`).bind(urls.success || null, urls.cancel || null, urls.other || null, urls.success || null, urls.cancel || null, urls.other || null).run();
+        done = "Saved. A test post went to each channel you changed. The sorter's address stays the same.";
+      }
+    }
+  } else if (action === "no-other" && s) {
+    await env.DB.prepare("UPDATE hook_sorter SET other_url = NULL, err_other = NULL WHERE id = 'main'").run();
+    done = "Everything else goes with the successful checkouts again.";
+  } else if (action === "new-address" && s) {
+    const num = "1" + Array.from(crypto.getRandomValues(new Uint8Array(18)), (b) => b % 10).join("");
+    await env.DB.prepare("UPDATE hook_sorter SET num = ?, secret = ? WHERE id = 'main'").bind(num, randomId(51)).run();
+    done = "New address made: paste it into your bot. The old one no longer works.";
+  } else if (action === "remove" && s) {
+    await env.DB.prepare("DELETE FROM hook_sorter WHERE id = 'main'").run();
+    done = "The sorter is off, and its address no longer works. Put your bot back on a Discord webhook of its own.";
+  }
+  // After a change, back to the page by its link (303), so reloading it doesn't send the change again.
+  if (form && action) {
+    const q = new URLSearchParams({ t });
+    if (done) q.set("done", done);
+    if (err) q.set("err", err);
+    return new Response(null, { status: 303, headers: { location: `${url.pathname}?${q}`, "cache-control": "no-store", "referrer-policy": "no-referrer" } });
+  }
+  done = (url.searchParams.get("done") || "").slice(0, 400);
+  err = (url.searchParams.get("err") || "").slice(0, 600);
+  s = await env.DB.prepare("SELECT * FROM hook_sorter WHERE id = 'main'").first();
+  const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  const btn = (a, text, cls, ask) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${a}"${ask ? ` data-confirm="${esc(ask)}"` : ""}>${esc(text)}</button></form>`;
+  const ends = (u) => `…${esc(u.slice(-6))}`;
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const state = !s ? `<p>Not set up yet. In Discord, open the settings of the channel for successful checkouts (#fafocheckouts, say), then Integrations → Webhooks → New Webhook → Copy Webhook URL, and paste it below. Do the same in the channel for canceled and declined orders (#fafocancels).</p>`
+    : `<p>Sorting since ${esc(sortWhen(s.set_at))}: ${plural(s.n_success, "successful checkout", "successful checkouts")}, ${s.n_cancel} canceled or declined, ${s.n_other} other.${s.last_at ? ` Last post ${esc(sortWhen(s.last_at))}.` : " Nothing yet."}</p>
+      ${SORT_KINDS.filter((k) => s[`err_${k}`]).map((k) => `<p class="err">${esc(SORT_LABEL[k])}: the last post there didn't go through (${esc(s[`err_${k}`])}). If that channel's webhook was deleted, make a new one and paste it below.</p>`).join("")}`;
+  // A webhook already set says so by its label (its last characters only), and its box takes a new one.
+  const field = (k, hint) => {
+    const set = s && s[`${k}_url`], withCheckouts = !set && s && k === "other";
+    return `<label>${esc(SORT_LABEL[k])} ${k === "other" ? "goes" : "go"} to${set ? ` <span style="color:#5fd39a">✓ set (${ends(set)})</span>` : withCheckouts ? ` <span>· with the checkouts</span>` : ""}<input type="url" name="${k}" maxlength="300" autocomplete="off" spellcheck="false"
+      placeholder="${set ? "Paste one to change it" : withCheckouts ? "Paste one for its own channel" : "https://discord.com/api/webhooks/…"}"></label>
+      <p class="hint">${hint}</p>`;
+  };
+  const other = SORT_ORIGINS.includes(url.origin) ? SORT_ORIGINS.find((x) => x !== url.origin) : "";
+  const address = s ? `${url.origin}/api/webhooks/${s.num}/${s.secret}` : "";
+  const copy = (v, label) => `<div class="row" style="margin-top:8px"><input class="addr" type="text" readonly value="${esc(v)}" aria-label="${esc(label)}" style="flex:1;min-width:0;box-sizing:border-box;padding:10px 12px;border-radius:10px;border:1px solid #2a3f7a;background:#07102b;color:#e6ecff;font:14px ui-monospace,Consolas,monospace"><button type="button" class="copy" data-copy>Copy</button></div>`;
+  return page(200, title, done, `${err ? `<p class="err">${esc(err)}</p>` : ""}
+     ${state}
+     ${s ? `<h3>Your sorter's address</h3>
+     <p class="small" style="margin-top:0">Paste it into your bot (Shikari) where its Discord webhook goes, in place of the one there now.</p>
+     ${copy(address, "The sorter's address")}
+     ${other ? `<p class="hint">If your bot can't reach it, this one is the same sorter:</p>${copy(`${other}/api/webhooks/${s.num}/${s.secret}`, "The sorter's other address")}` : ""}
+     <p class="hint">Anyone with it can post into your channels, as with a webhook link, so keep it to yourself.</p>` : ""}
+     <h3>Where each post goes</h3>
+     <form method="post" class="edit">${hidden}
+       ${field("success", "Posts whose title says Successful (Shikari's \"Successful Checkout!\").")}
+       ${field("cancel", "Posts whose title says Canceled or Declined (\"Order Canceled: Item Demand\").")}
+       ${field("other", `Anything else, like a test post.${s && s.other_url ? "" : " Leave it empty to send these with the successful checkouts."}`)}
+       <p class="hint">Each webhook you paste gets a test post first.</p>
+       <div class="row"><button class="ok" type="submit" name="action" value="save">Save</button></div>
+     </form>
+     ${s ? `<div class="stack">${s.other_url ? `<div class="row">${btn("no-other", "Send everything else with the successful checkouts", "copy")}</div>` : ""}
+     <h3>Change the address, or turn it off</h3>
+     <p class="small" style="margin-top:0">A new address stops the old one at once, so paste the new one into your bot right away. Turning the sorter off stops its address too.</p>
+     <div class="row">${btn("new-address", "Make a new address", "copy", "Make a new address? The old one stops working at once, so your bot's posts fail until you paste the new one into it.")}${btn("remove", "Turn the sorter off", "no", "Turn the sorter off? Its address stops working, so your bot's posts fail until you put it back on a Discord webhook.")}</div></div>` : ""}
+     <p class="small">This link works until ${esc(sortWhen(o.created_at + SORT_SETUP_TTL_MS))}. Ask for another at ${esc(url.origin)}/hooks.</p>
+     <script>document.querySelectorAll("[data-confirm]").forEach(function(b){ b.addEventListener("click", function(e){ if (!confirm(b.getAttribute("data-confirm"))) e.preventDefault(); }); });
+     document.querySelectorAll("[data-copy]").forEach(function(b){ b.addEventListener("click", function(){ var i = b.parentNode.querySelector("input.addr");
+       var ok = function(){ b.textContent = "Copied"; setTimeout(function(){ b.textContent = "Copy"; }, 1500); };
+       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(i.value).then(ok, function(){ i.select(); });
+       else { i.select(); try { document.execCommand("copy"); ok(); } catch(e){} } }); });</script>`);
 }
 
 // ---- pulls ---------------------------------------------------------------------------

@@ -233,6 +233,21 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   used meanwhile) and answers a week, nothing found 6 hours (an hour when a list couldn't be read) (`picture_finds`); a
   license gets `PIC_ASKS_PER_DAY` (300) asks a day not answered from those (`picture_asks`, a count per day, kept two
   days; 429 past it). `/admin/pictures?q=` shows what a name finds and why.
+  Since 2026-10-13 (the owner's request, with a screenshot of Shikari's "Successful Checkout!" and "Order Canceled: Item
+  Demand" in one channel: "filter the webhook to success and cancels in each sub-channel"; "put Canceled and Declined into
+  #fafocancels") it also sorts the owner's checkout bot's Discord posts. The bot posts to `/api/webhooks/<num>/<secret>`
+  (shaped like a Discord webhook's address, as bots check for; D1 `hook_sorter`, one row `main`), and each post goes on,
+  byte for byte with its content type, to the owner's webhook for its kind (`sortKindOf`, by its embeds' titles, or its
+  text when none has one: "cancel" or "declin" to the cancels channel, then "success" to the checkouts channel, anything
+  else to `other_url` or, with none, the checkouts channel); only `wait` and `with_components` of the query go on (a
+  `thread_id` was the bot's own channel's). Discord's answer goes back as it was, with its rate-limit headers
+  (`SORT_PASS`), so the bot's retries work. GET answers as Discord does for a webhook (the checkouts webhook's details
+  with the sorter's id and token), and `/messages/:id` is tried on each webhook until one has it. Nothing in a post is
+  kept: counts per kind, the last post's time, and each webhook's last error (`sortNote`; not a 429). It's set up from a
+  link posted to the owner's channel from `/hooks` (5 a day per address that asks, 20 in all; D1 `hook_setups`, 24 hours):
+  `/hooks/setup/:id?t=…` takes Discord's webhooks only (`okHookUrl`), each after a test post, shows the address (and the
+  other host's), never the webhooks, and can make a new address or turn the sorter off (both ask first). It's not in FAFO
+  itself. If a bot only takes discord.com addresses, this can't help it; Discord itself can't sort one webhook's posts.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 

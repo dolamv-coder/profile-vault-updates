@@ -547,6 +547,36 @@ hear about it in their FAFO without ever seeing the account:
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/alerts
 ```
 
+## Sorting your checkout bot's posts
+
+Since 2026-10-13 (your request), your checkout bot's Discord posts can be sorted into channels. Shikari posts every
+checkout, cancel and decline to one webhook, so they all land in one channel. With the sorter, the bot posts to this
+worker instead, and each post goes on, exactly as the bot made it (same embed, picture and colors), to the channel for
+its kind, by its title:
+
+- **Canceled or Declined** in the title (Shikari's "Order Canceled: Item Demand", a declined card): your cancels channel.
+- **Successful** in the title ("Successful Checkout!"): your checkouts channel.
+- **Anything else** (a test post, "Checkout Failed"): a third channel if you add one, or the checkouts channel.
+
+A post with no title is sorted by its text. Discord's answer goes back to the bot as it was, its rate limits too, so
+the bot retries as it always did. Nothing in a post is kept here, only how many of each kind went and when.
+
+To set it up:
+
+1. In Discord, make a webhook in each channel: the channel's settings (the gear) → **Integrations → Webhooks → New
+   Webhook → Copy Webhook URL**. One in #fafocheckouts, one in #fafocancels.
+2. Open `https://license.fafoaco.com/hooks` and choose **Send me a setup link**. The link goes to your FAFO channel on
+   Discord (like See my list's), works for 24 hours, and you can ask for 5 a day.
+3. Open it, paste the two webhooks, and choose **Save**. Each one gets a test post first, so a wrong one is caught then.
+4. Copy **Your sorter's address** and paste it into Shikari where its Discord webhook goes. It looks like a Discord
+   webhook's (`…/api/webhooks/<number>/<code>`), and there's a second address on
+   `orbit-license.orbit-app.workers.dev` for a network that blocks the first.
+
+The same page shows how many posts went to each channel, and says when one of your webhooks stops taking posts (deleted
+in Discord, say), so you can paste a new one. **Make a new address** stops the old one at once (keep it to yourself:
+anyone with it can post into your channels, as with a webhook link), and **Turn the sorter off** stops it altogether.
+The sorter is in the `hook_sorter` and `hook_setups` tables, which `npm run db:init` (and the deploy Action) adds.
+
 ## The web version's synced vaults
 
 From Orbit 1.9.65, a desktop app can keep an encrypted copy of its vault here (Settings → Web

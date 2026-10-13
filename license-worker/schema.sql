@@ -330,3 +330,34 @@ CREATE TABLE IF NOT EXISTS picture_asks (
   n        INTEGER NOT NULL,
   PRIMARY KEY (key_hash, day)
 );
+
+-- The owner's webhook sorter (2026-10-13): their checkout bot posts to /api/webhooks/<num>/<secret> as if to a Discord
+-- webhook, and each post goes on to the owner's webhook for its kind (successful checkouts, canceled and declined orders,
+-- anything else, which goes with the checkouts when other_url is NULL). Nothing in a post is kept: only how many of each
+-- kind went, when the last one did, and each webhook's last error. One sorter (id 'main').
+CREATE TABLE IF NOT EXISTS hook_sorter (
+  id          TEXT PRIMARY KEY,
+  num         TEXT NOT NULL,
+  secret      TEXT NOT NULL,
+  success_url TEXT NOT NULL,
+  cancel_url  TEXT NOT NULL,
+  other_url   TEXT,
+  set_at      INTEGER NOT NULL,
+  n_success   INTEGER NOT NULL DEFAULT 0,
+  n_cancel    INTEGER NOT NULL DEFAULT 0,
+  n_other     INTEGER NOT NULL DEFAULT 0,
+  last_at     INTEGER,
+  last_kind   TEXT,
+  err_success TEXT,
+  err_cancel  TEXT,
+  err_other   TEXT
+);
+
+-- Links to set the sorter up, posted to the owner's channel from /hooks (5 a day per address that asks, 20 in all); each
+-- works for 24 hours, and rows go after a week.
+CREATE TABLE IF NOT EXISTS hook_setups (
+  id         TEXT PRIMARY KEY,
+  token      TEXT NOT NULL,
+  ip         TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);

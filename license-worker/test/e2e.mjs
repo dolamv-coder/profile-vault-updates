@@ -69,6 +69,10 @@ const CATALOG_PRODUCTS = {
 };
 const webhookPosts = [], webhookEdits = [], webhookFail = [];
 const buyerHookPosts = [];   // posts to buyers' own webhooks (order alerts)
+// The webhook sorter's channels (2026-10-13): what reached each webhook, as it came, and what Discord answers next
+// ({status, body, headers}, one per request; otherwise 204, or the message with ?wait=true). A message is only on the
+// webhook it was posted to (sortMsgs: id -> path).
+const sortHookHits = [], sortHookReply = [], sortMsgs = new Map();
 let webhookHang = null;   // {ms, code}: the next webhook post waits ms, then fails with code (if given)
 const discord = createServer(async (req, res) => {
   const chunks = []; for await (const c of req) chunks.push(c);
@@ -134,6 +138,23 @@ const discord = createServer(async (req, res) => {
   }
   if (req.method === "PATCH" && u.pathname.startsWith("/webhook/messages/")) {
     webhookEdits.push({ id: u.pathname.split("/").pop(), ...JSON.parse(body) }); return send(200, {});
+  }
+  if (u.pathname.startsWith("/buyerhook/sort/")) {
+    if (u.pathname.includes("/dead")) return send(404, { message: "Unknown Webhook", code: 10015 });
+    const msg = /^(.*)\/messages\/([^/]+)$/.exec(u.pathname), base = msg ? msg[1] : u.pathname;
+    sortHookHits.push({ method: req.method, path: u.pathname, query: u.search, type: req.headers["content-type"] || "", raw });
+    if (sortHookReply.length) {
+      const x = sortHookReply.shift();
+      res.writeHead(x.status, { "content-type": "application/json", ...(x.headers || {}) }); return res.end(JSON.stringify(x.body || {}));
+    }
+    if (msg) {
+      if (sortMsgs.get(msg[2]) !== base) return send(404, { message: "Unknown Message", code: 10008 });
+      if (req.method === "DELETE") { sortMsgs.delete(msg[2]); res.writeHead(204); return res.end(); }
+      return send(200, { id: msg[2], webhook_path: base });
+    }
+    if (req.method === "GET") return send(200, { type: 1, id: "123456789012345678", name: "Checkouts", channel_id: "555", guild_id: "666", token: "stand-in" });
+    if (u.searchParams.get("wait") === "true") { const id = "9" + String(sortHookHits.length).padStart(17, "0"); sortMsgs.set(id, base); return send(200, { id, channel_id: "555" }); }
+    res.writeHead(204); return res.end();
   }
   if (req.method === "POST" && u.pathname.startsWith("/buyerhook/")) {
     if (u.pathname.includes("/dead/")) return send(404, { message: "Unknown Webhook" });
@@ -2762,6 +2783,183 @@ try {
     const again = await (await vault("/vault?base=0", V2, { method: "PUT", auth: tok(), record: sealed(b64(16)) })).json();
     assert.equal(again.rev, 1); assert.ok(again.created > 0);
     assert.equal(before, created1, "the other license's vault keeps its id");
+  });
+  console.log("\nWebhook sorter (2026-10-13)");
+  // The owner's checkout bot posts here as if to a Discord webhook, and each post goes on to the channel for its kind. Its
+  // own worker and database. The owner's channels' webhooks are the stand-in's (ALERT_WEBHOOK_TEST_PREFIX).
+  await startWorker("sorter", APPROVAL_PORT + 4, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0"]);
+  const HOOK = `http://127.0.0.1:${DISCORD_PORT}/buyerhook/sort/`;
+  const setupLinkOf = (content) => (content.match(/\((http[^)]+\/hooks\/setup\/[^)]+)\)/) || [])[1];
+  // A change answers 303, back to the page with what happened.
+  const setupDo = async (link, body) => {
+    const r = await fetch(link.split("?")[0], { method: "POST", redirect: "manual", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), ...body }) });
+    await r.text();
+    assert.equal(r.status, 303, "a change goes back to the page");
+    return unescape(await (await fetch(new URL(r.headers.get("location"), link))).text());
+  };
+  const addrOf = (html) => (html.match(/value="(http[^"]+\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+)"/) || [])[1];
+  // A post as Shikari makes one (the owner's screenshot), sample data.
+  const shikari = (title, extra = {}) => ({ username: "Shikari", embeds: [{ title, url: "https://example.com/product/1",
+    color: /success/i.test(title) ? 0x2ecc71 : 0xe74c3c, thumbnail: { url: "https://example.com/product/1.png" },
+    fields: [{ name: "Site", value: "Target", inline: true }, { name: "Profile", value: "Sample Profile", inline: true }, { name: "Order ID", value: "9000000001", inline: true },
+      { name: "Quantity", value: "2", inline: true }, { name: "Account", value: "sample@example.com", inline: true }],
+    footer: { text: "@shikaritech" }, timestamp: "2026-10-09T03:09:00.000Z" }], ...extra });
+  const hitsAt = (name) => sortHookHits.filter((h) => h.path === "/buyerhook/sort/" + name);
+  const botPost = (addr, body, q = "") => fetch(addr + q, { method: "POST", headers: { "content-type": "application/json" }, body: typeof body === "string" ? body : JSON.stringify(body) });
+  // Where a post went: the path of the last stand-in webhook it reached.
+  const wentTo = async (addr, body) => {
+    const before = sortHookHits.length, r = await botPost(addr, body);
+    assert.ok(r.status === 204 || r.status === 200, String(r.status)); await r.text();
+    const h = sortHookHits.slice(before);
+    assert.equal(h.length, 1, "one post on, to one webhook");
+    return h[0].path.replace("/buyerhook/sort/", "");
+  };
+  const sorterRows = () => JSON.parse(execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "sorter"),
+    "--command", "SELECT * FROM hook_sorter", "--json"], { cwd: root, env, stdio: "pipe" }).toString())[0].results;
+  let setup, addr;
+  await test("the sorter's page sends a setup link to the owner's channel, 5 a day", async () => {
+    const home = await (await fetch(BASE + "/hooks")).text();
+    assert.match(home, /Send me a setup link/); assert.match(home, /only you can open it/);
+    const before = webhookPosts.length;
+    const r = await fetch(BASE + "/hooks", { method: "POST" });
+    assert.equal(r.status, 200); assert.match(await r.text(), /Sent\. Open the link in your FAFO channel on Discord\./);
+    assert.equal(webhookPosts.length, before + 1);
+    const m = webhookPosts.at(-1);
+    assert.match(m.content, /🔀 \*\*Your webhook sorter\*\*\n\[Set it up or change it\]\(http[^)]+\/hooks\/setup\/[A-Za-z0-9_-]+\?t=[A-Za-z0-9_-]+\) · the link works for 24 hours$/, m.content);
+    setup = setupLinkOf(m.content); assert.ok(setup);
+    for (let i = 0; i < 4; i++) assert.equal((await fetch(BASE + "/hooks", { method: "POST" })).status, 200);
+    const n = webhookPosts.length, sixth = await fetch(BASE + "/hooks", { method: "POST" });
+    assert.equal(sixth.status, 429); assert.match(await sixth.text(), /5 links today already/);
+    assert.equal(webhookPosts.length, n, "nothing posted");
+  });
+  await test("the setup page needs its link's token, and asks for the two channels' webhooks", async () => {
+    const html = unescape(await (await fetch(setup)).text());
+    assert.match(html, /Not set up yet\. In Discord, open the settings of the channel for successful checkouts/);
+    assert.match(html, /Successful checkouts go to<input type="url" name="success"/); assert.match(html, /Canceled and declined orders go to<input type="url" name="cancel"/);
+    assert.match(html, /Everything else goes to<input type="url" name="other"/);
+    assert.ok(!addrOf(html), "no address before it's set up");
+    assert.equal((await fetch(setup.replace(/t=[^&]+/, "t=wrong"))).status, 404);
+    assert.equal((await fetch(setup.replace(/\/hooks\/setup\/[^?]+/, "/hooks/setup/nope12345"))).status, 404);
+    assert.equal((await fetch(setup.split("?")[0], { method: "POST", body: new URLSearchParams({ action: "remove" }) })).status, 404, "a change needs the token too");
+  });
+  await test("saving takes Discord's webhooks only, each after a test post, then gives the sorter's address", async () => {
+    let html = await setupDo(setup, { action: "save", success: HOOK + "checkouts" });
+    assert.match(html, /Paste a webhook for successful checkouts and one for canceled and declined orders\./); assert.ok(!addrOf(html));
+    html = await setupDo(setup, { action: "save", success: "https://example.com/hook", cancel: HOOK + "cancels" });
+    assert.match(html, /Successful checkouts: that isn't a Discord webhook link\./);
+    html = await setupDo(setup, { action: "save", success: HOOK + "checkouts", cancel: HOOK + "dead" });
+    assert.match(html, /Canceled and declined orders: Discord answered 404\. Check that webhook link, or make a new one in that channel\./);
+    assert.ok(!addrOf(html), "nothing saved"); assert.deepEqual(sorterRows(), []);
+    const before = sortHookHits.length;
+    html = await setupDo(setup, { action: "save", success: HOOK + "checkouts", cancel: HOOK + "cancels" });
+    assert.match(html, /Saved\. A test post went to each channel\. Now paste the sorter's address below into your bot/);
+    const tests = sortHookHits.slice(before).filter((h) => h.method === "POST").map((h) => [h.path, JSON.parse(h.raw.toString()).content]);
+    assert.deepEqual(tests, [["/buyerhook/sort/checkouts", "✅ FAFO's sorter will post successful checkouts here."], ["/buyerhook/sort/cancels", "✅ FAFO's sorter will post canceled and declined orders here."]]);
+    addr = addrOf(html);
+    assert.match(addr, /\/api\/webhooks\/1\d{18}\/[A-Za-z0-9_-]{68}$/, "shaped like a Discord webhook's address");
+    assert.ok(addr.startsWith(BASE + "/api/webhooks/"));
+    assert.ok(!html.includes(HOOK + "checkouts") && !html.includes(HOOK + "cancels"), "the webhooks aren't shown");
+    assert.match(html, /Successful checkouts go to <span style="color:#5fd39a">✓ set \(…ckouts\)<\/span><input type="url" name="success"[^>]*placeholder="Paste one to change it"/);
+    assert.match(html, /Everything else goes to <span>· with the checkouts<\/span><input type="url" name="other"[^>]*placeholder="Paste one for its own channel"/);
+    assert.match(html, /data-confirm="Make a new address\? The old one stops working at once/); assert.match(html, /data-confirm="Turn the sorter off\?/);
+  });
+  await test("a successful checkout goes to the checkouts channel exactly as it came, and Discord's answer comes back", async () => {
+    const body = JSON.stringify(shikari("Successful Checkout!"));
+    const before = sortHookHits.length, r = await botPost(addr, body);
+    assert.equal(r.status, 204); assert.equal(await r.text(), "");
+    const [h] = sortHookHits.slice(before);
+    assert.equal(h.path, "/buyerhook/sort/checkouts"); assert.equal(h.raw.toString(), body, "byte for byte"); assert.equal(h.type, "application/json"); assert.equal(h.query, "");
+    const w = await botPost(addr, body, "?wait=true&thread_id=123");
+    assert.equal(w.status, 200); assert.match((await w.json()).id, /^9\d{17}$/, "Discord's message comes back");
+    assert.equal(sortHookHits.at(-1).query, "?wait=true", "the thread was the bot's own channel's");
+  });
+  await test("canceled and declined orders go to the cancels channel, anything else with the checkouts", async () => {
+    for (const t of ["Order Canceled: Item Demand", "Order Cancelled", "Checkout Declined", "Payment declined (card)"]) assert.equal(await wentTo(addr, shikari(t)), "cancels", t);
+    assert.equal(await wentTo(addr, shikari("Successful Checkout!", { content: "it was canceled later" })), "checkouts", "the title decides");
+    assert.equal(await wentTo(addr, shikari("Checkout Failed")), "checkouts", "anything else, with no webhook of its own");
+    assert.equal(await wentTo(addr, { content: "Test webhook from Shikari" }), "checkouts");
+    assert.equal(await wentTo(addr, { content: "Order canceled #1234" }), "cancels", "the text, when no embed has a title");
+    assert.equal(await wentTo(addr, "not json at all"), "checkouts", "and Discord answers it as it would");
+  });
+  await test("a post with files goes on as it came", async () => {
+    const form = new FormData();
+    form.append("payload_json", JSON.stringify(shikari("Order Canceled: Item Demand")));
+    form.append("files[0]", new Blob(["sample receipt"], { type: "text/plain" }), "receipt.txt");
+    const made = new Response(form), type = made.headers.get("content-type"), bytes = Buffer.from(await made.arrayBuffer());
+    const before = sortHookHits.length;
+    const r = await fetch(addr, { method: "POST", headers: { "content-type": type }, body: bytes });
+    assert.equal(r.status, 204); await r.text();
+    const [h] = sortHookHits.slice(before);
+    assert.equal(h.path, "/buyerhook/sort/cancels"); assert.equal(h.type, type); assert.ok(h.raw.equals(bytes), "byte for byte");
+  });
+  await test("Discord's limits and errors reach the bot as they were; a webhook that stops working shows on the page", async () => {
+    sortHookReply.push({ status: 429, body: { message: "You are being rate limited.", retry_after: 0.4, global: false }, headers: { "retry-after": "1", "x-ratelimit-remaining": "0" } });
+    const r = await botPost(addr, shikari("Successful Checkout!"));
+    assert.equal(r.status, 429); assert.equal(r.headers.get("retry-after"), "1"); assert.equal(r.headers.get("x-ratelimit-remaining"), "0");
+    assert.equal((await r.json()).retry_after, 0.4);
+    sortHookReply.push({ status: 404, body: { message: "Unknown Webhook", code: 10015 } });
+    const d = await botPost(addr, shikari("Order Canceled: Item Demand"));
+    assert.equal(d.status, 404); assert.equal((await d.json()).code, 10015);
+    await new Promise((ok) => setTimeout(ok, 300));
+    let html = unescape(await (await fetch(setup)).text());
+    assert.match(html, /<p class="err">Canceled and declined orders: the last post there didn't go through \(Discord answered 404, [^)]+\)\. If that channel's webhook was deleted, make a new one and paste it below\.<\/p>/);
+    assert.doesNotMatch(html, /Successful checkouts: the last post/, "a rate limit isn't an error");
+    assert.equal(await wentTo(addr, shikari("Order Canceled: Item Demand")), "cancels");
+    await new Promise((ok) => setTimeout(ok, 300));
+    html = unescape(await (await fetch(setup)).text());
+    assert.doesNotMatch(html, /didn't go through/, "it went through again");
+  });
+  await test("the address answers as a Discord webhook does: its details, its messages, a wrong one", async () => {
+    const [, num, secret] = /\/api\/webhooks\/(\d+)\/([^/]+)$/.exec(addr);
+    const w = await (await fetch(addr)).json();
+    assert.equal(w.id, num); assert.equal(w.token, secret); assert.equal(w.name, "Checkouts"); assert.equal(w.type, 1);
+    const p = await botPost(addr, shikari("Order Canceled: Item Demand"), "?wait=true"), mid = (await p.json()).id;
+    const e = await fetch(`${addr}/messages/${mid}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ content: "edited" }) });
+    assert.equal(e.status, 200); assert.equal((await e.json()).webhook_path, "/buyerhook/sort/cancels", "found where it went");
+    assert.equal((await fetch(`${addr}/messages/${mid}`, { method: "DELETE" })).status, 204);
+    assert.equal((await fetch(`${addr}/messages/${mid}`)).status, 404);
+    for (const bad of [addr.replace(secret, secret.slice(0, -2) + (secret.endsWith("AA") ? "BB" : "AA")), addr.replace(`/${num}/`, "/1234567890123456789/"), BASE + "/api/webhooks/1/x"]) {
+      const r = await botPost(bad, shikari("Successful Checkout!"));
+      assert.equal(r.status, 404); assert.deepEqual(await r.json(), { message: "Unknown Webhook", code: 10015 });
+    }
+    assert.equal((await fetch(addr, { method: "PUT", body: "{}" })).status, 405);
+  });
+  await test("the page counts what went where, never what was in it", async () => {
+    const html = unescape(await (await fetch(setup)).text());
+    const row = sorterRows()[0];
+    assert.ok(row.n_success >= 3 && row.n_cancel >= 7 && row.n_other >= 3, JSON.stringify(row));
+    assert.ok(html.includes(`: ${row.n_success} successful checkouts, ${row.n_cancel} canceled or declined, ${row.n_other} other. Last post `), html.slice(0, 2000));
+    for (const x of ["Sample Profile", "9000000001", "sample@example.com", "example.com/product"]) assert.ok(!html.includes(x) && !JSON.stringify(row).includes(x), "nothing of a post kept: " + x);
+  });
+  await test("everything else can have a channel of its own, and go back with the checkouts", async () => {
+    let html = await setupDo(setup, { action: "save", other: HOOK + "other" });
+    assert.match(html, /Saved\. A test post went to each channel you changed\. The sorter's address stays the same\./);
+    assert.equal(JSON.parse(hitsAt("other")[0].raw.toString()).content, "✅ FAFO's sorter will post your bot's other posts here.");
+    assert.equal(addrOf(html), addr);
+    assert.equal(await wentTo(addr, shikari("Checkout Failed")), "other");
+    assert.equal(await wentTo(addr, shikari("Successful Checkout!")), "checkouts");
+    html = await setupDo(setup, { action: "no-other" });
+    assert.match(html, /Everything else goes with the successful checkouts again\./);
+    assert.equal(await wentTo(addr, shikari("Checkout Failed")), "checkouts");
+  });
+  await test("a new address stops the old one; turning the sorter off stops it too", async () => {
+    let html = await setupDo(setup, { action: "new-address" });
+    assert.match(html, /New address made: paste it into your bot\. The old one no longer works\./);
+    const fresh = addrOf(html);
+    assert.ok(fresh && fresh !== addr);
+    assert.equal((await botPost(addr, shikari("Successful Checkout!"))).status, 404);
+    assert.equal(await wentTo(fresh, shikari("Successful Checkout!")), "checkouts");
+    html = await setupDo(setup, { action: "remove" });
+    assert.match(html, /The sorter is off, and its address no longer works\./); assert.match(html, /Not set up yet/);
+    assert.equal((await botPost(fresh, shikari("Successful Checkout!"))).status, 404);
+  });
+  await test("a setup link works for 24 hours", async () => {
+    execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "sorter"),
+      "--command", `UPDATE hook_setups SET created_at = created_at - 86400001 WHERE token = '${new URL(setup).searchParams.get("t")}'`], { cwd: root, env, stdio: "pipe" });
+    const r = await fetch(setup);
+    assert.equal(r.status, 410); assert.match(await r.text(), /This link has expired\. Ask for a new one at http[^ ]+\/hooks\./);
+    const p = await fetch(setup.split("?")[0], { method: "POST", redirect: "manual", body: new URLSearchParams({ t: new URL(setup).searchParams.get("t"), action: "save", success: HOOK + "checkouts", cancel: HOOK + "cancels" }) });
+    assert.equal(p.status, 410); assert.deepEqual(sorterRows(), [], "nothing saved");
   });
   console.log(`\n${passed} passed`);
 } finally {
