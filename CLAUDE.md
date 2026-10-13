@@ -212,7 +212,7 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   before the account was given out. It keeps the alert 60 days without the account (D1 `alerts`), and
   posts it to the buyer's own Discord webhook if they set one (`PUT /alerts/webhook`, D1
   `alert_webhooks`; Discord's URLs only, and a test post first). The buyer's Orbit checks
-  `GET /alerts?since=` every 5 minutes (cursor `settings.sellerSince`). It adds each alert as an order
+  `GET /alerts?since=` every 5 minutes (cursor `settings.sellerSince`; the web version too from 1.9.115, below). It adds each alert as an order
   with id `sa-<oid>`, `fromSeller` and `profile`, moves it along, and notifies (`sendAlert`).
   A deleted one stays deleted: from 1.9.69 the order editor's Delete also records `deletedOrders`.
   From 1.9.57 a store waiting for a login is linked to the saved login with the profile's email on
@@ -387,7 +387,8 @@ release reaches the web the same way it reaches installed apps, and the
 worker itself only changes for its own fixes ("Deploy web app",
 `.github/workflows/deploy-web-app.yml`, on `web-worker/` changes to `main`).
 Opening it needs no license key (`licenseGate` only runs in the desktop app; from 1.9.107 sending slots to the seller
-uses the vault's, below; from 1.9.109 a browser with no vault opens on Continue with Discord, with Use this browser only),
+uses the vault's, below, as getting the seller's orders does from 1.9.115; from 1.9.109 a browser with no vault opens on
+Continue with Discord, with Use this browser only),
 and email sync and Clean emails stay in the desktop app.
 
 **The web version follows releases again from 1.9.106** (the owner's request, 2026-10-10: "add the web base project into
@@ -1032,6 +1033,23 @@ left as they are, and switching Jig for stops the other store's Jig. Nothing gai
 From 1.9.114 the phone's tabs along the top (`#mnav`) start with Orders, then Profiles, as the sidebar always has (the
 owner's request, 2026-10-13, with a screenshot of app.fafoaco.com: "Put Orders before Profiles"); FAFO already opens on
 Orders. Nothing gains a field.
+
+From 1.9.115 the web version gets the orders the seller places on accounts they gave the buyer (order alerts for buyers,
+the worker section above; the owner's request, 2026-10-13, once the front page said orders show up after the runner checks
+out): `scheduleSellerAlerts` and `pollSellerAlerts` ran only in the desktop app, with its license, so a buyer who only used
+app.fafoaco.com never saw one. They now run where `sellerAlertsCan`: the desktop app, or the web version on its own address
+(`WEB_SELF`, not claude.ai or a file) once the vault has a license key (`sellerLic()`, which `alertApi` now uses for every
+call; the seller's side stays in the desktop app). It doesn't ask before this device's first merge with the online copy
+(`SYNC.oneStoreDue`: a browser's copy can be days behind, its `sellerSince` too, and would alert again about orders another
+device already added), nor while a window is open or email syncs (`syncBlocked()`: the order editor saves its Status over a
+newer step), trying again 15 seconds later. A tab coming back into view (a phone's browser stops a background tab's timers)
+or back online asks at once, at most once a minute (`sellerAlertsBack`). `sellerSince` never goes back when a merge brought
+a newer one meanwhile, nothing is applied to a vault locked meanwhile, a new order gets its picture right away
+(`autoPicturesSoon`), a notification Android's browsers can't show (`new Notification` throws there) no longer throws, and
+clicking one about an order from the seller opens Orders on All, not Needs attention. The web version has no Settings →
+Alerts, so the buyer's own Discord webhook for these is still set in the desktop app. Only slots on Use Assigned Account
+get these: an order on the buyer's own store login reaches FAFO through that login's inbox, which only the desktop app
+syncs. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
