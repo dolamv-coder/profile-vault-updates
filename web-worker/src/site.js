@@ -570,7 +570,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
         <details><summary>Who can see my cards and passwords?<span class="pm">${ic("plus")}</span></summary><p>Your vault is encrypted with your master password before it's saved or synced, so only you can open it. When you submit slots, your runner gets each slot's card, addresses and store logins, so they can check out with them.</p></details>
         <details><summary>What if I forget my master password?<span class="pm">${ic("plus")}</span></summary><p>No one can reset it, not even your runner: it's the key your vault is encrypted with. Keep it somewhere safe.</p></details>
         <details><summary>Which stores does FAFO work with?<span class="pm">${ic("plus")}</span></summary><p>For now only Pokémon Center and Target, but more are on the way.</p></details>
-        <details><summary>How do my orders get into FAFO?<span class="pm">${ic("plus")}</span></summary><p>Paste your order confirmation emails into Orders → Add from email (several at once is fine), or add an order by hand. Each confirmation becomes a tracked order. With sync on, every device gets them.</p></details>
+        <details><summary>How do my orders get into FAFO?<span class="pm">${ic("plus")}</span></summary><p>Orders will be displayed after runner successfully checks out with your profiles.</p></details>
         <details><summary>Can I use FAFO on my phone and my computer?<span class="pm">${ic("plus")}</span></summary><p>Yes. Your vault syncs from the start: on the other device, choose Login with Discord and enter the same master password. Made it with Use this browser only? Turn on sync in Settings → Web version &amp; sync first.</p></details>
       </div>
     </div>
