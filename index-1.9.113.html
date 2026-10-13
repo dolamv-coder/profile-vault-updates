@@ -3803,9 +3803,13 @@ function renderLock(msg){
       try {
         const salt = crypto.getRandomValues(new Uint8Array(16));
         const dk = await deriveKeys(pw, salt, ITER);
-        KEY = dk.key; SYNC_AUTH = dk.auth;
-        S = blankState();
-        VAULT = await sealState(KEY, {iter:ITER, salt:toB64(salt)}, S);
+        const st = blankState();
+        const rec = await sealState(dk.key, {iter:ITER, salt:toB64(salt)}, st);
+        // (1.9.113) Nothing written once the screen has moved on (another tab's vault redraws it, or another choice), or
+        // over a vault another tab of this browser saved meanwhile: its lock screen instead.
+        if (S || !go.isConnected) return;
+        if (validRecord(readStore())) return renderLock(WEB_TAKEN_MSG);
+        KEY = dk.key; SYNC_AUTH = dk.auth; S = st; VAULT = rec;
         writeStore(VAULT);
         startApp();
       } catch(ex){ go.disabled = false; go.textContent = "Create vault"; err.textContent = "Couldn't create the vault in this browser."; }
@@ -4434,8 +4438,7 @@ function openLayer(o){
   const panel = $(".panel", el);
   if (o.mount) o.mount(panel, close);
   setTimeout(() => {
-    // (not the screen-reader-only username box for password managers, `.sr`, which takes no typing anyone can see)
-    const f = $("[autofocus]", panel) || $("input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not(.sr),select,textarea", panel) || $(".panel-foot .btn-primary", panel) || $("[data-close]", panel);
+    const f = $("[autofocus]", panel) || $("input:not([type=hidden]):not([type=checkbox]):not([type=radio]),select,textarea", panel) || $(".panel-foot .btn-primary", panel) || $("[data-close]", panel);
     if (f) f.focus();
   }, 60);
   return { el, panel, close };
@@ -13491,7 +13494,7 @@ function openSyncPassword(){
     title:"Enter your new master password", small:true,
     body:`<form id="sp-form" autocomplete="on"><p style="margin:0 0 12px;color:var(--ink-2)">It was changed on another device. Once you enter it, this ${dev} syncs again, and its vault opens with the new password too.</p>
       <input class="sr" type="text" name="username" autocomplete="username" value="Profile Vault" tabindex="-1" aria-hidden="true">
-      <div class="field"><label for="sp-pw">New master password</label><input id="sp-pw" type="password" autocomplete="current-password"><span class="err" id="sp-err" role="alert"></span></div></form>`,
+      <div class="field"><label for="sp-pw">New master password</label><input id="sp-pw" type="password" autocomplete="current-password" autofocus><span class="err" id="sp-err" role="alert"></span></div></form>`,
     foot:`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="sp-go">Continue</button>`,
     mount:(panel, close) => {
       const go = $("#sp-go", panel), err = $("#sp-err", panel);
@@ -13542,7 +13545,7 @@ function openSyncSignIn(){
   let saved = ""; try { saved = (syncHint() || {}).lic || ""; } catch(e){}
   const intro = `<p style="margin:0">${known ? "Enter your master password to open your synced vault." : "Enter your license key and master password to open your synced vault."} If your license doesn't have one yet, FAFO makes it.</p>
     <p class="item-sub" style="margin:8px 0 0">Using FAFO on another device? Turn on sync there first: Settings, then Web version &amp; sync.</p>`;
-  const ELSEWHERE = "Another device just made a synced vault for this license. Enter its master password to open it.";
+  const MADE = "Another device just made a synced vault for this license.";
   let gone = false;   // the dialog was closed (Cancel, or the lock screen drawn again): nothing is made or opened after that
   openLayer({
     title:"Open your synced vault", small:true, dismiss:false,
@@ -13552,24 +13555,33 @@ function openSyncSignIn(){
       const p = $("#wd-pw"); if (!S && p && !p.hidden) setTimeout(() => { const f = $("#pw1"); if (f && !stack.length) f.focus(); }, 30);
     },
     body:`<form id="ss-form" autocomplete="on"><div id="ss-say" aria-live="polite" style="margin:0 0 12px;color:var(--ink-2)">${intro}</div>
-      ${known ? `<input type="hidden" id="ss-lic" value="${esc(known)}">` : `<div class="field" style="margin-bottom:12px"><label for="ss-lic">License key</label><input id="ss-lic" class="lic-input" spellcheck="false" autocomplete="off" placeholder="PVLT-XXXX-XXXX-XXXX-XXXX" value="${esc(saved)}"><span class="hint">The key you got from the seller or from Discord. In the FAFO desktop app, it's under Settings, then License.</span></div>`}
+      ${known ? `<input type="hidden" id="ss-lic" value="${esc(known)}">` : `<div class="field" style="margin-bottom:12px"><label for="ss-lic">License key</label><input id="ss-lic" class="lic-input" spellcheck="false" autocomplete="off" placeholder="PVLT-XXXX-XXXX-XXXX-XXXX" value="${esc(saved)}"><span class="hint">The key you got from the seller or from Discord. In the FAFO desktop app, it's under Settings, then License.</span><span class="err" id="ss-lic-err" role="alert" hidden></span></div>`}
       <input class="sr" type="text" name="username" autocomplete="username" value="Profile Vault" tabindex="-1" aria-hidden="true">
-      <div class="field"><label for="ss-pw">Master password</label><input id="ss-pw" type="password" autocomplete="current-password"></div>
+      <div class="field"><label for="ss-pw">Master password</label><input id="ss-pw" type="password" autocomplete="current-password"${known ? " autofocus" : ""}><span class="err" id="ss-pw-err" role="alert" hidden></span></div>
       <div class="field" id="ss-pw2-f" style="margin-top:12px" hidden><label for="ss-pw2">Confirm password</label><input id="ss-pw2" type="password" autocomplete="new-password"></div>
       <div class="field" style="margin-top:10px"><span class="err" id="ss-err" role="alert"></span></div>
-      ${known ? "" : `<div id="ss-dc" hidden><div class="lic-sep"><span>Got your key with Discord?</span></div><button class="btn btn-discord" type="button" id="ss-dc-go">${DISCORD_ICON}Fill it in with Discord</button><p class="lic-dc-msg" id="ss-dc-msg" role="status"></p></div>`}</form>`,
+      ${known ? "" : `<div id="ss-dc" hidden><div class="lic-sep"><span>Got your key with Discord?</span></div><button class="btn btn-discord" type="button" id="ss-dc-go">${DISCORD_ICON}Continue with Discord</button></div>`}</form>`,
     foot:`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="ss-go">Continue</button>`,
     mount:(panel, close) => {
-      const go = $("#ss-go", panel), err = $("#ss-err", panel), lin = $("#ss-lic", panel), pw1 = $("#ss-pw", panel), pw2 = $("#ss-pw2", panel);
+      const go = $("#ss-go", panel), lin = $("#ss-lic", panel), pw1 = $("#ss-pw", panel), pw2 = $("#ss-pw2", panel);
+      const errs = {lic:$("#ss-lic-err", panel), pw:$("#ss-pw-err", panel), end:$("#ss-err", panel)};
       // The license, with no synced vault yet, that the dialog makes one for ("" while it opens one), and when it switched.
-      let making = "", switched = 0;
+      let making = "", switched = -1e9;
       const label = () => making ? "Create vault" : "Continue";
-      // A message under the boxes, brought into view: on a small phone the dialog scrolls, with Confirm password last.
-      const say = (t) => { err.textContent = t || ""; if (t) err.scrollIntoView({block:"nearest"}); };
+      // A message under the box it's about (the key, the password, or Confirm and anything else), with the cursor put in
+      // `el` first and then the message brought into view: on a small phone the dialog scrolls.
+      const say = (t, where, el) => {
+        for (const k in errs) if (errs[k]){ errs[k].textContent = ""; if (k !== "end") errs[k].hidden = true; }
+        if (el){ el.focus(); if (el.value && el.select) el.select(); }
+        if (!t) return;
+        const box = errs[where] || errs.end;
+        box.textContent = t; box.hidden = false;
+        box.scrollIntoView({block:"nearest"});
+      };
       const mode = (lic) => {
         if ((lic || "") === making) return;
         making = lic || "";
-        if (making) switched = Date.now();
+        if (making) switched = performance.now();
         say("");
         $(".panel-head h2", panel).textContent = making ? "Create your synced vault" : "Open your synced vault";
         $("#ss-say", panel).innerHTML = making
@@ -13585,7 +13597,7 @@ function openSyncSignIn(){
       const busy = (on, text) => {
         go.disabled = on; go.textContent = on ? text : label();
         panel.querySelectorAll("input:not([type=hidden])").forEach((i) => { i.readOnly = on; });
-        const o = $("#ss-open", panel); if (o) o.disabled = on;
+        for (const id of ["#ss-open", "#ss-dc-go"]){ const b = $(id, panel); if (b) b.disabled = on; }
       };
       // Another tab of this browser made or opened a vault meanwhile: its lock screen instead (as on Continue with Discord).
       const taken = () => { if (S || !validRecord(readStore())) return false; renderLock(WEB_TAKEN_MSG); return true; };
@@ -13593,35 +13605,35 @@ function openSyncSignIn(){
       const settled = () => { webDc.gen++; clearTimeout(webDc.timer); webDc.lic = ""; webDc.info = null; webKeyreq(null); };
       // `fromKey`: Enter in the key box, where an empty password just moves on to it.
       const run = async (fromKey) => {
-        if (go.disabled || Date.now() - switched < 400) return;   // a double press doesn't land on the step it opened
+        if (go.disabled) return;
+        // A double press doesn't land on the step it opened, nor leave the cursor on the button it was swallowed by.
+        if (making && performance.now() - switched < 600){ if (document.activeElement === go) (pw1.value ? pw2 : pw1).focus(); return; }
         say("");
         const lic = licFormat(lin.value);
-        if (!/^PVLT(-[A-Z0-9]{4}){4}$/.test(lic)){ say("Enter your license key. It starts with PVLT-."); if (!known) lin.focus(); return; }
+        if (!/^PVLT(-[A-Z0-9]{4}){4}$/.test(lic)){ say("Enter your license key. It starts with PVLT-.", "lic", known ? null : lin); return; }
         if (making && lic !== making) mode("");
         if (taken()) return;
-        const pw = pw1.value, was = making;
-        busy(true, making ? "Creating…" : "Checking…");
+        const pw = pw1.value;
+        let elsewhere = false;   // making one, but another device has made it since: it's opened instead, if this is its password
+        busy(true, "Checking…");
         try {
           const info = await syncInfo(lic);
           if (S || gone || taken()) return;
           if (!info.exists){
             // No synced vault for this license: a master password twice, then a vault that syncs from the start.
             if (making !== lic){ busy(false); mode(lic); (pw ? pw2 : pw1).focus(); return; }
-            if (!pw || pw !== pw2.value){
-              busy(false);
-              if (!pw){ say("Choose a master password and enter it in both boxes."); pw1.focus(); }
-              else if (!pw2.value){ say("Enter the password again."); pw2.focus(); }
-              else { say("The passwords don't match."); pw2.focus(); pw2.select(); }
-              return;
-            }
+            if (!pw){ busy(false); say("Choose a master password and enter it in both boxes.", "pw", pw1); return; }
+            if (!pw2.value){ busy(false); say("Enter the password again.", "end", pw2); return; }
+            if (pw !== pw2.value){ busy(false); say("The passwords don't match.", "end", pw2); return; }
+            go.textContent = "Creating…";
             if (!(await makeSyncedVault(lic, pw, () => !gone))){ if (!S && !gone && !taken()) busy(false); return; }
             closeAllLayers(); startApp(); settled();
             toast("Your vault is ready. It syncs, so it opens wherever you sign in.");
             return;
           }
-          // There's a synced vault (when the dialog was making one, another device made it since).
-          if (making) mode("");
-          if (!pw){ busy(false); say(was ? ELSEWHERE : fromKey ? "" : "Enter your master password."); pw1.focus(); return; }
+          // The create step stays as it is until this is known: it either opens, or says another device made one.
+          elsewhere = !!making;
+          if (!pw){ busy(false); mode(""); say(elsewhere ? MADE + " Enter its master password to open it." : fromKey ? "" : "Enter your master password.", "pw", pw1); return; }
           go.textContent = "Opening…";
           const o = await syncFetchWith(lic, info, pw);
           if (S || gone || taken()) return;
@@ -13632,62 +13644,50 @@ function openSyncSignIn(){
         } catch(m){
           if (S || gone) return;
           busy(false);
-          const wrong = m === SYNC_ERR.password;
-          say(was && !making && wrong ? ELSEWHERE : typeof m === "string" ? m : making ? "Couldn't create the vault in this browser." : "Your synced vault couldn't be opened.");
-          if (wrong){ pw1.focus(); pw1.select(); } else go.focus();
+          if (elsewhere) mode("");
+          const msg = typeof m === "string" ? m : making ? "Couldn't create the vault in this browser." : "Your synced vault couldn't be opened.";
+          if (m === SYNC_ERR.password) say(elsewhere ? MADE + " Enter its master password to open it." : msg, "pw", pw1);
+          else if (m === SYNC_ERR.license && !known) say(msg, "lic", lin);
+          else if (/^Too many wrong passwords/.test(msg)) say(msg, "pw", pw1);
+          else say(elsewhere ? MADE + " " + msg : msg, "end", go);
         }
       };
       go.addEventListener("click", () => run());
       $("#ss-form", panel).addEventListener("submit", (e) => { e.preventDefault(); run(); });
       // Enter in a box goes ahead: with several boxes and its button outside the form, a browser wouldn't submit it. Not
       // while an input method is picking a word (Safari sends that Return as keyCode 229 after compositionend), nor held.
+      // At the create step, Enter in Master password moves on to Confirm password.
       $("#ss-form", panel).addEventListener("keydown", (e) => {
         if (e.key !== "Enter" || e.isComposing || e.keyCode === 229 || !e.target.matches("input")) return;
         e.preventDefault();
-        if (!e.repeat) run(e.target === lin);
+        if (e.repeat) return;
+        if (making && e.target === pw1 && pw1.value && !pw2.value && !go.disabled){ say("", "", pw2); return; }
+        run(e.target === lin);
       });
       // "open it here" (the create step's advice): back to opening, for that vault's password.
       panel.addEventListener("click", (e) => { if (e.target.closest("#ss-open") && !go.disabled){ mode(""); pw1.focus(); pw1.select(); } });
       if (!known){
         lin.addEventListener("input", () => { if (making && licFormat(lin.value) !== making) mode(""); });
-        // Not while a press is out, and the cursor stays put when it's the key that's there already.
-        discordKeyFill(panel, (key) => { if (go.disabled || licFormat(lin.value) === key) return; lin.value = key; mode(""); pw1.focus(); });
+        discordBox(panel);
+        // The first screen's own Continue with Discord, which waits for the seller's approval, keeps the sign-in across a
+        // reload and has Back to FAFO; from Use this browser only's screen too, which goes back to the first screen.
+        $("#ss-dc-go", panel).addEventListener("click", () => {
+          if (go.disabled) return;
+          closeAllLayers();
+          if (LOCK_LOCAL){ LOCK_LOCAL = false; renderLock(); }
+          const start = $("#wd-start"), g = $("#wd-go");
+          if (start && !start.hidden && g && !g.hidden) g.click();
+        });
       }
     }
   });
 }
-// "Fill it in with Discord": the same sign-in that hands out keys gives a Discord account its key back.
-async function discordKeyFill(panel, onKey){
+// The dialog's Continue with Discord shows once the license server's sign-in is set up, as the first screen's does.
+async function discordBox(panel){
   const box = $("#ss-dc", panel); if (!box) return;
   let ready = false;
   try { const r = await relayFetch("/discord/ready", {cache:"no-store"}); ready = r.ok && !!(await r.json()).ready; } catch(e){}
-  if (!ready || !box.isConnected) return;
-  box.hidden = false;
-  const msg = $("#ss-dc-msg", panel), btn = $("#ss-dc-go", panel);
-  const say = (t, tone) => { msg.textContent = t; msg.classList.toggle("is-ok", tone === "ok"); msg.classList.toggle("is-err", tone === "err"); };
-  let gen = 0;
-  btn.addEventListener("click", () => {
-    const r = phB64u(crypto.getRandomValues(new Uint8Array(18))), started = Date.now(), my = ++gen;
-    // 1.9.113, as Continue with Discord since 1.9.111: on the web its address goes along (`web`), so Discord's last page
-    // has Back to FAFO, and the sign-in is kept (WEB_KEYREQ), so FAFO opened in Discord's tab picks it up too.
-    if (!DESK) webKeyreq({r, at:started});
-    window.open(LICENSE_RELAY + "/discord/start?r=" + r + (DESK ? "" : "&web=" + encodeURIComponent(location.origin)), "_blank", "noopener");
-    say("Finish signing in with Discord in the new tab…");
-    let heard = false;
-    const tick = async () => {
-      if (my !== gen || !box.isConnected) return;
-      if (Date.now() - started > 15 * 60 * 1000){ say("Sign-in timed out. Try again.", "err"); return; }
-      let s = null;
-      try { const res = await relayFetch("/discord/status/" + r, {cache:"no-store"}); s = res.status >= 500 ? null : await res.json(); } catch(e){}
-      if (my !== gen || !box.isConnected) return;
-      if (s && s.status && s.status !== "unknown") heard = true;
-      if (!s || !s.status || s.status === "pending" || (s.status === "unknown" && !heard)){ setTimeout(tick, 3000); return; }
-      if (s.status === "issued" && s.key){ say("Got your license key.", "ok"); onKey(licFormat(s.key)); return; }
-      if (s.status === "review"){ say("This Discord account doesn't have a license key yet. A request was sent to the seller.", "err"); return; }
-      say(s.error || "Sign-in didn't finish. Try again.", "err");
-    };
-    setTimeout(tick, 3000);
-  });
+  if (ready && box.isConnected) box.hidden = false;
 }
 // 1.9.109: the web version's first screen (renderLock's webStart). Continue with Discord opens the same sign-in that hands
 // out keys: an account with a license gets its key back at once, a new one waits for the seller's approval (the request
@@ -13803,18 +13803,19 @@ function webShowPassword(){
   setTimeout(() => { if (!stack.length) pw1.focus(); }, 30);
 }
 async function webVaultSubmit(elsewhere){
-  const {lic, info} = webDc;
+  const {lic, info} = webDc, gen = webDc.gen;
   const err = $("#lock-err"), go = $("#lock-go"), pw = $("#pw1").value;
   if (!lic || !info || !go || go.disabled) return;
   if (webVaultTaken()) return;
   err.textContent = "";
   if (!pw){ err.textContent = info.exists ? "Enter your master password." : "Enter a password."; return; }
+  // This press still stands: nothing opened meanwhile, the same sign-in (Start over and a new sign-in change webDc.gen),
+  // and no vault saved by another tab. Asked again right before anything is written, too.
+  const still = () => !S && webDc.lic === lic && webDc.gen === gen && !validRecord(readStore());
   if (info.exists){
     go.disabled = true; go.textContent = "Opening…";
     try {
       const o = await syncFetchWith(lic, info, pw);
-      // Another tab got there first, or Start over was pressed: asked again right before writing too (syncStartFrom).
-      const still = () => !S && webDc.lic === lic && !validRecord(readStore());
       if (!still() || !(await syncStartFrom(lic, info, o, still))) return webVaultTaken();
       webDc.lic = ""; webDc.info = null; webKeyreq(null);
       toast("Your synced vault is open");
@@ -13828,17 +13829,28 @@ async function webVaultSubmit(elsewhere){
   }
   if (pw !== $("#pw2").value){ err.textContent = "The passwords don't match."; return; }
   go.disabled = true; go.textContent = "Creating…";
+  // Asked again (1.9.113): another device may have made the synced vault since the sign-in found none. It's then opened
+  // with this password if it's that vault's, and otherwise the password step asks for that one.
+  let now;
+  try { now = await syncInfo(lic); }
+  catch(m){
+    if (!still()) return webVaultTaken();
+    go.disabled = false; go.textContent = "Create vault"; err.textContent = typeof m === "string" ? m : SYNC_ERR.server;
+    return;
+  }
+  if (!still()) return webVaultTaken();
+  if (now.exists){ webDc.info = now; go.disabled = false; webShowPassword(); return webVaultSubmit(true); }
+  let made = false;
   try {
-    // Asked again (1.9.113): another device may have made the synced vault since the sign-in found none. It's then opened
-    // with this password if it's that vault's, and otherwise the password step asks for that one.
-    const now = await syncInfo(lic);
-    if (S || webDc.lic !== lic) return webVaultTaken();
-    if (now.exists){ webDc.info = now; go.disabled = false; webShowPassword(); return webVaultSubmit(true); }
-    if (!(await makeSyncedVault(lic, pw, () => webDc.lic === lic))){ webVaultTaken(); return; }   // another tab got there first
+    if (!(await makeSyncedVault(lic, pw, () => webDc.lic === lic && webDc.gen === gen))){ webVaultTaken(); return; }   // another tab got there first
+    made = true;
     webDc.lic = ""; webDc.info = null; webKeyreq(null);
     startApp();
     toast("Your vault is ready. It syncs, so it opens wherever you sign in.");
-  } catch(m){ S = null; KEY = null; SYNC_AUTH = null; go.disabled = false; go.textContent = "Create vault"; err.textContent = typeof m === "string" ? m : "Couldn't create the vault in this browser."; }
+  } catch(ex){
+    if (!made && S) return;   // a vault opened another way meanwhile stays as it is
+    S = null; KEY = null; SYNC_AUTH = null; go.disabled = false; go.textContent = "Create vault"; err.textContent = "Couldn't create the vault in this browser.";
+  }
 }
 // A new, empty vault for license `lic` that syncs from the start, as Turn on sync does for a vault with no online copy
 // yet: its first round puts it online. Continue with Discord makes one, and from 1.9.113 Enter it instead too. False,

@@ -965,26 +965,31 @@ turn on sync in a desktop app they didn't have), Open your synced vault (`openSy
 and Open my synced vault after Use this browser only or in the desktop app) makes a synced vault for a license with none
 online yet. Its first step says so and its button is Continue, which asks `/vault/info` (the key alone is enough; Enter in the
 key box with no password just moves on to it): with no synced vault the dialog becomes Create your synced vault, by the key's
-last four, which takes a master password twice (`making`) and makes a new vault that syncs from the start, as Continue with
-Discord does (`makeSyncedVault`, which both use: nothing is written when this browser has a vault by then, checked again right
-before writing). Every press asks `/vault/info` again before refusing anything, so a vault another device made meanwhile is
-opened if the password is its own (also following the create step's own advice, "turn on sync there, then open it here",
-whose link goes back to opening), and otherwise the dialog says another device just made one; another tab's vault shows its
-lock screen (`WEB_TAKEN_MSG`), checked before each request too; a key the server doesn't know is refused as before. Changing
-the key goes back to opening, the boxes hold still while a request is out, Cancel then stops it (nothing is made or opened
-after the dialog closes: `syncStartFrom` now takes a `still` callback, asked once the vault is sealed, right before anything is
-written), a press within 400 ms of the switch to creating is ignored, and Enter in a box goes ahead (its button is outside the
-form, so a browser never submitted it; not keyCode 229, Safari's Return that picks an input method's word, nor a held key).
-Messages are scrolled into view (on a small phone the dialog scrolls, with Confirm password last). Its Fill it in with Discord
-sends the web version's address (`web`) and keeps the sign-in in `orbit-web-keyreq`, as Continue with Discord does, and a key it
-brings while a press is out, or that's already in the box, is left alone. A Continue with Discord left waiting behind the
-dialog is cleared once the vault opens, and one that finishes behind it no longer takes the cursor (`webShowPassword` leaves it
-while a window is open). Continue with Discord's Create asks `/vault/info` again too (`webVaultSubmit`): a vault another device
-made since the sign-in is opened with that password if it's its own, and otherwise its password step asks for that one; its
-open step asks again right before writing (`syncStartFrom`'s `still`). Another tab's vault also redraws Use this browser only's
-screen (`webVaultTaken`), and a window's first focus skips the hidden username box for password managers (`.sr`; the desktop
-dialog and Enter your new master password started there). The release note doesn't mention it: only desktop users read notes,
-and updating one already has a vault. Nothing gains a field.
+last four, which takes a master password twice (`making`; Enter in Master password moves on to Confirm) and makes a new vault
+that syncs from the start, as Continue with Discord does (`makeSyncedVault`, which both use: nothing is written when this
+browser has a vault by then, checked again right before writing). Every press asks `/vault/info` again before refusing
+anything (the button says Checking…, then Creating… or Opening…), so a vault another device made meanwhile is opened if the
+password is its own (also following the create step's own advice, "turn on sync there, then open it here", whose link goes
+back to opening; the create step stays on screen until that's known), and otherwise the dialog says another device just made
+one; another tab's vault shows its lock screen (`WEB_TAKEN_MSG`), checked before each request too; a key the server doesn't
+know is refused as before. Messages show under the box they're about (the key, Master password, or Confirm and the rest), with
+the cursor in that box and the message scrolled into view. Changing the key goes back to opening, the boxes hold still while a
+request is out, Cancel then stops it (nothing is made or opened after the dialog closes: `syncStartFrom` now takes a `still`
+callback, asked once the vault is sealed, right before anything is written), a press within 600 ms of the switch to creating
+is ignored (and the cursor goes back to the box it was in), and Enter in a box goes ahead (its button is outside the form, so a
+browser never submitted it; not keyCode 229, Safari's Return that picks an input method's word, nor a held key). Its Discord
+button (Got your key with Discord? Continue with Discord) hands over to the first screen's own Continue with Discord, which
+waits for the seller's approval, keeps the sign-in across a reload and has Back to FAFO (from Use this browser only's screen it
+goes back to the first screen); until 1.9.113 it was Fill it in with Discord, a sign-in of its own with none of those. A
+Continue with Discord left waiting behind the dialog is cleared once the vault opens, and one that finishes behind it no
+longer takes the cursor (`webShowPassword` leaves it while a window is open). Continue with Discord's Create asks `/vault/info`
+again too (`webVaultSubmit`): a vault another device made since the sign-in is opened with that password if it's its own, and
+otherwise its password step asks for that one; a press only goes on while it's still the same sign-in (`webDc.gen`: Start over
+and a new sign-in change it), and its open step asks again right before writing (`syncStartFrom`'s `still`). Another tab's
+vault also redraws Use this browser only's screen (`webVaultTaken`), whose own Create writes nothing once the screen has moved
+on or over a vault another tab saved meanwhile. The desktop dialog and Enter your new master password start with the cursor in
+their password box (`autofocus`; openLayer's first focus was the hidden username box for password managers). The release note
+doesn't mention it: only desktop users read notes, and updating one already has a vault. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
