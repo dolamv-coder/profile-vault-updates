@@ -990,6 +990,16 @@ vault also redraws Use this browser only's screen (`webVaultTaken`), whose own C
 on or over a vault another tab saved meanwhile. The desktop dialog and Enter your new master password start with the cursor in
 their password box (`autofocus`; openLayer's first focus was the hidden username box for password managers). The release note
 doesn't mention it: only desktop users read notes, and updating one already has a vault. Nothing gains a field.
+Also from 1.9.113 (the owner's request, 2026-10-13: "give jig function to mass edit… the same jig ability as in generate";
+1.9.74 and 1.9.90 had kept bulk Jig on Generate), Mass edit on Profiles has Generate's Jig: Jig for (Target or Pokémon
+Center, the shared `jigFor`), Jig on Address line 1 and 2 for Target, Jig for Pokémon Center on line 2, and Jig on City and ZIP
+code, each as a box with Shuffle in place of the field (`pmJig`, after what's typed and the new random names; `pmPkcCrowded`
+counts the other Pokémon Center profiles on the street). Each profile's shipping address gets its own way of being written,
+none like another saved address or a draft (the profiles' own shipping addresses don't count, as Generate leaves out the
+drafts it jigs, so one can keep its spelling once the others run out). Billing never gets jigged: a profile billing to its
+shipping address whose address Jig changes goes on billing to the address (and name, after Jig for Pokémon Center doubles a
+letter) as it was, as Jig on one profile does, unless Bills to is ticked; cards keep their name. Addresses outside the US are
+left as they are, and switching Jig for stops the other store's Jig. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

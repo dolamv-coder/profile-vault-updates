@@ -7337,10 +7337,10 @@ function jigWays(a, parts, taken){
   return jigChoices(a, parts).order.filter(x => !t.has(draftAddrKey(Object.assign({}, a, x)))).length;
 }
 // What jigging needed beyond the usual spellings, for a summary: lines of text.
-function jigNotes(res){
-  return [res.ord ? `${plural(res.ord, "draft")} ${res.ord === 1 ? "writes" : "write"} the street's number out (like Eighteenth), since the usual spellings ran out` : "",
-    res.usps ? `${plural(res.usps, "draft")} ${res.usps === 1 ? "uses" : "use"} one of USPS's other spellings for the street type (like Str or Drv)` : "",
-    res.dotted ? `${plural(res.dotted, "draft")} ${res.dotted === 1 ? "has" : "have"} a dot in the street name, since every other way of writing it ran out` : ""].filter(Boolean);
+function jigNotes(res, what = "draft"){
+  return [res.ord ? `${plural(res.ord, what)} ${res.ord === 1 ? "writes" : "write"} the street's number out (like Eighteenth), since the usual spellings ran out` : "",
+    res.usps ? `${plural(res.usps, what)} ${res.usps === 1 ? "uses" : "use"} one of USPS's other spellings for the street type (like Str or Drv)` : "",
+    res.dotted ? `${plural(res.dotted, what)} ${res.dotted === 1 ? "has" : "have"} a dot in the street name, since every other way of writing it ran out` : ""].filter(Boolean);
 }
 
 /* ---------- Jig for Pokémon Center (1.9.80+) ---------- */
@@ -7469,12 +7469,14 @@ function pkcCrowded(rows){
   return [...mine].filter(k => count.get(k) > PKC_PER).map(k => ({line:lines.get(k), n:count.get(k)}));
 }
 // Names already on each street (pkcStreetKey), as {key: Set}: the other drafts' (all but those in skip) and
-// the shipping addresses of the other profiles (all but skipProfile), so a jigged name doesn't repeat theirs.
+// the shipping addresses of the other profiles (all but skipProfile, an id or a Set of them), so a jigged name doesn't
+// repeat theirs.
 function pkcNamesTaken(skip, skipProfile){
+  const skipP = (id) => skipProfile instanceof Set ? skipProfile.has(id) : id === skipProfile;
   const m = new Map(), add = (b, first, last) => { if (!first || !last) return; const k = pkcStreetKey(b); if (!m.has(k)) m.set(k, new Set()); m.get(k).add(norm(first + " " + last)); };
   draftList().filter(d => !skip.has(d.id)).forEach(d => add(pkcBase(d), d.first, d.last));
   // Only Pokémon Center's profiles (1.9.96+): a person's Target profile has the same name at the same address.
-  S.profiles.filter(p => p.id !== skipProfile && isPokemonCenter(profileStores(p)[0])).forEach(p => { const a = addrById(p.shipId); if (a) add(a, a.first, a.last); });
+  S.profiles.filter(p => !skipP(p.id) && isPokemonCenter(profileStores(p)[0])).forEach(p => { const a = addrById(p.shipId); if (a) add(a, a.first, a.last); });
   return m;
 }
 // Jig for Pokémon Center on rows (drafts, or a profile's address as one): a new line 1 and 2 each, different
@@ -8134,9 +8136,11 @@ function profileContextMenu(pid, anchor, at, how){
 /* ---------- Mass edit on Profiles (1.9.90+) ---------- */
 // The owner's request: right-click one of several selected profiles (or Mass edit on the selection bar) to change
 // them all at once. As on Generate, each ticked field goes onto every selected profile and the rest stay as they
-// are, the window shows every profile as it will be before Change, and Change has Undo. No Jig here (the owner
-// keeps bulk Jig on Generate) and no Email: a profile's email follows its stores (1.9.86+), so adding or removing
-// stores can change it. A card or a billing address in the old shipping name takes the new one, as in the editor.
+// are, the window shows every profile as it will be before Change, and Change has Undo. From 1.9.113 it has Jig, as
+// Generate's Mass edit does (the owner's request, 2026-10-13: "give jig function to mass edit… the same jig ability as
+// in generate"; until then bulk Jig was only on Generate). No Email: a profile's email follows its stores (1.9.86+), so
+// adding or removing stores can change it. A card or a billing address in the old shipping name takes the new one, as
+// in the editor.
 const PM_FIELDS = ["group", "name", "phone", "size", "once", "stores", "first", "last", "line1", "line2", "city", "state", "zip", "bill"];
 const PM_SHIP = ["first", "last", "line1", "line2", "city", "state", "zip"];
 const pmFull = (a) => a ? [a.first, a.last].filter(Boolean).join(" ") : "";
@@ -8168,11 +8172,13 @@ function openProfileMassEdit(ids){
   const rows0 = profilesInOrder(ids); if (!rows0.length) return;
   const n0 = rows0.length;
   let pmStore = null;   // the store picked under Store (1.9.96+: each profile is on one)
-  // A field with its tick, and its links (o.link, o.mode, o.box), each with the box shown while its mode is on.
-  const fld = (k, label, ctrl, o = {}) => `<div class="field ${o.cls || "c6"} me-f" data-field="pm_${k}">
-    <div class="me-lab"><label class="me-tick"><input type="checkbox" data-pm-tick="${k}" aria-label="Change ${esc(label)}"><span>${esc(label)}</span></label>${o.link ? `<button type="button" class="link me-jig" data-pm-mode="${o.mode}">${esc(o.link)}</button>` : ""}</div>
-    <div class="dm-ctrl">${ctrl}</div>${o.link ? `<div class="dm-rnd" data-pm-box="${o.mode}" hidden>${ic("refresh")}<span title="${esc(o.tip || o.box)}">${esc(o.box)}</span><button type="button" class="link" data-pm-shuffle="${o.mode}">Shuffle</button><button type="button" class="icon-btn" data-pm-stop="${o.mode}" aria-label="Stop: ${esc(o.link)}" title="Stop">${ic("x")}</button></div>` : ""}
-    ${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ""}<span class="err"></span></div>`;
+  // A field with its tick, and its links (o.links, or one: o.link, o.mode, o.box), each with the box shown while its mode
+  // is on. A link can be for one store's Jig only (cls target-only or pkc-only), as on Generate.
+  const fld = (k, label, ctrl, o = {}) => { const L = o.links || (o.link ? [{link:o.link, mode:o.mode, box:o.box, tip:o.tip}] : []);
+    return `<div class="field ${o.cls || "c6"} me-f" data-field="pm_${k}">
+    <div class="me-lab"><label class="me-tick"><input type="checkbox" data-pm-tick="${k}" aria-label="Change ${esc(label)}"><span>${esc(label)}</span></label>${L.map(x => `<button type="button" class="link me-jig ${x.cls || ""}" data-pm-mode="${x.mode}">${esc(x.link)}</button>`).join("")}</div>
+    <div class="dm-ctrl">${ctrl}</div>${L.map(x => `<div class="dm-rnd" data-pm-box="${x.mode}" hidden>${ic("refresh")}<span title="${esc(x.tip || x.box)}">${esc(x.box)}</span><button type="button" class="link" data-pm-shuffle="${x.mode}">Shuffle</button><button type="button" class="icon-btn" data-pm-stop="${x.mode}" aria-label="Stop: ${esc(x.link)}" title="Stop">${ic("x")}</button></div>`).join("")}
+    ${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ""}<span class="err"></span></div>`; };
   const text = (k, label, o = {}) => fld(k, label, `<input name="pm_${k}" aria-label="${esc(label)}" autocomplete="off" ${o.ph ? `placeholder="${esc(o.ph)}"` : ""} ${o.attrs || ""}>`, o);
   const select = (k, label, options, o = {}) => fld(k, label, `<select name="pm_${k}" aria-label="${esc(label)}">${options}</select>`, o);
   const sub = (k, label, cls, o = {}) => fieldHTML(Object.assign({name:"pm_" + k, label, cls, showOpt:false}, o));
@@ -8196,11 +8202,14 @@ function openProfileMassEdit(ids){
       <h3 class="pm-head c6">Shipping address</h3>
       ${text("first", "First name", {cls:"c3", link:"New random first names", mode:"rfirst", box:"New random first names", tip:"New random first names: each profile gets its own"})}
       ${text("last", "Last name", {cls:"c3", link:"New random last names", mode:"rlast", box:"New random last names", tip:"New random last names: each profile gets its own"})}
-      ${text("line1", "Address line 1", {cls:"c3", ph:"Street and number"})}
-      ${text("line2", "Address line 2", {cls:"c3", ph:"Apt, suite, unit"})}
-      ${text("city", "City", {cls:"c2"})}
+      <div class="c6 gd-jigfor">${jigForHTML()}</div>
+      ${text("line1", "Address line 1", {cls:"c3", ph:"Street and number", links:[{link:"Jig", mode:"jig1", box:"Jigged", tip:"Jigged: each profile gets its own way of writing it", cls:"target-only"}]})}
+      ${text("line2", "Address line 2", {cls:"c3", ph:"Apt, suite, unit", links:[{link:"Jig", mode:"jig2", box:"Jigged", tip:"Jigged: each profile's unit written its own way", cls:"target-only"},
+        {link:"Jig for Pokémon Center", mode:"pkc", box:"Jigged for Pokémon Center", tip:"Jigged for Pokémon Center: each profile gets its own unit, and a name already on the street a letter doubled", cls:"pkc-only"}]})}
+      ${text("city", "City", {cls:"c2", link:"Jig", mode:"jigc", box:"Jigged"})}
       ${select("state", "State", opt(US_STATES, "", "Select a state"), {cls:"c2"})}
-      ${text("zip", "ZIP code", {cls:"c2", attrs:'inputmode="numeric" maxlength="10"'})}
+      ${text("zip", "ZIP code", {cls:"c2", attrs:'inputmode="numeric" maxlength="10"', link:"Jig", mode:"jigz", box:"Jigged"})}
+      <p class="c6 item-sub pm-jig-note" style="margin:-4px 0 0">Jig changes only the shipping address. A profile billing to its shipping address goes on billing to the address as it was, since the bank checks it against the card.</p>
       <h3 class="pm-head c6">Billing address</h3>
       ${select("bill", "Bills to", opt([["same", "Their shipping address"], ["other", "A different address"]], "", "Pick one"), {hint:"The bank checks the billing address against the card: bill to the shipping address only with a virtual credit card."})}
       <div class="c6 form-grid pm-billto" hidden>
@@ -8215,10 +8224,10 @@ function openProfileMassEdit(ids){
     foot:`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="pm-go" disabled>Change ${plural(n0, "profile")}</button>`,
     mount:(panel, close) => {
       const form = $("#pm-form", panel), go = $("#pm-go", panel), sum = $("#pm-sum", panel), billTo = $(".pm-billto", panel);
-      const modes = new Set(), cache = new Map(), MODE_FIELD = {rfirst:"first", rlast:"last", phone:"phone"};
+      const modes = new Set(), cache = new Map(), MODE_FIELD = {rfirst:"first", rlast:"last", phone:"phone", jig1:"line1", jig2:"line2", pkc:"line2", jigc:"city", jigz:"zip"};
       let plan = null;
-      // Shuffle (or switching a mode) forgets its random results, so the next preview rolls new ones.
-      const forget = (m) => [...cache.keys()].forEach(x => { if (x.startsWith(m + "|")) cache.delete(x); });
+      // Shuffle (or switching a mode) forgets its random results, so the next preview rolls new ones (Jig's together).
+      const forget = (m) => { const pre = /^jig/.test(m) ? "jig" : m; [...cache.keys()].forEach(x => { if (x.startsWith(pre + "|")) cache.delete(x); }); };
       const tick = (k, on) => { const c = $(`[data-pm-tick="${k}"]`, panel); if (c) c.checked = !!on; const f = c && c.closest(".me-f"); if (f) f.classList.toggle("is-on", !!on); };
       const ticked = (k) => { const c = $(`[data-pm-tick="${k}"]`, panel); return !!(c && c.checked); };
       const v = (k) => { const el = $(`[name="pm_${k}"]`, panel); return el ? el.value.trim() : ""; };
@@ -8266,6 +8275,8 @@ function openProfileMassEdit(ids){
         draw();
       });
       panel.addEventListener("click", (e) => {
+        // Switching which store Jig is for stops the other store's Jig, once the switch is made (as on Generate).
+        if (e.target.closest('[data-act="jig-for"]')){ setTimeout(() => { (jigFor() === "pokemon" ? ["jig1", "jig2"] : ["pkc"]).forEach(m => { if (modes.has(m)) setMode(m, false); }); draw(); }, 0); return; }
         const md = e.target.closest("[data-pm-mode]"); if (md){ setMode(md.dataset.pmMode, true); draw(); return; }
         const sh = e.target.closest("[data-pm-shuffle]"); if (sh){ forget(sh.dataset.pmShuffle); draw(); return; }
         const st = e.target.closest("[data-pm-stop]"); if (st){ setMode(st.dataset.pmStop, false); draw(); return; }
@@ -8350,7 +8361,8 @@ function pmPlan(ids, r, cache){
       after.forEach((a, i) => { if (a.ship) a.ship[k] = list[i]; });
     }
   }
-  const noShip = PM_SHIP.some(k => k in s) || M.has("rfirst") || M.has("rlast") ? before.filter(b => !b.ship).length : 0;
+  const PM_JIG = ["jig1", "jig2", "pkc", "jigc", "jigz"];
+  const noShip = PM_SHIP.some(k => k in s) || M.has("rfirst") || M.has("rlast") || PM_JIG.some(m => M.has(m)) ? before.filter(b => !b.ship).length : 0;
   if (noShip) plan.warns.push(`${plural(noShip, "profile")} ${noShip === 1 ? "has" : "have"} no shipping address yet, so ${noShip === 1 ? "its" : "their"} address isn't changed`);
   // New random phone numbers, with the area codes of each profile's state (as it will be).
   if (M.has("phone")){
@@ -8391,6 +8403,7 @@ function pmPlan(ids, r, cache){
   });
   after.forEach((a, i) => { if (plan.cards.has(rows[i].cardId)) a.holder = plan.cards.get(rows[i].cardId); });
   if (kept) plan.warns.push(`${plural(kept, "card")} ${kept === 1 ? "keeps its" : "keep their"} name, as profiles with another name use ${kept === 1 ? "it" : "them"} too. Edit names on Cards changes ${kept === 1 ? "it" : "them"}.`);
+  pmJig(plan, after, r, cache, sel);
   // Store (1.9.96+: each profile is on one): profiles on another store move to the one picked (r.store), keeping their
   // name, and ones on it switch to the way picked (r.way: "login", Pokémon Center on the profile's email, or "seller",
   // Use Assigned Account). A store login is linked by the profile's email, as the editor does; one with none waits for a
@@ -8463,6 +8476,76 @@ function pmPlan(ids, r, cache){
     {label:"Name on card", key:"card", show:(a) => a.holder || ""}];
   plan.cols = COLS.filter(c => plan.rows.some(x => x.ch.has(c.key)));
   return plan;
+}
+// Mass edit's Jig (1.9.113+), on the shipping addresses as they'll be after what's typed and the new names, as on
+// Generate: for Target the parts ticked written their own way (jigAssign: USPS's spellings), for Pokémon Center each
+// profile its own unit and a name already on the street a letter doubled (pkcAssign), then City and ZIP if ticked. None
+// ends up like another saved address or a draft: as Generate leaves out the drafts it jigs, the profiles' own shipping
+// addresses don't count, since they change (unless a profile not picked uses one too). Billing never gets jigged: a
+// profile billing to its shipping address goes on billing to the address (and name) as it was, as Jig on one profile
+// does, unless Bills to is ticked; cards keep their name (worked out before this). Addresses outside the US are left
+// as they are.
+function pmJig(plan, after, r, cache, sel){
+  const M = r.modes, s = r.set, pkc = M.has("pkc");
+  const parts = [["jig1", "line1"], ["jig2", "line2"], ["jigc", "city"], ["jigz", "zip"]].filter(([m]) => M.has(m)).map(([, k]) => k);
+  if (!pkc && !parts.length) return;
+  const idx = after.map((a, i) => i).filter(i => after[i].ship && (after[i].ship.country || "US") === "US");
+  const abroad = after.filter(a => a.ship && (a.ship.country || "US") !== "US").length;
+  if (abroad) plan.warns.push(`${plural(abroad, "profile")} ${abroad === 1 ? "has an address" : "have addresses"} outside the US, which Jig leaves as ${abroad === 1 ? "it is" : "they are"}`);
+  if (!idx.length) return;
+  const mine = new Set(S.profiles.filter(p => sel.has(p.id)).map(p => p.shipId));
+  S.profiles.forEach(p => { if (!sel.has(p.id)) mine.delete(p.shipId); if (!p.billSame) mine.delete(p.billId); });
+  const taken = S.addresses.filter(a => !mine.has(a.id)).map(draftAddrKey).concat(draftList().map(draftAddrKey)), ship = (i) => after[i].ship;
+  const pre = idx.map(i => Object.assign({}, ship(i)));
+  if (pkc){
+    const base = idx.map(i => Object.assign({}, ship(i)));
+    const key = "pkc|" + base.map(b => draftAddrKey(b) + "~" + norm(pmFull(b))).join("/");
+    let res = cache.get(key);
+    if (!res){ res = pkcAssign(base.map(b => Object.assign({}, b)), taken, pkcNamesTaken(new Set(), sel)); [...cache.keys()].forEach(x => { if (x.startsWith("pkc|")) cache.delete(x); }); cache.set(key, res); }
+    idx.forEach((i, j) => { ["line1", "line2", "first", "last"].forEach(k => { ship(i)[k] = res.out[j][k]; }); });
+    plan.lines.push(`Each profile gets its own unit for Pokémon Center${res.named ? `, and ${plural(res.named, "repeated name")} ${res.named === 1 ? "gets" : "get"} a letter doubled` : ""}`);
+    pmPkcCrowded(base, sel).forEach(o => plan.warns.push(`${esc(o.line)} would have ${o.n} Pokémon Center profiles: up to ${PKC_PER} per address went through at Pokémon Center`));
+    if (res.sameName) plan.warns.push(`${plural(res.sameName, "profile")} ${res.sameName === 1 ? "shares its" : "share their"} name with another on the street: it's too short to write another way. Use New random first names or last names to give each its own.`);
+    if (res.repeats) plan.warns.push(`${plural(res.repeats, "profile")} still ${res.repeats === 1 ? "matches" : "match"} another address`);
+  }
+  if (parts.length){
+    const base = idx.map(i => Object.assign({}, ship(i)));
+    const key = "jig|" + parts.join(",") + "|" + base.map(draftAddrKey).join("/");
+    let res = cache.get(key);
+    if (!res){ res = jigAssign(base, parts, taken); [...cache.keys()].forEach(x => { if (x.startsWith("jig|")) cache.delete(x); }); cache.set(key, res); }
+    idx.forEach((i, j) => { JIG_PARTS.forEach(k => { ship(i)[k] = res.out[j][k]; }); });
+    if (M.has("jig2") && !base.some(a => jigUnit(a.line2).length > 1)) plan.warns.push(base.some(a => a.line2) ? "Address line 2 isn't an apartment, suite or unit that Jig can write another way" : "None of these profiles has an address line 2 to jig");
+    if (M.has("jigc") && !base.some(a => jigChoices(a, ["city"]).order.length > 1)) plan.warns.push("Jig only changes a city's name where it has Saint, Fort or Mount (St, Ft, Mt) in it");
+    if (M.has("jigz") && !base.some(a => /^\d{5}-?\d{4}$/.test(String(a.zip || "").trim()))) plan.warns.push("None of these profiles has a ZIP+4 to jig. Put the ZIP+4 from USPS's ZIP Code lookup in ZIP code first, then jig it.");
+    jigNotes(res, "profile").forEach(x => plan.lines.push(x));
+    if (res.repeats){
+      const one = new Set(base.map(draftAddrKey)).size === 1;
+      plan.warns.push(`${plural(res.repeats, "profile")} still ${res.repeats === 1 ? "matches" : "match"} another address: ${one ? `${esc([base[0].line1, base[0].line2, base[0].city].filter(Boolean).join(", "))} can be written only ${plural(jigWays(base[0], parts, taken), "way")} that no other saved address or draft uses` : "there's no other way left to write it"}. Jig more of the address, change the rest by hand, or select fewer profiles.`);
+    }
+  }
+  // Billing keeps the address as it was where Jig changed the shipping address.
+  let billKept = 0, renamed = false;
+  if (!("bill" in s)) idx.forEach((i, j) => {
+    const a = after[i]; if (!a.billSame || ADDR_F.every(k => String(a.ship[k] || "") === String(pre[j][k] || ""))) return;
+    a.billSame = false; a.bill = pre[j]; billKept++;
+    if (pmFull(a.ship) !== pmFull(pre[j])) renamed = true;
+  });
+  if (billKept) plan.lines.push(`${plural(billKept, "profile")} billing to ${billKept === 1 ? "its" : "their"} shipping address will bill to the address${renamed ? " and name" : ""} as ${renamed ? "they were" : "it was"}, since the bank checks ${renamed ? "them" : "it"} against the card`);
+  // All different, or how many still share one.
+  const t = new Set(taken), seen = new Map(), k = (i) => draftAddrKey(ship(i));
+  idx.forEach(i => seen.set(k(i), (seen.get(k(i)) || 0) + 1));
+  const clash = idx.filter(i => seen.get(k(i)) > 1 || t.has(k(i))).length;
+  if (!clash && idx.length > 1) plan.lines.push(`All ${idx.length} addresses are different, and none matches another saved address or a draft`);
+}
+// Streets the jigged profiles (ships, before Jig for Pokémon Center) would put more than five Pokémon Center profiles
+// on, counting the other profiles there: [{line, n}], as pkcCrowded counts drafts.
+function pmPkcCrowded(ships, sel){
+  const count = new Map(), lines = new Map(), mine = new Set();
+  const add = (b, own) => { const k = pkcStreetKey(b); count.set(k, (count.get(k) || 0) + 1);
+    if (own){ mine.add(k); if (!lines.has(k)) lines.set(k, draftAddrLine(Object.assign({}, b, {line1:pkcRealUnit(b).head, line2:""}))); } };
+  S.profiles.filter(p => !sel.has(p.id) && isPokemonCenter(profileStores(p)[0])).forEach(p => { const a = addrById(p.shipId); if (a) add(a, false); });
+  ships.forEach(b => add(b, true));
+  return [...mine].filter(k => count.get(k) > PKC_PER).map(k => ({line:lines.get(k), n:count.get(k)}));
 }
 // Does what the plan says; returns how many profiles changed and what Undo needs.
 function pmApply(plan){
