@@ -1028,6 +1028,10 @@ shipping address whose address Jig changes goes on billing to the address (and n
 letter) as it was, as Jig on one profile does, unless Bills to is ticked; cards keep their name. Addresses outside the US are
 left as they are, and switching Jig for stops the other store's Jig. Nothing gains a field.
 
+From 1.9.114 the phone's tabs along the top (`#mnav`) start with Orders, then Profiles, as the sidebar always has (the
+owner's request, 2026-10-13, with a screenshot of app.fafoaco.com: "Put Orders before Profiles"); FAFO already opens on
+Orders. Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
