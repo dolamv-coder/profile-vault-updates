@@ -37,6 +37,36 @@ const OWNER = snowflake(Date.parse("2017-02-01"));   // NOTIFY_USER_ID in approv
 const mirrorHits = [];   // requests the worker made for /mirror
 const MIRROR_UPDATE = { version: "1.9.99", url: "index-1.9.99.html", sha256: "ab".repeat(32), signature: "c2ln", notes: "Sample" };
 const MIRROR_PAGE = "<!doctype html><title>FAFO 1.9.99</title><script>window.x = 1</script>\n";
+// Product pictures (app 1.9.113): a stand-in catalog. Ten filler groups newer than the Mega Evolution base set (ME01) push
+// it, Prismatic Evolutions and the Scarlet & Violet base set out of the newest ten, so they're only searched for sharing a
+// word (or a series) with the name; 905 is newest and answers 500.
+const catalogHits = [], imageHits = [];
+let catalogDown = false;
+const PIXEL = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+const card = (productId, name, number) => ({ productId, name, cleanName: name, imageUrl: "", extendedData: [{ name: "Number", displayName: "Card Number", value: number }, { name: "Rarity", displayName: "Rarity", value: "Double Rare" }] });
+const sealed = (productId, name) => ({ productId, name, cleanName: name.replace(/[^\w ]/g, ""), imageUrl: `https://tcgplayer-cdn.tcgplayer.com/product/${productId}_200w.jpg`, extendedData: [] });
+const CATALOG_GROUPS = [
+  { groupId: 900, name: "ME03: Delta Reign", abbreviation: "ME03", isSupplemental: false, publishedOn: "2026-09-26T00:00:00", modifiedOn: "2026-10-10T00:00:00", categoryId: 3 },
+  { groupId: 901, name: "30th Celebration", abbreviation: "30TH", isSupplemental: false, publishedOn: "2026-10-03T00:00:00", modifiedOn: "2026-10-10T00:00:00", categoryId: 3 },
+  { groupId: 902, name: "SV: Prismatic Evolutions", abbreviation: "PRE", isSupplemental: false, publishedOn: "2025-01-17T00:00:00", modifiedOn: "2026-10-01T00:00:00", categoryId: 3 },
+  { groupId: 903, name: "ME01: Mega Evolution", abbreviation: "MEG", isSupplemental: false, publishedOn: "2025-09-26T00:00:00", modifiedOn: "2026-10-01T00:00:00", categoryId: 3 },
+  { groupId: 904, name: "Celebrations", abbreviation: "CEL", isSupplemental: false, publishedOn: "2021-10-08T00:00:00", modifiedOn: "2026-01-01T00:00:00", categoryId: 3 },
+  { groupId: 905, name: "ME04: Broken Set", abbreviation: "ME04", isSupplemental: false, publishedOn: "2026-11-20T00:00:00", modifiedOn: "2026-10-10T00:00:00", categoryId: 3 },
+  { groupId: 906, name: "SV01: Scarlet & Violet Base Set", abbreviation: "SV01", isSupplemental: false, publishedOn: "2023-03-31T00:00:00", modifiedOn: "2026-01-01T00:00:00", categoryId: 3 },
+  ...Array.from({ length: 10 }, (_, i) => ({ groupId: 910 + i, name: `Filler Set ${i + 1}`, abbreviation: "F" + i, isSupplemental: false, publishedOn: `2025-1${i % 3}-1${i}T00:00:00`.replace(/^2025-12-1[3-9]/, "2026-01-1" + i), modifiedOn: "2026-01-01T00:00:00", categoryId: 3 })),
+];
+const CATALOG_PRODUCTS = {
+  900: [sealed(712104, "Delta Reign Pokemon Center Elite Trainer Box"), sealed(712100, "Delta Reign Elite Trainer Box"), sealed(712101, "Delta Reign Booster Box"),
+    sealed(712102, "Delta Reign Booster Box Case"), sealed(712103, "Delta Reign Booster Bundle"), sealed(712105, "Delta Reign 3 Pack Blister [Mega Gengar]"),
+    sealed(712106, "Delta Reign 3 Pack Blister [Mega Froslass]"), sealed(712190, "30th Celebration Collection"), card(712200, "Mega Gengar ex - 091/131", "091/131")],
+  901: [sealed(720001, "30th Celebration Figure Collection [Mew]"), sealed(720003, "30th Celebration Ultra Premium Collection [Day]"),
+    sealed(720004, "30th Celebration Ultra Premium Collection [Night]"), sealed(720005, "30th Celebration Ditto Premium Collection"), sealed(720190, "Delta Reign Collection")],
+  902: [sealed(600001, "Prismatic Evolutions Elite Trainer Box"), sealed(600002, "Prismatic Evolutions Pokemon Center Elite Trainer Box")],
+  903: [sealed(650001, "Mega Evolution Elite Trainer Box [Mega Lucario]"), sealed(650002, "Mega Evolution Elite Trainer Box [Mega Gardevoir]"),
+    sealed(650003, "Mega Evolution Booster Bundle")],
+  906: [sealed(500001, "Scarlet & Violet Booster Bundle"), sealed(500002, "Scarlet & Violet Elite Trainer Box [Koraidon]")],
+  904: [sealed(300001, "Celebrations Elite Trainer Box")],
+};
 const webhookPosts = [], webhookEdits = [], webhookFail = [];
 const buyerHookPosts = [];   // posts to buyers' own webhooks (order alerts)
 let webhookHang = null;   // {ms, code}: the next webhook post waits ms, then fails with code (if given)
@@ -63,6 +93,25 @@ const discord = createServer(async (req, res) => {
     if (name === "index-1.9.99.html") { res.writeHead(200, { "content-type": "text/plain" }); return res.end(MIRROR_PAGE); }
     if (name === "index-9.9.9.html") return send(500, { message: "GitHub had a moment" });
     return send(404, {});
+  }
+  // TCGplayer's catalog as tcgcsv.com publishes it, and its picture servers (product pictures, app 1.9.113).
+  if (u.pathname.startsWith("/catalog/")) {
+    catalogHits.push(u.pathname);
+    if (catalogDown) return send(503, { message: "down" });
+    const rest = u.pathname.slice("/catalog/".length);
+    if (rest === "groups") return send(200, { totalItems: CATALOG_GROUPS.length, success: true, errors: [], results: CATALOG_GROUPS });
+    const m = /^(\d+)\/products$/.exec(rest);
+    if (m && m[1] === "905") return send(500, { message: "broken" });
+    if (m) { const results = CATALOG_PRODUCTS[m[1]] || []; return send(200, { totalItems: results.length, success: true, errors: [], results }); }
+    return send(404, {});
+  }
+  if (u.pathname.startsWith("/img/")) {
+    imageHits.push(u.pathname);
+    const [, kind, file] = u.pathname.split("/").slice(1);
+    const id = Number((file || "").replace(/_200w\.jpg$|\.jpg$/, ""));
+    if (id === 650002) { res.writeHead(200, { "content-type": "text/html" }); return res.end("<p>not a picture</p>"); }
+    if (kind === "fit" && id === 600001) return send(404, {});
+    res.writeHead(200, { "content-type": "image/png" }); return res.end(PIXEL);
   }
   if (req.method === "POST" && u.pathname === "/webhook") {
     if (webhookHang) {
@@ -113,6 +162,8 @@ const common = [
   `DISCORD_API_BASE=http://127.0.0.1:${DISCORD_PORT}`,
   `GH_LICENSE_URL=http://127.0.0.1:${DISCORD_PORT}/gh.json`,
   `MIRROR_BASE=http://127.0.0.1:${DISCORD_PORT}/mirror-src/`,
+  `PICTURES_CATALOG=http://127.0.0.1:${DISCORD_PORT}/catalog`,
+  `PICTURES_IMAGES=http://127.0.0.1:${DISCORD_PORT}/img/fit/{id}.jpg http://127.0.0.1:${DISCORD_PORT}/img/cdn/{id}_200w.jpg`,
   `PULL_STALE_MS=3000`,
   `ACCOUNT_OFFER_TTL_MS=8000`,
   `ACCOUNTS_LOW_AT=3`,
@@ -2501,6 +2552,133 @@ try {
     const g = d.buyers.find((b) => b.username === "gina");
     assert.equal(g.alerts, 4); assert.equal(g.discordWebhook, false);
     assert.doesNotMatch(JSON.stringify(d), /ORD-1001|Booster|review_token/);
+  });
+
+  console.log("\nProduct pictures (app 1.9.113)");
+  await startWorker("pictures", APPROVAL_PORT + 3, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", "PICTURES_LIST_MS=4000", "PICTURES_ASKS_PER_DAY=60"]);
+  const pic = (q, key = GH_KEY) => fetch(BASE + "/pictures/find?q=" + encodeURIComponent(q), { headers: key ? { authorization: "Bearer " + key } : {}, cache: "no-store" });
+  // Asks again while the worker is still reading the catalog's lists (`more`), as the app does.
+  const find = async (q) => {
+    for (let i = 0; i < 8; i++) {
+      const r = await pic(q);
+      assert.equal(r.status, 200, q);
+      assert.equal(r.headers.get("access-control-allow-origin"), "*");
+      assert.equal(r.headers.get("cache-control"), "no-store");
+      const d = await r.json();
+      if (!d.more) return d;
+    }
+    throw new Error("still reading the catalog after 8 asks: " + q);
+  };
+  const picData = (d) => Buffer.from(d.image.replace(/^data:image\/png;base64,/, ""), "base64");
+  await test("pictures: a license is needed, and a name of one word or a code isn't looked up", async () => {
+    catalogHits.length = 0;
+    assert.equal((await pic("Delta Reign Elite Trainer Box", "")).status, 401);
+    assert.equal((await pic("Delta Reign Elite Trainer Box", "PVLT-AAAA-BBBB-CCCC-DDDD")).status, 401);
+    for (const q of ["Order", "ETB", "912003760096466", "", "Pokémon TCG"]) assert.deepEqual(await (await pic(q)).json(), { found: false }, q);
+    assert.deepEqual(catalogHits, [], "the catalog wasn't asked");
+  });
+  await test("pictures: the catalog not answering is an error to try again later, not 'nothing found'", async () => {
+    catalogDown = true;
+    try {
+      const r = await pic("Pokémon TCG: Mega Evolution—Delta Reign Pokémon Center Elite Trainer Box");
+      assert.equal(r.status, 502);
+      assert.equal(r.headers.get("access-control-allow-origin"), "*");
+    } finally { catalogDown = false; }
+  });
+  await test("pictures: Pokémon Center's own Elite Trainer Box, read from the catalog a few lists at a time", async () => {
+    catalogHits.length = 0; imageHits.length = 0;
+    const d = await find("Pokémon TCG: Mega Evolution—Delta Reign Pokémon Center Elite Trainer Box");
+    assert.equal(d.found, true);
+    assert.equal(d.product, 712104);
+    assert.equal(d.name, "Delta Reign Pokemon Center Elite Trainer Box");
+    assert.equal(d.source, "TCGplayer");
+    assert.match(d.image, /^data:image\/png;base64,/);
+    assert.deepEqual(picData(d), PIXEL);
+    assert.deepEqual(imageHits, ["/img/fit/712104.jpg"]);
+    assert.equal(catalogHits.filter((h) => h === "/catalog/groups").length, 1, "groups read once");
+    assert.ok(catalogHits.includes("/catalog/900/products"), "the group named in it was read");
+    assert.ok(catalogHits.filter((h) => h.endsWith("/products")).length <= 3, "at most 3 lists in one ask: " + catalogHits.join(" "));
+  });
+  await test("pictures: an answer is kept, and asked again it comes from there", async () => {
+    catalogHits.length = 0; imageHits.length = 0;
+    const d = await find("Pokemon Trading Card Game: Mega Evolution Delta Reign Pokemon Center Elite Trainer Box");
+    assert.equal(d.product, 712104);
+    assert.deepEqual(catalogHits, []); assert.deepEqual(imageHits, []);
+  });
+  await test("pictures: the store's Elite Trainer Box, the Booster Display, the Booster Bundle, each its own", async () => {
+    const want = {
+      "Pokémon TCG: Mega Evolution—Delta Reign Elite Trainer Box": 712100,
+      "Pokémon TCG: Mega Evolution-Delta Reign Booster Display Box (36 Packs)": 712101,
+      "Pokémon Trading Card Game: Mega Evolution Delta Reign Booster Bundle (6 Booster Packs)": 712103,
+      "Pokémon Trading Card Game: 30th Celebration Figure Collection- Mew": 720001,
+      "Pokémon Trading Card Game: 30th Celebration Ultra-Premium Collection - Day": 720003,
+      "Pokemon TCG: 30th Celebration Ultra Premium Collection (Night)": 720004,
+      "Pokemon Trading Card Game 30th Celebration Ditto Premium Collection": 720005,
+      "Pokemon TCG Mega Evolution Elite Trainer Box - Mega Lucario": 650001,
+    };
+    for (const [q, id] of Object.entries(want)) { const d = await find(q); assert.equal(d.found, true, q); assert.equal(d.product, id, q); }
+  });
+  await test("pictures: an older set's group is read when the name shares its words; its picture from the second server", async () => {
+    imageHits.length = 0;
+    const d = await find("Pokemon Scarlet & Violet S8.5 Prismatic Evolutions Elite Trainer Box (Target Exclusive)");
+    assert.equal(d.product, 600001);
+    assert.deepEqual(imageHits, ["/img/fit/600001.jpg", "/img/cdn/600001_200w.jpg"]);
+  });
+  await test("pictures: never a near match: another edition, a case, a blister without its Pokémon, a card, two that fit", async () => {
+    for (const q of ["Delta Reign Booster Box Case Bundle",
+      "Pokémon TCG: Mega Evolution—Delta Reign Three-Booster Blister",
+      "Mega Gengar ex 091/131",
+      "Pokémon TCG: 30th Celebration Figure Collection",
+      "Delta Reign 30th Celebration Collection",
+      "Pokémon TCG: Paldean Fates Tin"]) assert.equal((await find(q)).found, false, q);
+    const tr = await (await admin("/admin/pictures?q=" + encodeURIComponent("Delta Reign 30th Celebration Collection"))).json();
+    assert.equal(tr.result.ambiguous, true);
+    assert.deepEqual(tr.fits.map((f) => f.id).sort(), [712190, 720190]);
+  });
+  await test("pictures: a product whose picture doesn't come isn't an answer", async () => {
+    const d = await find("Mega Evolution Elite Trainer Box [Mega Gardevoir]");
+    assert.deepEqual(d, { found: false });
+  });
+  await test("pictures: a series' own set by its series' name, never another series' product", async () => {
+    // ME01 and SV01 aren't among the ten newest groups: they're searched for the series the name has.
+    assert.equal((await find("Pokémon TCG: Mega Evolution Booster Bundle")).product, 650003);
+    assert.equal((await find("Pokémon Trading Card Game: Scarlet & Violet Booster Bundle")).product, 500001);
+    assert.equal((await find("Pokemon TCG Scarlet & Violet Elite Trainer Box (Koraidon)")).product, 500002);
+    assert.equal((await find("Pokémon TCG: Sword & Shield Booster Bundle")).found, false, "no Sword & Shield one: not another series'");
+  });
+  await test("pictures: a group that can't be read is tried again in an hour, and nothing found then isn't kept long", async () => {
+    const before = catalogHits.filter((h) => h === "/catalog/905/products").length;
+    assert.equal((await find("Pokémon TCG: Obsidian Flames Tin")).found, false);
+    assert.equal((await find("Pokémon TCG: Paradox Rift Tin")).found, false);
+    assert.ok(catalogHits.filter((h) => h === "/catalog/905/products").length - before <= 1, "905 isn't asked again at once");
+    const tr = await (await admin("/admin/pictures?q=" + encodeURIComponent("Pokémon TCG: Paradox Rift Tin"))).json();
+    assert.ok(tr.cached && tr.cached.until - tr.cached.at <= 3600000, "kept an hour, since a group couldn't be read");
+  });
+  await test("pictures: with the catalog down, the lists kept are used (day-old ones too)", async () => {
+    await new Promise((ok) => setTimeout(ok, 4500));   // every list kept is now older than PICTURES_LIST_MS
+    catalogDown = true;
+    try {
+      // Names not asked before, so they're looked up, not answered from what's kept.
+      assert.equal((await find("Pokémon TCG: Mega Evolution—Delta Reign Three-Booster Blister (Mega Froslass)")).product, 712106);
+      assert.equal((await find("Pokémon TCG: Scarlet & Violet—Prismatic Evolutions Pokémon Center Elite Trainer Box")).product, 600002);
+    } finally { catalogDown = false; }
+  });
+  await test("pictures: a license gets so many lookups a day that aren't answered from what's kept", async () => {
+    const key = VAULT_KEYS[1];
+    for (let i = 1; i <= 60; i++) assert.equal((await pic(`Pokémon TCG: Test Tin Number ${i}`, key)).status, 200, "ask " + i);
+    const r = await pic("Pokémon TCG: Test Tin Number 61", key);
+    assert.equal(r.status, 429); assert.equal(r.headers.get("access-control-allow-origin"), "*");
+    assert.equal((await pic("Pokémon TCG: Test Tin Number 3", key)).status, 200, "what's kept still answers");
+    assert.equal((await pic("Pokémon TCG: Test Tin Number 62", GH_KEY)).status, 200, "other licenses aren't affected");
+  });
+  await test("pictures: the admin view shows the words, the groups searched and what fit", async () => {
+    assert.equal((await fetch(BASE + "/admin/pictures?q=x")).status, 401);
+    const tr = await (await admin("/admin/pictures?q=" + encodeURIComponent("Pokémon TCG: Mega Evolution—Delta Reign Pokémon Center Elite Trainer Box"))).json();
+    assert.deepEqual(tr.words, ["s_me", "delta", "reign", "pkc", "etb"]);
+    assert.equal(tr.cached.product_id, 712104);
+    assert.ok(tr.groups.includes("ME03: Delta Reign"));
+    assert.deepEqual(tr.fits.map((f) => f.id), [712104]);
+    assert.equal(tr.result.product.id, 712104);
   });
 
   console.log("\nWeb version and sync: vault storage");

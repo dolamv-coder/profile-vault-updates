@@ -202,6 +202,17 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   posts a plain list (store, profile name, account email, card brand and last 4) to the same
   channel, only for keys that license already sent submissions to. Pull alerts never carry card
   numbers or passwords.
+  From page 1.9.113 it also finds product pictures for orders (`GET /pictures/find?q=`, license Bearer; 1.9.113 below):
+  the sealed Pokémon TCG product in TCGplayer's catalog, as tcgcsv.com publishes it daily (category 3's groups and each
+  group's products), whose name has the same words as the order's once both are written the same way (`pictureWords`,
+  `pictureFits`: ETB, Pokémon Center's own edition, Booster Display = Booster Box, set codes off, a series' name one word
+  `s_…` that a store's name may have and the catalog's sub-sets don't, but a product of another series never fits), with
+  its picture as a `data:` address from TCGplayer's image servers. Never a near match: a word either side lacks, or two
+  products that fit, is no answer. Lists are kept a day (D1 `picture_lists`, read at most `PIC_BUILDS` per ask, answering
+  `more` only while a picked group was never read; one that can't be read is tried again after an hour, its last copy
+  used meanwhile) and answers a week, nothing found 6 hours (an hour when a list couldn't be read) (`picture_finds`); a
+  license gets `PIC_ASKS_PER_DAY` (300) asks a day not answered from those (`picture_asks`, a count per day, kept two
+  days; 429 past it). `/admin/pictures?q=` shows what a name finds and why.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 
@@ -865,8 +876,9 @@ goes on after the page is closed or reloaded; coming back to the tab checks at o
 release waits while the password step shows); with the key, `webGotKey` asks `/vault/info`, and the master password
 either opens the synced vault (`syncStartFrom`) or makes a new vault that syncs from the start (`webVaultSubmit`: `_local`
 set as Turn on sync sets it for a vault with no online copy). The master password stays: it's the key the vault is
-encrypted with, which Discord can't stand in for. Have your license key? Enter it instead opens Open my synced vault, and
-Use this browser only (`LOCK_LOCAL`) makes a vault in the browser as before; a browser that has a vault unlocks with its
+encrypted with, which Discord can't stand in for. Have your license key? Enter it instead opens Open my synced vault (which
+from 1.9.113 makes one for a license with none online yet, below), and Use this browser only (`LOCK_LOCAL`) makes a vault in
+the browser as before; a browser that has a vault unlocks with its
 password, and the desktop app and a claude.ai copy (`ON_CLAUDE`, which can't reach the license server) are unchanged. The
 moved note and Settings → Web version & sync say Continue with Discord or Enter it instead, and Erase vault's message names
 them (`erasedMsg`). The line under the wordmark on the lock, license and sign-in screens is "Cop it. Track it. FAFO." (the
@@ -920,6 +932,74 @@ can't skip a step (clicks within 400 ms of one are dropped) or, when a click clo
 editor's button underneath (a closing window is inert, so clicks fall through: `eatClick`). A browser can't sign in
 to email, so the web version says the desktop app checks it when it syncs. Import accounts, login Mass edit and imports still
 save logins without an inbox. Nothing gains a field.
+
+From 1.9.113 an order with no picture gets its product's picture by itself (the owner's request, 2026-10-12: "make FAFO put
+the picture on automatically after every order completion"; Target's pre-orders show a gray bag and Pokémon Center's emails
+have no photos). `autoPictures` asks the license worker's `/pictures/find` (above) about each item (`pictureKey`) whose orders
+have no picture and none taken off on purpose (`noPic`), newest first, `AUTO_PIC_PER_RUN` at a time, with `sellerLic()`; a
+found picture is kept like one added by hand (a WebP copy in `itemPics`, with `from` and `name`, which the Picture window
+shows as "Found on TCGplayer: …") and goes on every order of the item (`autoPicApply`), and later orders of it get it from
+`shareOrderPictures`, which `autoPictures` runs first. It runs after unlocking (`scheduleAutoPictures`, then every 30
+minutes), after a sync round that changed something, after orders are added (the order editor, pasted emails, the own
+server, the desktop's email sync), never before this device's first merge (`SYNC.oneStoreDue`), during a sync round, with a
+window open (an open order editor would save over it) or out of sight, and it stops when locked or turned off. Items that
+found nothing are asked again after 12 hours, doubling to a week, and one the server was still reading the catalog for in
+half an hour (`orbit-autopic` in localStorage, per device, hashes of the names only, cleared by Erase vault: `clearStore`);
+a 429 holds it an hour. The pictures are written with the orders' references (`autoPicApply`), never before. The toast on
+Orders has Undo, which puts back what the orders had and notes the items in the shared setting `autoPicsNo` (hashes), so
+they aren't looked up again while a photo from the store's email, another order of the item or Picture can still go on
+(not `noPic`). Safari and every iPhone browser can't write WebP (canvas gives a PNG, too big), so `pictureFromBlob` writes
+a JPEG on white there, for pictures added by hand too. Settings → Preferences → Find product pictures (`settings.autoPics`,
+shared) turns it off. A browser vault with no license key (Use this browser only, never synced) asks nothing. Orders gain
+nothing, settings gain `autoPics` and `autoPicsNo`, and `itemPics` entries gain `from` and `name`, which 1.9.112 keeps; the
+desktop app gets the pictures through sync, and finds them itself once desktop updates follow again. The selection bar
+can take several rows on a narrow phone, so the page's room at the bottom follows its height (`renderBulk`).
+Also from 1.9.113 (the owner's request: "copy all just name, address line 1, address line 2, or city"), Generate's selection
+bar has **Copy**, and the right-click menu the same items (`draftCopyItems`, `copyDrafts`): the selected drafts' names (as the
+Name column shows them), address lines 1 or 2, or cities, one per line (CRLF) in the order shown, as jigged; a draft without
+one leaves an empty line, so the lines match the drafts row for row, and the toast counts them. Nothing gains a field. The
+Send accounts window says one person gets as many as their slot limit (the worker's `accountLimit`, 2026-10-12), where
+1.9.101 to 1.9.112 say 20.
+Also from 1.9.113 (the owner's request, 2026-10-12: a buyer who entered their license key in the web version was told to
+turn on sync in a desktop app they didn't have), Open your synced vault (`openSyncSignIn`: the web version's Enter it instead,
+and Open my synced vault after Use this browser only or in the desktop app) makes a synced vault for a license with none
+online yet. Its first step says so and its button is Continue, which asks `/vault/info` (the key alone is enough; Enter in the
+key box with no password just moves on to it): with no synced vault the dialog becomes Create your synced vault, by the key's
+last four, which takes a master password twice (`making`; Enter in Master password moves on to Confirm) and makes a new vault
+that syncs from the start, as Continue with Discord does (`makeSyncedVault`, which both use: nothing is written when this
+browser has a vault by then, checked again right before writing). Every press asks `/vault/info` again before refusing
+anything (the button says Checking…, then Creating… or Opening…), so a vault another device made meanwhile is opened if the
+password is its own (also following the create step's own advice, "turn on sync there, then open it here", whose link goes
+back to opening; the create step stays on screen until that's known), and otherwise the dialog says another device just made
+one; another tab's vault shows its lock screen (`WEB_TAKEN_MSG`), checked before each request too; a key the server doesn't
+know is refused as before. Messages show under the box they're about (the key, Master password, or Confirm and the rest), with
+the cursor in that box and the message scrolled into view. Changing the key goes back to opening, the boxes hold still while a
+request is out, Cancel then stops it (nothing is made or opened after the dialog closes: `syncStartFrom` now takes a `still`
+callback, asked once the vault is sealed, right before anything is written), a press within 600 ms of the switch to creating
+is ignored (and the cursor goes back to the box it was in), and Enter in a box goes ahead (its button is outside the form, so a
+browser never submitted it; not keyCode 229, Safari's Return that picks an input method's word, nor a held key). Its Discord
+button (Got your key with Discord? Continue with Discord) hands over to the first screen's own Continue with Discord, which
+waits for the seller's approval, keeps the sign-in across a reload and has Back to FAFO (from Use this browser only's screen it
+goes back to the first screen); until 1.9.113 it was Fill it in with Discord, a sign-in of its own with none of those. A
+Continue with Discord left waiting behind the dialog is cleared once the vault opens, and one that finishes behind it no
+longer takes the cursor (`webShowPassword` leaves it while a window is open). Continue with Discord's Create asks `/vault/info`
+again too (`webVaultSubmit`): a vault another device made since the sign-in is opened with that password if it's its own, and
+otherwise its password step asks for that one; a press only goes on while it's still the same sign-in (`webDc.gen`: Start over
+and a new sign-in change it), and its open step asks again right before writing (`syncStartFrom`'s `still`). Another tab's
+vault also redraws Use this browser only's screen (`webVaultTaken`), whose own Create writes nothing once the screen has moved
+on or over a vault another tab saved meanwhile. The desktop dialog and Enter your new master password start with the cursor in
+their password box (`autofocus`; openLayer's first focus was the hidden username box for password managers). The release note
+doesn't mention it: only desktop users read notes, and updating one already has a vault. Nothing gains a field.
+Also from 1.9.113 (the owner's request, 2026-10-13: "give jig function to mass edit… the same jig ability as in generate";
+1.9.74 and 1.9.90 had kept bulk Jig on Generate), Mass edit on Profiles has Generate's Jig: Jig for (Target or Pokémon
+Center, the shared `jigFor`), Jig on Address line 1 and 2 for Target, Jig for Pokémon Center on line 2, and Jig on City and ZIP
+code, each as a box with Shuffle in place of the field (`pmJig`, after what's typed and the new random names; `pmPkcCrowded`
+counts the other Pokémon Center profiles on the street). Each profile's shipping address gets its own way of being written,
+none like another saved address or a draft (the profiles' own shipping addresses don't count, as Generate leaves out the
+drafts it jigs, so one can keep its spelling once the others run out). Billing never gets jigged: a profile billing to its
+shipping address whose address Jig changes goes on billing to the address (and name, after Jig for Pokémon Center doubles a
+letter) as it was, as Jig on one profile does, unless Bills to is ticked; cards keep their name. Addresses outside the US are
+left as they are, and switching Jig for stops the other store's Jig. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
