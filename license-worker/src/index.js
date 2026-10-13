@@ -970,9 +970,9 @@ async function submission(request, env, url) {
   const limit = await accountLimit(env, lic.hash);
   const accts = (x) => {
     const p = picks.get(x.name) || {}, got = p.got || 0, need = short(x);
-    // Pokémon Center slots given their profile's Target account again (reuseAccount) say so, as do slots given back the
-    // account they had, and why the rest got none (2026-10-07: the owner couldn't tell).
-    const parts = [got ? `${got} assigned account${got === 1 ? "" : "s"}${p.reused ? `, ${p.reused} reused from Target` : ""}${p.back ? `, ${p.back} they had before` : ""}` : "",
+    // Slots given the account their profile's slot at the other store has (reuseAccount, listAccount) say so, as do slots
+    // given back the account they had, and why the rest got none (2026-10-07: the owner couldn't tell).
+    const parts = [got ? `${got} assigned account${got === 1 ? "" : "s"}${p.reused ? `, ${p.reused} reused from ${p.from && p.from.length ? p.from.join(" and ") : "the other store"}` : ""}${p.back ? `, ${p.back} they had before` : ""}` : "",
       need ? `${need} need${need === 1 ? "s" : ""} an account${p.why === "limit" ? `: this license is at its limit of ${limit}` : p.why === "empty" ? ": your list has none" : ""}` : ""].filter(Boolean);
     return parts.length ? ` (${parts.join(", ")})` : "";
   };
@@ -1033,7 +1033,9 @@ async function submission(request, env, url) {
   }
   await env.DB.prepare("UPDATE submissions SET webhook_message_id = ? WHERE id = ?").bind(msgId, s.id).run().catch((e) => console.error("record", e));
   if (picks.size) await settleAccounts(env, lic, batch, true, Date.now()).catch((e) => console.error("accounts", e));
-  for (const f of files || []) if (f.assigned > 0) await stockCheck(env, f.storeKey, f.store, true).catch((e) => console.error("stock", e));
+  // Each list the batch's slots took accounts from: the one list (Target and Pokémon Center), or a store's own.
+  const lists = new Map((files || []).filter((f) => f.assigned > 0).map((f) => [listStoreOf(f.storeKey), f.store]));
+  for (const [st, name] of lists) await stockCheck(env, st, name, true).catch((e) => console.error("stock", e));
   // How many slots got an account per store; buyers never see which. `review`: the batch waits for the owner's approval.
   return json({ ok: true, id: s.id, ...(reviewed ? { review: "pending" } : {}),
     ...(picks.size ? { accounts: Object.fromEntries([...picks].map(([k, p]) => [k, { asked: p.asked, got: p.got, ...(p.reused ? { reused: p.reused } : {}) }])) } : {}) });
@@ -1064,15 +1066,17 @@ async function submissionReview(request, env, ctx, url, id) {
     return page(405, "Not allowed", "");
   }
   if (!r || !(await sameText(t, r.review_token))) return page(404, "Slots not found", "This review link isn't valid.");
-  // Accounts from the owner's list given to this batch's slots (Use Assigned Account), which declining puts back.
-  const given = async () => (await env.DB.prepare(`SELECT store FROM accounts WHERE key_hash = ? AND batch = ? AND ${OWN_ACCOUNT}`).bind(r.key_hash, r.id).all()).results;
+  // Accounts from the owner's stores' own lists given to this batch's slots (Use Assigned Account), which declining puts
+  // back; the one list's go by declineEffect (listBack, listKept).
+  const given = async () => (await env.DB.prepare(`SELECT store FROM accounts WHERE key_hash = ? AND batch = ? AND ${OWN_ACCOUNT} AND store <> '${MASTER}'`).bind(r.key_hash, r.id).all()).results;
+  const none = { kept: 0, released: 0, listKept: 0, listBack: 0 };
   let done = "", asking = false;
   if (r.status === "pending" && (action === "approve" || action === "decline")) {
     const now = Date.now(), status = action === "approve" ? "approved" : "declined";
     const back = status === "declined" ? await given() : [];
     // Worked out before the batch is marked: accounts that stay for a Pokémon Center slot elsewhere, and parked ones
     // whose last slot is in this batch.
-    const eff = status === "declined" ? await declineEffect(env, r.key_hash, r.id) : { kept: 0, released: 0 };
+    const eff = status === "declined" ? await declineEffect(env, r.key_hash, r.id) : none;
     // Its message is no longer needed once it's marked.
     const res = await env.DB.prepare("UPDATE submission_reviews SET status = ?, decided_at = ?, content = '' WHERE id = ? AND status = 'pending'").bind(status, now, r.id).run();
     if (res.meta && res.meta.changes) {
@@ -1080,11 +1084,11 @@ async function submissionReview(request, env, ctx, url, id) {
       // Every decline, so a batch whose only accounts are reuses drops them too.
       if (status === "declined") {
         await freeBatch(env, r.key_hash, r.id);
-        for (const st of new Set([...back.map((a) => a.store), ...Object.values(REUSE_FROM)])) await stockCheck(env, st, accountStoreName(st), false);
+        for (const st of new Set([...back.map((a) => a.store), ...Object.values(REUSE_FROM), MASTER])) await stockCheck(env, st, accountStoreName(st), false);
       }
-      const kept = eff.kept, freed = back.length - eff.kept + eff.released;
+      const kept = eff.kept, freed = back.length - eff.kept + eff.released + eff.listBack;
       done = status === "approved" ? "Approved. Their FAFO now shows these slots as Success."
-        : `Declined. Their FAFO now shows these slots as Declined.${freed ? ` ${freed} account${freed === 1 ? "" : "s"} given to them ${freed === 1 ? "is" : "are"} back on your list.` : ""}${keptNote(kept)}`;
+        : `Declined. Their FAFO now shows these slots as Declined.${freed ? ` ${freed} account${freed === 1 ? "" : "s"} given to them ${freed === 1 ? "is" : "are"} back on your list.` : ""}${keptNote(kept)}${listKeptNote(eff.listKept)}`;
     }
     Object.assign(r, await env.DB.prepare("SELECT status, decided_at FROM submission_reviews WHERE id = ?").bind(r.id).first());
   } else if (r.status === "pending" && action === "decline-ask") asking = true;
@@ -1094,14 +1098,14 @@ async function submissionReview(request, env, ctx, url, id) {
   const who = [r.name, r.username ? "@" + r.username : "", "license …" + r.key_last4].filter(Boolean).join(" · ");
   const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
   const btn = (a, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${a}">${esc(text)}</button></form>`;
-  const eff = asking ? await declineEffect(env, r.key_hash, r.id) : { kept: 0, released: 0 }, kept = eff.kept;
-  const n = r.status === "pending" ? (await given()).length - eff.kept + eff.released : 0;
+  const eff = asking ? await declineEffect(env, r.key_hash, r.id) : none, kept = eff.kept;
+  const n = r.status === "pending" ? (await given()).length - eff.kept + eff.released + eff.listBack : 0;
   const head = `<p class="who">${r.slots} slot${r.slots === 1 ? "" : "s"}${r.name ? ` from ${esc(r.name)}` : ""}</p>
      ${r.stores ? `<p class="small" style="margin-top:8px">${esc(r.stores)}</p>` : ""}`;
   const sent = `<p class="small">Sent by ${esc(who)}, ${esc(when(r.created_at))}</p>`;
   if (asking) return page(200, "Decline these slots?", "",
     `${head}
-     <p class="small">Their FAFO will show these slots as Declined, and they can send them again.${n ? ` The ${n} account${n === 1 ? "" : "s"} given to them go${n === 1 ? "es" : ""} back on your list.` : ""}${keptNote(kept)} This can't be undone.</p>
+     <p class="small">Their FAFO will show these slots as Declined, and they can send them again.${n ? ` The ${n} account${n === 1 ? "" : "s"} given to them go${n === 1 ? "es" : ""} back on your list.` : ""}${keptNote(kept)}${listKeptNote(eff.listKept)} This can't be undone.</p>
      ${sent}
      <div class="row">${btn("decline", "Decline", "no")}<form method="get"><input type="hidden" name="t" value="${esc(t)}"><button class="copy" style="width:100%;padding:12px;font-size:16px" type="submit">Keep it waiting</button></form></div>`);
   return page(200, "Submitted slots", done || label,
@@ -1176,6 +1180,20 @@ const FREE_ACCOUNT = "key_hash = NULL, key_last4 = NULL, batch = NULL, store_nam
 // Pokémon Center row marked offer_id "reuse:target", which isn't on the owner's list: it's deleted where others are
 // freed, and doesn't count in a store's stock or toward a license's limit (OWN_ACCOUNT).
 const OWN_ACCOUNT = "COALESCE(offer_id, '') NOT LIKE 'reuse:%'";
+// One list for Target and Pokémon Center (2026-10-13, the owner's request: "make this a master list for both target and
+// pokemon center"; they chose one buyer per account). Its accounts are rows with store MASTER. One goes to a buyer's profile
+// (key_hash, profile and the batch it was first given in, on that row) when a slot of theirs on Use Assigned Account at
+// either store needs one, and each of that profile's slots that uses it has a row of its own at its store (offer_id USE: a
+// reuse of the list's row, so it's dropped where that one is freed and never counts toward a limit or a list's stock),
+// which pulls, order alerts, declines and slots sent again go by, as before. The profile's slot at the other store gets
+// the same account (listAccount). It goes back on the list once no slot of theirs uses it any more (sweepParked), or when
+// the owner gives it back. Accounts the owner sends or adds for Target or Pokémon Center go on it; other stores keep lists
+// of their own. Rows from the stores' own lists from before (none on the owner's, which was empty) still work as they did.
+const MASTER = "*", USE = "reuse:" + MASTER;
+const MASTER_STORES = new Set(["target", "pokemoncenter"]);
+const listStoreOf = (store) => MASTER_STORES.has(store) ? MASTER : store;
+// Where accounts of a list are, in what the owner reads: "your list" for the one list, "your Kohl's list" for a store's own.
+const listName = (store) => store === MASTER ? "your list" : `your ${accountStoreName(store)} list`;
 // A reuse goes with the account it reuses: one whose Target account is freed (by /admin/accounts/free, say) is deleted
 // too, so the Pokémon Center slot doesn't keep an email the list may give another buyer. (`where` names the freed
 // accounts' own columns, which inside the subquery are s's.) Then a parked account whose last slot this freed goes back.
@@ -1209,34 +1227,47 @@ const PAIRS = () => Object.entries(REUSE_FROM);   // [[reusing store, store it r
 async function declineEffect(env, keyHash, batch) {
   let kept = 0, released = 0;
   for (const [to, from] of PAIRS()) {
-    const k = await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ? AND batch = ? AND store = ? AND ${usedBy("r.batch <> accounts.batch")}`)
+    const k = await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ? AND batch = ? AND store = ? AND ${OWN_ACCOUNT} AND ${usedBy("r.batch <> accounts.batch")}`)
       .bind(keyHash, batch, from, to).first();
     const r = await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ? AND store = ? AND batch LIKE '${PARKED}%'
       AND ${usedBy("r.batch = ?")} AND NOT ${usedBy("r.batch <> ?")}`).bind(keyHash, from, to, batch, to, batch).first();
     kept += k ? k.n : 0; released += r ? r.n : 0;
   }
-  return { kept, released };
+  // Accounts from the list on this batch's slots: one the buyer's slot at the other store, in another batch, still uses
+  // stays with them (listKept); the rest go back (listBack).
+  const { results: uses } = await env.DB.prepare(`SELECT u.email_norm, MAX(EXISTS (SELECT 1 FROM accounts v WHERE v.offer_id = '${USE}' AND v.key_hash = u.key_hash
+    AND v.email_norm = u.email_norm AND v.batch <> u.batch)) AS other FROM accounts u WHERE u.key_hash = ? AND u.batch = ? AND u.offer_id = '${USE}' GROUP BY u.email_norm`)
+    .bind(keyHash, batch).all();
+  const listKept = uses.filter((x) => x.other).length;
+  return { kept, released, listKept, listBack: uses.length - listKept };
 }
-// What the decline page says about the ones that stay (one pair of stores so far: REUSE_FROM).
+// What the decline page says about the ones that stay (one pair of stores so far: REUSE_FROM), and about the list's.
 const keptNote = (k) => {
   if (!k) return "";
   const [[to, from]] = PAIRS(), one = k === 1;
   return ` ${k} ${accountStoreName(from)} account${one ? " stays" : "s stay"} with them: their ${accountStoreName(to)} slot${one ? " in another batch uses it" : "s in other batches use them"} too.`;
 };
-// Run once the batch is marked declined (and again by undoMoves for a batch declined while a move was out).
+const listKeptNote = (k) => !k ? "" : ` ${k} account${k === 1 ? " stays" : "s stay"} with them: their slot${k === 1 ? "" : "s"} at the other store in another batch use${k === 1 ? "s it" : " them"} too.`;
+// Run once the batch is marked declined (and again by undoMoves for a batch declined while a move was out). An account
+// from the list isn't freed with the batch it was first given in: its slots' rows in the batch go, and it goes back once
+// none is left (sweepParked).
 async function freeBatch(env, keyHash, batch) {
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM accounts WHERE key_hash = ? AND batch = ? AND NOT (${OWN_ACCOUNT})`).bind(keyHash, batch),
     ...PAIRS().map(([to, from]) => env.DB.prepare(`UPDATE accounts SET batch = '${PARKED}' || batch WHERE key_hash = ? AND batch = ? AND store = ?
-      AND ${usedBy("r.batch <> accounts.batch")}`).bind(keyHash, batch, from, to)),
-    env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE key_hash = ? AND batch = ?`).bind(keyHash, batch),
+      AND ${OWN_ACCOUNT} AND ${usedBy("r.batch <> accounts.batch")}`).bind(keyHash, batch, from, to)),
+    env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE key_hash = ? AND batch = ? AND store <> '${MASTER}'`).bind(keyHash, batch),
   ]);
   await sweepParked(env);
 }
-// A parked account no slot uses any more goes back on the list.
+// A parked account no slot uses any more goes back on the list, and so does an account from the list (MASTER) none of its
+// buyer's slots uses any more. One not yet sent (its batch still being sent) is left to that batch: freed if it never
+// reaches the channel (settleAccounts, or as a stale pick).
 async function sweepParked(env) {
-  await env.DB.batch(PAIRS().map(([to, from]) => env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE store = ? AND batch LIKE '${PARKED}%' AND NOT ${usedBy("1")}`)
-    .bind(from, to)));
+  await env.DB.batch([...PAIRS().map(([to, from]) => env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE store = ? AND batch LIKE '${PARKED}%' AND NOT ${usedBy("1")}`)
+    .bind(from, to)),
+    env.DB.prepare(`UPDATE accounts SET ${FREE_ACCOUNT} WHERE store = '${MASTER}' AND key_hash IS NOT NULL AND sent_at IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM accounts u WHERE u.offer_id = '${USE}' AND u.email_norm = accounts.email_norm AND u.key_hash = accounts.key_hash)`)]);
 }
 // Moves an account this buyer holds from batch `from` to the batch being sent, if it's still there; the move is noted
 // so undoMoves can put it back. False if it moved meanwhile (a decline, say).
@@ -1375,8 +1406,9 @@ const REUSE_FROM = { pokemoncenter: "target" };
 async function reuseAccount(env, lic, batch, f, profile, at, moves) {
   const from = REUSE_FROM[f.storeKey];
   if (!from || !profile) return null;
+  // The Target list's own row (a slot's row of an account from the one list goes by listAccount).
   const t = await env.DB.prepare(`SELECT email, email_norm, password FROM accounts WHERE key_hash = ? AND store = ? AND profile = ? AND (sent_at IS NOT NULL OR batch = ?)
-    ORDER BY batch = ? DESC, sent_at DESC, assigned_at DESC LIMIT 1`).bind(lic.hash, from, profile, batch, batch).first();
+    AND ${OWN_ACCOUNT} ORDER BY batch = ? DESC, sent_at DESC, assigned_at DESC LIMIT 1`).bind(lic.hash, from, profile, batch, batch).first();
   if (!t) return null;
   const cur = await env.DB.prepare("SELECT key_hash, profile, email, password, batch FROM accounts WHERE store = ? AND email_norm = ?").bind(f.storeKey, t.email_norm).first();
   if (cur && cur.key_hash) {
@@ -1394,6 +1426,52 @@ async function reuseAccount(env, lic, batch, f, profile, at, moves) {
     .bind(f.storeKey, t.email, t.email_norm, t.password, at, "reuse:" + from, lic.hash, lic.last4, batch, f.store, profile, at, ...own).first();
 }
 
+// A slot at Target or Pokémon Center whose profile (by its name, same license) already has an account from the list: that
+// account, so the profile checks out with one email at both stores. The slot's own row from before (sent again: in this
+// batch already, or moved here from the batch it was in, as a Pokémon Center slot took its reused Target account along:
+// "they had before"; moved back if this batch never posts), or a new row for it at this store, when the account came for
+// the profile's slot at the other store ("reused"). Null when it has none, or when this batch gave it to another row here
+// already (`taken`, store|email: two rows with one name): then the slot gets another account.
+async function listAccount(env, lic, batch, f, profile, at, moves, taken) {
+  if (!MASTER_STORES.has(f.storeKey) || !profile) return null;
+  const m = await env.DB.prepare(`SELECT email, email_norm, password FROM accounts WHERE store = '${MASTER}' AND key_hash = ? AND profile = ?
+    ORDER BY batch = ? DESC, sent_at IS NULL, assigned_at DESC LIMIT 1`).bind(lic.hash, profile, batch).first();
+  if (!m || taken.has(f.storeKey + "|" + m.email_norm)) return null;
+  const mine = { email: m.email, password: m.password, emailNorm: m.email_norm };
+  const u = await env.DB.prepare("SELECT key_hash, profile, batch, offer_id FROM accounts WHERE store = ? AND email_norm = ?").bind(f.storeKey, m.email_norm).first();
+  if (u) {
+    if (u.key_hash !== lic.hash || u.profile !== profile || u.offer_id !== USE) return null;   // never another buyer's
+    if (u.batch === batch) return { ...mine, how: "had" };
+    if (await takeAccount(env, lic, batch, f.storeKey, m.email_norm, u.batch, f.store, moves)) return { ...mine, how: "back" };
+    // It moved meanwhile (a decline dropped it, say): a row of its own here, if the account is still theirs.
+  }
+  // Only while it's still this profile's (a decline meanwhile may have put it back).
+  const r = await env.DB.prepare(`INSERT OR IGNORE INTO accounts (store, email, email_norm, password, added_at, offer_id, key_hash, key_last4, batch, store_name, profile, assigned_at)
+    SELECT ?, email, email_norm, password, ?, '${USE}', key_hash, key_last4, ?, ?, profile, ? FROM accounts WHERE store = '${MASTER}' AND email_norm = ? AND key_hash = ? AND profile = ?
+    RETURNING email, password`).bind(f.storeKey, at, batch, f.store, at, m.email_norm, lic.hash, profile).first();
+  if (!r) return null;
+  // Which store's slot it came from, for the store line: "reused from Target".
+  const o = await env.DB.prepare(`SELECT store FROM accounts WHERE offer_id = '${USE}' AND email_norm = ? AND key_hash = ? AND store <> ? LIMIT 1`).bind(m.email_norm, lic.hash, f.storeKey).first();
+  return { ...mine, how: "reused", from: o ? accountStoreName(o.store) : "" };
+}
+// A free account from the list for a slot at Target or Pokémon Center: it goes to the buyer's profile, and the slot gets a row
+// of its own at its store, in one go. Never one that's a buyer's anywhere (an account on a store's own list with the same
+// email, from before, say), or that has a row at this store already. `at` tells this slot's pick from the others' in the
+// batch.
+async function claimListAccount(env, lic, batch, f, profile, at) {
+  const [c] = await env.DB.batch([
+    env.DB.prepare(`UPDATE accounts SET key_hash = ?, key_last4 = ?, batch = ?, store_name = ?, profile = ?, assigned_at = ?, sent_at = NULL
+      WHERE rowid = (SELECT rowid FROM accounts m WHERE m.store = '${MASTER}' AND m.key_hash IS NULL
+        AND NOT EXISTS (SELECT 1 FROM accounts g WHERE g.email_norm = m.email_norm AND g.key_hash IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM accounts x WHERE x.store = ? AND x.email_norm = m.email_norm)
+        ORDER BY random() LIMIT 1) RETURNING email, email_norm, password`).bind(lic.hash, lic.last4, batch, f.store, profile, at, f.storeKey),
+    env.DB.prepare(`INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id, key_hash, key_last4, batch, store_name, profile, assigned_at)
+      SELECT ?, email, email_norm, password, ?, '${USE}', key_hash, key_last4, batch, store_name, profile, assigned_at FROM accounts
+      WHERE store = '${MASTER}' AND key_hash = ? AND batch = ? AND profile = ? AND assigned_at = ? AND sent_at IS NULL`).bind(f.storeKey, at, lic.hash, batch, profile, at)]);
+  const a = (c.results || [])[0];
+  return a ? { email: a.email, password: a.password, emailNorm: a.email_norm } : null;
+}
+
 async function assignAccounts(env, lic, batch, files, now, moves, active) {
   const picks = new Map();
   // Pokémon Center after Target, so it can reuse the Target accounts given out in the same batch.
@@ -1408,15 +1486,24 @@ async function assignAccounts(env, lic, batch, files, now, moves, active) {
     const rows = parseCsv(f.text), col = (rows[0] || []).findIndex((h) => h.replace(/^\uFEFF/, "").trim() === "email");
     // The app puts these slots right after the ones with a login, so they start at row N + 1.
     const start = 1 + lines.length, asked = Math.min(f.assigned, Math.max(0, rows.length - start));
-    // Sending the same batch again gets the same accounts, each for the same profile.
-    const { results: had } = await env.DB.prepare("SELECT email, password, profile FROM accounts WHERE key_hash = ? AND batch = ? AND store = ? ORDER BY assigned_at, rowid")
+    // Sending the same batch again gets the same accounts, each for the same profile (a slot's row of an account from the
+    // list goes by listAccount).
+    const { results: had } = await env.DB.prepare(`SELECT email, password, profile FROM accounts WHERE key_hash = ? AND batch = ? AND store = ? AND ${OWN_ACCOUNT} ORDER BY assigned_at, rowid`)
       .bind(lic.hash, batch, f.storeKey).all();
-    const res = [];
+    const res = [], taken = new Set(), from = new Map();
+    const out = active && active.get(f.storeKey);
     let reused = 0, back = 0, more = true, why = "";
+    const reuse = (name) => { reused++; from.set(name, (from.get(name) || 0) + 1); };
     for (let i = 0; i < asked; i++) {
       const profile = String(rows[start + i][0] || "").slice(0, 80);
+      const l = await listAccount(env, lic, batch, f, profile, now + i, moves, taken);
+      if (l) {
+        res[i] = l; taken.add(f.storeKey + "|" + l.emailNorm);
+        if (l.how === "reused") reuse(l.from); else if (l.how === "back") back++;
+        continue;
+      }
       const r = await reuseAccount(env, lic, batch, f, profile, now + i, moves);
-      if (r) { res[i] = r; reused++; continue; }
+      if (r) { res[i] = r; reuse(accountStoreName(REUSE_FROM[f.storeKey])); continue; }
       const h = had.findIndex((a) => a.profile === profile);
       if (h >= 0) { res[i] = had.splice(h, 1)[0]; continue; }
       // A declined slot sent again gets the account it had back, if it was kept for the profile's Pokémon Center slot.
@@ -1428,7 +1515,6 @@ async function assignAccounts(env, lic, batch, files, now, moves, active) {
       // A profile sent again whose slot here isn't out any more (switched off, or cleared after a decline; the app says
       // which still are, 1.9.99+) gets back the account it had, while that's still this license's, instead of a new one
       // that counts toward its limit (the owner's request, 2026-10-07). Moved back if the batch never posts (undoMoves).
-      const out = active && active.get(f.storeKey);
       if (out && profile && !out.has(profile)) {
         const k = await env.DB.prepare(`SELECT email, email_norm, password, batch FROM accounts WHERE key_hash = ? AND store = ? AND profile = ?
           AND sent_at IS NOT NULL AND batch IS NOT NULL AND batch != ? AND batch NOT LIKE '${PARKED}%' AND ${OWN_ACCOUNT}
@@ -1436,13 +1522,19 @@ async function assignAccounts(env, lic, batch, files, now, moves, active) {
         if (k && await takeAccount(env, lic, batch, f.storeKey, k.email_norm, k.batch, f.store, moves)) { res[i] = k; back++; continue; }
       }
       if (!more) continue;
+      // An account from the list counts once however many of the profile's slots use it (their rows are reuses).
       const held = await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ? AND ${OWN_ACCOUNT}`).bind(lic.hash).first();
       const atLimit = (held ? held.n : 0) >= limit;
-      const a = !atLimit ? await env.DB.prepare(
+      let a = null;
+      if (!atLimit && MASTER_STORES.has(f.storeKey)) a = await claimListAccount(env, lic, batch, f, profile, now + i);
+      // The store's own list (other stores, and Target's or Pokémon Center's from before the one list): never an email
+      // that's a buyer's anywhere.
+      if (!atLimit && !a) a = await env.DB.prepare(
         `UPDATE accounts SET key_hash = ?, key_last4 = ?, batch = ?, store_name = ?, profile = ?, assigned_at = ?, sent_at = NULL
-         WHERE rowid = (SELECT rowid FROM accounts WHERE store = ? AND key_hash IS NULL ORDER BY random() LIMIT 1) RETURNING email, password`
-      ).bind(lic.hash, lic.last4, batch, f.store, profile, now + i, f.storeKey).first() : null;
-      if (a) res[i] = a; else { more = false; why = atLimit ? "limit" : "empty"; }   // only reuse from here on
+         WHERE rowid = (SELECT rowid FROM accounts c WHERE c.store = ? AND c.key_hash IS NULL
+           AND NOT EXISTS (SELECT 1 FROM accounts g WHERE g.email_norm = c.email_norm AND g.key_hash IS NOT NULL) ORDER BY random() LIMIT 1) RETURNING email, password`
+      ).bind(lic.hash, lic.last4, batch, f.store, profile, now + i, f.storeKey).first();
+      if (a) { res[i] = a; if (a.emailNorm) taken.add(f.storeKey + "|" + a.emailNorm); } else { more = false; why = atLimit ? "limit" : "empty"; }   // only reuse from here on
     }
     // Rows left without an account go last, so line N of the logins file still goes with row N.
     const order = [...Array(asked).keys()].sort((x, y) => (res[x] ? 0 : 1) - (res[y] ? 0 : 1) || x - y);
@@ -1461,7 +1553,8 @@ async function assignAccounts(env, lic, batch, files, now, moves, active) {
       if (logins) logins.text = logins.text.replace(/[\r\n]+$/, "") + (lines.length ? eol : "") + add.join(eol);
       else files.splice(files.indexOf(f) + 1, 0, { store: f.store, kind: "logins", text: add.join(eol), storeKey: f.storeKey, assigned: 0 });
     }
-    picks.set(f.store, { asked: f.assigned, got: got.length, ...(reused ? { reused } : {}), ...(back ? { back } : {}), ...(why && got.length < asked ? { why } : {}) });
+    picks.set(f.store, { asked: f.assigned, got: got.length, ...(reused ? { reused, from: [...from.keys()].filter(Boolean) } : {}), ...(back ? { back } : {}),
+      ...(why && got.length < asked ? { why } : {}) });
   }
   return picks;
 }
@@ -1483,19 +1576,43 @@ async function stockCheck(env, store, name, post) {
     : `INSERT INTO account_stock (store, low_at) VALUES (?, ?) ON CONFLICT (store) DO UPDATE
        SET low_at = excluded.low_at WHERE account_stock.low_at IS NULL`).bind(...(empty ? [store, now, now] : [store, now])).run();
   if (!r.meta || !r.meta.changes) return;
+  // The one list (Target and Pokémon Center) is "your list"; a store's own is named.
+  const what = store === MASTER ? "" : md(name) + " ";
   await webhookPost(env, { content: empty
-    ? `🚫 **No ${md(name)} accounts left** on your list for Use Assigned Account. Slots on it wait for you to assign one by hand until you send more from FAFO (Settings → Accounts to assign).`
-    : `⚠️ **Only ${free} ${md(name)} account${free === 1 ? "" : "s"} left** on your list for Use Assigned Account. Send more from FAFO (Settings → Accounts to assign).` });
+    ? `🚫 **No ${what}accounts left** on your list for Use Assigned Account. Slots on it wait for you to assign one by hand until you send more from FAFO (Settings → Accounts to assign).`
+    : `⚠️ **Only ${free} ${what}account${free === 1 ? "" : "s"} left** on your list for Use Assigned Account. Send more from FAFO (Settings → Accounts to assign).` });
 }
 
 // sent: the batch (or part of it) reached the channel, so its accounts are given out for good.
 // Otherwise they go back to the list.
+// An account from the list counts as sent once any slot's row of it reached the channel, also when it was first given in
+// another batch that's still being sent.
 async function settleAccounts(env, lic, batch, sent, now) {
-  if (sent) await env.DB.prepare("UPDATE accounts SET sent_at = ? WHERE key_hash = ? AND batch = ? AND sent_at IS NULL").bind(now, lic.hash, batch).run();
+  if (sent) await env.DB.batch([
+    env.DB.prepare("UPDATE accounts SET sent_at = ? WHERE key_hash = ? AND batch = ? AND sent_at IS NULL").bind(now, lic.hash, batch),
+    env.DB.prepare(`UPDATE accounts SET sent_at = ? WHERE store = '${MASTER}' AND key_hash = ? AND sent_at IS NULL
+      AND email_norm IN (SELECT email_norm FROM accounts WHERE key_hash = ? AND batch = ? AND offer_id = '${USE}')`).bind(now, lic.hash, lic.hash, batch)]);
   else await freeAccounts(env, "key_hash = ? AND batch = ? AND sent_at IS NULL", lic.hash, batch);
 }
 
 const offerStoreName = (x) => String(x || "").replace(/\s+/g, " ").trim().slice(0, 40);
+// Puts accounts on a list, as the offers' review link and See my list's Add do: one already there keeps its password, and a
+// reused Target account on Pokémon Center's own list (reuseAccount) becomes the list's own, still with its slot. On the one
+// list (MASTER), a free row with the same email left on Target's or Pokémon Center's own list from before goes: the one
+// list has it now. How many were added.
+async function addToList(env, store, rows, offerId, now) {
+  let added = 0;
+  for (let i = 0; i < rows.length; i += 100) {
+    const res = await env.DB.batch(rows.slice(i, i + 100).flatMap((a) => [env.DB.prepare(
+      `INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (store, email_norm) DO UPDATE SET password = excluded.password, added_at = excluded.added_at, offer_id = excluded.offer_id WHERE NOT (${OWN_ACCOUNT})`
+    ).bind(store, a.email, a.email.toLowerCase(), a.password, now, offerId),
+      ...(store === MASTER ? [env.DB.prepare(`DELETE FROM accounts WHERE store IN ('target', 'pokemoncenter') AND email_norm = ? AND key_hash IS NULL AND ${OWN_ACCOUNT}`)
+        .bind(a.email.toLowerCase())] : [])]));
+    added += res.filter((r, k) => store !== MASTER || k % 2 === 0).reduce((n, r) => n + (r.meta && r.meta.changes || 0), 0);
+  }
+  return added;
+}
 
 async function accountOffer(request, env, ctx, url) {
   const lic = await slotLicense(request, env);
@@ -1539,7 +1656,8 @@ async function accountOffer(request, env, ctx, url) {
 function offerMessage(origin, o) {
   const who = [o.name ? `**${md(o.name)}**` : "", o.username ? `@${md(o.username)}` : "", `license …${o.key_last4}`].filter(Boolean).join(" · ");
   const link = `${origin}/accounts/review/${o.id}?t=${o.review_token}`;
-  const n = (k) => `${k} ${md(o.store_name)} account${k === 1 ? "" : "s"}`;
+  // Accounts for Target or Pokémon Center go on the one list, so they're just accounts; a store's own are named.
+  const n = (k) => `${k} ${listStoreOf(o.store) === MASTER ? "" : md(o.store_name) + " "}account${k === 1 ? "" : "s"}`;
   const head = o.status === "added" ? `✅ **Added ${n(o.added || 0)} to your list** for Use Assigned Account`
     : o.status === "refused" ? `⛔ **${n(o.count)} refused**` : o.status === "expired" ? `⌛ **${n(o.count)} expired** before they were added`
     : `🗂️ **Add ${n(o.count)} to your list for Use Assigned Account?**`;
@@ -1562,17 +1680,10 @@ async function accountReview(request, env, ctx, url, id) {
   if (o.status === "pending" && o.created_at < now - offerTtlMs(env)) { await expireOffers(env, now); o.status = "expired"; }
   if (o.status === "pending" && action === "add") {
     const list = JSON.parse(o.accounts || "[]");
-    let added = 0;
-    for (let i = 0; i < list.length; i += 100) {
-      const res = await env.DB.batch(list.slice(i, i + 100).map((a) => env.DB.prepare(
-        // A reused Target account on this store's list (reuseAccount) becomes this one, and stays with its slot.
-        `INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT (store, email_norm) DO UPDATE SET password = excluded.password, added_at = excluded.added_at, offer_id = excluded.offer_id WHERE NOT (${OWN_ACCOUNT})`
-      ).bind(o.store, a.email, a.email.toLowerCase(), a.password, now, o.id)));
-      added += res.reduce((n, r) => n + (r.meta && r.meta.changes || 0), 0);
-    }
+    // Sent for Target or Pokémon Center (FAFO asks which): on the one list, for both.
+    const added = await addToList(env, listStoreOf(o.store), list, o.id, now);
     await env.DB.prepare("UPDATE account_offers SET status = 'added', added = ?, accounts = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(added, now, o.id).run();
-    await stockCheck(env, o.store, o.store_name, false);
+    await stockCheck(env, listStoreOf(o.store), o.store_name, false);
     done = `Added ${added} to your list.${added < list.length ? ` ${list.length - added} ${list.length - added === 1 ? "was" : "were"} already on it.` : ""}`;
   } else if (o.status === "pending" && action === "refuse") {
     await env.DB.prepare("UPDATE account_offers SET status = 'refused', accounts = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(now, o.id).run();
@@ -1580,18 +1691,20 @@ async function accountReview(request, env, ctx, url, id) {
   }
   const cur = await env.DB.prepare("SELECT * FROM account_offers WHERE id = ?").bind(o.id).first();
   if (done && cur.webhook_message_id) ctx.waitUntil(webhookEdit(env, cur.webhook_message_id, { content: offerMessage(url.origin, cur) }).catch(() => {}));
-  const stats = await env.DB.prepare(`SELECT COUNT(*) AS n, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free FROM accounts WHERE store = ? AND ${OWN_ACCOUNT}`).bind(cur.store).first();
+  const st = listStoreOf(cur.store), one = st === MASTER;
+  const stats = await env.DB.prepare(`SELECT COUNT(*) AS n, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free FROM accounts WHERE store = ? AND ${OWN_ACCOUNT}`).bind(st).first();
   const label = { pending: "Waiting for you", added: `Added ${cur.added} to your list`, refused: "Refused", expired: "Expired before it was added. Send the accounts again from FAFO." }[cur.status] || cur.status;
   const who = [cur.name, cur.username ? "@" + cur.username : "", "license …" + cur.key_last4].filter(Boolean).join(" · ");
   const emails = cur.status === "pending" ? JSON.parse(cur.accounts || "[]").map((a) => a.email) : [];
   const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
   const btn = (a, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${a}">${esc(text)}</button></form>`;
-  return page(200, `${cur.store_name} accounts`, done || label,
-    `<p class="who">${cur.count} account${cur.count === 1 ? "" : "s"} for Use Assigned Account</p>
-     <p class="small">Each slot on Use Assigned Account gets one of your free accounts when its batch reaches your channel, with the email on its AYCD profile${cur.store === "pokemoncenter" ? "" : " and email:password in the logins file"}. Buyers never see them, and each one goes to one slot only.</p>
+  return page(200, one ? "Accounts for your list" : `${cur.store_name} accounts`, done || label,
+    `<p class="who">${cur.count} account${cur.count === 1 ? "" : "s"} for Use Assigned Account${one ? " at Target and Pokémon Center" : ""}</p>
+     <p class="small">${one ? "Your list is for Target and Pokémon Center both. Each slot on Use Assigned Account at either store gets one of your free accounts when its batch reaches your channel, with the email on its AYCD profile and, at Target, email:password in the logins file. A buyer's Target and Pokémon Center slots for one profile get the same account, and no other buyer gets it while they have it. Buyers never see them."
+       : `Each slot on Use Assigned Account gets one of your free accounts when its batch reaches your channel, with the email on its AYCD profile and email:password in the logins file. Buyers never see them, and each one goes to one slot only.`}</p>
      ${cur.status === "pending" ? `<p class="small"><strong>Only add these if you sent them</strong> from your own FAFO (Settings → Accounts to assign).</p>` : ""}
      ${emails.length ? `<p class="small">${emails.slice(0, 12).map(esc).join("<br>")}${emails.length > 12 ? `<br>and ${emails.length - 12} more` : ""}</p>` : ""}
-     <p class="small">Your ${esc(cur.store_name)} list: ${stats.n || 0} account${stats.n === 1 ? "" : "s"}, ${stats.free || 0} free.<br>Sent by ${esc(who)}, ${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC</p>
+     <p class="small">${one ? "Your list" : `Your ${esc(cur.store_name)} list`}: ${stats.n || 0} account${stats.n === 1 ? "" : "s"}, ${stats.free || 0} free.<br>Sent by ${esc(who)}, ${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC</p>
      ${cur.status === "pending" ? `<div class="row">${btn("add", "Add to my list", "ok")}${btn("refuse", "Refuse", "no")}</div>` : ""}`);
 }
 
@@ -1602,7 +1715,7 @@ async function accountReview(request, env, ctx, url, id) {
 const ACCOUNT_REMOVALS_PER_DAY = 5;
 const expireRemovals = (env, now) => env.DB.prepare("UPDATE account_removals SET status = 'expired', emails = '[]', decided_at = ? WHERE status = 'pending' AND created_at < ?")
   .bind(now, now - offerTtlMs(env)).run();
-const ACCOUNT_STORE_NAMES = { target: "Target", walmart: "Walmart", bestbuy: "Best Buy", amazon: "Amazon", gamestop: "GameStop", pokemoncenter: "Pokémon Center", costco: "Costco", samsclub: "Sam's Club", nike: "Nike" };
+const ACCOUNT_STORE_NAMES = { [MASTER]: "Target and Pokémon Center", target: "Target", walmart: "Walmart", bestbuy: "Best Buy", amazon: "Amazon", gamestop: "GameStop", pokemoncenter: "Pokémon Center", costco: "Costco", samsclub: "Sam's Club", nike: "Nike" };
 const accountStoreName = (k) => ACCOUNT_STORE_NAMES[k] || String(k).replace(/^other:/, "");
 
 async function accountRemove(request, env, ctx, url) {
@@ -1663,7 +1776,7 @@ async function accountRemovalReview(request, env, ctx, url, id) {
   // Where each email is on the list now (a store's list each), to show before deciding.
   const where = new Map();
   for (let i = 0; i < list.length; i += 100) {
-    const res = await env.DB.batch(list.slice(i, i + 100).map((e) => env.DB.prepare("SELECT store, key_hash, key_last4, profile, sent_at FROM accounts WHERE email_norm = ? ORDER BY store").bind(e)));
+    const res = await env.DB.batch(list.slice(i, i + 100).map((e) => env.DB.prepare("SELECT store, key_hash, key_last4, profile, sent_at, offer_id FROM accounts WHERE email_norm = ? ORDER BY store").bind(e)));
     res.forEach((r, k) => where.set(list[i + k], r.results || []));
   }
   if (o.status === "pending" && action === "remove") {
@@ -1687,7 +1800,8 @@ async function accountRemovalReview(request, env, ctx, url, id) {
   const who = [cur.name, cur.username ? "@" + cur.username : "", "license …" + cur.key_last4].filter(Boolean).join(" · ");
   const pending = cur.status === "pending";
   const spot = (a) => `${esc(accountStoreName(a.store))}: ${!a.key_hash ? "free" : `given to license …${esc(a.key_last4 || "")}${a.profile ? ` for ${esc(a.profile)}` : ""}${a.sent_at ? "" : ", in a batch being sent"}`}`;
-  const line = (e) => { const rows = where.get(e) || []; return `<strong>${esc(e)}</strong>: ${rows.length ? rows.map(spot).join("; ") : "not on your list"}`; };
+  // An account from the one list shows once: its slots' own rows at each store (USE) go with it.
+  const line = (e) => { const rows = (where.get(e) || []).filter((a) => a.offer_id !== USE); return `<strong>${esc(e)}</strong>: ${rows.length ? rows.map(spot).join("; ") : "not on your list"}`; };
   const given = pending && list.some((e) => (where.get(e) || []).some((a) => a.key_hash));
   const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
   const btn = (a, text, cls) => `<form method="post">${hidden}<button class="${cls}" type="submit" name="action" value="${a}">${esc(text)}</button></form>`;
@@ -1942,12 +2056,26 @@ async function accountListPage(request, env, url, id) {
   const back = `<p><a class="back" href="${esc(url.pathname)}?t=${esc(encodeURIComponent(t))}">← Back to the list</a></p>`;
   const isReuse = (a) => String(a.offer_id || "").startsWith("reuse:");
   const reusedFrom = (a) => accountStoreName(String(a.offer_id).slice("reuse:".length));
-  // An account's status as text (statusText, for the search) and as HTML (status).
-  const statusText = (a) => !a.key_hash ? "Free"
+  // An account's status as text (statusText, for the search) and as HTML (status). One from the one list says which of the
+  // buyer's slots use it (`us`: their rows, USE): "Given to license …1234, Kim: Target, sent …; Pokémon Center, sent …".
+  const sentText = (x) => x.sent_at ? `, sent ${when(x.sent_at)}` : ", in a batch being sent";
+  const statusText = (a, us) => !a.key_hash ? "Free"
+    : a.store === MASTER ? `Given to license …${a.key_last4 || ""}${a.profile ? `, ${a.profile}` : ""}${us && us.length ? `: ${us.map((u) => accountStoreName(u.store) + sentText(u)).join("; ")}` : sentText(a)}`
     : isReuse(a) ? `Reused from ${reusedFrom(a)} for license …${a.key_last4 || ""}${a.profile ? `, ${a.profile}` : ""}`
     : String(a.batch || "").startsWith(PARKED) ? `Held for license …${a.key_last4 || ""}${a.profile ? `, ${a.profile}` : ""}: its Pokémon Center slot still uses it`
-    : `Given to license …${a.key_last4 || ""}${a.profile ? `, ${a.profile}` : ""}${a.sent_at ? `, sent ${when(a.sent_at)}` : ", in a batch being sent"}`;
-  const status = (a) => esc(statusText(a));
+    : `Given to license …${a.key_last4 || ""}${a.profile ? `, ${a.profile}` : ""}${sentText(a)}`;
+  const status = (a, us) => esc(statusText(a, us));
+  // In the list itself, an account from the one list that a buyer has gets a line for each of their slots that uses it.
+  const statusCell = (a, us) => a.store === MASTER && a.key_hash && us && us.length
+    ? esc(`Given to license …${a.key_last4 || ""}${a.profile ? `, ${a.profile}` : ""}:`) + us.map((u) => "<br>" + esc(accountStoreName(u.store) + sentText(u))).join("")
+    : status(a, us);
+  // The slots' own rows of an account from the one list, among rows read (usesIn), or read for it (usesOf), Target's first;
+  // and the rows to show: those slots' rows only go with their account.
+  const usesIn = (rows, a) => a.store === MASTER && a.key_hash ? rows.filter((u) => u.offer_id === USE && u.email_norm === a.email_norm && u.key_hash === a.key_hash)
+    .sort((x, y) => (y.store > x.store) - (y.store < x.store)) : [];
+  const usesOf = async (a) => a.store === MASTER && a.key_hash ? (await env.DB.prepare(`SELECT store, email_norm, key_hash, sent_at, offer_id FROM accounts WHERE offer_id = '${USE}'
+    AND email_norm = ? AND key_hash = ? ORDER BY store DESC`).bind(a.email_norm, a.key_hash).all()).results : [];
+  const vis = (rows) => { const v = rows.filter((a) => a.offer_id !== USE); return v.length ? v : rows; };
   const COLS = "store, email, email_norm, key_hash, key_last4, profile, batch, offer_id, sent_at";
   const one = (st, em) => env.DB.prepare(`SELECT ${COLS} FROM accounts WHERE store = ? AND email_norm = ?`).bind(st, em).first();
   // The accounts ticked on the list, each "store email" (split at the last space: an email has none, a typed store's key
@@ -1968,13 +2096,21 @@ async function accountListPage(request, env, url, id) {
 
   // One account: its email (while it's free) and password, and giving it back to the list once it's given.
   const editPage = async (a, err) => {
-    const name = accountStoreName(a.store);
-    const head = `${err ? `<p class="err">${esc(err)}</p>` : ""}<p class="who">${esc(a.email)}</p><p class="small">${esc(name)}: ${status(a)}</p>`;
+    const name = accountStoreName(a.store), us = await usesOf(a);
+    const head = `${err ? `<p class="err">${esc(err)}</p>` : ""}<p class="who">${esc(a.email)}</p><p class="small">${esc(name)}: ${status(a, us)}</p>`;
+    if (a.offer_id === USE) return page(200, "Edit an account", "", `${head}
+      <p class="small">It's an account from your list, on this buyer's ${esc(name)} slot, so it follows that one: change it on your list.</p>${back}`);
     if (isReuse(a)) return page(200, "Edit an account", "", `${head}
       <p class="small">It's your ${esc(reusedFrom(a))} account, used again for this buyer's ${esc(name)} slot, so it follows that one: change it on your ${esc(reusedFrom(a))} list.</p>${back}`);
     const given = !!a.key_hash;
     let giveBack = "";
-    if (given) {
+    if (given && a.store === MASTER) {
+      // From the one list: every slot of the buyer's that uses it loses it.
+      const where = us.map((u) => esc(accountStoreName(u.store))).join(" and ");
+      giveBack = `<h3>Give it back</h3>
+        <p class="small">It goes back on your list as free, so the next slot on Use Assigned Account can get it. License …${esc(a.key_last4 || "")} keeps what was posted to your channel, and stops getting order alerts for it.${us.length ? ` Their ${where} slot${us.length === 1 ? " loses" : "s lose"} it too.` : ""}</p>
+        <form method="post">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="no" type="submit" name="action" value="giveback">Give it back to my list</button></form>`;
+    } else if (given) {
       // The same buyer's rows with this email at other stores: a reuse of it (dropped with it), the owner's own account
       // there on a slot that checks out with this email too, or one held (parked) for this slot, which comes free with it.
       const { results: others } = await env.DB.prepare("SELECT store, offer_id, batch FROM accounts WHERE email_norm = ? AND key_hash = ? AND store <> ?")
@@ -1994,7 +2130,7 @@ async function accountListPage(request, env, url, id) {
         <label>Email<input type="text" inputmode="email" name="new_email" value="${esc(a.email)}" maxlength="120" autocomplete="off" spellcheck="false" required${given ? " readonly" : ""}></label>
         ${given ? `<p class="hint">It's on a buyer's slot, so its email stays as it was posted. Give it back to your list first to change it.</p>` : ""}
         <label>New password<input type="text" name="password" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Leave empty to keep it"></label>
-        <p class="hint">${a.store === "pokemoncenter" ? "The email's inbox password: Pokémon Center checks out as a guest with the email." : "The store account's password."} It's never shown here.${given ? " What was posted already doesn't change; a slot sent again gets the new one." : ""}</p>
+        <p class="hint">${a.store === MASTER ? "The store account's password: Target's logins file gets it, and Pokémon Center checks out as a guest with the email." : a.store === "pokemoncenter" ? "The email's inbox password: Pokémon Center checks out as a guest with the email." : "The store account's password."} It's never shown here.${given ? " What was posted already doesn't change; a slot sent again gets the new one." : ""}</p>
         <div class="row"><button class="ok" type="submit" name="action" value="save">Save</button></div>
       </form>${giveBack}${back}`);
   };
@@ -2019,7 +2155,7 @@ async function accountListPage(request, env, url, id) {
     if (!on.length) err = emails.length ? "Those aren't on your list any more." : "Tick the accounts to remove first.";
     else {
       const given = on.some((e) => rows.get(e).some((a) => a.key_hash)), n = on.length;
-      const line = (e) => { const rs = rows.get(e); return `${esc(rs[0].email)} · ${rs.map((a) => `${esc(accountStoreName(a.store))}: ${status(a)}`).join("; ")}`; };
+      const line = (e) => { const rs = rows.get(e), v = vis(rs); return `${esc(v[0].email)} · ${v.map((a) => `${esc(accountStoreName(a.store))}: ${status(a, usesIn(rs, a))}`).join("; ")}`; };
       return page(200, "Remove accounts", "",
         `<p class="who">${n} account${n === 1 ? "" : "s"}</p>
          <p class="small">${on.slice(0, 200).map(line).join("<br>")}${n > 200 ? `<br>and ${n - 200} more` : ""}</p>
@@ -2045,20 +2181,20 @@ async function accountListPage(request, env, url, id) {
     const { results: rows } = await env.DB.prepare(`SELECT ${COLS} FROM accounts WHERE email_norm = ? ORDER BY store`).bind(email).all();
     if (!rows.length) done = `${email} isn't on your list any more.`;
     else {
-      const given = rows.some((a) => a.key_hash);
+      const given = rows.some((a) => a.key_hash), v = vis(rows);
       return page(200, "Remove an account", "",
-        `<p class="who">${esc(rows[0].email)}</p>
-         <p class="small">${rows.map((a) => `${esc(accountStoreName(a.store))}: ${status(a)}`).join("<br>")}</p>
+        `<p class="who">${esc(v[0].email)}</p>
+         <p class="small">${v.map((a) => `${esc(accountStoreName(a.store))}: ${status(a, usesIn(rows, a))}`).join("<br>")}</p>
          <p class="small">It comes off every store's list it's on, so no more slots get it.${given ? " A buyer who has it stops getting order alerts for it." : ""} Its password goes too, and can't be got back here.</p>
          <div class="row"><form method="post">${hidden}<input type="hidden" name="email" value="${esc(email)}"><button class="no" type="submit" name="action" value="remove">Remove from my list</button></form>
          <form method="get" action="${esc(url.pathname)}"><input type="hidden" name="t" value="${esc(t)}"><button class="ok" type="submit">Keep it</button></form></div>`);
     }
   } else if (email && store && (action === "edit" || ((action === "save" || action === "giveback") && post))) {
-    const a = await one(store, email), name = accountStoreName(store);
-    if (!a) done = `${email} isn't on your ${name} list any more.`;
-    else if (action === "edit" || isReuse(a)) return editPage(a, action === "edit" ? "" : `It follows your ${reusedFrom(a)} account: change that one.`);
+    const a = await one(store, email), on = listName(store);
+    if (!a) done = `${email} isn't on ${on} any more.`;
+    else if (action === "edit" || isReuse(a)) return editPage(a, action === "edit" ? "" : a.offer_id === USE ? "It's an account from your list: change it there." : `It follows your ${reusedFrom(a)} account: change that one.`);
     else if (action === "giveback") {
-      if (!a.key_hash) done = `${a.email} is already free on your ${name} list.`;
+      if (!a.key_hash) done = `${a.email} is already free on ${on}.`;
       else {
         const held = `SELECT store FROM accounts WHERE email_norm = ? AND store <> ? AND batch LIKE '${PARKED}%' AND key_hash = ?`;
         const { results: before } = await env.DB.prepare(held).bind(a.email_norm, a.store, a.key_hash).all();
@@ -2068,7 +2204,7 @@ async function accountListPage(request, env, url, id) {
         for (const x of stores) await stockCheck(env, x.store, accountStoreName(x.store), false);
         const { results: still } = await env.DB.prepare(held).bind(a.email_norm, a.store, a.key_hash).all();
         const freed = before.filter((r) => !still.some((x) => x.store === r.store)).map((r) => accountStoreName(r.store));
-        done = `Gave ${a.email} back to your ${name} list. It's free for the next slot.${freed.length ? ` Your ${freed.join(" and ")} account with this email came free too.` : ""}`;
+        done = `Gave ${a.email} back to ${on}. It's free for the next slot.${freed.length ? ` Your ${freed.join(" and ")} account with this email came free too.` : ""}`;
       }
     } else {
       const newEmail = get("new_email").trim(), pw = get("password").trim();
@@ -2079,45 +2215,42 @@ async function accountListPage(request, env, url, id) {
       const norm = newEmail.toLowerCase();
       if (newEmail !== a.email) {
         if (a.key_hash) return editPage(a, "It's on a buyer's slot, so its email can't change. Give it back to your list first.");
-        if (norm !== a.email_norm && await one(a.store, norm)) return editPage(a, `${newEmail} is already on your ${name} list.`);
+        if (norm !== a.email_norm && await one(a.store, norm)) return editPage(a, `${newEmail} is already on ${on}.`);
         // Only while it's still free: one given to a slot meanwhile keeps the email that slot got.
         const r = await env.DB.prepare(`UPDATE accounts SET email = ?, email_norm = ?${pw ? ", password = ?" : ""} WHERE store = ? AND email_norm = ? AND key_hash IS NULL AND ${OWN_ACCOUNT}`)
           .bind(newEmail, norm, ...(pw ? [pw] : []), a.store, a.email_norm).run().catch(() => null);
         if (!r || !r.meta || !r.meta.changes) return editPage((await one(a.store, a.email_norm)) || a, "It changed meanwhile (given to a slot, or edited). Look again, then try again.");
-        done = `Changed ${a.email} to ${newEmail}${pw ? ", with its new password," : ""} on your ${name} list.`;
+        // On the one list, a free row with that email left on Target's or Pokémon Center's own list from before goes (addToList).
+        if (a.store === MASTER) await env.DB.prepare(`DELETE FROM accounts WHERE store IN ('target', 'pokemoncenter') AND email_norm = ? AND key_hash IS NULL AND ${OWN_ACCOUNT}`).bind(norm).run();
+        done = `Changed ${a.email} to ${newEmail}${pw ? ", with its new password," : ""} on ${on}.`;
       } else if (pw) {
-        // A reuse of it at another store (same buyer) checks out with it too, so it gets the new password with it.
+        // A reuse of it at another store (same buyer), or a slot's row of it from the one list, checks out with it too, so it
+        // gets the new password with it.
         await env.DB.batch([
           env.DB.prepare(`UPDATE accounts SET password = ? WHERE store = ? AND email_norm = ? AND ${OWN_ACCOUNT}`).bind(pw, a.store, a.email_norm),
           env.DB.prepare("UPDATE accounts SET password = ? WHERE email_norm = ? AND offer_id = ? AND key_hash IS ?").bind(pw, a.email_norm, "reuse:" + a.store, a.key_hash),
         ]);
-        done = `Changed the password of ${a.email} on your ${name} list.`;
+        done = `Changed the password of ${a.email} on ${on}.`;
       } else done = "Nothing changed.";
     }
   }
 
-  // Stores to add to: Target and Pokémon Center (FAFO's store pickers), and any other store already on the list.
+  // Where Add puts accounts: the one list (Target and Pokémon Center: what FAFO's store pickers offer), or a store's own list
+  // that's on the page already. No store picked (no other list to pick from) means the one list.
   const { results: listed } = await env.DB.prepare("SELECT DISTINCT store FROM accounts").all();
-  const addStores = [...new Set(["target", "pokemoncenter", ...listed.map((r) => r.store)])];
+  const ownLists = listed.map((r) => r.store).filter((x) => x !== MASTER && !MASTER_STORES.has(x));
+  const addStores = [MASTER, ...ownLists], addTo = (x) => x === "" ? MASTER : addStores.includes(listStoreOf(x)) ? listStoreOf(x) : "";
   if (action === "add" && post) {
-    const st = addStores.includes(store) ? store : "", name = accountStoreName(st);
+    const st = addTo(store), name = accountStoreName(st);
     const text = get("accounts");
     const { rows, bad, bare } = text.length > 400_000 ? { rows: [], bad: [], bare: [] } : parseListLines(text, get("password").trim());
     if (!st) err = "Pick a store to add them to.";
     else if (text.length > 400_000 || rows.length > ACCOUNT_OFFER_MAX) err = `That's too many at once: ${ACCOUNT_OFFER_MAX} at most.`;
     else {
-      let n = 0;
-      for (let i = 0; i < rows.length; i += 100) {
-        const res = await env.DB.batch(rows.slice(i, i + 100).map((a) => env.DB.prepare(
-          // As the review link adds them: a reused Target account on this store's list becomes this one, and stays with its slot.
-          `INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT (store, email_norm) DO UPDATE SET password = excluded.password, added_at = excluded.added_at, offer_id = excluded.offer_id WHERE NOT (${OWN_ACCOUNT})`
-        ).bind(st, a.email, a.email.toLowerCase(), a.password, now, "list:" + o.id)));
-        n += res.reduce((k, r) => k + (r.meta && r.meta.changes || 0), 0);
-      }
+      const n = await addToList(env, st, rows, "list:" + o.id, now);
       if (n) await stockCheck(env, st, name, false);
       const already = rows.length - n;
-      done = rows.length ? `Added ${n} to your ${name} list.${already ? ` ${already} ${already === 1 ? "was" : "were"} already on it, and kept ${already === 1 ? "its" : "their"} password (Edit changes one).` : ""}` : "";
+      done = rows.length ? `Added ${n} to ${listName(st)}.${already ? ` ${already} ${already === 1 ? "was" : "were"} already on it, and kept ${already === 1 ? "its" : "their"} password (Edit changes one).` : ""}` : "";
       err = [bad.length ? `${lineList(bad)} couldn't be read: write each account as email:password.` : "",
         bare.length ? `${lineList(bare)} ${bare.length === 1 ? "has" : "have"} only an email: add ${bare.length === 1 ? "it" : "them"} again with the password box filled in.` : "",
         !rows.length && !bad.length && !bare.length ? "Paste the accounts to add, one per line." : ""].filter(Boolean).join(" ");
@@ -2128,11 +2261,15 @@ async function accountListPage(request, env, url, id) {
     const q = new URLSearchParams({ t });
     if (done) q.set("done", done);
     if (err) q.set("err", err);
-    if (action === "add" && addStores.includes(store)) q.set("store", store);
+    if (action === "add" && addTo(store) && addTo(store) !== MASTER) q.set("store", addTo(store));
     return new Response(null, { status: 303, headers: { location: `${url.pathname}?${q}`, "cache-control": "no-store", "referrer-policy": "no-referrer" } });
   }
   if (!action) { done = get("done").slice(0, 600); err = get("err").slice(0, 600); }
-  const { results: all } = await env.DB.prepare(`SELECT ${COLS} FROM accounts ORDER BY store, key_hash IS NOT NULL, email_norm`).all();
+  // The one list first (its store, "*", sorts first); its accounts' slots' rows (USE) show in their accounts' status.
+  const { results: rowsAll } = await env.DB.prepare(`SELECT ${COLS} FROM accounts ORDER BY store, key_hash IS NOT NULL, email_norm`).all();
+  const all = rowsAll.filter((a) => a.offer_id !== USE), usesBy = new Map();
+  for (const u of rowsAll) if (u.offer_id === USE) { const k = u.email_norm + "|" + u.key_hash; if (!usesBy.has(k)) usesBy.set(k, []); usesBy.get(k).push(u); }
+  const usOf = (a) => usesIn(usesBy.get(a.email_norm + "|" + a.key_hash) || [], a);
   const byStore = new Map();
   for (const a of all) { if (!byStore.has(a.store)) byStore.set(a.store, []); byStore.get(a.store).push(a); }
   const own = (a) => !isReuse(a);
@@ -2140,18 +2277,18 @@ async function accountListPage(request, env, url, id) {
     const mine = rows.filter(own), free = mine.filter((a) => !a.key_hash).length;
     // Each row carries what the search box looks in: its email, its store and its status, in lowercase without accents.
     return `<section class="store" data-store="${esc(st)}"><h3><input type="checkbox" class="all js" hidden data-store="${esc(st)}" aria-label="Tick every ${esc(accountStoreName(st))} account"> ${esc(accountStoreName(st))} <span class="count">${free} free of ${mine.length}</span></h3>
-      <table><thead><tr><th class="pick"></th><th>Account</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((a) => `<tr${a.key_hash ? "" : ' class="free"'}${own(a) ? "" : " data-reuse"} data-q="${esc(searchText(`${a.email} ${accountStoreName(st)} ${statusText(a)}`))}">
+      <table><thead><tr><th class="pick"></th><th>Account</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((a) => `<tr${a.key_hash ? "" : ' class="free"'}${own(a) ? "" : " data-reuse"} data-q="${esc(searchText(`${a.email} ${accountStoreName(st)} ${statusText(a, usOf(a))}`))}">
         <td class="pick"><input type="checkbox" name="pick" form="bulk" value="${esc(a.store + " " + a.email_norm)}" data-store="${esc(a.store)}" data-email="${esc(a.email)}" aria-label="Tick ${esc(a.email)}"></td>
-        <td class="em">${esc(a.email)}</td><td>${status(a)}</td>
+        <td class="em">${esc(a.email)}</td><td>${statusCell(a, usOf(a))}</td>
         <td class="act"><form method="get" action="${esc(url.pathname)}">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="ed" type="submit" name="action" value="edit">Edit</button></form><form method="get" action="${esc(url.pathname)}">${hidden}${keep("email", a.email_norm)}<button class="rm" type="submit" name="action" value="ask">Remove</button></form></td></tr>`).join("")}</tbody></table></section>`;
   }).join("");
   const total = all.filter(own).length;
-  const pick = addStores.includes(store) ? store : "target";
+  const pick = addTo(store) || MASTER;
   const who = [o.name, o.username ? "@" + o.username : "", "license …" + o.key_last4].filter(Boolean).join(" · ");
   return page(200, "Your list for Use Assigned Account", done,
     `${err ? `<p class="err">${esc(err)}</p>` : ""}
      <p class="who">${total ? `${total} account${total === 1 ? "" : "s"}, ${all.filter((a) => own(a) && !a.key_hash).length} free` : "Your list is empty"}</p>
-     <p class="small">Edit sets a new password, or a new email while the account is free. One given to a buyer can be given back to your list from there. Tick accounts (Shift+click ticks a run of them) to copy or remove them together. Search matches emails, stores and what each says (Free, a buyer's license, a profile name). <a href="#add">Add accounts</a> is at the end. Changes count at once.</p>
+     <p class="small">One list for Target and Pokémon Center: a buyer's slots at both stores for one profile get the same account, and no other buyer gets it while they have it. Edit sets a new password, or a new email while the account is free. One given to a buyer can be given back to your list from there. Tick accounts (Shift+click ticks a run of them) to copy or remove them together. Search matches emails, stores and what each says (Free, a buyer's license, a profile name). <a href="#add">Add accounts</a> is at the end. Changes count at once.</p>
      ${all.length ? `<div class="find js" hidden><input type="search" id="find" placeholder="Search your list" aria-label="Search your list" autocomplete="off" spellcheck="false"><button type="button" class="ed" data-pickall>Tick all</button><span class="shown" id="shown" role="status"></span></div>
      <p class="small" id="none-match" hidden>No accounts match your search.</p>` : ""}
      ${sections}
@@ -2164,10 +2301,11 @@ async function accountListPage(request, env, url, id) {
      </form>${LIST_SCRIPT}` : ""}
      <h3 id="add">Add accounts</h3>
      <form method="post" class="edit">${hidden}
-       <label>Store<select name="store">${addStores.map((st) => `<option value="${esc(st)}"${st === pick ? " selected" : ""}>${esc(accountStoreName(st))}</option>`).join("")}</select></label>
+       ${ownLists.length ? `<label>Add to<select name="store">${addStores.map((st) => `<option value="${esc(st)}"${st === pick ? " selected" : ""}>${esc(st === MASTER ? "Your list (Target and Pokémon Center)" : accountStoreName(st) + "'s own list")}</option>`).join("")}</select></label>`
+         : `<p class="small">They go on your list, for Target and Pokémon Center both.</p>`}
        <label>Accounts<textarea name="accounts" rows="5" spellcheck="false" autocomplete="off" placeholder="One per line: email:password"></textarea></label>
        <label>Password for lines with only an email<input type="text" name="password" maxlength="200" autocomplete="off" spellcheck="false"></label>
-       <p class="hint">For Pokémon Center, the password is the email's inbox password. One already on that store's list keeps its password: Edit changes it.</p>
+       <p class="hint">The store account's password: Target's logins file gets email:password, and Pokémon Center checks out as a guest with the email. One already on the list keeps its password: Edit changes it.</p>
        <div class="row"><button class="ok" type="submit" name="action" value="add">Add to my list</button></div>
      </form>
      <p class="small">Passwords are never shown here (Copy email:password puts them on your clipboard only). Asked by ${esc(who)}; this link works until ${esc(when(until))}.</p>`, true);
@@ -2287,7 +2425,8 @@ async function alertSender(request, env) {
 async function alertAccounts(request, env) {
   const { error } = await alertSender(request, env);
   if (error) return error;
-  const { results } = await env.DB.prepare("SELECT email, store FROM accounts WHERE key_hash IS NOT NULL AND sent_at IS NOT NULL").all();
+  // A slot's row at its store: the one list's account row itself (store "*") is at no store.
+  const { results } = await env.DB.prepare(`SELECT email, store FROM accounts WHERE key_hash IS NOT NULL AND sent_at IS NOT NULL AND store <> '${MASTER}'`).all();
   return json({ accounts: results.map((a) => ({ email: a.email, store: a.store })) }, 200, { "cache-control": "no-store" });
 }
 
