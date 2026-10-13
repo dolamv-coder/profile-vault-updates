@@ -1008,8 +1008,9 @@ it, or replace it); that section says so too, until FAFO locks (`SYNC.state` `"e
 "password changed" (this vault's token is that copy's previous password's: it was this vault's own copy) and a copy with this
 vault's own salt and rounds (its own upload, whose answer was lost) stay as before, and a copy deleted meanwhile is made by this
 device after all ("again"). Turn on sync's own first upload (or replace) losing that race goes on to its step 2, which no longer
-says the copy has a different master password (it can be the same one, chosen on another device), and a password change that
-finds it changes only this vault (sync is off by then). `PUT base=0` only inserts, so nothing was lost either way. Tested end to
+says the copy has a different master password (it can be the same one, chosen on another device), and a master password change
+whose round finds it, or that waited on a round that did, changes only this vault (`syncChangePassword`: no round once sync is
+off). `PUT base=0` only inserts, so nothing was lost either way. Tested end to
 end with the license worker under `wrangler dev` and a second Chromium making the copy first: on 1.9.113 ten unlocks locked the
 other device out; on 1.9.114 one try, then none. Installed apps stay on 1.9.112 while desktop updates are paused, so they still
 show the old message. Its release note repeats 1.9.113's (installed apps will catch up from 1.9.112 in one go). Nothing gains a

@@ -13162,6 +13162,7 @@ async function syncCycle(opts){
       if (!S._local.pending && !mustSend){ S._local.okAt = Date.now(); syncPersist(); SYNC.fails = 0; syncShow("ok"); return "ok"; }
       syncShow("syncing");
       const sent = await syncPush(key, auth, lic, opts.rekey, alive);
+      if (sent === "elsewhere") return sent;   // sync went off here (syncRefused)
       if (!alive()) return "stopped";
       if (sent === "ok"){ S._local.okAt = Date.now(); syncPersist(); SYNC.fails = 0; syncShow("ok"); return "ok"; }
       if (sent !== "again") return sent;
@@ -13559,8 +13560,10 @@ function openSyncPassword(){
 // Change password with sync on: the online copy moves to the new password first (so other devices are
 // asked for it), then this vault. Returns "" when done, or a message.
 async function syncChangePassword(key, auth, salt, iter){
-  const r = await syncExclusive(() => syncCycle({now:true, rekey:{key, auth, salt, iter}}));
-  if (r === "elsewhere") return "";   // 1.9.114: sync went off (another device's synced vault), so only this vault changes
+  // 1.9.114: sync can go off before or during this round (another device's synced vault, syncElsewhere): then only this
+  // vault changes, and its token isn't sent again.
+  const r = await syncExclusive(() => syncOn() ? syncCycle({now:true, rekey:{key, auth, salt, iter}}) : "off");
+  if (r === "off" || r === "elsewhere") return "";
   if (r !== "ok") return SYNC.state === "offline" ? "Connect to the internet to change the password: sync is on, so the online copy changes with it." : (SYNC.msg || syncStatus().text);
   return "";
 }
