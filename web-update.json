@@ -1,10 +1,10 @@
 {
-  "version": "1.9.112",
-  "url": "index-1.9.112.html",
-  "sha256": "600d70ec8840041c9801291d025c45384e139f8661b7ec2f1220a85541b8366d",
-  "signature": "y2ci7D4B82wh/gRvdG6AT1HEapBKhPrltskWXSB80kw3BBt/7WI6AVWeI0BYepvKKUsxdWokJO6P0ctfGBbVBw==",
+  "version": "1.9.113",
+  "url": "index-1.9.113.html",
+  "sha256": "b9679f34650e0da84645ba7d2588401f7c20559f6a0ec7eabf1a00c7c79e4b34",
+  "signature": "K55loM3NeW51a0fPbmej3uPk1dtYc5VqZ8VyvhbiWqXxorKn1VPhjntZ0pWiz5CF4qhDdfrGdBWi/CJL9X+MCg==",
   "minAppVersion": "0",
-  "notes": "Every store login now needs the inbox its sign-in codes and order emails go to. Not sure how to set one up? Press Set it up step by step: FAFO shows you which inbox to use, how to make the app password your email wants, and in the desktop app checks that it signs in.",
+  "notes": "Orders without a product picture now get one by themselves, Target pre-orders and Pokémon Center orders included: FAFO looks the item up in TCGplayer's catalog and puts its picture on every order of it, later ones too. Only a product with exactly the same name counts. A wrong one? Press Undo, or use Picture to change or remove it. Turn it off in Settings → Preferences → Find product pictures. Mass edit on Profiles can now Jig the selected profiles' shipping addresses, as on Generate. On Generate, Copy puts the selected drafts' names, address lines or cities on the clipboard, one per line.",
   "installerUrl": "",
-  "publishedAt": "2026-10-11T21:05:54.348Z"
+  "publishedAt": "2026-10-13T13:39:00.464Z"
 }
