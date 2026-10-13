@@ -76,7 +76,7 @@ export function sitePage(version, appUrl = APP_URL) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>FAFO</title>
-<meta name="description" content="FAFO keeps your checkout profiles, cards and store logins encrypted, sends your slots to your seller in one batch, and keeps your orders in one place.">
+<meta name="description" content="FAFO keeps your checkout profiles, cards and store logins encrypted, sends your slots to your runner in one batch, and keeps your orders in one place.">
 <meta name="theme-color" content="#F8FAFC" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0B0F19" media="(prefers-color-scheme: dark)">
 <script>try{var t=localStorage.getItem("fafo-site-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}document.documentElement.className+=" js"</script>
@@ -474,7 +474,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
     <div class="wrap hero-grid">
       <div>
         <h1 class="display"><span>Your slots in.</span><span class="grad">Your orders tracked.</span></h1>
-        <p class="lead">FAFO keeps your checkout profiles, cards and store logins encrypted, sends your slots to your seller in one batch, and keeps your orders in one place.</p>
+        <p class="lead">FAFO keeps your checkout profiles, cards and store logins encrypted, sends your slots to your runner in one batch, and keeps your orders in one place.</p>
         <div class="cta">${loginBtn(app)}<a class="btn btn-ghost" href="#how">How it works</a></div>
         <p class="meta"><span class="live" aria-hidden="true"></span><span>${v ? `Web version ${esc(v)} · ` : ""}Encrypted with your master password</span></p>
       </div>
@@ -485,7 +485,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
           <div class="app">
             <div class="side"><span class="wordmark">FAFO</span><span>${ic("user")}</span><span>${ic("card")}</span><span>${ic("key")}</span><span class="on">${ic("send")}</span><span>${ic("box")}</span><span>${ic("layers")}</span></div>
             <div class="main">
-              <div class="mh"><div><h4>Submit</h4><small>Slots switched on go to your seller in one batch</small></div><div class="chips"><span class="chip on">All</span><span class="chip">${POKEBALL}<b>4</b></span><span class="chip">${BULLSEYE}<b>8</b></span></div></div>
+              <div class="mh"><div><h4>Submit</h4><small>Slots switched on go to your runner in one batch</small></div><div class="chips"><span class="chip on">All</span><span class="chip">${POKEBALL}<b>4</b></span><span class="chip">${BULLSEYE}<b>8</b></span></div></div>
               <div class="stats"><div class="stat"><span class="t sky">${ic("send")}</span><span><strong>12</strong><small>Selected</small></span></div><div class="stat"><span class="t wait">${ic("clock")}</span><span><strong>4</strong><small>Pending</small></span></div><div class="stat"><span class="t ok">${ic("check")}</span><span><strong>8</strong><small>Success</small></span></div></div>
               <div class="rows">${SUBMIT_ROWS.map(([s, n, c, p]) => `<div class="row"><span class="sw"></span>${mark(s)}<span><b>${n}</b><small>${c}</small></span>${pill(p)}</div>`).join("")}</div>
             </div>
@@ -508,18 +508,18 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
       <div class="head"><h2 class="display">Four steps to Success.</h2><p>Log in, set your master password and build your profiles. Then switch your slots on for the drop and watch them go from Pending approval to Success.</p></div>
       <div class="stack">
         <article class="step s1" style="--n:0">
-          <div><span class="num">1</span><h3 class="display">Log in with Discord</h3><p>Sign in with your Discord account. Once your seller approves you, your license arrives in FAFO on its own, even if you closed the page.</p>
-            <ul class="ticks">${check("Nothing to install or copy")}${check("Your seller approves every new member")}</ul></div>
+          <div><span class="num">1</span><h3 class="display">Log in with Discord</h3><p>Sign in with your Discord account. Once your runner approves you, your license arrives in FAFO on its own, even if you closed the page.</p>
+            <ul class="ticks">${check("Nothing to install or copy")}${check("Your runner approves every new member")}</ul></div>
           <div class="art" aria-hidden="true"><div class="panel-card">
             <div class="flow"><span class="tile dc-t">${DISCORD}</span><span class="dash"></span><span class="tile ff"><span class="wordmark">FAFO</span></span></div>
             <div class="srow"><span class="t ok">${ic("check")}</span><span><b>Signed in with Discord</b><small>@yourname</small></span></div>
-            <div class="srow"><span class="t ok">${ic("check")}</span><span><b>Approved by your seller</b><small>You're in</small></span></div>
+            <div class="srow"><span class="t ok">${ic("check")}</span><span><b>Approved by your runner</b><small>You're in</small></span></div>
             <div class="srow"><span class="t sky">${ic("key")}</span><span><b>License ready</b><small>PVLT-••••-••••-••••-7Q2C</small></span></div>
           </div></div>
         </article>
         <article class="step s2" style="--n:1">
           <div><span class="num">2</span><h3 class="display">Choose your master password</h3><p>It encrypts your profiles, cards and logins before they're saved or synced. Only you know it, so only you can open your vault.</p>
-            <ul class="ticks">${check("The same vault on your computer and your phone")}${check("No one can reset it, not even your seller")}</ul></div>
+            <ul class="ticks">${check("The same vault on your computer and your phone")}${check("No one can reset it, not even your runner")}</ul></div>
           <div class="art" aria-hidden="true">
             <span class="badge b1">${ic("lock")}Encrypted before it's saved</span>
             <div class="panel-card lock-c"><span class="wordmark">FAFO</span><p>Cop it. Track it. FAFO.</p><div class="field"><span>••••••••••••</span>${ic("eye")}</div><div class="fake-btn">${ic("lock")}Unlock</div></div>
@@ -536,8 +536,8 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
           </div></div>
         </article>
         <article class="step s4" style="--n:3">
-          <div><span class="num">4</span><h3 class="display">Submit your slots</h3><p>Switch slots on and send them to your seller in one batch. Each shows Pending approval, then Success once your seller approves it.</p>
-            <ul class="ticks">${check("No store login? Your seller can assign you one")}${check("Declined slots can go out again in a new batch")}</ul></div>
+          <div><span class="num">4</span><h3 class="display">Submit your slots</h3><p>Switch slots on and send them to your runner in one batch. Each shows Pending approval, then Success once your runner approves it.</p>
+            <ul class="ticks">${check("No store login? Your runner can assign you one")}${check("Declined slots can go out again in a new batch")}</ul></div>
           <div class="art" aria-hidden="true">
             <div class="panel-card">
               <div class="pc-h"><span>Submit</span><small>4 / 20 selected</small></div>
@@ -547,7 +547,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
               <div class="sub"><span class="sw"></span>${POKEBALL}<b>Pokémon Center #2</b>${pill("wait")}</div>
               <div class="fake-btn">${ic("send")}Submit slots</div>
             </div>
-            <span class="badge b2">${ic("check")}Your seller approved 2 slots</span>
+            <span class="badge b2">${ic("check")}Your runner approved 2 slots</span>
           </div>
         </article>
       </div>
@@ -571,12 +571,12 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
 
   <section class="sec" id="faq">
     <div class="wrap faq">
-      <div class="head"><h2 class="display">Good to know.</h2><p>Anything else? Ask your seller in their Discord.</p></div>
+      <div class="head"><h2 class="display">Good to know.</h2><p>Anything else? Ask your runner in their Discord.</p></div>
       <div class="qs">
-        <details open><summary>How do I get a license?<span class="pm">${ic("plus")}</span></summary><p>Choose Login with Discord. Once your seller approves you, your license arrives in FAFO on its own.</p></details>
+        <details open><summary>How do I get a license?<span class="pm">${ic("plus")}</span></summary><p>Choose Login with Discord. Once your runner approves you, your license arrives in FAFO on its own.</p></details>
         <details><summary>Do I need to download anything?<span class="pm">${ic("plus")}</span></summary><p>No. FAFO runs in your browser at ${appHost}, on your computer or your phone.</p></details>
         <details><summary>Who can see my cards and passwords?<span class="pm">${ic("plus")}</span></summary><p>Your vault is encrypted with your master password before it's saved or synced, so only you can open it. When you submit slots, your runner gets each slot's card, addresses and store logins, so they can check out with them.</p></details>
-        <details><summary>What if I forget my master password?<span class="pm">${ic("plus")}</span></summary><p>No one can reset it, not even your seller: it's the key your vault is encrypted with. Keep it somewhere safe.</p></details>
+        <details><summary>What if I forget my master password?<span class="pm">${ic("plus")}</span></summary><p>No one can reset it, not even your runner: it's the key your vault is encrypted with. Keep it somewhere safe.</p></details>
         <details><summary>Which stores does FAFO work with?<span class="pm">${ic("plus")}</span></summary><p>Pokémon Center and Target. Each profile is for one store, and Duplicate makes its twin for the other.</p></details>
         <details><summary>How do my orders get into FAFO?<span class="pm">${ic("plus")}</span></summary><p>Paste your order confirmation emails into Orders → Add from email (several at once is fine), or add an order by hand. Each confirmation becomes a tracked order. With sync on, every device gets them.</p></details>
         <details><summary>Can I use FAFO on my phone and my computer?<span class="pm">${ic("plus")}</span></summary><p>Yes. Your vault syncs from the start: on the other device, choose Login with Discord and enter the same master password. Made it with Use this browser only? Turn on sync in Settings → Web version &amp; sync first.</p></details>

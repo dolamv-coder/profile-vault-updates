@@ -246,7 +246,8 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   system's, or the header's switch, kept as `fafo-site-theme` on fafoaco.com), Inter with the Bruno Ace SC wordmark,
   mockups of FAFO's own Submit and Orders screens with sample data, four stacked steps, a grid of features, an FAQ and a
   dark last call. Only the style is taken from that site, never its wording, logo or product photos, and what it says has
-  to be true of the web version (no email sync there: orders come from pasted confirmation emails). The page waits at
+  to be true of the web version (no email sync there: orders come from pasted confirmation emails). It calls the seller
+  the buyer's **runner** (the owner's word, 2026-10-13); the app itself still says seller. The page waits at
   most 800 ms for the feed's version line. See "Web version and sync" below.
 - GitHub Releases: the app links new users to
   `releases/latest/download/FAFO-Windows.zip` on this repo (`Orbit-Windows.zip`
