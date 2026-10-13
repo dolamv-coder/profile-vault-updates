@@ -103,6 +103,12 @@ try {
     assert.ok(logins.length >= 3, "Login with Discord in the header, the hero and the last call");
     for (const m of logins) assert.equal(m[1], "https://app.fafoaco.com");
     for (const gone of [/Download for Windows/, /Open in your browser/, /Windows 10 and 11/, /any browser/, /href="\/download"/, /<script[^>]+src=/]) assert.doesNotMatch(body, gone);
+    // Every link stays on the page or goes to the app; nothing points at a download.
+    for (const m of body.matchAll(/<a\b[^>]*?\shref="([^"]*)"/g)) assert.match(m[1], /^(#(main|how|features|faq)|\/|https:\/\/app\.fafoaco\.com)$/, "a link the front page shouldn't have: " + m[1]);
+    for (const gone of [/FAFO-Windows\.zip/, /releases\/latest/, /\bWindows\b/]) assert.doesNotMatch(body, gone);
+    const { sitePage } = await import("../src/site.js");
+    const hostile = sitePage('1.9.0"><x', 'https://x" onmouseover="alert(1)');
+    assert.doesNotMatch(hostile, /onmouseover="/); assert.doesNotMatch(hostile, /"><x/);
     assert.equal(r.headers.get("content-type"), "text/html; charset=utf-8"); assert.equal(r.headers.get("x-frame-options"), "DENY");
     assert.equal(r.headers.get("x-orbit-version"), null);
     const d = await fetch(site + "/download", { redirect: "manual" });

@@ -243,10 +243,11 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   `https://fafoaco.com`, whose button since 2026-10-13 is Login with Discord, to the app (the owner's request: no
   Windows download or "Windows 10 and 11, or any browser" on it; `/download` still redirects for old links). The same day
   the owner asked for a look "similar to" aphrowuu.com (an ACO's site): `site.js` is now light with a dark theme (the
-  system's, or the header's switch, kept as `fafo-site-theme` on fafoaco.com), Inter and Inter Tight with the Bruno Ace SC
-  wordmark, mockups of FAFO's own Submit and Orders screens with sample data, four stacked steps, a grid of features, an
-  FAQ and a dark last call. Only the style is taken from that site, never its wording, logo or product photos. See "Web
-  version and sync" below.
+  system's, or the header's switch, kept as `fafo-site-theme` on fafoaco.com), Inter with the Bruno Ace SC wordmark,
+  mockups of FAFO's own Submit and Orders screens with sample data, four stacked steps, a grid of features, an FAQ and a
+  dark last call. Only the style is taken from that site, never its wording, logo or product photos, and what it says has
+  to be true of the web version (no email sync there: orders come from pasted confirmation emails). The page waits at
+  most 800 ms for the feed's version line. See "Web version and sync" below.
 - GitHub Releases: the app links new users to
   `releases/latest/download/FAFO-Windows.zip` on this repo (`Orbit-Windows.zip`
   until 1.9.75; each release also carries the same zip as `Orbit-Windows.zip` and

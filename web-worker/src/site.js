@@ -34,7 +34,6 @@ const ICONS = {
   card: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>',
   monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
   phone: '<rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18h2"/>',
-  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
   layers: '<path d="m12 3 9 5-9 5-9-5 9-5z"/><path d="m3 13 9 5 9-5"/>',
 };
 const ic = (name, cls = "") => `<svg class="i${cls ? " " + cls : ""}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -51,19 +50,19 @@ const check = (t) => `<li>${ic("check")}<span>${t}</span></li>`;
 
 // Sample data for the mockups (this repo is public: no real names, addresses, cards or accounts).
 const SUBMIT_ROWS = [
-  ["t", "Target #1", "Visa •••• 4242", "ok"], ["t", "Target #2", "Visa •••• 1881", "ok"],
+  ["t", "Target #1", "Visa •••• 6417", "ok"], ["t", "Target #2", "Visa •••• 2093", "ok"],
   ["pc", "Pokémon Center #1", "Mastercard •••• 5100", "wait"], ["t", "Target #3", "Amex •••• 0005", "ok"],
   ["pc", "Pokémon Center #2", "Visa •••• 7310", "wait"],
 ];
 const ORDERS = [
-  ["Elite Trainer Box", "t", 2, "delivered", "a"], ["Booster Bundle", "pc", 3, "shipped", "b"],
-  ["Mini Tin", "t", 4, "placed", "c"], ["Booster Box", "pc", 1, "canceled", "d"],
+  ["Elite Trainer Box", "pc", 1, "delivered", "a"], ["Booster Bundle", "pc", 3, "shipped", "b"],
+  ["Binder Collection", "t", 4, "placed", "c"], ["Booster Box", "pc", 1, "canceled", "d"],
 ];
 const JIGS = [["Target #1", "214 Maple <b>Ave</b>"], ["Target #2", "214 Maple <b>Avenue</b>"], ["Target #3", "214 Maple <b>Ave.</b>"], ["Target #4", "214 Maple <b>Av</b>"]];
 
 const loginBtn = (app, cls = "") => `<a class="btn btn-primary${cls ? " " + cls : ""}" href="${app}">${DISCORD}<span>Login with Discord</span></a>`;
-// The header's, which says "Log in" on a phone.
-const loginBtnSm = (app) => `<a class="btn btn-primary btn-sm" href="${app}" aria-label="Login with Discord">${DISCORD}<span class="long">Login with Discord</span><span class="short" aria-hidden="true">Log in</span></a>`;
+// The header's, which says "Login" on a phone (inside its name, "Login with Discord").
+const loginBtnSm = (app) => `<a class="btn btn-primary btn-sm" href="${app}" aria-label="Login with Discord">${DISCORD}<span class="long">Login with Discord</span><span class="short" aria-hidden="true">Login</span></a>`;
 
 // `version`: the release the web version serves now ("" when it isn't known yet). It's labelled the web version's: installed
 // apps stay on their release while desktop updates are paused (channels.json).
@@ -77,22 +76,22 @@ export function sitePage(version, appUrl = APP_URL) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>FAFO</title>
-<meta name="description" content="FAFO keeps your checkout profiles, cards and store logins encrypted, sends your slots to the seller in one batch, and tracks every order.">
+<meta name="description" content="FAFO keeps your checkout profiles, cards and store logins encrypted, sends your slots to your seller in one batch, and keeps your orders in one place.">
 <meta name="theme-color" content="#F8FAFC" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0B0F19" media="(prefers-color-scheme: dark)">
 <script>try{var t=localStorage.getItem("fafo-site-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}document.documentElement.className+=" js"</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bruno+Ace+SC&text=FAFO&display=swap">
 <style>
 :root{
   --bg:#F8FAFC; --bg-2:#F1F5F9; --card:#FFFFFF; --card-2:#F8FAFC; --ink:#0F172A; --ink-2:#475569; --ink-3:#64748B;
-  --line:#E2E8F0; --line-2:#EEF2F6; --dot:rgba(15,23,42,.11); --glass:rgba(248,250,252,.78);
-  --btn:#027BBB; --btn-hover:#0369A1; --link:#0369A1; --glow:rgba(14,165,233,.45);
-  --grad:linear-gradient(180deg,#1FA9E8 0%,#0284C7 52%,#075985 100%);
+  --line:#E2E8F0; --line-2:#EEF2F6; --dot:rgba(15,23,42,.11); --glass:rgba(248,250,252,.88); --band:#F1F5F9;
+  --btn:#027BBB; --btn-hover:#0369A1; --focus:#0369A1; --glow:rgba(14,165,233,.45);
+  --grad:linear-gradient(180deg,#0A98D8 0%,#0284C7 55%,#0B6FA0 100%);
   --ok:#047857; --ok-bg:#ECFDF5; --ok-line:#A7F3D0; --wait:#B45309; --wait-bg:#FFFBEB; --wait-line:#FDE68A;
-  --no:#DC2626; --no-bg:#FEF2F2; --no-line:#FECACA; --sky:#0369A1; --sky-bg:#F0F9FF; --sky-line:#BAE6FD;
+  --no:#B91C1C; --no-bg:#FEF2F2; --no-line:#FECACA; --sky:#0369A1; --sky-bg:#F0F9FF; --sky-line:#BAE6FD;
   --mute:#475569; --mute-bg:#F1F5F9; --mute-line:#E2E8F0;
   --shadow:0 1px 2px rgba(15,23,42,.06),0 10px 30px -14px rgba(15,23,42,.18);
   --shadow-lg:0 2px 6px rgba(15,23,42,.05),0 30px 70px -28px rgba(15,23,42,.32);
@@ -101,8 +100,8 @@ export function sitePage(version, appUrl = APP_URL) {
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#0B0F19; --bg-2:#0E1421; --card:#111827; --card-2:#0D1320; --ink:#F1F5F9; --ink-2:#A3B1C6; --ink-3:#8392A9;
-  --line:rgba(148,163,184,.17); --line-2:rgba(148,163,184,.10); --dot:rgba(148,163,184,.15); --glass:rgba(11,15,25,.74);
-  --link:#7DD3FC; --glow:rgba(14,165,233,.5);
+  --line:rgba(148,163,184,.17); --line-2:rgba(148,163,184,.10); --dot:rgba(148,163,184,.15); --glass:rgba(11,15,25,.74); --band:#080B13;
+  --focus:#7DD3FC; --glow:rgba(14,165,233,.5);
   --grad:linear-gradient(180deg,#B5E8FF 0%,#38BDF8 50%,#0EA5E9 100%);
   --ok:#34D399; --ok-bg:rgba(16,185,129,.13); --ok-line:rgba(52,211,153,.32); --wait:#FBBF24; --wait-bg:rgba(245,158,11,.13); --wait-line:rgba(251,191,36,.32);
   --no:#F87171; --no-bg:rgba(239,68,68,.13); --no-line:rgba(248,113,113,.32); --sky:#7DD3FC; --sky-bg:rgba(14,165,233,.13); --sky-line:rgba(56,189,248,.32);
@@ -114,8 +113,8 @@ export function sitePage(version, appUrl = APP_URL) {
 }}
 :root[data-theme="dark"]{
   --bg:#0B0F19; --bg-2:#0E1421; --card:#111827; --card-2:#0D1320; --ink:#F1F5F9; --ink-2:#A3B1C6; --ink-3:#8392A9;
-  --line:rgba(148,163,184,.17); --line-2:rgba(148,163,184,.10); --dot:rgba(148,163,184,.15); --glass:rgba(11,15,25,.74);
-  --link:#7DD3FC; --glow:rgba(14,165,233,.5);
+  --line:rgba(148,163,184,.17); --line-2:rgba(148,163,184,.10); --dot:rgba(148,163,184,.15); --glass:rgba(11,15,25,.74); --band:#080B13;
+  --focus:#7DD3FC; --glow:rgba(14,165,233,.5);
   --grad:linear-gradient(180deg,#B5E8FF 0%,#38BDF8 50%,#0EA5E9 100%);
   --ok:#34D399; --ok-bg:rgba(16,185,129,.13); --ok-line:rgba(52,211,153,.32); --wait:#FBBF24; --wait-bg:rgba(245,158,11,.13); --wait-line:rgba(251,191,36,.32);
   --no:#F87171; --no-bg:rgba(239,68,68,.13); --no-line:rgba(248,113,113,.32); --sky:#7DD3FC; --sky-bg:rgba(14,165,233,.13); --sky-line:rgba(56,189,248,.32);
@@ -136,9 +135,11 @@ a{color:inherit}
 .wrap{max-width:1224px;margin:0 auto;padding:0 24px}
 .skip{position:absolute;left:12px;top:-60px;z-index:100;background:var(--card);color:var(--ink);padding:10px 14px;border-radius:10px;box-shadow:var(--shadow)}
 .skip:focus{top:12px}
-:focus-visible{outline:2px solid #0EA5E9;outline-offset:3px;border-radius:8px}
+:focus-visible{outline:2px solid var(--focus);outline-offset:3px;border-radius:8px}
+.final :focus-visible{outline-color:#7DD3FC}
 .wordmark{font-family:"Bruno Ace SC",system-ui,sans-serif;letter-spacing:.02em;line-height:1;text-decoration:none;color:var(--ink)}
-.display{font-family:"Inter Tight","Inter",system-ui,sans-serif;font-weight:700;letter-spacing:-.035em;line-height:1.02;margin:0;color:var(--ink)}
+.display{font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;font-weight:700;letter-spacing:-.035em;line-height:1.02;margin:0;color:var(--ink);text-wrap:balance}
+p,.ticks li span,.qs summary{text-wrap:pretty}
 .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;padding-bottom:.06em}
 
 /* Header */
@@ -178,8 +179,9 @@ a{color:inherit}
 .hero{position:relative;overflow-x:hidden;background:radial-gradient(900px 520px at 78% -8%,var(--hero-glow),transparent 70%)}
 @supports (overflow:clip){.hero{overflow-x:clip}}
 .hero-grid{display:grid;grid-template-columns:minmax(0,600px) minmax(0,1fr);gap:40px;align-items:center;padding-top:72px;padding-bottom:72px;min-height:640px}
-.hero h1{font-size:clamp(42px,4vw + 12px,70px)}
+.hero h1{font-size:clamp(40px,3.7vw + 10px,64px)}
 .hero h1 span{display:block}
+.hero h1 .grad{background-size:100% 1.02em}
 .lead{margin:28px 0 0;color:var(--ink-2);font-size:18.5px;line-height:1.62;max-width:34em}
 .cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:36px}
 .meta{display:flex;align-items:center;gap:10px;margin:28px 0 0;color:var(--ink-3);font-size:14.5px}
@@ -187,11 +189,11 @@ a{color:inherit}
 
 /* Hero mockups */
 .scene{position:relative;height:560px}
-.win{position:absolute;left:0;top:56px;width:780px;border-radius:18px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow-lg);overflow:hidden;transform:perspective(2200px) rotateY(-9deg) rotateX(3deg);transform-origin:left center}
+.win{position:absolute;left:0;top:56px;width:720px;border-radius:18px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow-lg);overflow:hidden;transform:perspective(2200px) rotateY(-9deg) rotateX(3deg);transform-origin:left center}
 .bar{display:flex;align-items:center;gap:7px;height:42px;padding:0 16px;border-bottom:1px solid var(--line-2);background:var(--card-2)}
 .bar i{width:11px;height:11px;border-radius:50%;background:#F87171}
 .bar i:nth-child(2){background:#FBBF24}.bar i:nth-child(3){background:#34D399}
-.url{margin:0 auto;display:flex;align-items:center;gap:6px;height:26px;padding:0 12px;border-radius:8px;background:var(--bg-2);color:var(--ink-3);font-size:12.5px}
+.url{margin:0 auto;display:flex;align-items:center;gap:6px;height:26px;padding:0 12px;border-radius:8px;background:var(--bg-2);color:var(--ink-2);font-size:12.5px}
 .url .i{font-size:11px}
 .app{display:grid;grid-template-columns:52px 1fr;min-height:430px}
 .side{border-right:1px solid var(--line-2);padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:4px}
@@ -201,7 +203,7 @@ a{color:inherit}
 .side span.on{background:var(--sky-bg);color:var(--sky)}
 .main{padding:18px 20px}
 .mh{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-.mh h4{margin:0;font:700 19px/1.2 "Inter Tight","Inter",sans-serif;letter-spacing:-.02em}
+.mh h4{margin:0;font:700 19px/1.2 "Inter",sans-serif;letter-spacing:-.02em}
 .mh small{display:block;color:var(--ink-3);font-size:12px;margin-top:3px}
 .chips{display:flex;gap:6px}
 .chip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:8px;border:1px solid var(--line);font-size:11.5px;font-weight:500;color:var(--ink-2);background:var(--card)}
@@ -210,9 +212,9 @@ a{color:inherit}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0 14px}
 .stat{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;gap:10px;align-items:center}
 .stat .t{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;flex:none}
-.stat strong{display:block;font:700 18px/1 "Inter Tight","Inter",sans-serif;font-variant-numeric:tabular-nums}
+.stat strong{display:block;font:700 18px/1 "Inter",sans-serif;font-variant-numeric:tabular-nums}
 .stat small{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-top:3px}
-.t.ok{background:var(--ok-bg);color:var(--ok)}.t.wait{background:var(--wait-bg);color:var(--wait)}.t.sky{background:var(--sky-bg);color:var(--sky)}.t.no{background:var(--no-bg);color:var(--no)}.t.mute{background:var(--mute-bg);color:var(--mute)}
+.t.ok{background:var(--ok-bg);color:var(--ok)}.t.wait{background:var(--wait-bg);color:var(--wait)}.t.sky{background:var(--sky-bg);color:var(--sky)}
 .rows{border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .row{display:grid;grid-template-columns:30px 18px 1fr auto;align-items:center;gap:10px;padding:9px 12px;border-top:1px solid var(--line-2);font-size:12.5px}
 .row:first-child{border-top:0}
@@ -221,7 +223,6 @@ a{color:inherit}
 .row small{color:var(--ink-3);font-size:11.5px;margin-left:8px}
 .sw{width:28px;height:16px;border-radius:9px;background:#0EA5E9;position:relative}
 .sw::after{content:"";position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:50%;background:#fff}
-.sw.off{background:var(--line)}.sw.off::after{right:auto;left:2px}
 .pill{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid;white-space:nowrap}
 .pill .i{font-size:11px;stroke-width:2.6}
 .pill.ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-line)}
@@ -230,21 +231,21 @@ a{color:inherit}
 .pill.sky{color:var(--sky);background:var(--sky-bg);border-color:var(--sky-line)}
 .pill.mute{color:var(--mute);background:var(--mute-bg);border-color:var(--mute-line)}
 
-.phone{position:absolute;right:-96px;top:96px;width:262px;height:534px;border-radius:46px;background:var(--phone);padding:10px;box-shadow:0 40px 80px -30px rgba(2,6,23,.55),0 0 0 1px rgba(148,163,184,.25)}
+.phone{position:absolute;right:10px;top:84px;width:262px;height:534px;border-radius:46px;background:var(--phone);padding:10px;box-shadow:0 40px 80px -30px rgba(2,6,23,.55),0 0 0 1px rgba(148,163,184,.25)}
 .screen{height:100%;border-radius:37px;background:var(--bg);overflow:hidden;position:relative;padding:44px 14px 14px}
 .notch{position:absolute;left:50%;top:10px;transform:translateX(-50%);width:92px;height:26px;border-radius:14px;background:#020617}
 .sbar{position:absolute;left:24px;right:22px;top:14px;display:flex;justify-content:space-between;font:600 12px/1 "Inter",sans-serif}
 .sbar i{width:22px;height:10px;border-radius:3px;border:1.5px solid currentColor;display:block;position:relative}
 .sbar i::after{content:"";position:absolute;inset:1.5px 5px 1.5px 1.5px;background:currentColor;border-radius:1px}
-.screen h5{margin:6px 2px 10px;font:700 24px/1 "Inter Tight","Inter",sans-serif;letter-spacing:-.03em}
+.screen h5{margin:6px 2px 10px;font:700 24px/1 "Inter",sans-serif;letter-spacing:-.03em}
 .screen .chips{margin-bottom:12px}
 .screen .chip{height:24px;font-size:10.5px;padding:0 9px}
 .stick{border:1px solid var(--line);background:var(--card);border-radius:16px;padding:12px}
 .stick .lab{display:flex;justify-content:space-between;align-items:baseline;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
-.stick strong{font:800 30px/1 "Inter Tight","Inter",sans-serif;letter-spacing:-.03em;color:var(--ok);display:block;margin:6px 0 8px}
+.stick strong{font:800 30px/1 "Inter",sans-serif;letter-spacing:-.03em;color:var(--ink);display:block;margin:8px 0 4px}
 .meter{display:flex;height:7px;border-radius:5px;overflow:hidden;gap:2px}
 .meter i{background:#10B981}.meter i+i{background:#F87171}
-.stick small{display:block;margin-top:7px;font-size:10.5px;color:var(--ink-3)}
+.stick small{display:block;font-size:11px;color:var(--ink-3)}
 .olist{margin-top:10px;display:grid;gap:8px}
 .order{display:grid;grid-template-columns:36px 1fr;gap:9px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:8px}
 .thumb{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.95);font-size:17px}
@@ -255,11 +256,11 @@ a{color:inherit}
 .order .q{display:inline-flex;align-items:center;gap:5px}
 .order .q .mk{font-size:12px}
 
-.toast{position:absolute;display:flex;align-items:center;gap:11px;padding:11px 16px 11px 11px;border-radius:16px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow-lg);z-index:3;animation:float 6s ease-in-out infinite}
+.toast{position:absolute;white-space:nowrap;display:flex;align-items:center;gap:11px;padding:11px 16px 11px 11px;border-radius:16px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow-lg);z-index:3;animation:float 2.5s ease-in-out 2}
 .toast .t{width:34px;height:34px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:17px;flex:none}
 .toast b{display:block;font-size:13.5px;font-weight:600}
 .toast small{display:block;font-size:12px;color:var(--ink-3);margin-top:1px}
-.toast.a{left:230px;top:0}
+.toast.a{left:150px;top:4px}
 .toast.b{left:-12px;bottom:28px;animation-delay:-3s}
 @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
 
@@ -270,18 +271,20 @@ a{color:inherit}
 
 /* Sections */
 section.sec{padding:120px 0 0}
+section.sec#features{background:var(--band);margin-top:120px;padding:104px 0 112px}
 .head{max-width:680px}
 .head h2{font-size:clamp(34px,3.2vw + 10px,56px);letter-spacing:-.034em;line-height:1.04}
 .head p{margin:20px 0 0;color:var(--ink-2);font-size:18px;line-height:1.62}
-.center{margin:0 auto;text-align:center}
 
 /* Steps, stacked as you scroll */
-.stack{margin-top:64px;display:grid;gap:36px}
-.step{position:sticky;top:calc(92px + var(--n) * 14px);display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:48px;align-items:center;min-height:560px;padding:40px;border-radius:30px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden;isolation:isolate}
+.stack{margin-top:96px;display:grid;gap:36px}
+.step{position:relative;transform-origin:50% 0;display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:44px;align-items:center;min-height:clamp(560px,100vh - 150px,640px);padding:40px;border-radius:30px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden;isolation:isolate}
+@media (min-width:981px) and (min-height:640px){.step{position:sticky;top:calc(92px + var(--n) * 14px)}}
 .step::before{content:"";position:absolute;inset:0;z-index:-1;background:radial-gradient(640px 360px at 100% 0%,var(--tint-bg),transparent 70%)}
+.step::after{content:"";position:absolute;inset:0;z-index:5;border-radius:inherit;background:var(--bg);opacity:calc(var(--dim,0) * .55);pointer-events:none}
 .step.s1{--tint:#6366F1;--tint-bg:rgba(99,102,241,.10)}.step.s2{--tint:#0EA5E9;--tint-bg:rgba(14,165,233,.11)}
 .step.s3{--tint:#10B981;--tint-bg:rgba(16,185,129,.11)}.step.s4{--tint:#F59E0B;--tint-bg:rgba(245,158,11,.12)}
-.num{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;font-weight:700;font-size:15px;color:var(--tint);background:color-mix(in srgb,var(--tint) 12%,transparent);border:1px solid color-mix(in srgb,var(--tint) 35%,transparent)}
+.num{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;font-weight:700;font-size:15px;color:color-mix(in srgb,var(--tint) 50%,var(--ink));background:color-mix(in srgb,var(--tint) 12%,transparent);border:1px solid color-mix(in srgb,var(--tint) 35%,transparent)}
 .step h3{margin:22px 0 0;font-size:clamp(28px,1.6vw + 14px,38px);letter-spacing:-.03em;line-height:1.08}
 .step p{margin:14px 0 0;color:var(--ink-2);font-size:17px;line-height:1.62}
 .ticks{list-style:none;margin:26px 0 0;padding:0;display:grid;gap:12px;color:var(--ink-2);font-size:15px}
@@ -315,16 +318,20 @@ section.sec{padding:120px 0 0}
 .jig em{font-style:normal;color:var(--ink-2)}
 .jig em b{color:var(--ok);font-weight:700}
 .chip.tint{border-color:color-mix(in srgb,var(--tint) 40%,transparent);color:var(--tint);background:color-mix(in srgb,var(--tint) 10%,transparent)}
+@supports not (color:color-mix(in srgb,red,red)){.num{color:var(--ink);background:var(--tint-bg);border:1px solid var(--tint-bg)}.ticks .i{background:var(--tint-bg,rgba(14,165,233,.12))}.chip.tint{background:var(--tint-bg);border-color:var(--tint)}}
 .sub{display:grid;grid-template-columns:30px 18px 1fr auto;align-items:center;gap:10px;padding:10px 4px;border-top:1px solid var(--line-2);font-size:13px}
 .sub .mk{font-size:17px}
 .sub b{font-weight:600}
 
 /* Bento */
 .bento{margin-top:56px;display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:20px}
-.cell{grid-column:span 6;border-radius:26px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow);padding:22px;display:flex;flex-direction:column;overflow:hidden}
+.cell{grid-column:span 6;border-radius:26px;background:var(--card);border:1px solid var(--line);box-shadow:var(--shadow);padding:14px 14px 22px;display:flex;flex-direction:column;overflow:hidden}
 .cell.w7{grid-column:span 7}.cell.w5{grid-column:span 5}
 .cell .art{min-height:250px;height:auto;border-radius:18px;--tint-bg:rgba(14,165,233,.09)}
-.cell h3{margin:22px 6px 0;font:700 21px/1.25 "Inter Tight","Inter",sans-serif;letter-spacing:-.02em}
+.cell .art{border:0;background:none;padding:22px;overflow:visible}
+.cell .art::before{content:"";position:absolute;inset:0;background:radial-gradient(circle,var(--dot) 1px,transparent 1.3px) 0 0/18px 18px;-webkit-mask-image:radial-gradient(75% 85% at 50% 45%,#000 35%,transparent 100%);mask-image:radial-gradient(75% 85% at 50% 45%,#000 35%,transparent 100%)}
+.cell .art>*{position:relative}
+.cell h3{margin:22px 6px 0;font:700 21px/1.25 "Inter",sans-serif;letter-spacing:-.02em}
 .cell p{margin:8px 6px 6px;color:var(--ink-2);font-size:15.5px;line-height:1.6}
 .track{width:min(100%,430px)}
 .track .top-r{display:flex;gap:12px;align-items:center}
@@ -337,9 +344,9 @@ section.sec{padding:120px 0 0}
 .steps-line span::before{content:"";width:20px;height:20px;border-radius:50%;background:var(--card);border:3px solid var(--line);box-sizing:border-box}
 .steps-line span.d::before{border-color:#10B981;background:#10B981;box-shadow:inset 0 0 0 3px var(--card)}
 .steps-line span.d{color:var(--ink);font-weight:600}
-.big{text-align:center}
-.big strong{display:block;font:800 64px/1 "Inter Tight","Inter",sans-serif;letter-spacing:-.04em;color:var(--ok)}
-.big .meter{width:250px;height:10px;margin:16px auto 10px}
+.big{text-align:center;width:100%}
+.big strong{display:block;font:800 64px/1 "Inter",sans-serif;letter-spacing:-.04em;color:var(--ok)}
+.big .meter{max-width:250px;height:10px;margin:16px auto 10px}
 .big small{color:var(--ink-3);font-size:13px}
 .pics{display:grid;grid-template-columns:repeat(3,64px);gap:12px}
 .pics .thumb{width:64px;height:64px;border-radius:16px;font-size:26px;box-shadow:var(--shadow)}
@@ -356,33 +363,30 @@ section.sec{padding:120px 0 0}
 
 /* FAQ */
 .faq{display:grid;grid-template-columns:minmax(0,400px) minmax(0,1fr);gap:64px;align-items:start}
-.faq .head p a{color:var(--link)}
 .qs{border-top:1px solid var(--line)}
 .qs details{border-bottom:1px solid var(--line)}
 .qs summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:24px 0;cursor:pointer;font-weight:600;font-size:17.5px;letter-spacing:-.01em}
 .qs summary::-webkit-details-marker{display:none}
 .qs summary .pm{width:32px;height:32px;border-radius:50%;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--ink-2);flex:none;transition:transform .2s,background .2s,color .2s,border-color .2s}
 .qs details[open] summary .pm{transform:rotate(45deg);background:var(--btn);border-color:var(--btn);color:#fff}
-.qs details p{margin:-6px 56px 24px 0;color:var(--ink-2);font-size:16px;line-height:1.65}
+.qs details[open] summary{padding-bottom:18px}
+.qs details p{margin:0 56px 24px 0;color:var(--ink-2);font-size:16px;line-height:1.65}
 
 /* Last call */
-.final{position:relative;isolation:isolate;overflow:hidden;margin-top:128px;border-radius:34px;background:#040914;color:#F8FAFC;text-align:center;padding:100px 24px 104px}
+.final{position:relative;isolation:isolate;overflow:hidden;margin-top:128px;border-radius:34px;background:linear-gradient(180deg,#08142B 0%,#0A1B36 60%,#0D2A4C 100%);box-shadow:0 60px 90px -50px rgba(56,189,248,.6);color:#F8FAFC;text-align:center;padding:100px 24px 104px}
 .final::before{content:"";position:absolute;inset:-30% -10%;z-index:-2;background:radial-gradient(42% 22% at 28% 74%,rgba(56,189,248,.55),transparent 70%),radial-gradient(36% 16% at 74% 36%,rgba(14,165,233,.45),transparent 72%),radial-gradient(70% 34% at 50% 112%,rgba(2,132,199,.85),transparent 70%),radial-gradient(40% 30% at 90% 90%,rgba(99,102,241,.35),transparent 70%);filter:blur(28px)}
-.streak{position:absolute;left:-15%;right:-15%;height:3px;z-index:-1;border-radius:3px;background:linear-gradient(90deg,transparent 0%,rgba(125,211,252,.0) 12%,rgba(186,230,253,.95) 48%,rgba(56,189,248,.6) 62%,transparent 88%);filter:blur(1.2px);box-shadow:0 0 24px 6px rgba(56,189,248,.45)}
-.streak.a{top:64%;transform:rotate(-7deg)}.streak.b{top:30%;transform:rotate(5deg);opacity:.55}.streak.c{top:84%;transform:rotate(-2deg);opacity:.4}
+.waves{position:absolute;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none}
 .final .wordmark{color:#fff;font-size:44px;text-shadow:0 0 34px rgba(56,189,248,.55)}
 .final h2{color:#fff;margin:26px auto 0;font-size:clamp(34px,3vw + 12px,56px);max-width:12em}
 .final p{margin:18px auto 0;max-width:30em;color:#CBD5E1;font-size:18px;line-height:1.6}
 .final .cta{justify-content:center}
-.final .btn-ghost{background:rgba(255,255,255,.06);color:#fff;border-color:rgba(255,255,255,.22)}
-.final .btn-ghost:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.4)}
 
 /* Footer */
 footer{margin-top:96px;border-top:1px solid var(--line)}
 .foot{display:grid;grid-template-columns:minmax(0,1.6fr) repeat(2,minmax(0,1fr));gap:40px;padding:56px 0 48px}
 .foot .wordmark{font-size:26px}
 .foot p{margin:16px 0 0;color:var(--ink-2)}
-.foot h4{margin:0 0 14px;font-size:14.5px;font-weight:600}
+.foot .fh{margin:0 0 14px;font-size:14.5px;font-weight:600;letter-spacing:0}
 .foot ul{list-style:none;margin:0;padding:0;display:grid;gap:12px}
 .foot li a{color:var(--ink-2);text-decoration:none}
 .foot li a:hover{color:var(--ink)}
@@ -390,22 +394,27 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
 .base a{color:var(--ink-2)}
 
 @media (max-width:1100px){
-  .win{width:640px}
-  .phone{right:-60px}
+  .win{width:600px}
+  .phone{right:-12px}
+  .toast.a{left:96px}
+  .toast.b{left:-80px}
 }
 @media (max-width:980px){
   .hero-grid{grid-template-columns:minmax(0,1fr);padding-top:48px;padding-bottom:48px;min-height:0}
+  .hero h1{font-size:clamp(40px,6vw + 4px,56px)}
   .scene{height:600px;max-width:520px;width:100%;margin:8px auto 0}
   .win{display:none}
   .phone{left:50%;right:auto;top:30px;transform:translateX(-50%)}
-  .toast.a{left:auto;right:0;top:120px}
+  .toast.a{left:auto;right:0;top:80px}
   .toast.b{left:0;bottom:70px}
   .step{grid-template-columns:minmax(0,1fr);gap:32px;min-height:0}
-  .art{min-height:380px}
+  .art{min-height:380px;flex-direction:column;gap:12px}
+  .badge{position:static}
   .faq{grid-template-columns:minmax(0,1fr);gap:28px}
 }
+@media (max-width:1040px){.acts .navlink{display:none}}
 @media (max-width:860px){
-  .nav,.acts .navlink{display:none}
+  .nav{display:none}
   .menu{display:block}
 }
 @media (max-width:760px){
@@ -414,29 +423,35 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
   .acts .btn-sm .long{display:none}
   .acts .btn-sm .short{display:inline}
   .acts{gap:4px}
+  .hero h1{font-size:clamp(32px,9.6vw,44px)}
   .lead{font-size:17px}
   .cta .btn{width:100%}
-  .scene{height:570px}
+  .scene{height:610px}
   .toast{padding:9px 12px 9px 9px}
-  .toast.a{top:96px;right:-4px}
-  .toast.b{left:-4px;bottom:54px}
+  .toast.a{top:0;right:-4px}
+  .toast.b{bottom:0;left:-4px}
   section.sec{padding-top:88px}
-  .stack{gap:20px}
-  .step{position:relative;top:auto;padding:22px;border-radius:24px}
+  .stack{gap:20px;margin-top:48px}
+  .step{padding:22px;border-radius:24px}
   .art{min-height:340px;padding:18px;border-radius:18px}
-  .badge.b1{left:10px;top:12px}.badge.b2{right:10px;bottom:12px}
   .bento{grid-template-columns:minmax(0,1fr);gap:16px}
   .cell,.cell.w7,.cell.w5{grid-column:auto;padding:16px}
   .qs details p{margin-right:0}
   .devices{gap:10px}
   .dev.pc{width:120px;height:96px}.dev.ph{width:68px;height:116px}
-  .stores{gap:12px 28px}
+  .stores{gap:10px 20px;font-size:14.5px}
+  .store{font-size:16px}
+  section.sec#features{margin-top:88px;padding:72px 0 80px}
   .final{margin-top:96px;padding:72px 20px 76px;border-radius:26px}
   .final .wordmark{font-size:36px}
   footer{margin-top:88px}
   .foot{grid-template-columns:repeat(2,minmax(0,1fr));gap:32px 20px}
   .foot>div:first-child{grid-column:1/-1}
 }
+@media (max-width:480px){.sub{grid-template-columns:30px 18px minmax(0,1fr);row-gap:4px}.sub .pill{grid-column:3;justify-self:start}}
+@media (max-width:420px){.jig{grid-template-columns:18px 64px minmax(0,1fr);gap:8px}}
+@media (max-width:419px){.stores>span:first-child{flex-basis:100%}}
+@media (max-width:359px){.sub{grid-template-columns:18px minmax(0,1fr)}.sub .sw{display:none}.sub .pill{grid-column:2}.art{padding:12px}}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}.toast{animation:none}.btn,.qs summary .pm{transition:none}}
 </style>
 </head>
@@ -450,7 +465,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
       <button class="tbtn" type="button" aria-label="Switch between light and dark" title="Light or dark">${ic("sun", "i-sun")}${ic("moon", "i-moon")}</button>
       <a class="navlink" href="${app}">Open FAFO</a>
       ${loginBtnSm(app)}
-      <details class="menu"><summary aria-label="Menu">${ic("menu")}</summary><div class="panel"><a href="#how">How it works</a><a href="#features">Features</a><a href="#faq">FAQ</a><a href="${app}">Open FAFO</a></div></details>
+      <details class="menu"><summary aria-label="Menu">${ic("menu")}</summary><nav class="panel" aria-label="Sections"><a href="#how">How it works</a><a href="#features">Features</a><a href="#faq">FAQ</a><a href="${app}">Open FAFO</a></nav></details>
     </div>
   </div>
 </header>
@@ -459,19 +474,19 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
     <div class="wrap hero-grid">
       <div>
         <h1 class="display"><span>Your slots in.</span><span class="grad">Your orders tracked.</span></h1>
-        <p class="lead">FAFO keeps your checkout profiles, cards and store logins encrypted, sends your slots to the seller in one batch, and follows every order from your email.</p>
+        <p class="lead">FAFO keeps your checkout profiles, cards and store logins encrypted, sends your slots to your seller in one batch, and keeps your orders in one place.</p>
         <div class="cta">${loginBtn(app)}<a class="btn btn-ghost" href="#how">How it works</a></div>
         <p class="meta"><span class="live" aria-hidden="true"></span><span>${v ? `Web version ${esc(v)} · ` : ""}Encrypted with your master password</span></p>
       </div>
       <div class="scene" aria-hidden="true">
-        <div class="toast a"><span class="t ok">${ic("check")}</span><span><b>Batch approved</b><small>8 slots · just now</small></span></div>
+        <div class="toast a"><span class="t ok">${ic("check")}</span><span><b>Success</b><small>8 slots approved</small></span></div>
         <div class="win">
           <div class="bar"><i></i><i></i><i></i><span class="url">${ic("lock")}${appHost}</span></div>
           <div class="app">
             <div class="side"><span class="wordmark">FAFO</span><span>${ic("user")}</span><span>${ic("card")}</span><span>${ic("key")}</span><span class="on">${ic("send")}</span><span>${ic("box")}</span><span>${ic("layers")}</span></div>
             <div class="main">
               <div class="mh"><div><h4>Submit</h4><small>Slots switched on go to your seller in one batch</small></div><div class="chips"><span class="chip on">All</span><span class="chip">${POKEBALL}<b>4</b></span><span class="chip">${BULLSEYE}<b>8</b></span></div></div>
-              <div class="stats"><div class="stat"><span class="t sky">${ic("send")}</span><span><strong>12</strong><small>Slots on</small></span></div><div class="stat"><span class="t wait">${ic("clock")}</span><span><strong>4</strong><small>Pending</small></span></div><div class="stat"><span class="t ok">${ic("check")}</span><span><strong>8</strong><small>Success</small></span></div></div>
+              <div class="stats"><div class="stat"><span class="t sky">${ic("send")}</span><span><strong>12</strong><small>Selected</small></span></div><div class="stat"><span class="t wait">${ic("clock")}</span><span><strong>4</strong><small>Pending</small></span></div><div class="stat"><span class="t ok">${ic("check")}</span><span><strong>8</strong><small>Success</small></span></div></div>
               <div class="rows">${SUBMIT_ROWS.map(([s, n, c, p]) => `<div class="row"><span class="sw"></span>${mark(s)}<span><b>${n}</b><small>${c}</small></span>${pill(p)}</div>`).join("")}</div>
             </div>
           </div>
@@ -479,10 +494,10 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
         <div class="phone"><div class="screen"><span class="notch"></span><span class="sbar"><span>9:41</span><i></i></span>
           <h5>Orders</h5>
           <div class="chips"><span class="chip">Today</span><span class="chip on">Weekly</span><span class="chip">Overall</span></div>
-          <div class="stick"><span class="lab"><span>Stick rate</span><span>This week</span></span><strong>92%</strong><span class="meter"><i style="flex:23"></i><i style="flex:2"></i></span><small>23 kept · 2 canceled</small></div>
+          <div class="stick"><span class="lab"><span>Checkouts</span><span>Weekly</span></span><strong>23</strong><small>successful orders</small></div>
           <div class="olist">${ORDERS.map(([n, s, q, st, th]) => `<div class="order"><span class="thumb ${th}">${ic("box")}</span><span><b>${n}</b><span class="s"><span class="q">${mark(s)}×${q}</span>${pill(st)}</span></span></div>`).join("")}</div>
         </div></div>
-        <div class="toast b"><span class="t sky">${ic("truck")}</span><span><b>Delivered</b><small>Target · 2:14 PM</small></span></div>
+        <div class="toast b"><span class="t sky">${ic("image")}</span><span><b>Picture found</b><small>Booster Bundle</small></span></div>
       </div>
     </div>
     <div class="wrap"><div class="stores"><span>Made for</span><span class="store">${POKEBALL}Pokémon Center</span><span class="store">${BULLSEYE}Target</span></div></div>
@@ -490,10 +505,10 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
 
   <section class="sec" id="how">
     <div class="wrap">
-      <div class="head"><h2 class="display">From sign-in to Success.</h2><p>Set up once, switch your slots on when the drop is announced, and watch them go from Pending approval to Success.</p></div>
+      <div class="head"><h2 class="display">Four steps to Success.</h2><p>Log in, set your master password and build your profiles. Then switch your slots on for the drop and watch them go from Pending approval to Success.</p></div>
       <div class="stack">
         <article class="step s1" style="--n:0">
-          <div><span class="num">1</span><h3 class="display">Log in with Discord</h3><p>One click with your Discord account. Your seller approves you, and your license arrives in FAFO on its own.</p>
+          <div><span class="num">1</span><h3 class="display">Log in with Discord</h3><p>Sign in with your Discord account. Once your seller approves you, your license arrives in FAFO on its own, even if you closed the page.</p>
             <ul class="ticks">${check("Nothing to install or copy")}${check("Your seller approves every new member")}</ul></div>
           <div class="art" aria-hidden="true"><div class="panel-card">
             <div class="flow"><span class="tile dc-t">${DISCORD}</span><span class="dash"></span><span class="tile ff"><span class="wordmark">FAFO</span></span></div>
@@ -504,7 +519,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
         </article>
         <article class="step s2" style="--n:1">
           <div><span class="num">2</span><h3 class="display">Choose your master password</h3><p>It encrypts your profiles, cards and logins before they're saved or synced. Only you know it, so only you can open your vault.</p>
-            <ul class="ticks">${check("With sync, the same vault on your computer and phone")}${check("No one can reset it, not even your seller")}</ul></div>
+            <ul class="ticks">${check("The same vault on your computer and your phone")}${check("No one can reset it, not even your seller")}</ul></div>
           <div class="art" aria-hidden="true">
             <span class="badge b1">${ic("lock")}Encrypted before it's saved</span>
             <div class="panel-card lock-c"><span class="wordmark">FAFO</span><p>Cop it. Track it. FAFO.</p><div class="field"><span>••••••••••••</span>${ic("eye")}</div><div class="fake-btn">${ic("lock")}Unlock</div></div>
@@ -512,25 +527,25 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
           </div>
         </article>
         <article class="step s3" style="--n:2">
-          <div><span class="num">3</span><h3 class="display">Build your profiles</h3><p>One profile per store. Generate them in bulk, jig each address the ways USPS reads as the same one, and add your cards and store logins.</p>
+          <div><span class="num">3</span><h3 class="display">Build your profiles</h3><p>One profile per store. Generate them in bulk, jig each address so no two profiles share one, and add your cards and store logins.</p>
             <ul class="ticks">${check("Generate, Mass edit and Duplicate")}${check("Jig for Target or Pokémon Center")}</ul></div>
           <div class="art" aria-hidden="true"><div class="panel-card">
             <div class="pc-h"><span>Generate</span><span class="chip tint">${ic("shuffle")}Jig for Target</span></div>
             ${JIGS.map(([n, a]) => `<div class="jig">${BULLSEYE}<span>${n}</span><em>${a}</em></div>`).join("")}
-            <div class="fake-btn">${ic("plus")}Import 4 profiles</div>
+            <div class="fake-btn">${ic("plus")}Import 4 to profiles</div>
           </div></div>
         </article>
         <article class="step s4" style="--n:3">
           <div><span class="num">4</span><h3 class="display">Submit your slots</h3><p>Switch slots on and send them to your seller in one batch. Each shows Pending approval, then Success once your seller approves it.</p>
-            <ul class="ticks">${check("Use Assigned Account when you have no store login")}${check("Declined slots can go out again in a new batch")}</ul></div>
+            <ul class="ticks">${check("No store login? Your seller can assign you one")}${check("Declined slots can go out again in a new batch")}</ul></div>
           <div class="art" aria-hidden="true">
             <div class="panel-card">
-              <div class="pc-h"><span>Submit</span><small>4 slots on</small></div>
+              <div class="pc-h"><span>Submit</span><small>4 / 20 selected</small></div>
               <div class="sub"><span class="sw"></span>${BULLSEYE}<b>Target #1</b>${pill("ok")}</div>
               <div class="sub"><span class="sw"></span>${BULLSEYE}<b>Target #2</b>${pill("ok")}</div>
               <div class="sub"><span class="sw"></span>${POKEBALL}<b>Pokémon Center #1</b>${pill("wait")}</div>
               <div class="sub"><span class="sw"></span>${POKEBALL}<b>Pokémon Center #2</b>${pill("wait")}</div>
-              <div class="fake-btn">${ic("send")}Send to your seller</div>
+              <div class="fake-btn">${ic("send")}Submit slots</div>
             </div>
             <span class="badge b2">${ic("check")}Your seller approved 2 slots</span>
           </div>
@@ -541,41 +556,41 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
 
   <section class="sec" id="features">
     <div class="wrap">
-      <div class="head"><h2 class="display">Everything after checkout, handled.</h2><p>Your orders, their pictures and your stick rate keep themselves up to date, so all that's left is the next drop.</p></div>
+      <div class="head"><h2 class="display">What happens after checkout.</h2><p>Keep every order in one place, with its picture, and see how many of them stuck.</p></div>
       <div class="bento">
         <div class="cell w7"><div class="art" aria-hidden="true"><div class="panel-card track">
-          <div class="top-r"><span class="thumb a">${ic("box")}</span><span><b>Elite Trainer Box ×2</b><small>Target · Order #4471-0290</small></span></div>
+          <div class="top-r"><span class="thumb a">${ic("box")}</span><span><b>Booster Bundle ×3</b><small>Target · Order #4471-0290</small></span></div>
           <div class="steps-line"><span class="d">Placed</span><span class="d">Shipped</span><span class="d">Arriving</span><span>Delivered</span></div>
-        </div></div><h3>Every order, tracked.</h3><p>Placed, shipped, arriving, delivered or canceled: every step, read from your order emails.</p></div>
-        <div class="cell w5"><div class="art" aria-hidden="true"><div class="big"><strong>92%</strong><span class="meter"><i style="flex:23"></i><i style="flex:2"></i></span><small>23 kept · 2 canceled</small></div></div><h3>Your stick rate, per drop.</h3><p>See how many of a drop's items weren't canceled, right on its success card.</p></div>
-        <div class="cell w5"><div class="art" aria-hidden="true"><div class="pics"><span class="thumb a">${ic("box")}</span><span class="thumb e">${ic("box")}</span><span class="thumb b">${ic("box")}</span><span class="thumb c">${ic("box")}</span><span class="thumb found f"><span class="spark">${ic("sparkle")}</span>${ic("image")}</span><span class="thumb d">${ic("box")}</span></div></div><h3>Pictures, found for you.</h3><p>Orders get their product's picture on their own. Paste or drop your own any time.</p></div>
-        <div class="cell w7"><div class="art" aria-hidden="true"><div class="devices"><span class="dev pc">${ic("monitor")}Computer</span><span class="syncdot"><span class="t ok">${ic("sync")}</span>Synced</span><span class="dev ph">${ic("phone")}Phone</span></div></div><h3>One vault, every screen.</h3><p>Turn on sync to use the same vault on your computer and your phone. It's encrypted before it leaves either one.</p></div>
+        </div></div><h3>Every order in one place.</h3><p>Paste your order confirmation emails into Orders and each one becomes an order. Mark it shipped, arriving, delivered or canceled as it goes.</p></div>
+        <div class="cell w5"><div class="art" aria-hidden="true"><div class="big"><strong>92%</strong><span class="meter"><i style="flex:23"></i><i style="flex:2"></i></span><small>23 items stuck · 2 canceled</small></div></div><h3>Your stick rate, on your success card.</h3><p>Generate success shows how many of your items weren't canceled, for today, this week or any dates you pick.</p></div>
+        <div class="cell w5"><div class="art" aria-hidden="true"><div class="pics"><span class="thumb a">${ic("box")}</span><span class="thumb e">${ic("box")}</span><span class="thumb b">${ic("box")}</span><span class="thumb c">${ic("box")}</span><span class="thumb found f"><span class="spark">${ic("sparkle")}</span>${ic("image")}</span><span class="thumb d">${ic("box")}</span></div></div><h3>Pictures, found for you.</h3><p>Pokémon products get their picture on their own, from TCGplayer's catalog. Paste or drop your own any time.</p></div>
+        <div class="cell w7"><div class="art" aria-hidden="true"><div class="devices"><span class="dev pc">${ic("monitor")}Computer</span><span class="syncdot"><span class="t ok">${ic("sync")}</span>Synced</span><span class="dev ph">${ic("phone")}Phone</span></div></div><h3>One vault, every screen.</h3><p>Log in with Discord on your computer and your phone, and the same vault opens on both. It's encrypted before it leaves either one.</p></div>
       </div>
     </div>
   </section>
 
   <section class="sec" id="faq">
     <div class="wrap faq">
-      <div class="head"><h2 class="display">Questions, answered.</h2><p>Still stuck? Ask your seller in their Discord.</p></div>
+      <div class="head"><h2 class="display">Good to know.</h2><p>Anything else? Ask your seller in their Discord.</p></div>
       <div class="qs">
-        <details open><summary>How do I get a license?<span class="pm">${ic("plus")}</span></summary><p>Choose Login with Discord. Your seller approves you, and your license arrives in FAFO on its own.</p></details>
+        <details open><summary>How do I get a license?<span class="pm">${ic("plus")}</span></summary><p>Choose Login with Discord. Once your seller approves you, your license arrives in FAFO on its own.</p></details>
         <details><summary>Do I need to download anything?<span class="pm">${ic("plus")}</span></summary><p>No. FAFO runs in your browser at ${appHost}, on your computer or your phone.</p></details>
-        <details><summary>Who can see my cards and passwords?<span class="pm">${ic("plus")}</span></summary><p>Your vault is encrypted with your master password before it's saved or synced, so only you can open it. When you submit slots, those slots go to your seller so they can check out with them.</p></details>
+        <details><summary>Who can see my cards and passwords?<span class="pm">${ic("plus")}</span></summary><p>Your vault is encrypted with your master password before it's saved or synced, so only you can open it. When you submit slots, your seller gets each slot's card, addresses and store login as files in their Discord channel, so they can check out with them.</p></details>
         <details><summary>What if I forget my master password?<span class="pm">${ic("plus")}</span></summary><p>No one can reset it, not even your seller: it's the key your vault is encrypted with. Keep it somewhere safe.</p></details>
         <details><summary>Which stores does FAFO work with?<span class="pm">${ic("plus")}</span></summary><p>Pokémon Center and Target. Each profile is for one store, and Duplicate makes its twin for the other.</p></details>
-        <details><summary>How do my orders get into FAFO?<span class="pm">${ic("plus")}</span></summary><p>From your order emails: paste them into Orders, or let the desktop app read them from your inbox. With sync on, every device gets them.</p></details>
-        <details><summary>Can I use FAFO on my phone and my computer?<span class="pm">${ic("plus")}</span></summary><p>Yes. Turn on sync in Settings → Web version &amp; sync, then log in on the other device with the same license.</p></details>
+        <details><summary>How do my orders get into FAFO?<span class="pm">${ic("plus")}</span></summary><p>Paste your order confirmation emails into Orders → Add from email (several at once is fine), or add an order by hand. Each confirmation becomes a tracked order. With sync on, every device gets them.</p></details>
+        <details><summary>Can I use FAFO on my phone and my computer?<span class="pm">${ic("plus")}</span></summary><p>Yes. Your vault syncs from the start: on the other device, choose Login with Discord and enter the same master password. Made it with Use this browser only? Turn on sync in Settings → Web version &amp; sync first.</p></details>
       </div>
     </div>
   </section>
 
   <div class="wrap">
     <section class="final" aria-labelledby="final-h">
-      <span class="streak a"></span><span class="streak b"></span><span class="streak c"></span>
+      <svg class="waves" viewBox="0 0 1200 500" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="wg" x1="0" x2="1"><stop offset="0" stop-color="#38BDF8" stop-opacity="0"/><stop offset=".45" stop-color="#BAE6FD"/><stop offset="1" stop-color="#0EA5E9" stop-opacity="0"/></linearGradient><filter id="wb" filterUnits="userSpaceOnUse" x="-100" y="-100" width="1400" height="700"><feGaussianBlur stdDeviation="16"/></filter><filter id="wf" filterUnits="userSpaceOnUse" x="-100" y="-100" width="1400" height="700"><feGaussianBlur stdDeviation="1"/></filter></defs><g fill="none" stroke="url(#wg)"><path d="M-60 380C180 300 420 470 650 385S1040 270 1260 330" stroke-width="80" filter="url(#wb)" opacity=".6"/><path d="M-60 380C180 300 420 470 650 385S1040 270 1260 330" stroke-width="2" filter="url(#wf)"/><path d="M-60 430C250 360 470 505 720 420S1020 330 1260 395" stroke-width="46" filter="url(#wb)" opacity=".45"/><path d="M-60 430C250 360 470 505 720 420S1020 330 1260 395" stroke-width="1.4" filter="url(#wf)" opacity=".8"/><path d="M-60 150C300 210 600 90 1260 170" stroke-width="30" filter="url(#wb)" opacity=".25"/></g></svg>
       <span class="wordmark" aria-hidden="true">FAFO</span>
       <h2 class="display" id="final-h">Ready for the next drop?</h2>
       <p>Log in with Discord, choose your master password and add your first profile.</p>
-      <div class="cta">${loginBtn(app)}<a class="btn btn-ghost" href="${app}">Open FAFO</a></div>
+      <div class="cta">${loginBtn(app)}</div>
     </section>
   </div>
 </main>
@@ -583,8 +598,8 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
   <div class="wrap">
     <div class="foot">
       <div><a class="wordmark" href="/" aria-label="FAFO home">FAFO</a><p>Cop it. Track it. FAFO.</p></div>
-      <div><h4>FAFO</h4><ul><li><a href="#how">How it works</a></li><li><a href="#features">Features</a></li><li><a href="#faq">FAQ</a></li></ul></div>
-      <div><h4>Account</h4><ul><li><a href="${app}">Login with Discord</a></li><li><a href="${app}">Open FAFO</a></li></ul></div>
+      <div><h2 class="fh">FAFO</h2><ul><li><a href="#how">How it works</a></li><li><a href="#features">Features</a></li><li><a href="#faq">FAQ</a></li></ul></div>
+      <div><h2 class="fh">Account</h2><ul><li><a href="${app}">Login with Discord</a></li><li><a href="${app}">Open FAFO</a></li></ul></div>
     </div>
     <div class="base"><span>© ${year} FAFO</span><span>${v ? `Web version ${esc(v)} · ` : ""}<a href="${app}">${appHost}</a></span></div>
   </div>
@@ -593,14 +608,24 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
 (function(){
   var root=document.documentElement,btn=document.querySelector(".tbtn");
   function dark(){var t=root.getAttribute("data-theme");return t?t==="dark":!!(window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)}
-  function label(){if(btn)btn.setAttribute("aria-label",dark()?"Switch to light theme":"Switch to dark theme")}
+  // The browser's own bar (theme-color) follows a theme picked here too.
+  function label(){var d=dark();if(btn)btn.setAttribute("aria-label",d?"Switch to light theme":"Switch to dark theme");if(root.getAttribute("data-theme"))[].forEach.call(document.querySelectorAll('meta[name="theme-color"]'),function(m){m.setAttribute("content",d?"#0B0F19":"#F8FAFC")})}
   label();
+  if(window.matchMedia){var mq=matchMedia("(prefers-color-scheme: dark)");if(mq.addEventListener)mq.addEventListener("change",label);else if(mq.addListener)mq.addListener(label)}
   if(btn)btn.addEventListener("click",function(){var t=dark()?"light":"dark";root.setAttribute("data-theme",t);try{localStorage.setItem("fafo-site-theme",t)}catch(e){}label()});
   var top=false;function onScroll(){var s=window.scrollY>4;if(s!==top){top=s;root.classList.toggle("scrolled",s)}}
   onScroll();window.addEventListener("scroll",onScroll,{passive:true});
+  // Stacked steps: the ones covered shrink a little and fade, while they're sticky (wide, tall enough windows).
+  var steps=[].slice.call(document.querySelectorAll(".step")),mm=window.matchMedia,still=mm&&mm("(prefers-reduced-motion: reduce)").matches,wide=mm&&mm("(min-width: 981px) and (min-height: 640px)"),busy=false;
+  function stack(){busy=false;var on=!still&&wide&&wide.matches;for(var i=0;i<steps.length;i++){var s=steps[i],d=0;if(on){var a=s.getBoundingClientRect();for(var j=i+1;j<steps.length;j++){var b=steps[j].getBoundingClientRect();d+=Math.min(1,Math.max(0,1-(b.top-a.top)/a.height))}}s.style.transform=d?"scale("+(1-.035*d).toFixed(4)+")":"";s.style.setProperty("--dim",Math.min(1,d).toFixed(3))}}
+  function later(){if(!busy){busy=true;(window.requestAnimationFrame||setTimeout)(stack)}}
+  if(steps.length){stack();window.addEventListener("scroll",later,{passive:true});window.addEventListener("resize",later)}
   var menu=document.querySelector(".menu");
-  if(menu){menu.addEventListener("click",function(e){if(e.target.closest&&e.target.closest(".panel a"))menu.removeAttribute("open")});
-    document.addEventListener("click",function(e){if(menu.open&&!menu.contains(e.target))menu.removeAttribute("open")});}
+  if(menu){var shut=function(){menu.removeAttribute("open")};
+    menu.addEventListener("click",function(e){if(e.target.closest&&e.target.closest(".panel a"))shut()});
+    document.addEventListener("pointerdown",function(e){if(menu.open&&!menu.contains(e.target))shut()});
+    document.addEventListener("keydown",function(e){if(e.key==="Escape"&&menu.open){shut();menu.querySelector("summary").focus()}});
+    menu.addEventListener("focusout",function(e){if(menu.open&&e.relatedTarget&&!menu.contains(e.relatedTarget))shut()});}
 })();
 </script>
 </body>

@@ -41,7 +41,8 @@ are: `app.fafoaco.com` (the app), `fafoaco.com` (FAFO's front page, `src/site.js
 Windows download and `/app` to the app) and `www.fafoaco.com` (to `fafoaco.com`). Since 2026-10-13 (the owner's request)
 the front page's button is Login with Discord, which opens the app; it no longer offers the Windows download, and
 `/download` stays for links people already have. Its design (also 2026-10-13) is light with a dark theme, following the
-system or the switch in its header (kept in the browser as `fafo-site-theme`). `SITE_HOST` in the environment
+system or the switch in its header (kept in the browser as `fafo-site-theme`). It shows the web version's release when
+the feed answers within 800 ms, and finishes the check in the background otherwise. `SITE_HOST` in the environment
 changes the front page's address (the tests use `localhost`). Every `http://` request goes to `https://` (301), since the
 page needs a secure context and a browser keeps each origin's vault apart; turning on SSL/TLS → Edge Certificates →
 Always Use HTTPS for the zone does the same at Cloudflare's edge.
