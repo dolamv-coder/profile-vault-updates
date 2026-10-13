@@ -240,8 +240,12 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   download. See "Desktop app" below and `desktop/README.md`.
 - `web-worker/`: the web version, a Cloudflare Worker (`app`) at
   `https://app.fafoaco.com` (and still `https://app.orbit-app.workers.dev`), and FAFO's front page at
-  `https://fafoaco.com`, whose one button since 2026-10-13 is Login with Discord, to the app (the owner's request: no
-  Windows download or "Windows 10 and 11, or any browser" on it; `/download` still redirects for old links). See "Web
+  `https://fafoaco.com`, whose button since 2026-10-13 is Login with Discord, to the app (the owner's request: no
+  Windows download or "Windows 10 and 11, or any browser" on it; `/download` still redirects for old links). The same day
+  the owner asked for a look "similar to" aphrowuu.com (an ACO's site): `site.js` is now light with a dark theme (the
+  system's, or the header's switch, kept as `fafo-site-theme` on fafoaco.com), Inter and Inter Tight with the Bruno Ace SC
+  wordmark, mockups of FAFO's own Submit and Orders screens with sample data, four stacked steps, a grid of features, an
+  FAQ and a dark last call. Only the style is taken from that site, never its wording, logo or product photos. See "Web
   version and sync" below.
 - GitHub Releases: the app links new users to
   `releases/latest/download/FAFO-Windows.zip` on this repo (`Orbit-Windows.zip`
