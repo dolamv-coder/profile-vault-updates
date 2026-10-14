@@ -1117,6 +1117,11 @@ that inbox passwords stay in the vault. The sidebar item's badge counts the logi
 and gated on `UI.view === "imap"`; nothing gains a field, and since desktop updates are paused the desktop variant is
 dormant until they resume (the web variant is what ships).
 
+From 1.9.118 the IMAP tab's web note (`renderImap`'s `webNote`, web only) also says that pulling orders from your email
+happens in the desktop app and that the web version tracks orders by pasting confirmation emails, so a web buyer who saves
+an inbox doesn't expect orders to appear on their own (the owner's request: buyers should track their own orders, which the
+desktop app's email sync does privately in their sealed vault). Copy only; nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
