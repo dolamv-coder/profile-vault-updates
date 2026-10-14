@@ -2365,7 +2365,7 @@ async function accountListPage(request, env, url, id) {
         const { results: had } = typed.length ? await env.DB.prepare(`SELECT email, email_norm, password FROM accounts WHERE store = '${MASTER}' AND email_norm IN (SELECT value FROM json_each(?))`)
           .bind(JSON.stringify(typed.map((x) => x.email.toLowerCase()))).all() : { results: [] };
         const kept = had.filter((h) => typed.some((x) => x.email.toLowerCase() === h.email_norm && x.password !== h.password)).map((h) => h.email);
-        if (kept.length) notes.push(`${few(kept)} ${kept.length === 1 ? "was" : "were"} on your list already, and kept ${kept.length === 1 ? "the password it had" : "the passwords they had"} (Edit changes one).`);
+        if (kept.length) notes.push(`${few(kept)} ${kept.length === 1 ? "was" : "were"} on your list already, and kept ${kept.length === 1 ? "the password it had" : "the passwords they had"} (Edit changes ${kept.length === 1 ? "it" : "one"}).`);
         if (typed.length) await addToList(env, MASTER, typed, "list:" + o.id, now);
         await env.DB.batch(norms.map((e) => env.DB.prepare(`DELETE FROM accounts WHERE store IN ('target', 'pokemoncenter') AND email_norm = ? AND key_hash IS NULL AND ${OWN_ACCOUNT}`).bind(e)));
         wants = norms;
