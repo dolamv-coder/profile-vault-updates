@@ -1105,6 +1105,18 @@ their shipping address as Jig writes it (virtual credit cards only), counted aft
 different address bills each in its own name before Jig for Pokémon Center doubles a letter. Without Jig nothing changes. Jig on one profile (its menu, the profile editor) still keeps billing
 as it was. Nothing gains a field.
 
+From 1.9.117 a read-only **IMAP** tab is in the sidebar, under Store logins (the owner's request, with a screenshot of
+aphrowuu.com's IMAP page; display only, nothing sent to the server). `renderImap` shows the slot summary (each store's
+switched-on count over its `capOf` cap, and `slotsInUse`/`slotAllow` overall, each row linking to Submit), the store
+logins with no inbox (`!l.inboxId`) under **Needs an inbox** with a Set up inbox button that opens the login editor
+(`edit-login`) and a note that Use Assigned Account profiles need none, and each saved inbox with how many logins use it.
+Only the desktop app signs in to an inbox, so its live status is per-device (`inbox.syncError`, `inbox.lastSync`, in
+`SYNC_DEVICE_FIELDS`): the desktop variant (`DESK`) shows Connected/Error with the last check and a Test button
+(`edit-inbox`, where the check lives), the web variant shows "Status shows in the desktop app", a disabled Test and a note
+that inbox passwords stay in the vault. The sidebar item's badge counts the logins needing an inbox. The view is additive
+and gated on `UI.view === "imap"`; nothing gains a field, and since desktop updates are paused the desktop variant is
+dormant until they resume (the web variant is what ships).
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
