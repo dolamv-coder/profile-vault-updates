@@ -1,10 +1,10 @@
 {
-  "version": "1.9.121",
-  "url": "index-1.9.121.html",
-  "sha256": "30265a559478808b1a2bc27a548704b99cdbf557a991f36d7e52881f2c332192",
-  "signature": "AwoM+tUSKLWHELI6xl9vz06Yz1kxrIce1H5uB+nzH93cye5HKpf2vmgMUaxOLchCCj6VQoqXpN+6hjehX0B3Bg==",
+  "version": "1.9.122",
+  "url": "index-1.9.122.html",
+  "sha256": "f9f947a618bb1278d07a660086c912ec11a2e8bc44425c6c98a5067339578ada",
+  "signature": "OH32RF6i/izYNfgQKloOIRR2GwZwCNmJfOetxs23+lDkrYiGh3CicgFQs5KY2H+MIvwfBFvivUbRC1o66KMoDg==",
   "minAppVersion": "0",
-  "notes": "A fresh look for the Profiles page, to match the new Orders page. Your profiles are now clean cards: the store mark, name and group up top, the city and card below, and a status pill that tells you at a glance whether each one is ready to submit — or exactly what it still needs (a card, a login, an address). Along the top you get a count for each store plus how many are ready and how many need attention, and a store switch to focus on Target or Pokémon Center. The Compact and List layouts are still there. Clean emails now also catches store sale emails worded \"40% savings\" or \"Save up to $100\", not just \"40% off\".",
+  "notes": "A fresh look for the Store logins page, to match Orders and Profiles. Each login is now a clean card: the store and account email up top, a pill that shows at a glance whether its inbox is connected or still needs one, and how many profiles use it. Counts along the top tell you how many logins you have, how many have an inbox and how many still need one. Groups, search and the Compact and List layouts work as before, and your saved inboxes are listed underneath.",
   "installerUrl": "",
-  "publishedAt": "2026-10-14T22:05:31.115Z"
+  "publishedAt": "2026-10-14T22:32:33.721Z"
 }
