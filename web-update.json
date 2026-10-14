@@ -1,10 +1,10 @@
 {
-  "version": "1.9.118",
-  "url": "index-1.9.118.html",
-  "sha256": "d685dc843dfab21563395b225e47aa758c6fab4c845adb41f57e1d331e173bac",
-  "signature": "zwh/UdzvWd6gpHztDF/ToOKuUDzUI6Eq9wgDLf0xIiljOWQw31M/HLYSvtBvd40mAHAQlF6mHCu+959T84VsAw==",
+  "version": "1.9.119",
+  "url": "index-1.9.119.html",
+  "sha256": "ff76faa223d9d272f0995839fd04779606034180bb8f113f1d94b451fa72608b",
+  "signature": "n2JgcEGrJuT7Vc1FhmiPdpT90Sg5AD+bkE4arbjJ/rQNu3CAGGVHcz88HeyQj+2wD150UDWvo74o9DmLClunDw==",
   "minAppVersion": "0",
-  "notes": "The IMAP tab now makes it clear, on the web, that pulling your orders from your email happens in the FAFO desktop app — the web version can't read email, so there you track orders by pasting their confirmation emails. Your inbox passwords still never leave your device.",
+  "notes": "Setting up a store login's inbox reads clearer: if you type an inbox you've already added to FAFO, the step-by-step now shows a clear green \"already set up\" note and the button reads Use this inbox — so it's obvious you can just reuse it, rather than looking like the guide stopped. A brand-new inbox still walks you through every step.",
   "installerUrl": "",
-  "publishedAt": "2026-10-14T15:56:35.102Z"
+  "publishedAt": "2026-10-14T16:51:13.026Z"
 }
