@@ -81,7 +81,7 @@ export function sitePage(version, appUrl = APP_URL) {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bruno+Ace+SC&text=FAFO&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bruno+Ace+SC&text=FAFOACO&display=swap">
 <style>
 :root{
   --bg:#F8FAFC; --bg-2:#F1F5F9; --card:#FFFFFF; --card-2:#F8FAFC; --ink:#0F172A; --ink-2:#475569; --ink-3:#64748B;
@@ -136,6 +136,8 @@ a{color:inherit}
 :focus-visible{outline:2px solid var(--focus);outline-offset:3px;border-radius:8px}
 .final :focus-visible{outline-color:#7DD3FC}
 .wordmark{font-family:"Bruno Ace SC",system-ui,sans-serif;letter-spacing:.02em;line-height:1;text-decoration:none;color:var(--ink)}
+.brand{display:inline-flex;flex-direction:column;align-items:center}
+.brand .aco{display:block;font-size:max(9px,.4em);letter-spacing:.35em;margin:.34em 0 0 .35em;color:var(--sky)}
 .display{font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;font-weight:700;letter-spacing:-.035em;line-height:1.02;margin:0;color:var(--ink);text-wrap:balance}
 p,.ticks li span,.qs summary{text-wrap:pretty}
 .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;padding-bottom:.06em}
@@ -368,6 +370,7 @@ section.sec#features{background:var(--band);margin-top:120px;padding:104px 0 112
 .final::before{content:"";position:absolute;inset:-30% -10%;z-index:-2;background:radial-gradient(42% 22% at 28% 74%,rgba(56,189,248,.55),transparent 70%),radial-gradient(36% 16% at 74% 36%,rgba(14,165,233,.45),transparent 72%),radial-gradient(70% 34% at 50% 112%,rgba(2,132,199,.85),transparent 70%),radial-gradient(40% 30% at 90% 90%,rgba(99,102,241,.35),transparent 70%);filter:blur(28px)}
 .waves{position:absolute;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none}
 .final .wordmark{color:#fff;font-size:44px;text-shadow:0 0 34px rgba(56,189,248,.55)}
+.final .brand .aco{color:#7DD3FC;text-shadow:none}
 .final h2{color:#fff;margin:26px auto 0;font-size:clamp(34px,3vw + 12px,56px);max-width:12em}
 .final p{margin:18px auto 0;max-width:30em;color:#CBD5E1;font-size:18px;line-height:1.6}
 .final .cta{justify-content:center}
@@ -447,7 +450,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <div class="wrap">
-    <a class="wordmark" href="/" aria-label="FAFO home">FAFO</a>
+    <a class="wordmark brand" href="/" aria-label="FAFO ACO home">FAFO<span class="aco">ACO</span></a>
     <nav class="nav" aria-label="Sections"><a href="#how">How it works</a><a href="#features">Features</a><a href="#faq">FAQ</a></nav>
     <div class="acts">
       <button class="tbtn" type="button" aria-label="Switch between light and dark" title="Light or dark">${ic("sun", "i-sun")}${ic("moon", "i-moon")}</button>
@@ -573,7 +576,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
   <div class="wrap">
     <section class="final" aria-labelledby="final-h">
       <svg class="waves" viewBox="0 0 1200 500" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="wg" x1="0" x2="1"><stop offset="0" stop-color="#38BDF8" stop-opacity="0"/><stop offset=".45" stop-color="#BAE6FD"/><stop offset="1" stop-color="#0EA5E9" stop-opacity="0"/></linearGradient><filter id="wb" filterUnits="userSpaceOnUse" x="-100" y="-100" width="1400" height="700"><feGaussianBlur stdDeviation="16"/></filter><filter id="wf" filterUnits="userSpaceOnUse" x="-100" y="-100" width="1400" height="700"><feGaussianBlur stdDeviation="1"/></filter></defs><g fill="none" stroke="url(#wg)"><path d="M-60 380C180 300 420 470 650 385S1040 270 1260 330" stroke-width="80" filter="url(#wb)" opacity=".6"/><path d="M-60 380C180 300 420 470 650 385S1040 270 1260 330" stroke-width="2" filter="url(#wf)"/><path d="M-60 430C250 360 470 505 720 420S1020 330 1260 395" stroke-width="46" filter="url(#wb)" opacity=".45"/><path d="M-60 430C250 360 470 505 720 420S1020 330 1260 395" stroke-width="1.4" filter="url(#wf)" opacity=".8"/><path d="M-60 150C300 210 600 90 1260 170" stroke-width="30" filter="url(#wb)" opacity=".25"/></g></svg>
-      <span class="wordmark" aria-hidden="true">FAFO</span>
+      <span class="wordmark brand" aria-hidden="true">FAFO<span class="aco">ACO</span></span>
       <h2 class="display" id="final-h">Ready for the next drop?</h2>
       <p>Log in with Discord, choose your master password and add your first profile.</p>
       <div class="cta">${loginBtn(app)}</div>
@@ -583,7 +586,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
 <footer>
   <div class="wrap">
     <div class="foot">
-      <div><a class="wordmark" href="/" aria-label="FAFO home">FAFO</a><p>Cop it. Track it. FAFO.</p></div>
+      <div><a class="wordmark brand" href="/" aria-label="FAFO ACO home">FAFO<span class="aco">ACO</span></a><p>Cop it. Track it. FAFO.</p></div>
       <div><h2 class="fh">FAFO</h2><ul><li><a href="#how">How it works</a></li><li><a href="#features">Features</a></li><li><a href="#faq">FAQ</a></li></ul></div>
       <div><h2 class="fh">Account</h2><ul><li><a href="${app}">Login with Discord</a></li><li><a href="${app}">Open FAFO</a></li></ul></div>
     </div>
