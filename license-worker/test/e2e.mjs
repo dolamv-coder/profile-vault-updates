@@ -2363,6 +2363,216 @@ try {
     const gone = new URLSearchParams({ t: new URL(lsLink).searchParams.get("t"), action: "copy" }); gone.append("pick", "other:a|b c typed.one@example.com");
     assert.deepEqual(await (await fetchOnce(lsLink.split("?")[0], { method: "POST", body: gone })).json(), { lines: [], missing: 1, over: 0 }, "none left: nothing to copy");
   });
+  // Reassign (2026-10-14, the owner's request): a buyer's account swapped for another, when something's wrong with it. Rosa is
+  // the buyer here.
+  let rosaKey, rosaOld, rosaNew;
+  const rosaPair = async (name, batch = "ra" + rid()) => {
+    const before = webhookPosts.length;
+    const r = await fetchOnce(BASE + "/submissions", { method: "POST", headers: { authorization: "Bearer " + rosaKey, "content-type": "application/json" },
+      body: JSON.stringify({ files: [tgFile([name]), pcFile([name])], name: "Rosa", slots: 2, batch, stores: [{ name: "Target", n: 1, seller: 1 }, { name: "Pokémon Center", n: 1, seller: 1 }] }) });
+    assert.equal(r.status, 200, await r.clone().text()); await r.text();
+    const m = batchPost(before); assert.ok(m, "posted");
+    const a = listRows().find((x) => x.store === "*" && x.profile === name && x.key_hash); assert.ok(a, name + " has one");
+    return { a, m };
+  };
+  const masterOf = (e) => dbRows(`SELECT email, email_norm, password, key_hash, key_last4, profile, batch, store_name, sent_at, assigned_at FROM accounts WHERE store = '*' AND email_norm = '${e}'`)[0];
+  const masterFor = (profile) => dbRows(`SELECT email, email_norm, password, key_hash, key_last4, profile, batch, store_name, sent_at, assigned_at FROM accounts WHERE store = '*' AND profile = '${profile}' AND key_hash IS NOT NULL`);
+  const slotRowsOf2 = (e) => dbRows(`SELECT store, email, email_norm, password, key_hash, profile, batch, sent_at, assigned_at FROM accounts WHERE offer_id = 'reuse:*' AND email_norm = '${e}' ORDER BY store DESC`);
+  const rowsWith = (e) => dbRows(`SELECT COUNT(*) AS n FROM accounts WHERE email_norm = '${e}'`)[0].n;
+  const freeOnList = () => dbRows("SELECT COUNT(*) AS n FROM accounts m WHERE store = '*' AND key_hash IS NULL AND NOT EXISTS (SELECT 1 FROM accounts x WHERE x.email_norm = m.email_norm AND x.store <> '*')")[0].n;
+  // A POST with a field given more than once (ticks, emails).
+  const postPairs = (link, pairs, redirect = "follow") => fetchOnce(link.split("?")[0], { method: "POST", redirect, body: new URLSearchParams([["t", new URL(link).searchParams.get("t")], ...pairs]) });
+  const after = async (location) => { const r = await fetchOnce(new URL(location, lsLink)); return unescape(await r.text()); };
+  const reassignTo = async (a, body) => { const r = await sendRaw(lsLink, { action: "do-reassign", email: a.email_norm, ...body }); assert.equal(r.status, 303, "back to the list"); return r; };
+  await test("setup: Rosa, a buyer, and free accounts on the list", async () => {
+    rosaKey = await newKey("rosa");
+    const add = await page2(await send(lsLink, { action: "add", accounts: Array.from({ length: 16 }, (_, i) => `re${i + 1}@example.com:Re-Pw-${i + 1}`).join("\n") }));
+    assert.ok(add.includes("<p>Added 16 to your list.</p>"), add.slice(0, 600));
+  });
+  await test("Reassign gives a buyer's slots a free account from the list in place of theirs, and takes the old one off", async () => {
+    const { a } = await rosaPair("Rosa A");
+    const a0 = masterOf(a.email_norm);
+    rosaOld = a.email;
+    const uses0 = slotRowsOf2(a.email_norm);
+    assert.deepEqual(uses0.map((u) => u.store), ["target", "pokemoncenter"], "its Target and Pokémon Center slots' rows");
+    // Its button on the list, and on its Edit page; a free account has none.
+    const list0 = await page2(await view(lsLink, {}));
+    const btn = (e) => `name="email" value="${e}"><button class="ed" type="submit" name="action" value="reassign">Reassign</button>`;
+    assert.ok(list0.includes(btn(a.email_norm)), "a given account has Reassign");
+    const free = listRows().find((x) => x.store === "*" && !x.key_hash);
+    assert.ok(!list0.includes(btn(free.email_norm)), "a free one doesn't");
+    assert.ok(list0.includes('<button type="submit" class="ed" name="action" value="reassign">Reassign</button>'), "the bar has it too");
+    assert.ok(list0.includes("or reassigned: Reassign gives their slots another account in its place, if something's wrong with it."), "the page says what it does");
+    const edit = await page2(await view(lsLink, { action: "edit", store: "*", email: a.email_norm }));
+    assert.ok(edit.includes("<h3>Reassign it</h3>") && edit.includes("Their slots can get another account in its place, from your list or one you add.") && edit.includes('value="reassign">Reassign…</button>'), edit.slice(0, 1500));
+    // The question changes nothing by itself.
+    const free0 = freeOnList(), posts0 = webhookPosts.length;
+    const ask = await page2(await view(lsLink, { action: "reassign", email: a.email_norm }));
+    assert.ok(ask.includes("<h2>Reassign an account</h2>") && ask.includes(`<p class="who">${a.email}</p>`), ask.slice(0, 800));
+    assert.ok(ask.includes(`Given to license …${a.key_last4}, Rosa A: Target, sent ${at(uses0[0].sent_at)}; Pokémon Center, sent ${at(uses0[1].sent_at)}`), "whose it is and its slots");
+    assert.ok(ask.includes(`<input type="radio" name="how" value="list" checked><span>A free account from my list, picked at random <span class="hint">(${free0} free)</span>`), "a free one from the list, to start");
+    assert.ok(ask.includes('<input type="radio" name="old" value="remove" checked><span>Take it off my list: something\'s wrong with it</span>') && ask.includes('<input type="radio" name="old" value="free"><span>Put it back on my list as free</span>'));
+    assert.ok(ask.includes("change the email in their profile in your bot (and the login, for Target). Order alerts follow the account: the buyer gets them for the new one, and no more for the old one."));
+    for (const x of listRows().filter((y) => y.password)) assert.ok(!ask.includes(x.password), "never a password");
+    await view(lsLink, { action: "do-reassign", email: a.email_norm, how: "list", old: "remove" });
+    assert.deepEqual(masterOf(a.email_norm), a0, "a link (GET) changes nothing");
+    // Reassigned.
+    const r = await reassignTo(a, { how: "list", old: "remove" });
+    const [n] = masterFor("Rosa A");
+    rosaNew = n.email;
+    assert.notEqual(n.email_norm, a.email_norm);
+    assert.deepEqual(new URLSearchParams(r.location.split("?")[1]).getAll("tick"), ["* " + n.email_norm], "the new one comes ticked");
+    assert.deepEqual({ key_hash: n.key_hash, key_last4: n.key_last4, batch: n.batch, store_name: n.store_name, sent_at: n.sent_at },
+      { key_hash: a0.key_hash, key_last4: a0.key_last4, batch: a0.batch, store_name: a0.store_name, sent_at: a0.sent_at }, "it takes over what the old one had");
+    assert.ok(n.assigned_at >= uses0[0].sent_at, "given out now (order alerts drop older orders)");
+    const uses1 = slotRowsOf2(n.email_norm);
+    assert.deepEqual(uses1.map((u) => [u.store, u.email, u.password, u.batch, u.sent_at, u.assigned_at]),
+      uses0.map((u) => [u.store, n.email, n.password, u.batch, u.sent_at, n.assigned_at]), "its slots' rows take the new email and password, in the same batches");
+    assert.equal(rowsWith(a.email_norm), 0, "the old one is off the list, and no slot's row has it");
+    assert.equal(freeOnList(), free0 - 1);
+    // The channel hears it, without a password.
+    assert.equal(webhookPosts.length, posts0 + 1);
+    const note = webhookPosts.at(-1).content;
+    assert.equal(note, `🔁 **Reassigned 1 account** on your list for Use Assigned Account\nlicense …${a.key_last4}, Rosa A: ${a.email} → ${n.email}\n-# The old one came off your list. Batches already posted have the old email: change it in your bot.`);
+    assert.ok(!note.includes(n.password) && !note.includes(a.password));
+    // Back on the list, saying so, with the new one ticked for Copy email:password.
+    const page1 = await after(r.location);
+    assert.ok(page1.includes(`<p>Reassigned license …${a.key_last4}, Rosa A: their Target and Pokémon Center slots now use ${n.email} in place of ${a.email}, which came off your list. Change the email in their profile in your bot (and Target's login): the new account is ticked below, so Copy email:password copies it.</p>`), page1.slice(0, 1200));
+    assert.ok(page1.includes(`value="* ${n.email_norm}" data-store="*" data-email="${n.email}" aria-label="Tick ${n.email}" checked>`), "ticked");
+    assert.equal((page1.match(/ checked>/g) || []).length, 1, "only that one");
+    assert.ok(page1.includes(`Given to license …${a.key_last4}, Rosa A:<br>Target, sent ${at(uses0[0].sent_at)}<br>Pokémon Center, sent ${at(uses0[1].sent_at)}</td>`), "its slots, as they were sent");
+    const copied = await (await postPairs(lsLink, [["action", "copy"], ["pick", "* " + n.email_norm]])).json();
+    assert.deepEqual(copied.lines, [`${n.email}:${n.password}`]);
+    // The same profile sent again gets the new one: its logins file has it.
+    const again = await rosaPair("Rosa A");
+    assert.equal(again.a.email_norm, n.email_norm, "the same account for the profile");
+    const logins = plain(again.m).find((f) => f.name.endsWith("-target-logins.txt"));
+    assert.ok(logins && logins.text.includes(`${n.email}:${n.password}`), "Target's logins file has the new account");
+    assert.ok(!JSON.stringify(again.m.files).includes(a.email), "never the old one");
+    // Reassigning it again (the old one, now gone) says so.
+    const gone = await page2(await view(lsLink, { action: "reassign", email: a.email_norm }));
+    assert.ok(gone.includes(`<p class="err">${a.email_norm} isn't on your list any more.</p>`), gone.slice(0, 600));
+  });
+  await test("Reassign to a typed account: a free one on the list by its email, or a new one as email:password; the old one can go back free", async () => {
+    const { a } = await rosaPair("Rosa B");
+    const try1 = async (body) => {
+      const html = await page2(await send(lsLink, { action: "do-reassign", email: a.email_norm, old: "remove", ...body }));
+      assert.equal(masterOf(a.email_norm).key_hash, a.key_hash, "nothing changed: " + JSON.stringify(body));
+      return (html.match(/<p class="err">([^<]*)<\/p>/) || [])[1];
+    };
+    assert.equal(await try1({ how: "these", accounts: "" }), "Type one account: the one to give them.");
+    assert.equal(await try1({ how: "these", accounts: "re5@example.com\nre6@example.com" }), "Type one account: the one to give them, not 2.");
+    assert.equal(await try1({ how: "list", accounts: "re5@example.com" }), 'You typed an account, but picked a free account from your list: pick "This account" to use what you typed, or empty the box.');
+    assert.equal(await try1({ how: "", accounts: "" }), "Pick which account they get.");
+    assert.equal(await try1({ how: "these", accounts: "not an email" }), "Line 1 couldn't be read: write the email of a free account on your list, or email:password for a new one.");
+    assert.equal(await try1({ how: "these", accounts: a.email }), `${a.email} is one of the accounts you're reassigning: type another.`);
+    assert.equal(await try1({ how: "these", accounts: rosaNew }), `${rosaNew} is given to license …${a.key_last4}, Rosa A: type a free one.`);
+    assert.equal(await try1({ how: "these", accounts: "nobody.here@example.com" }), "nobody.here@example.com isn't on your list: write it as email:password to put it on.");
+    sqlRun("INSERT INTO accounts (store, email, email_norm, password, added_at) VALUES ('walmart', 'wm1@example.com', 'wm1@example.com', 'Wm-Pw', 1)");
+    try { assert.equal(await try1({ how: "these", accounts: "wm1@example.com:Wm-Pw" }), "wm1@example.com is on your Walmart list too: type another."); }
+    finally { sqlRun("DELETE FROM accounts WHERE email_norm = 'wm1@example.com'"); }
+    assert.equal(rowsWith("nobody.here@example.com"), 0);
+    // What was typed stays in the box when it's asked again.
+    const kept = await page2(await send(lsLink, { action: "do-reassign", email: a.email_norm, how: "these", old: "free", accounts: "nobody.here@example.com" }));
+    assert.ok(kept.includes('name="accounts" value="nobody.here@example.com"') && kept.includes('<input type="radio" name="how" value="these" checked>') && kept.includes('<input type="radio" name="old" value="free" checked>'), kept.slice(0, 2000));
+    // A new one, as email:password: it goes on the list and to them; the old one goes back free, with its password.
+    const r = await reassignTo(a, { how: "these", accounts: "Brand.New@example.com:Brand-Pw-1", old: "free" });
+    const n = masterOf("brand.new@example.com");
+    assert.deepEqual([n.email, n.password, n.key_hash, n.profile], ["Brand.New@example.com", "Brand-Pw-1", a.key_hash, "Rosa B"]);
+    assert.deepEqual(slotRowsOf2("brand.new@example.com").map((u) => [u.store, u.email, u.password]), [["target", "Brand.New@example.com", "Brand-Pw-1"], ["pokemoncenter", "Brand.New@example.com", "Brand-Pw-1"]]);
+    const old = masterOf(a.email_norm);
+    assert.deepEqual([old.key_hash, old.profile, old.batch, old.password], [null, null, null, a.password], "the old one is free on the list, with its password");
+    assert.deepEqual(slotRowsOf2(a.email_norm), []);
+    const page1 = await after(r.location);
+    assert.ok(page1.includes(`in place of ${a.email}, which is free on your list again.`), page1.slice(0, 1000));
+    assert.ok(webhookPosts.at(-1).content.endsWith("-# The old one is free on your list again. Batches already posted have the old email: change it in your bot."));
+    // A free one on the list, by its email alone (put on the list after Rosa C's slots took theirs, so they can't have taken it).
+    const c = (await rosaPair("Rosa C")).a;
+    await send(lsLink, { action: "add", accounts: "typed1@example.com:Typed-Pw-1\ntyped2@example.com:Typed-Pw-2" });
+    await reassignTo(c, { how: "these", accounts: "TYPED1@example.com" });
+    const t1 = masterOf("typed1@example.com");
+    assert.deepEqual([t1.key_hash, t1.profile, t1.password], [c.key_hash, "Rosa C", "Typed-Pw-1"]);
+    assert.equal(rowsWith(c.email_norm), 0);
+    // One on the list already, typed with another password: it keeps its own, and the page says so.
+    const d = (await rosaPair("Rosa D")).a;
+    assert.equal(masterOf("typed2@example.com").key_hash, null, "still free");
+    const rd = await reassignTo(d, { how: "these", accounts: "typed2@example.com:Other-Pw" });
+    assert.deepEqual(slotRowsOf2("typed2@example.com").map((u) => u.password), ["Typed-Pw-2", "Typed-Pw-2"]);
+    assert.ok((await after(rd.location)).includes("typed2@example.com was on your list already, and kept the password it had (Edit changes it)."));
+  });
+  await test("ticked accounts are reassigned together; the ones it can't do are named, and the new ones come ticked", async () => {
+    const e = (await rosaPair("Rosa E")).a, f = (await rosaPair("Rosa F")).a;
+    const free = listRows().find((x) => x.store === "*" && !x.key_hash);
+    const ask = await page2(await postPairs(lsLink, [["action", "reassign"], ["pick", "* " + e.email_norm], ["pick", "* " + f.email_norm], ["pick", "* " + free.email_norm], ["pick", "kohls nobody@example.com"]]));
+    assert.ok(ask.includes("<h2>Reassign 2 accounts</h2>") && ask.includes('<p class="who">2 accounts</p>'), ask.slice(0, 800));
+    assert.ok(ask.includes(`${e.email} · Given to license …${e.key_last4}, Rosa E: Target, sent `) && ask.includes(`${f.email} · Given to license …${f.key_last4}, Rosa F: Target, sent `));
+    assert.ok(ask.includes("<p class=\"small\">1 is free, not given to a buyer. 1 is on a store's own list: Reassign is for your list (Target and Pokémon Center).</p>"), ask.slice(0, 1500));
+    assert.ok(ask.includes('<textarea name="accounts"') && ask.includes("These accounts, one for each, in the order above") && ask.includes('value="do-reassign">Reassign 2</button>'));
+    const one = await page2(await postPairs(lsLink, [["action", "do-reassign"], ["email", e.email_norm], ["email", f.email_norm], ["how", "these"], ["old", "remove"], ["accounts", "re7@example.com"]]));
+    assert.ok(one.includes('<p class="err">Type 2 accounts, one for each: you typed 1.</p>'));
+    const twice = await page2(await postPairs(lsLink, [["action", "do-reassign"], ["email", e.email_norm], ["email", f.email_norm], ["how", "these"], ["old", "remove"], ["accounts", "re7@example.com\nRE7@example.com"]]));
+    assert.ok(twice.includes('<p class="err">RE7@example.com is in the box twice: each one gets an account of its own.</p>'));
+    const posts0 = webhookPosts.length;
+    const r = await postPairs(lsLink, [["action", "do-reassign"], ["email", e.email_norm], ["email", f.email_norm], ["how", "list"], ["old", "remove"], ["accounts", ""]], "manual");
+    assert.equal(r.status, 303); const loc = r.headers.get("location"); await r.text();
+    const [ne] = masterFor("Rosa E"), [nf] = masterFor("Rosa F");
+    assert.ok(ne.email_norm !== e.email_norm && nf.email_norm !== f.email_norm && ne.email_norm !== nf.email_norm);
+    assert.equal(rowsWith(e.email_norm) + rowsWith(f.email_norm), 0);
+    const page1 = await after(loc);
+    assert.ok(page1.includes(`<p>Reassigned 2 accounts (Rosa E: ${e.email} → ${ne.email}; Rosa F: ${f.email} → ${nf.email}). The old ones came off your list. Change the emails in those profiles in your bot (and Target's logins): the new accounts are ticked below, so Copy email:password copies them.</p>`), page1.slice(0, 1200));
+    assert.equal((page1.match(/ checked>/g) || []).length, 2);
+    assert.equal(webhookPosts.length, posts0 + 1);
+    assert.equal(webhookPosts.at(-1).content, `🔁 **Reassigned 2 accounts** on your list for Use Assigned Account\nlicense …${e.key_last4}, Rosa E: ${e.email} → ${ne.email}\nlicense …${f.key_last4}, Rosa F: ${f.email} → ${nf.email}\n-# The old ones came off your list. Batches already posted have the old email: change it in your bot.`);
+    // Nothing ticked, or none that can be: back to the list, saying why.
+    const none = await postPairs(lsLink, [["action", "reassign"]], "manual"); await none.text();
+    assert.equal(none.status, 303); assert.match(none.headers.get("location"), /err=Tick\+the\+accounts\+to\+reassign\+first\./);
+    const onlyFree = await postPairs(lsLink, [["action", "reassign"], ["pick", "* " + free.email_norm]], "manual"); await onlyFree.text();
+    assert.ok((await after(onlyFree.headers.get("location"))).includes(`<p class="err">${free.email} is free, not given to a buyer.</p>`));
+  });
+  await test("Reassign waits while a batch of the buyer's is being sent, and says when the list has no free account left", async () => {
+    const { a } = await rosaPair("Rosa G");
+    const held = async (why) => {
+      const ask = await page2(await view(lsLink, { action: "reassign", email: a.email_norm }));
+      assert.ok(ask.includes(`<p class="err">${a.email} ${why}</p>`), ask.slice(0, 800));
+      const r = await reassignTo(a, { how: "list", old: "remove" });
+      assert.ok((await after(r.location)).includes(`<p class="err">${a.email} ${why}</p>`));
+      assert.equal(masterOf(a.email_norm).key_hash, a.key_hash, "nothing changed");
+    };
+    // A batch of theirs not posted yet (its accounts were read before it posts).
+    sqlRun(`INSERT INTO submissions (id, key_hash, key_last4, name, slots, bytes, key_id, created_at) VALUES ('sending1', '${a.key_hash}', '${a.key_last4}', '', 1, 1, 'CSV', ${Date.now()})`);
+    try { await held("is in a batch being sent: try again in a minute."); }
+    finally { sqlRun("DELETE FROM submissions WHERE id = 'sending1'"); }
+    // One whose worker stopped long ago doesn't hold it.
+    sqlRun(`INSERT INTO submissions (id, key_hash, key_last4, name, slots, bytes, key_id, created_at) VALUES ('sending2', '${a.key_hash}', '${a.key_last4}', '', 1, 1, 'CSV', ${Date.now() - 11 * 60000})`);
+    try { assert.ok((await page2(await view(lsLink, { action: "reassign", email: a.email_norm }))).includes('value="do-reassign">Reassign</button>')); }
+    finally { sqlRun("DELETE FROM submissions WHERE id = 'sending2'"); }
+    // A slot's row in a batch being sent.
+    sqlRun(`UPDATE accounts SET sent_at = NULL WHERE offer_id = 'reuse:*' AND store = 'pokemoncenter' AND email_norm = '${a.email_norm}'`);
+    const ps = slotRowsOf2(a.email_norm);
+    try { await held("is in a batch being sent: try again in a minute."); }
+    finally { sqlRun(`UPDATE accounts SET sent_at = ${ps[0].sent_at} WHERE offer_id = 'reuse:*' AND store = 'pokemoncenter' AND email_norm = '${a.email_norm}'`); }
+    // None free: the question starts on typing one, and a free one from the list says there's none.
+    sqlRun("UPDATE accounts SET key_hash = 'held-for-test' WHERE store = '*' AND key_hash IS NULL");
+    try {
+      const ask = await page2(await view(lsLink, { action: "reassign", email: a.email_norm }));
+      assert.ok(ask.includes('<input type="radio" name="how" value="list" disabled><span>A free account from my list, picked at random <span class="hint">(none free)</span>') && ask.includes('<input type="radio" name="how" value="these" checked>'), ask.slice(0, 1500));
+      const r = await reassignTo(a, { how: "list", old: "remove" });
+      assert.ok((await after(r.location)).includes(`<p class="err">${a.email} got no new account: your list has no free one left.</p>`));
+      assert.equal(masterOf(a.email_norm).key_hash, a.key_hash);
+    } finally { sqlRun("UPDATE accounts SET key_hash = NULL WHERE key_hash = 'held-for-test'"); }
+  });
+  await test("declining the batch after a reassign puts the new account back on the list; the old one stays off", async () => {
+    const { a, m } = await rosaPair("Rosa H");
+    await reassignTo(a, { how: "list", old: "remove" });
+    const [n] = masterFor("Rosa H");
+    const link = approveLink(m.content);
+    assert.match(await (await approvePost(link, "decline-ask")).text(), /The 1 account given to them goes back on your list\./);
+    assert.match(await (await approvePost(link, "decline")).text(), /1 account given to them is back on your list\./);
+    const back = masterOf(n.email_norm);
+    assert.deepEqual([back.key_hash, back.profile], [null, null], "the new one is free again");
+    assert.deepEqual(slotRowsOf2(n.email_norm), []);
+    assert.equal(rowsWith(a.email_norm), 0, "the old one stays off");
+  });
   await test("the link stops working after 24 hours, and asks are limited to 10 a day per license", async () => {
     const id = lsLink.match(/\/accounts\/list\/([^?]+)/)[1];
     execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", `UPDATE account_lists SET created_at = created_at - 86400001 WHERE id = '${id}'`], { cwd: root, env, stdio: "pipe" });
@@ -2442,6 +2652,17 @@ try {
     assert.doesNotMatch(JSON.stringify(got), new RegExp(ginaAcct.email.replace(/[.+]/g, "\\$&"), "i"), "never the account");
     assert.equal((await (await getAuth("/alerts", bobKey)).json()).alerts.length, 0, "nothing for anyone else");
     assert.equal((await getAuth("/alerts", null)).status, 401);
+  });
+  await test("after a reassign, an order on the new account reaches the buyer, and none on the old one", async () => {
+    const old = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+    const r = await (await slots("/alerts", frankKey, { events: [orderEvent({ account: rosaNew, orderNo: "re-1" }), orderEvent({ account: rosaOld, orderNo: "re-2" }),
+      orderEvent({ account: rosaNew, store: "pokemoncenter", storeName: "Pokémon Center", orderNo: "re-3" }), orderEvent({ account: rosaNew, orderNo: "re-4", at: old })] })).json();
+    assert.deepEqual(r, { ok: true, sent: 2, already: 0, unknown: 2 }, "the old one is no one's now, and an order from before it was given to them was someone else's");
+    const got = await (await getAuth("/alerts", rosaKey)).json();
+    assert.deepEqual(got.alerts.map((x) => [x.orderNo, x.store, x.profile]).sort(), [["RE-1", "target", "Rosa A"], ["RE-3", "pokemoncenter", "Rosa A"]]);
+    const accts = (await (await getAuth("/alerts/accounts", frankKey)).json()).accounts;
+    assert.ok(accts.some((x) => x.email === rosaNew && x.store === "target") && accts.some((x) => x.email === rosaNew && x.store === "pokemoncenter"), "the sender's FAFO looks for orders on the new one");
+    assert.ok(!accts.some((x) => x.email.toLowerCase() === rosaOld.toLowerCase()), "and not on the old one");
   });
   await test("the same step isn't sent twice; the next one is, under the same order", async () => {
     assert.deepEqual(await (await slots("/alerts", frankKey, { events: [orderEvent()] })).json(), { ok: true, sent: 0, already: 1, unknown: 0 });

@@ -197,6 +197,23 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   request) shows the rows with every word typed in their `data-q` (email, store and `statusText`, lowercase without
   accents: `searchText`), kept per tab in sessionStorage (`?q=` sets it once, then leaves the address); Tick all, a store's
   box and Shift+click then tick only the rows shown.
+  Since 2026-10-14 (the owner's request: "a way for me to reassign a buyer's assigned account in case there's something
+  wrong with the original account") an account of the one list that a buyer has can be **reassigned**: its Reassign button
+  (on the list, `Reassign…` on its Edit page, or the bar's for the ticked, up to `LIST_REASSIGN_MAX` (100) at once) asks
+  (`action=reassign`, `reassignView`) which account each one's slots get instead: a free one from the list, picked at random,
+  or the ones typed (`reassignLines`: the email of a free one on the list, or `email:password`, put on it with `addToList`;
+  one there already keeps its password, and the page says so), and whether the old one comes off the list (to start) or
+  goes back free. `do-reassign` (POST) runs `swapAccount` for each, one D1 batch: the new `*` row takes over the old one's
+  license, profile, batch, `store_name` and `sent_at`, its slots' rows (`USE`) take its email, email_norm and password in
+  the batches they're in, and `assigned_at` becomes now on both (order alerts drop orders from before the day before, so
+  one placed on the new account for someone else never reaches this buyer); the old `*` row is deleted or freed. Only
+  while the old one is still that buyer's for that profile, it and its slots' rows were sent, and no batch of that license
+  is being sent (a `submissions` row with no `webhook_message_id`, newer than `BATCH_SENDING_MS`, 10 minutes: a batch reads
+  its accounts before it posts); the new one has no row at any other store, so its slots' rows can take its email. Then
+  the list says what changed with the new accounts ticked (`tick=` params, `checked` in the page) for Copy email:password,
+  and the channel gets "🔁 Reassigned N accounts" with old → new, never a password: what was posted keeps the old
+  email, so the owner changes it in their bot. Pulls, declines, slots sent again (`listAccount`) and order alerts then go
+  by the new one.
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
   once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.
   Never put the accounts or their password in this repo or a page: it's public.

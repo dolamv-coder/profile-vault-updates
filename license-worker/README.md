@@ -451,14 +451,29 @@ buyer gets it while they have it.
     while it's free. One given to a buyer keeps its email, as it was posted, and has **Give it back to my
     list**: it's free again for the next slot, the buyer stops getting order alerts for it, and their
     Target and Pokémon Center slots lose it (as `/admin/accounts/free` does).
+  - **Reassign** an account given to a buyer (its button on the list, or **Reassign…** on its Edit page),
+    when something's wrong with it: their slots get another account in its place, everything the old
+    one had (the license, the profile, its slots' rows at Target and Pokémon Center, in the same batches),
+    so slots sent again, pulls, declines and order alerts go by the new one. It asks first: **a free
+    account from your list, picked at random**, or **this account** (the email of a free one on your list,
+    or `email:password` to put a new one on it), and whether the old one **comes off your list** (the
+    start: something's wrong with it) or **goes back on it as free**. It's done once, as one change, and
+    only while the buyer's slots that use it were sent: while a batch of theirs is being sent, it says to
+    try again in a minute. What was posted to your channel keeps the old email, so change it in the bot
+    (and Target's login): the page comes back with the new account ticked, so **Copy email:password**
+    copies it, and your channel gets a note of what changed ("🔁 Reassigned 1 account", old → new,
+    never a password). Order alerts for the new account reach the buyer from then on (an order from
+    before the day before it was reassigned was someone else's), and none for the old one.
   - **Remove** an account: it asks first, saying where it is, then takes it off the list (one given to a
     buyer too, so order alerts on it stop reaching them); **Keep it** goes back.
   - **Tick** accounts to work on several at once (Shift+click ticks every one between, the box by a
     list's name ticks all of its accounts, and Tick all ticks the whole list). The bar that shows
     then has **Copy emails** and **Copy email:password** (one per line, in the order shown, onto your
-    clipboard; the passwords come from the worker when you click and never go in the page) and
-    **Remove**, which asks first, naming each one, as Remove does for one. One Copy or Remove takes up
-    to 5000; past that, it says how many it left out.
+    clipboard; the passwords come from the worker when you click and never go in the page),
+    **Reassign**, which asks as it does for one, with a box of accounts (one for each, in the order
+    shown) or free ones from your list, and **Remove**, which asks first, naming each one, as Remove
+    does for one. One Copy or Remove takes up to 5000, and one Reassign 100; past that, it says how
+    many it left out.
   - **Search** (the box above the list): shows only the accounts with every word typed in their email,
     store or status (Free, a buyer's license ending, a profile name; accents don't matter, so "pokemon"
     finds Pokémon Center), and hides a store with none. While searching, Tick all (Tick shown), a
