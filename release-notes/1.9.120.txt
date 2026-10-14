@@ -1,0 +1,5 @@
+A fresh look for the Orders page.
+
+Your numbers sit up top — money spent (with how it compares to the period before), checkouts, how many orders are still on the way, and your stick rate — each with a little trend line. Under them, a color bar shows every order's status at a glance, and the stages double as filters: tap one to see just those orders.
+
+Each order is now a tidy row with its product picture, price and status pill, and the store, inbox, date and status filters all work as before. Delete canceled orders, pick a picture, and everything else you did on this page is still right where it was.
