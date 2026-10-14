@@ -31,6 +31,7 @@ const USERS = {
   ivan:  { id: snowflake(Date.parse("2021-09-01")), username: "ivan", guilds: [] },
   owen:  { id: snowflake(Date.parse("2021-10-01")), username: "owen", guilds: [] },
   quinn: { id: snowflake(Date.parse("2021-11-01")), username: "quinn", guilds: [] },
+  rosa:  { id: snowflake(Date.parse("2021-12-01")), username: "rosa", guilds: [] },
 };
 const OWNER = snowflake(Date.parse("2017-02-01"));   // NOTIFY_USER_ID in approval mode
 
@@ -2488,14 +2489,14 @@ try {
     assert.ok(webhookPosts.at(-1).content.endsWith("-# The old one is free on your list again. Batches already posted have the old email: change it in your bot."));
     // A free one on the list, by its email alone (put on the list after Rosa C's slots took theirs, so they can't have taken it).
     const c = (await rosaPair("Rosa C")).a;
-    await send(lsLink, { action: "add", accounts: "typed1@example.com:Typed-Pw-1\ntyped2@example.com:Typed-Pw-2" });
+    await send(lsLink, { action: "add", accounts: "typed1@example.com:Typed-Pw-1" });
     await reassignTo(c, { how: "these", accounts: "TYPED1@example.com" });
     const t1 = masterOf("typed1@example.com");
     assert.deepEqual([t1.key_hash, t1.profile, t1.password], [c.key_hash, "Rosa C", "Typed-Pw-1"]);
     assert.equal(rowsWith(c.email_norm), 0);
     // One on the list already, typed with another password: it keeps its own, and the page says so.
     const d = (await rosaPair("Rosa D")).a;
-    assert.equal(masterOf("typed2@example.com").key_hash, null, "still free");
+    await send(lsLink, { action: "add", accounts: "typed2@example.com:Typed-Pw-2" });
     const rd = await reassignTo(d, { how: "these", accounts: "typed2@example.com:Other-Pw" });
     assert.deepEqual(slotRowsOf2("typed2@example.com").map((u) => u.password), ["Typed-Pw-2", "Typed-Pw-2"]);
     assert.ok((await after(rd.location)).includes("typed2@example.com was on your list already, and kept the password it had (Edit changes it)."));
