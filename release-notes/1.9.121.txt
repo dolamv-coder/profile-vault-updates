@@ -1,0 +1,5 @@
+A fresh look for the Profiles page, to match the new Orders page.
+
+Your profiles are now clean cards: the store mark, name and group up top, the city and card below, and a status pill that tells you at a glance whether each one is ready to submit — or exactly what it still needs (a card, a login, an address). Along the top you get a count for each store plus how many are ready and how many need attention, and a store switch to focus on Target or Pokémon Center. The Compact and List layouts are still there.
+
+Clean emails now also catches store sale emails worded "40% savings" or "Save up to $100", not just "40% off".

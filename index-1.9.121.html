@@ -972,6 +972,14 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .ppill-ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 15%,transparent);border-color:color-mix(in srgb,var(--ok) 32%,transparent)}
 .ppill-warn{color:var(--caution);background:color-mix(in srgb,var(--caution) 16%,transparent);border-color:color-mix(in srgb,var(--caution) 34%,transparent)}
 .ppill-bad{color:var(--danger);background:color-mix(in srgb,var(--danger) 15%,transparent);border-color:color-mix(in srgb,var(--danger) 32%,transparent)}
+.slip-slim{gap:8px;padding:14px 16px}
+.slip-slim .p-line{display:flex;align-items:center;gap:8px;font-size:calc(13px*var(--fs));color:var(--ink-2);min-width:0}
+.slip-slim .p-line > span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.slip-slim .p-line-off{color:var(--ink-3)}
+.slip-slim .p-mi{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;flex:none;color:var(--ink-3)}
+.slip-slim .p-mi svg{width:15px;height:15px}
+.slip-slim .expired{color:var(--danger)}
+.slip-slim .p-status{margin-top:2px}
 .upd-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 16px;padding:12px 14px;border-radius:8px;background:var(--sheet);border:1px solid var(--line);box-shadow:inset 4px 0 0 var(--accent)}
 .upd-banner > div{padding-left:6px}
 .lock-upd{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 12px;padding:10px 12px;border-radius:10px;background:var(--sheet);color:var(--ink);border:1px solid var(--line);box-shadow:inset 4px 0 0 var(--accent);font-size:calc(14px*var(--fs))}
@@ -4152,27 +4160,19 @@ function profilePill(p){
   return `<span class="ppill ppill-${bad ? "bad" : "warn"}">${esc(label)}${probs.length > 1 ? " +" + (probs.length - 1) : ""}</span>`;
 }
 function slipHTML(p){
-  const a = addrById(p.shipId), c = cardById(p.cardId), g = groupById(p.groupId), b = billAddr(p);
+  const a = addrById(p.shipId), c = cardById(p.cardId), g = groupById(p.groupId);
   const sel = UI.selected.has(p.id);
-  const billNote = p.billSame ? "Billing: same as shipping" : b ? "Billing: " + addrOneLine(b) : "Billing: not set";
-  return `<article class="slip ${sel ? "is-sel" : ""}" data-pmenu="${p.id}">
+  const city = a ? ([a.city, a.state].filter(Boolean).join(", ") || streetLine(a) || "Address set") : "No shipping address";
+  const cardText = c ? `${cardBrand(c)} •••• ${last4(c.number)} · ${isExpired(c) ? "Expired" : expStr(c)}` : "No card";
+  return `<article class="slip slip-slim ${sel ? "is-sel" : ""}" data-pmenu="${p.id}">
     <div class="slip-head p-head">
       <input type="checkbox" data-act="sel" data-id="${p.id}" ${sel ? "checked" : ""} aria-label="Select ${esc(p.name)}">
       ${slipTitleHTML(p, g)}
       <button class="icon-btn" data-act="dup-profile" data-id="${p.id}" aria-haspopup="menu" aria-label="Duplicate ${esc(p.name)} for a store" title="Duplicate for a store">${ic("dup")}</button>
       <button class="icon-btn" data-act="profile-menu" data-id="${p.id}" aria-label="More actions for ${esc(p.name)}">${ic("more")}</button>
     </div>
-    ${a ? labelHTML(a) : `<div class="missing"><span>No shipping address</span><button class="btn btn-sm" data-act="edit-profile" data-id="${p.id}">Add</button></div>`}
-    ${c ? `<div class="cardline"><span class="swatch" style="background:${(FINISHES[c.finish||0]||FINISHES[0]).bg}"></span><span>${esc(cardBrand(c))} •••• ${esc(last4(c.number))}</span><span class="${isExpired(c) ? "expired" : ""}" style="margin-left:auto">${isExpired(c) ? "Expired " : ""}${esc(expStr(c))}</span></div>`
-         : `<div class="missing"><span>No card</span><button class="btn btn-sm" data-act="edit-profile" data-id="${p.id}">Add</button></div>`}
-    <div class="slip-meta">
-      ${p.email ? `<span>${esc(p.email)}</span>` : ""}
-      ${p.phone ? `<span>${esc(p.phone)}</span>` : ""}
-      ${a ? `<span>${esc(billNote)}</span>` : ""}
-      ${p.size || p.oneCheckout ? `<span>${[p.size ? "Size " + esc(p.size) : "", p.oneCheckout ? "Only one checkout" : ""].filter(Boolean).join(" · ")}</span>` : ""}
-      ${checkoutsFor(p.id).length ? `<span class="co-line">${ic("check").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px;margin-right:5px"')}${plural(checkoutsFor(p.id).length, "checkout")}</span>` : ""}
-      ${profileStores(p).length ? `<span>Store: ${esc(profileStores(p).map(storeWithMode).join(", "))}</span>` : `<span>No store yet</span>`}
-    </div>
+    <div class="p-line${a ? "" : " p-line-off"}"><span class="p-mi">${ic("pin")}</span><span>${esc(city)}</span></div>
+    <div class="p-line${c ? "" : " p-line-off"}"><span class="p-mi">${ic("dollar")}</span><span${c && isExpired(c) ? ' class="expired"' : ""}>${esc(cardText)}</span></div>
     <div class="p-status">${profilePill(p)}</div>
   </article>`;
 }
