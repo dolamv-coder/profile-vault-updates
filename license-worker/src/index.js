@@ -2162,6 +2162,8 @@ async function accountListPage(request, env, url, id) {
     sending: ["is in a batch being sent: try again in a minute", "are in a batch being sent: try again in a minute"],
     changed: ["changed meanwhile (given back, removed or reassigned): look again", "changed meanwhile (given back, removed or reassigned): look again"],
     none: ["got no new account: your list has no free one left", "got no new account: your list has no free ones left"],
+    // With the old ones put back free: those are free, but never go to another of the same reassign's buyers.
+    noneOld: ["got no new account: the only free ones left are the old ones this put back", "got no new account: the only free ones left are the old ones this put back"],
     taken: ["got no new account: the one you typed was given to a slot meanwhile", "got no new accounts: the ones you typed were given to slots meanwhile"],
     over: [`isn't included: ${LIST_REASSIGN_MAX} at most at once. Reassign it next`, `aren't included: ${LIST_REASSIGN_MAX} at most at once. Reassign them next`],
   };
@@ -2373,17 +2375,17 @@ async function accountListPage(request, env, url, id) {
       // One at a time, each in a transaction of its own (swapAccount); one that didn't go is read again to say why. None of
       // them gets an old one of this reassign.
       const swapped = [], failed = [], olds = JSON.stringify(items.map((x) => x.e));
-      let none = false;
+      let none = "";
       const stayFree = [];
       for (const [i, x] of items.entries()) {
         const want = wants ? wants[i] : null;
-        if (none && !want) { failed.push({ ...x, why: "none" }); continue; }
+        if (none && !want) { failed.push({ ...x, why: none }); continue; }
         const n = await swapAccount(env, x.a, want, oldWay, now + i, since, olds);
         if (n) { swapped.push({ ...x, n }); continue; }
         sendingKeys.delete(x.a.key_hash);
         const [s] = await reassignState([x.e]);
-        const why = s.why || (s.a.key_hash !== x.a.key_hash || s.a.profile !== x.a.profile ? "changed" : want ? "taken" : "none");
-        if (why === "none") none = true;
+        const why = s.why || (s.a.key_hash !== x.a.key_hash || s.a.profile !== x.a.profile ? "changed" : want ? "taken" : oldWay === "free" && swapped.length ? "noneOld" : "none");
+        if (why === "none" || why === "noneOld") none = why;
         failed.push({ ...x, why });
         if (want && why !== "taken") stayFree.push(want);
       }

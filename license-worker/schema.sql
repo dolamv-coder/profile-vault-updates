@@ -159,6 +159,8 @@ CREATE TABLE IF NOT EXISTS accounts (
 );
 CREATE INDEX IF NOT EXISTS accounts_free ON accounts (store, key_hash);
 CREATE INDEX IF NOT EXISTS accounts_key ON accounts (key_hash, batch);
+-- Lookups by email alone (every store's rows of an account: See my list, Reassign, the list's pickers).
+CREATE INDEX IF NOT EXISTS accounts_email ON accounts (email_norm);
 
 -- Accounts sent from Orbit, waiting for the owner to add or refuse them. The list (with passwords)
 -- is cleared once decided.

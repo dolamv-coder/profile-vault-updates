@@ -2585,7 +2585,7 @@ try {
       assert.equal(r.status, 303); const loc = r.headers.get("location"); await r.text();
       const page1 = await after(loc);
       assert.ok(page1.includes(`their Target and Pokémon Center slots now use ${keep.email} in place of ${i1.email}, which is free on your list again.`), page1.slice(0, 1200));
-      assert.ok(page1.includes(`<p class="err">${j1.email} got no new account: your list has no free one left.</p>`), "not Rosa I's old one");
+      assert.ok(page1.includes(`<p class="err">${j1.email} got no new account: the only free ones left are the old ones this put back.</p>`), "not Rosa I's old one");
       assert.deepEqual([masterOf(i1.email_norm).key_hash, masterOf(j1.email_norm).key_hash, masterOf(j1.email_norm).profile], [null, j1.key_hash, "Rosa J"]);
       assert.deepEqual(slotRowsOf2(i1.email_norm), [], "no slot has Rosa I's old one");
     } finally { sqlRun("UPDATE accounts SET key_hash = NULL WHERE key_hash = 'held-for-test'"); }
