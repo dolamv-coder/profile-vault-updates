@@ -1129,6 +1129,24 @@ login guide (`openInboxGuide` with `o.saved`), `notes()` now shows a green "alre
 to redo it. Use it for this login.", toggled off when the email changes; Add inbox (where `next()` refuses a duplicate)
 keeps the plain note. A fresh inbox still walks through all three steps. Copy and styling only; nothing gains a field.
 
+From 1.9.120 the **Orders page** has the same look as the rest of the revamp (the owner's request, 2026-10-14: "revamp
+the Orders, profile, login etc tabs", Orders first): a header with the period line ("Weekly · Oct 8 – Oct 14", or "All
+time"; `ordersSub`), four KPI cards — Spent (with a "▲12% vs the previous week" delta from `prevRange`, else "not
+counting canceled"), Checkouts, Active and Stick rate — each with a small honest sparkline (`orderSpark` over the
+period's days, empty unless two days carry a value; `sparkDays`), a **Status** panel whose stacked bar and its legend
+are the stage filter (`STAGE_COL`, the `order-stage` chips restyled, with All and Needs attention), the Showing period
+controls as before (`orderPeriodHTML`), the store chips and the inbox as a dropdown (`ordersInboxPick`, `#o-inbox`,
+handled in the delegated change listener like the period controls; picking one clears the store filter as its chip did),
+a toolbar (Delete N canceled, Select all), and each order as a **compact row** (`orderRowHTML`, `.orow` CSS grid: thumb,
+title, store·#order·×qty·date, price and a soft status pill, with the warning/From-your-seller/ship-to/Address-or-Details
+expander/tracking lines on their own full-width line, and share/edit/delete). Every handler is unchanged (`order-sel`,
+`order-sel-all`, `order-stage`, `order-period`, `store`, `orders-del-cxl`, `order-addr`, `order-share`, `edit`/`delete-order`,
+`orders-sync`, `gen-success`, `email-import`, `new-order`, and the `#bulkbar` Picture/Delete), and selection, drag,
+Shift+click and Ctrl+A still key off `.order[data-oid]` and `.o-pick`. The only change in what the numbers mean: the KPIs
+and the Status bar now follow the store filter too (not just inbox and period), so the headline matches the rows below.
+Additive and display-only; nothing gains a field, so the paused desktop version is unaffected (it keeps 1.9.112's Orders
+page until desktop updates follow again).
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
