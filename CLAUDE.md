@@ -1050,10 +1050,11 @@ Center, the shared `jigFor`), Jig on Address line 1 and 2 for Target, Jig for Po
 code, each as a box with Shuffle in place of the field (`pmJig`, after what's typed and the new random names; `pmPkcCrowded`
 counts the other Pokémon Center profiles on the street). Each profile's shipping address gets its own way of being written,
 none like another saved address or a draft (the profiles' own shipping addresses don't count, as Generate leaves out the
-drafts it jigs, so one can keep its spelling once the others run out). Billing never gets jigged: a profile billing to its
-shipping address whose address Jig changes goes on billing to the address (and name, after Jig for Pokémon Center doubles a
-letter) as it was, as Jig on one profile does, unless Bills to is ticked; cards keep their name. Addresses outside the US are
-left as they are, and switching Jig for stops the other store's Jig. Nothing gains a field.
+drafts it jigs, so one can keep its spelling once the others run out). Billing never gets jigged: until 1.9.116 a profile
+billing to its shipping address whose address Jig changes went on billing to the address (and name, after Jig for Pokémon
+Center doubles a letter) as it was, as Jig on one profile does, unless Bills to was ticked; from 1.9.116 Bills to has to be
+picked (below). Cards keep their name. Addresses outside the US are left as they are, and switching Jig for stops the other
+store's Jig. Nothing gains a field.
 
 From 1.9.114 the phone's tabs along the top (`#mnav`) start with Orders, then Profiles, as the sidebar always has (the
 owner's request, 2026-10-13, with a screenshot of app.fafoaco.com: "Put Orders before Profiles"); FAFO already opens on
@@ -1091,6 +1092,18 @@ whose sync needs the new password (changed on another device) doesn't ask until 
 Settings → Alerts, so the buyer's own Discord webhook for these is still set in the desktop app. Only slots on Use Assigned
 Account get these: an order on the buyer's own store login reaches FAFO through that login's inbox, which only the desktop
 app syncs. Nothing gains a field.
+
+From 1.9.116 Mass edit on Profiles with Jig on (any of Jig on Address line 1 or 2, Jig for Pokémon Center, Jig on City or
+ZIP code) needs Bills to picked: Change N profiles stays off until it's Their shipping address, or A different address typed
+in full (the owner's report, 2026-10-14, with screenshots of 19 profiles jigged for Pokémon Center and Change lit with Bills
+to on Pick one: "Fix it to where the buyer has to pick a billing address"). Until then billing silently stayed as it was.
+`pmPlan` adds a soft error (`["pm_bill", …, true]`: the button stays off, the preview of the jigged addresses still shows,
+headed "Preview: pick where they bill to, to go on") whenever a Jig mode is on and Bills to has no pick, ticked or not;
+`pmJig` no longer keeps billing as it was. Turning a Jig on ticks Bills to, on Pick one with its message under it, and
+turning the last one off unticks it if nothing was picked. Their shipping address with Jig warns how many will bill to
+their shipping address as Jig writes it (virtual credit cards only), counted after Jig, which leaves some as they are; A
+different address bills each in its own name before Jig for Pokémon Center doubles a letter. Without Jig nothing changes. Jig on one profile (its menu, the profile editor) still keeps billing
+as it was. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
