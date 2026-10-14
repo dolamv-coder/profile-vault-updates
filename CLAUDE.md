@@ -1147,6 +1147,21 @@ and the Status bar now follow the store filter too (not just inbox and period), 
 Additive and display-only; nothing gains a field, so the paused desktop version is unaffected (it keeps 1.9.112's Orders
 page until desktop updates follow again).
 
+From 1.9.121 the **Profiles page** gets the same look (the owner's request, Profiles after Orders; "slim them down"): the
+header first, then a KPI strip (`p-kpis`: a count per store with its colour dot — Target red, Pokémon Center blue — plus
+Ready and Need attention over `profilesInView`), a segmented store filter (`p-storeseg`, a `.seg` of All / the stores in
+use, replacing the store chips; the group chips stay mobile-only), and the Comfortable card slimmed to the mockup
+(`slipHTML`, `.slip-slim`): the store mark, name and group, a city line (`pin`), a card line (`dollar`), and a readiness
+**status pill** (`profilePill`: "Ready to submit" when `profileProblems` is empty, else the first blocker — Needs a card /
+Needs a login / Needs an address / …). The full detail (address label, email, phone, billing, store, the inline Add
+buttons) moved off the Comfortable card to the editor; Compact and List are unchanged, as are every handler (`sel`,
+`sel-all`, `store`, `group`, `profile-view`, `edit`/`dup-profile`, `profile-menu`, `rename`/`delete-group`, `import`,
+`new-profile`), selection/drag/Shift (still `.slip[data-pmenu]` + `input[data-act="sel"]`), the issue icon, Mass edit,
+Duplicate, Jig, the split note and the unlinked-login alert. Also in 1.9.121, Clean emails' sale rule (`CLEAN_SALE`) now
+also matches "% savings" and "Save up to $N" (not only "% off"), so Best Buy appliance-deal subjects are caught (the
+owner's screenshot of a dozen Best Buy sales in Spam); desktop-only, so it reaches no one until desktop updates resume.
+Additive; nothing gains a field, so the paused desktop app (1.9.112) is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
