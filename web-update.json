@@ -1,10 +1,10 @@
 {
-  "version": "1.9.120",
-  "url": "index-1.9.120.html",
-  "sha256": "1c32c6fe939cf1ad603957c13de16f03522f9fce2bf33726d019df495dc8a84c",
-  "signature": "n6mWueijcXUlBzZo99Tkud8d+jpjSNvRoWoYYj9DZFMBpK6dsZPc5kptQBfMqXghF+18QAXVBysJ82J++kTdDQ==",
+  "version": "1.9.121",
+  "url": "index-1.9.121.html",
+  "sha256": "30265a559478808b1a2bc27a548704b99cdbf557a991f36d7e52881f2c332192",
+  "signature": "AwoM+tUSKLWHELI6xl9vz06Yz1kxrIce1H5uB+nzH93cye5HKpf2vmgMUaxOLchCCj6VQoqXpN+6hjehX0B3Bg==",
   "minAppVersion": "0",
-  "notes": "A fresh look for the Orders page. Your numbers sit up top — money spent (with how it compares to the period before), checkouts, how many orders are still on the way, and your stick rate — each with a little trend line. Under them, a color bar shows every order's status at a glance, and the stages double as filters: tap one to see just those orders. Each order is now a tidy row with its product picture, price and status pill, and the store, inbox, date and status filters all work as before. Delete canceled orders, pick a picture, and everything else you did on this page is still right where it was.",
+  "notes": "A fresh look for the Profiles page, to match the new Orders page. Your profiles are now clean cards: the store mark, name and group up top, the city and card below, and a status pill that tells you at a glance whether each one is ready to submit — or exactly what it still needs (a card, a login, an address). Along the top you get a count for each store plus how many are ready and how many need attention, and a store switch to focus on Target or Pokémon Center. The Compact and List layouts are still there. Clean emails now also catches store sale emails worded \"40% savings\" or \"Save up to $100\", not just \"40% off\".",
   "installerUrl": "",
-  "publishedAt": "2026-10-14T21:25:30.577Z"
+  "publishedAt": "2026-10-14T22:05:31.115Z"
 }
