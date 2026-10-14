@@ -1162,6 +1162,16 @@ also matches "% savings" and "Save up to $N" (not only "% off"), so Best Buy app
 owner's screenshot of a dozen Best Buy sales in Spam); desktop-only, so it reaches no one until desktop updates resume.
 Additive; nothing gains a field, so the paused desktop app (1.9.112) is unaffected.
 
+From 1.9.122 the **Store logins page** gets the same look (the owner's request, Store logins after Profiles; "ship it"):
+a KPI strip (`p-kpis`: Logins, Inbox connected, Need an inbox, Inboxes) under the header, and the Comfortable login card
+slimmed (`loginCardHTML`, `.slip-slim`): the store mark and the account email, a `store · group · label` line, an inbox
+**status pill** (`.ppill` — "Inbox connected" with the inbox address, or "Needs an inbox"), and "Used by N profiles"
+(`loginProfiles`). The Account/Password/Inbox detail list and the full linked-profile chips moved off the Comfortable
+card (Copy password stays in the card's actions and the right-click menu); Compact and List are unchanged, as are every
+handler (`login-sel`, `login-sel-all`, `login-view`, `login-group`, `edit`/`delete-login`, `copy-login-pw`, the
+`data-lmenu` right-click menu, Import accounts, Add store login), the group chips, the unlinked-login alert and the
+Inboxes section. Additive and display-only; nothing gains a field, so the paused desktop app (1.9.112) is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
