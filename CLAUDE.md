@@ -1122,6 +1122,13 @@ happens in the desktop app and that the web version tracks orders by pasting con
 an inbox doesn't expect orders to appear on their own (the owner's request: buyers should track their own orders, which the
 desktop app's email sync does privately in their sealed vault). Copy only; nothing gains a field.
 
+From 1.9.119 the step-by-step inbox guide's already-saved state reads as a clear reuse, not a dead-end (the owner's report:
+typing an inbox already in FAFO flipped the button to "Use this inbox" and looked like the guide stopped). In the store
+login guide (`openInboxGuide` with `o.saved`), `notes()` now shows a green "already set up" callout (`#ig-saved` gets
+`ig-ready` and the new `ig-good` class, a check icon, `--ok`) reading "You already set up this inbox in FAFO — no need
+to redo it. Use it for this login.", toggled off when the email changes; Add inbox (where `next()` refuses a duplicate)
+keeps the plain note. A fresh inbox still walks through all three steps. Copy and styling only; nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

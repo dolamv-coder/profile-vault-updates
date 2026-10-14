@@ -1,0 +1,1 @@
+Setting up a store login's inbox reads clearer: if you type an inbox you've already added to FAFO, the step-by-step now shows a clear green "already set up" note and the button reads Use this inbox — so it's obvious you can just reuse it, rather than looking like the guide stopped. A brand-new inbox still walks you through every step.
