@@ -1100,9 +1100,9 @@ to on Pick one: "Fix it to where the buyer has to pick a billing address"). Unti
 `pmPlan` adds a soft error (`["pm_bill", …, true]`: the button stays off, the preview of the jigged addresses still shows,
 headed "Preview: pick where they bill to, to go on") whenever a Jig mode is on and Bills to has no pick, ticked or not;
 `pmJig` no longer keeps billing as it was. Turning a Jig on ticks Bills to, on Pick one with its message under it, and
-turning the last one off unticks it if nothing was picked. Their shipping address with Jig warns that each profile will bill
-to its jigged address (virtual credit cards only); A different address bills each in its own name before Jig for Pokémon
-Center doubles a letter. Without Jig nothing changes. Jig on one profile (its menu, the profile editor) still keeps billing
+turning the last one off unticks it if nothing was picked. Their shipping address with Jig warns how many will bill to
+their shipping address as Jig writes it (virtual credit cards only), counted after Jig, which leaves some as they are; A
+different address bills each in its own name before Jig for Pokémon Center doubles a letter. Without Jig nothing changes. Jig on one profile (its menu, the profile editor) still keeps billing
 as it was. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the

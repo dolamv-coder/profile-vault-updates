@@ -8391,7 +8391,6 @@ function pmPlan(ids, r, cache){
       else { a.billSame = false; a.bill = Object.assign({first:a.ship ? a.ship.first : "", last:a.ship ? a.ship.last : ""}, o, {country:"US"}); }
     });
     if (o) plan.lines.push(`Each bills to ${esc(draftAddrLine(o))}, in its own name`);
-    if (s.bill === "same"){ const k = jigging ? before.filter(b => b.ship).length : before.filter(b => !b.billSame).length; if (k) plan.warns.push(`${plural(k, "profile")} will bill to ${k === 1 ? "its" : "their"} ${jigging ? "jigged " : ""}shipping address. Keep a regular card's billing on the address its bank has; this is for virtual credit cards.`); }
   } else after.forEach((a, i) => {
     const was = pmFull(before[i].ship);
     if (!a.billSame && a.bill && a.ship && norm(pmFull(a.bill)) === norm(was) && norm(pmFull(a.ship)) !== norm(was)){ a.bill.first = a.ship.first; a.bill.last = a.ship.last; }
@@ -8413,6 +8412,13 @@ function pmPlan(ids, r, cache){
   after.forEach((a, i) => { if (plan.cards.has(rows[i].cardId)) a.holder = plan.cards.get(rows[i].cardId); });
   if (kept) plan.warns.push(`${plural(kept, "card")} ${kept === 1 ? "keeps its" : "keep their"} name, as profiles with another name use ${kept === 1 ? "it" : "them"} too. Edit names on Cards changes ${kept === 1 ? "it" : "them"}.`);
   pmJig(plan, after, r, cache, sel);
+  // Their shipping address: the profiles whose billing moves, those that billed elsewhere and, with Jig on, those whose
+  // shipping address Jig writes another way (worked out after Jig, which leaves some as they are).
+  if (s.bill === "same"){
+    const moved = (i) => !!(jigging && before[i].ship && after[i].ship && ADDR_F.some(f => String(before[i].ship[f] || "") !== String(after[i].ship[f] || "")));
+    const k = before.filter((b, i) => !b.billSame || moved(i)).length, jg = before.some((b, i) => moved(i));
+    if (k) plan.warns.push(`${plural(k, "profile")} will bill to ${k === 1 ? "its" : "their"} shipping address${jg ? " as Jig writes it" : ""}. Keep a regular card's billing on the address its bank has; this is for virtual credit cards.`);
+  }
   // Store (1.9.96+: each profile is on one): profiles on another store move to the one picked (r.store), keeping their
   // name, and ones on it switch to the way picked (r.way: "login", Pokémon Center on the profile's email, or "seller",
   // Use Assigned Account). A store login is linked by the profile's email, as the editor does; one with none waits for a
