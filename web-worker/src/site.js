@@ -20,7 +20,6 @@ const ICONS = {
   key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M16 7l3 3M13.5 9.5l2 2"/>',
   truck: '<path d="M3 6h11v10H3z"/><path d="M14 9h4l3 3v4h-7"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="17.5" cy="17.5" r="1.8"/>',
   box: '<path d="m21 8-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/>',
-  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
   sync: '<path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/>',
   shuffle: '<path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="m15 15 6 6"/><path d="M4 4l5 5"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
@@ -260,7 +259,6 @@ p,.ticks li span,.qs summary{text-wrap:pretty}
 .toast b{display:block;font-size:13.5px;font-weight:600}
 .toast small{display:block;font-size:12px;color:var(--ink-3);margin-top:1px}
 .toast.a{left:150px;top:4px}
-.toast.b{left:-12px;bottom:28px;animation-delay:-3s}
 @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
 
 /* Stores */
@@ -390,7 +388,6 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
   .win{width:600px}
   .phone{right:-12px}
   .toast.a{left:96px}
-  .toast.b{left:-80px}
 }
 @media (max-width:980px){
   .hero-grid{grid-template-columns:minmax(0,1fr);padding-top:48px;padding-bottom:48px;min-height:0}
@@ -399,7 +396,6 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
   .win{display:none}
   .phone{left:50%;right:auto;top:30px;transform:translateX(-50%)}
   .toast.a{left:auto;right:0;top:80px}
-  .toast.b{left:0;bottom:70px}
   .step{grid-template-columns:minmax(0,1fr);gap:32px;min-height:0}
   .art{min-height:380px;flex-direction:column;gap:12px}
   .badge{position:static}
@@ -422,7 +418,6 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
   .scene{height:610px}
   .toast{padding:9px 12px 9px 9px}
   .toast.a{top:0;right:-4px}
-  .toast.b{bottom:0;left:-4px}
   section.sec{padding-top:88px}
   .stack{gap:20px;margin-top:48px}
   .step{padding:22px;border-radius:24px}
@@ -490,7 +485,6 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
           <div class="stick"><span class="lab"><span>Checkouts</span><span>Weekly</span></span><strong>23</strong><small>successful orders</small></div>
           <div class="olist">${ORDERS.map(([n, s, q, st, th]) => `<div class="order"><span class="thumb ${th}">${ic("box")}</span><span><b>${n}</b><span class="s"><span class="q">${mark(s)}×${q}</span>${pill(st)}</span></span></div>`).join("")}</div>
         </div></div>
-        <div class="toast b"><span class="t sky">${ic("image")}</span><span><b>Picture found</b><small>Booster Bundle</small></span></div>
       </div>
     </div>
     <div class="wrap"><div class="stores"><span>Made for</span><span class="store">${POKEBALL}Pokémon Center</span><span class="store">${BULLSEYE}Target</span></div></div>
