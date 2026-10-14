@@ -100,8 +100,9 @@
 //   GET/POST /accounts/review/ID?t=TOKEN  add or refuse accounts sent for Use Assigned Account
 //   GET/POST /accounts/removal/ID?t=TOKEN remove accounts from the list, or keep them
 //   GET/POST /accounts/list/ID?t=TOKEN    the list: each store's accounts, free or given (never a password in the page), to
-//                              edit (password, email while free, give back), remove (asks first) or add to, and to tick
-//                              several to copy or remove; POST action=copy answers the ticked ones' email:password as
+//                              edit (password, email while free, give back), reassign (a buyer's slots get another
+//                              account; asks first), remove (asks first) or add to, and to tick several to copy,
+//                              reassign or remove; POST action=copy answers the ticked ones' email:password as
 //                              JSON, the only place a password leaves the worker; 24 hours
 //   GET/POST /alerts/review/ID?t=TOKEN    allow or refuse a license sending order alerts to buyers
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
@@ -1023,12 +1024,13 @@ async function submission(request, env, url) {
     }
   } catch (e) { msgId = null; console.error("webhook", e); }
   if (!msgId) {
+    // Accounts that can't have reached the channel go back to the list (or to the batch they came from); if part of the
+    // batch went out, they're kept for this batch, and sending it again posts the same ones. Done before the batch's record
+    // goes, as above: while it's there, the batch counts as being sent, so a reassign (swapAccount) waits for this.
+    if (!postedAny) await undoMoves(env, lic, batch, moves).catch((e) => console.error("accounts", e));
+    if (picks.size) await settleAccounts(env, lic, batch, postedAny, Date.now()).catch((e) => console.error("accounts", e));
     await env.DB.prepare("DELETE FROM submissions WHERE id = ?").bind(s.id).run();
     if (reviewed) await env.DB.prepare("DELETE FROM submission_reviews WHERE id = ?").bind(s.id).run().catch((e) => console.error("review", e));
-    // Accounts that can't have reached the channel go back to the list (or to the batch they came from); if part of the
-    // batch went out, they're kept for this batch, and sending it again posts the same ones.
-    if (!postedAny) await undoMoves(env, lic, batch, moves).catch((e) => console.error("accounts", e));
-    if (picks.size) await settleAccounts(env, lic, batch, postedAny, Date.now());
     return json({ error: "couldn't post to the channel" }, 502);
   }
   await env.DB.prepare("UPDATE submissions SET webhook_message_id = ? WHERE id = ?").bind(msgId, s.id).run().catch((e) => console.error("record", e));
@@ -1820,10 +1822,15 @@ async function accountRemovalReview(request, env, ctx, url, id) {
 // held for a Pokémon Center slot, or reused there from Target), never a password. Remove asks first, then takes the email
 // off every store's list, as Remove accounts does. Edit (the owner's request: "make it to where I can edit the list")
 // changes an account's password, or its email while it's free, and gives one that's been given back to the list
-// (freeAccounts, as /admin/accounts/free does); Add puts accounts on a store's list as the offers' review link does.
+// (freeAccounts, as /admin/accounts/free does); Reassign gives a buyer's slots another account in place of theirs
+// (swapAccount, 2026-10-14); Add puts accounts on a store's list as the offers' review link does.
 // The link works for 24 hours.
 const ACCOUNT_LISTS_PER_DAY = 10;
 const LIST_PICK_MAX = 5000;   // accounts ticked on the list that one Copy or Remove takes
+const LIST_REASSIGN_MAX = 100;   // and that one Reassign takes
+// A batch whose channel message isn't recorded yet (submissions.webhook_message_id) is being sent: its accounts were read
+// before it posts. One whose worker stopped before posting stops counting after this.
+const BATCH_SENDING_MS = 10 * 60 * 1000;
 // What the list's search compares: lowercase, accents taken off (so "pokemon" finds Pokémon Center), as LIST_SCRIPT does to
 // what's typed.
 const searchText = (x) => String(x).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -2031,8 +2038,44 @@ const LIST_SCRIPT = `<script>
 })();
 </script>`;
 
-// Views (the list, an account to edit, Remove's question) answer GET or POST; changes, Copy email:password and Remove for
-// the ticked (ask-many, whose ticks come only in a POST) only POST. A change is made on
+// Reassign (2026-10-14, the owner's request: "a way for me to reassign a buyer's assigned account in case there's something
+// wrong with the original account"): a buyer's account from the one list is swapped for another, a free one from the list
+// (picked at random, or the one the owner names; `want`, its email_norm). The new one takes over what the old one had: the
+// license, the profile, the batch it was first given in and when that was sent, and every slot's row of it (USE: its email
+// and password, in the same batches, sent when they were), so pulls, declines, slots sent again and order alerts go by the
+// new one. `assigned_at` becomes `stamp` (now) on all of them: order alerts drop orders from before the day before that, so
+// an order placed on the new account for someone else doesn't reach this buyer. The old one comes off the list ("remove")
+// or goes back on it as free ("free"). In one batch (a transaction), and only while the old one is still that buyer's for
+// that profile, it and its slots' rows were sent, and no batch of theirs is being sent (`since`): a batch reads its
+// accounts before it posts, so swapping meanwhile would post the old email. The new one has no row anywhere else (another
+// store's list, or a slot's row at Target or Pokémon Center), so its slots' rows can take its email. Its email and email_norm,
+// or null when nothing changed (the old one changed meanwhile, or no account could take its place). `skip` (a JSON list of
+// email_norms) is never picked: the old accounts of the same reassign, so one put back free isn't given to the next buyer.
+async function swapAccount(env, a, want, oldWay, stamp, since, skip = "[]") {
+  const binds = [a.email_norm, a.key_hash, a.profile ?? null, stamp];
+  // The new one, once taken: given to the same buyer and profile at `stamp`.
+  const taken = `EXISTS (SELECT 1 FROM accounts n WHERE n.store = '${MASTER}' AND n.key_hash = ?2 AND n.profile IS ?3 AND n.assigned_at = ?4 AND n.email_norm <> ?1)`;
+  const [c] = await env.DB.batch([
+    env.DB.prepare(`UPDATE accounts SET (key_hash, key_last4, batch, store_name, profile, sent_at) = (SELECT o.key_hash, o.key_last4, o.batch, o.store_name, o.profile, o.sent_at
+        FROM accounts o WHERE o.store = '${MASTER}' AND o.email_norm = ?1), assigned_at = ?4
+      WHERE rowid = (SELECT m.rowid FROM accounts m WHERE m.store = '${MASTER}' AND m.key_hash IS NULL AND m.email_norm <> ?1 AND (?6 IS NULL OR m.email_norm = ?6)
+          AND m.email_norm NOT IN (SELECT value FROM json_each(?7))
+          AND NOT EXISTS (SELECT 1 FROM accounts x WHERE x.email_norm = m.email_norm AND x.store <> '${MASTER}') ORDER BY random() LIMIT 1)
+        AND EXISTS (SELECT 1 FROM accounts o WHERE o.store = '${MASTER}' AND o.email_norm = ?1 AND o.key_hash = ?2 AND o.profile IS ?3 AND o.sent_at IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM accounts u WHERE u.offer_id = '${USE}' AND u.email_norm = ?1 AND u.key_hash = ?2 AND u.sent_at IS NULL)
+        AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.key_hash = ?2 AND s.webhook_message_id IS NULL AND s.created_at > ?5)
+      RETURNING email, email_norm`).bind(...binds, since, want ?? null, skip),
+    env.DB.prepare(`UPDATE accounts SET (email, email_norm, password) = (SELECT n.email, n.email_norm, n.password FROM accounts n WHERE n.store = '${MASTER}' AND n.key_hash = ?2
+        AND n.profile IS ?3 AND n.assigned_at = ?4 AND n.email_norm <> ?1), assigned_at = ?4
+      WHERE offer_id = '${USE}' AND email_norm = ?1 AND key_hash = ?2 AND ${taken}`).bind(...binds),
+    env.DB.prepare(oldWay === "free" ? `UPDATE accounts SET ${FREE_ACCOUNT} WHERE store = '${MASTER}' AND email_norm = ?1 AND key_hash = ?2 AND ${taken}`
+      : `DELETE FROM accounts WHERE store = '${MASTER}' AND email_norm = ?1 AND key_hash = ?2 AND ${taken}`).bind(...binds),
+  ]);
+  return (c.results || [])[0] || null;
+}
+
+// Views (the list, an account to edit, Remove's and Reassign's questions) answer GET or POST; changes, Copy email:password,
+// and Remove and Reassign for the ticked (ask-many and reassign, whose ticks come only in a POST) only POST. A change is made on
 // the list as it is then, so an account given to a slot meanwhile is never changed as if it were still free.
 async function accountListPage(request, env, url, id) {
   const o = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM account_lists WHERE id = ?").bind(id).first() : null;
@@ -2094,6 +2137,90 @@ async function accountListPage(request, env, url, id) {
     return out;
   };
 
+  // Reassign: each email's account on the one list, its slots' rows, and why it can't be reassigned now ("" when it can):
+  // not on the list, on a store's own list, free, or sent only in part (a batch of the buyer's is being sent).
+  const since = now - BATCH_SENDING_MS, sendingKeys = new Map();
+  const sending = async (keyHash) => {
+    if (!sendingKeys.has(keyHash)) sendingKeys.set(keyHash, !!(await env.DB.prepare("SELECT 1 AS x FROM submissions WHERE key_hash = ? AND webhook_message_id IS NULL AND created_at > ? LIMIT 1")
+      .bind(keyHash, since).first()));
+    return sendingKeys.get(keyHash);
+  };
+  const reassignState = async (emails) => {
+    const rows = await rowsOf(emails), out = [];
+    for (const e of emails) {
+      const rs = rows.get(e), a = rs.find((x) => x.store === MASTER) || null, us = a ? usesIn(rs, a) : [];
+      const why = !a ? (rs.length ? "own" : "gone") : !a.key_hash ? "free" : !a.sent_at || us.some((u) => !u.sent_at) || await sending(a.key_hash) ? "sending" : "";
+      out.push({ e, a, us, why, email: (a || rs[0] || { email: e }).email });
+    }
+    return out;
+  };
+  // Why some weren't reassigned, a sentence a reason: by its email when it's the only one, else by how many.
+  const REASSIGN_WHY = {
+    gone: ["isn't on your list any more", "aren't on your list any more"],
+    own: ["is on a store's own list: Reassign is for your list (Target and Pokémon Center)", "are on a store's own list: Reassign is for your list (Target and Pokémon Center)"],
+    free: ["is free, not given to a buyer", "are free, not given to a buyer"],
+    sending: ["is in a batch being sent: try again in a minute", "are in a batch being sent: try again in a minute"],
+    changed: ["changed meanwhile (given back, removed or reassigned): look again", "changed meanwhile (given back, removed or reassigned): look again"],
+    none: ["got no new account: your list has no free one left", "got no new account: your list has no free ones left"],
+    // With the old ones put back free: those are free, but never go to another of the same reassign's buyers.
+    noneOld: ["got no new account: the only free ones left are the old ones this put back", "got no new account: the only free ones left are the old ones this put back"],
+    taken: ["got no new account: the one you typed was given to a slot meanwhile", "got no new accounts: the ones you typed were given to slots meanwhile"],
+    over: [`isn't included: ${LIST_REASSIGN_MAX} at most at once. Reassign it next`, `aren't included: ${LIST_REASSIGN_MAX} at most at once. Reassign them next`],
+  };
+  const whyText = (xs) => {
+    const by = new Map();
+    for (const x of xs) by.set(x.why, [...(by.get(x.why) || []), x]);
+    return [...by].map(([w, l]) => xs.length === 1 && l[0].email ? `${l[0].email} ${REASSIGN_WHY[w][0]}.` : `${l.length} ${REASSIGN_WHY[w][l.length === 1 ? 0 : 1]}.`).join(" ");
+  };
+  // Free accounts a reassign can take: on the one list, and with no row anywhere else.
+  const freeForReassign = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts m WHERE m.store = '${MASTER}' AND m.key_hash IS NULL
+    AND NOT EXISTS (SELECT 1 FROM accounts x WHERE x.email_norm = m.email_norm AND x.store <> '${MASTER}')`).first()).n;
+  // The accounts typed to give instead, a line each: the email of one on the list, or email:password (as Add reads it).
+  const reassignLines = (text) => {
+    const list = [], bad = [];
+    String(text || "").split(/\r?\n/).forEach((raw, i) => {
+      const line = raw.trim();
+      if (!line) return;
+      if (LIST_EMAIL.test(line) && line.length <= 120) { list.push({ email: line }); return; }
+      const { rows } = parseListLines(line, "");
+      if (rows.length === 1) list.push(rows[0]); else bad.push(i + 1);
+    });
+    return { list, bad };
+  };
+  const whom = (x) => `license …${x.a.key_last4 || ""}${x.a.profile ? `, ${x.a.profile}` : ""}`;
+  // A few emails by name, then how many more, so a message fits where it goes.
+  const few = (es) => es.slice(0, 3).join(", ") + (es.length > 3 ? ` and ${es.length - 3} more` : "");
+  const slotsOf = (x) => { const st = [...new Set(x.us.map((u) => accountStoreName(u.store)))]; return st.length ? `their ${st.join(" and ")} slot${x.us.length === 1 ? "" : "s"}` : "their slots"; };
+  // The question: which account each one's slots get instead (a free one from the list, picked at random, or the ones typed),
+  // and what happens to the old ones. `vals` keeps what was sent when it's asked again with an error.
+  const reassignView = async (items, notes, err, vals = {}) => {
+    const n = items.length, one = n === 1, free = await freeForReassign(), it = one ? "it" : "them";
+    const how = vals.how === "list" || vals.how === "these" ? vals.how : free >= n ? "list" : "these";
+    const target = items.some((x) => x.us.some((u) => u.store === "target"));
+    const line = (x) => `${one ? "" : `${esc(x.a.email)} · `}${status(x.a, x.us)}`;
+    const box = one ? `<input type="text" name="accounts" value="${esc(vals.accounts || "")}" maxlength="400" autocomplete="off" spellcheck="false" placeholder="email, or email:password" aria-label="The account to give them">`
+      : `<textarea name="accounts" rows="${Math.min(10, n + 1)}" spellcheck="false" autocomplete="off" placeholder="One per line: email, or email:password" aria-label="The accounts to give them">${esc(vals.accounts || "")}</textarea>`;
+    return page(200, one ? "Reassign an account" : `Reassign ${n} accounts`, "", `${err ? `<p class="err">${esc(err)}</p>` : ""}
+      <p class="who">${one ? esc(items[0].a.email) : `${n} accounts`}</p>
+      <p class="small">${items.slice(0, 200).map(line).join("<br>")}${n > 200 ? `<br>and ${n - 200} more` : ""}</p>
+      ${notes ? `<p class="small">${esc(notes)}</p>` : ""}
+      <form method="post" class="edit" id="re">${hidden}${items.map((x) => keep("email", x.e)).join("")}
+        <fieldset><legend>${one ? "Their slots get instead" : "Each one's slots get instead"}</legend>
+          <label class="opt"><input type="radio" name="how" value="list"${how === "list" ? " checked" : ""}${free ? "" : " disabled"}><span>${one ? "A free account" : "Free accounts"} from my list, picked at random <span class="hint">${free ? `(${free} free)` : "(none free)"}</span></span></label>
+          <label class="opt"><input type="radio" name="how" value="these"${how === "these" ? " checked" : ""}><span>${one ? "This account" : "These accounts, one for each, in the order above"}</span></label>
+          ${box}
+          <p class="hint">The email of a free account on your list, or email:password to put a new one on it${one ? "" : ", one per line"}.</p>
+        </fieldset>
+        <fieldset><legend>The old account${one ? "" : "s"}</legend>
+          <label class="opt"><input type="radio" name="old" value="remove"${vals.old === "free" ? "" : " checked"}><span>Take ${it} off my list: something's wrong with ${it}</span></label>
+          <label class="opt"><input type="radio" name="old" value="free"${vals.old === "free" ? " checked" : ""}><span>Put ${it} back on my list as free</span></label>
+        </fieldset>
+        <p class="hint">What was posted to your channel stays as it was: change the email in ${one ? "their profile" : "those profiles"} in your bot${target ? ` (and ${one ? "the login" : "the logins"}, for Target)` : ""}. Order alerts follow the account: the buyer gets them for the new one, and no more for the old one.</p>
+        <div class="row"><button class="ok" type="submit" name="action" value="do-reassign">Reassign${one ? "" : ` ${n}`}</button></div>
+      </form>
+      <script>(() => { const f = document.getElementById("re"), box = f.elements.accounts, these = f.querySelector('input[name="how"][value="these"]'); box.addEventListener("input", () => { if (box.value.trim()) these.checked = true; }); })();</script>${back}`, !one);
+  };
+
   // One account: its email (while it's free) and password, and giving it back to the list once it's given.
   const editPage = async (a, err) => {
     const name = accountStoreName(a.store), us = await usesOf(a);
@@ -2104,6 +2231,10 @@ async function accountListPage(request, env, url, id) {
       <p class="small">It's your ${esc(reusedFrom(a))} account, used again for this buyer's ${esc(name)} slot, so it follows that one: change it on your ${esc(reusedFrom(a))} list.</p>${back}`);
     const given = !!a.key_hash;
     let giveBack = "";
+    // One from the one list that a buyer has can be reassigned: their slots get another account in its place.
+    const reassign = given && a.store === MASTER ? `<h3>Reassign it</h3>
+      <p class="small">Something wrong with it? ${us.length === 1 ? "Their slot" : "Their slots"} can get another account in its place, from your list or one you add.</p>
+      <form method="get" action="${esc(url.pathname)}">${hidden}${keep("email", a.email_norm)}<button class="ed" type="submit" name="action" value="reassign">Reassign…</button></form>` : "";
     if (given && a.store === MASTER) {
       // From the one list: every slot of the buyer's that uses it loses it.
       const where = us.map((u) => esc(accountStoreName(u.store))).join(" and ");
@@ -2132,10 +2263,10 @@ async function accountListPage(request, env, url, id) {
         <label>New password<input type="text" name="password" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Leave empty to keep it"></label>
         <p class="hint">${a.store === MASTER ? "The store account's password: Target's logins file gets it, and Pokémon Center checks out as a guest with the email." : a.store === "pokemoncenter" ? "The email's inbox password: Pokémon Center checks out as a guest with the email." : "The store account's password."} It's never shown here.${given ? " What was posted already doesn't change; a slot sent again gets the new one." : ""}</p>
         <div class="row"><button class="ok" type="submit" name="action" value="save">Save</button></div>
-      </form>${giveBack}${back}`);
+      </form>${reassign}${giveBack}${back}`);
   };
 
-  let done = "", err = "";
+  let done = "", err = "", ticks = [];
   // Copy email:password for the ticked accounts (the page's script asks, and puts them on the clipboard): only here, by
   // POST with the link's token, never in the page itself.
   if (action === "copy" && post) {
@@ -2188,6 +2319,101 @@ async function accountListPage(request, env, url, id) {
          <p class="small">It comes off every store's list it's on, so no more slots get it.${given ? " A buyer who has it stops getting order alerts for it." : ""} Its password goes too, and can't be got back here.</p>
          <div class="row"><form method="post">${hidden}<input type="hidden" name="email" value="${esc(email)}"><button class="no" type="submit" name="action" value="remove">Remove from my list</button></form>
          <form method="get" action="${esc(url.pathname)}"><input type="hidden" name="t" value="${esc(t)}"><button class="ok" type="submit">Keep it</button></form></div>`);
+    }
+  } else if (action === "reassign" && (email || post)) {
+    // Reassign's question: for one account (its Reassign button, or its Edit page), or for the ones ticked (the bar's, by
+    // POST), those on the one list that a buyer has.
+    const ps = email ? [{ store: MASTER, email }] : picks();
+    const emails = [...new Set(ps.filter((p) => p.store === MASTER).map((p) => p.email))];
+    // At most LIST_REASSIGN_MAX of those that can be; the ones that can't don't count toward it.
+    const state = await reassignState(emails), ok = state.filter((x) => !x.why), items = ok.slice(0, LIST_REASSIGN_MAX), cut = ok.length - items.length;
+    const others = [...new Set(ps.filter((p) => p.store !== MASTER).map((p) => p.email))].map((e) => ({ why: "own", email: e }));
+    const skipped = [...state.filter((x) => x.why), ...others, ...Array.from({ length: cut }, () => ({ why: "over" }))];
+    if (items.length) return reassignView(items, whyText(skipped), "");
+    if (email) return page(200, "Reassign an account", "", `<p class="err">${esc(whyText(skipped))}</p>${back}`);
+    err = ps.length ? whyText(skipped) : "Tick the accounts to reassign first.";
+  } else if (action === "do-reassign" && post) {
+    const emails = emailsSent();
+    const state = await reassignState(emails), ok = state.filter((x) => !x.why), items = ok.slice(0, LIST_REASSIGN_MAX), cut = ok.length - items.length;
+    const skipped = [...state.filter((x) => x.why), ...Array.from({ length: cut }, () => ({ why: "over" }))];
+    if (!items.length) err = emails.length ? whyText(skipped) : "Tick the accounts to reassign first.";
+    else {
+      const how = get("how"), oldWay = get("old") === "free" ? "free" : "remove", text = get("accounts").slice(0, 100_000), one = items.length === 1;
+      const again = (e) => reassignView(items, whyText(skipped), e, { how, old: oldWay, accounts: text });
+      if (how !== "list" && how !== "these") return again("Pick which account they get.");
+      if (how === "list" && text.trim()) return again(`You typed ${one ? "an account" : "accounts"}, but picked ${one ? "a free account" : "free accounts"} from your list: pick "${one ? "This account" : "These accounts"}" to use what you typed, or empty the box.`);
+      let wants = null;
+      const notes = [];
+      if (how === "these") {
+        const { list, bad } = reassignLines(text);
+        if (bad.length) return again(`${lineList(bad)} couldn't be read: write the email of a free account on your list, or email:password for a new one.`);
+        if (list.length !== items.length) return again(one ? `Type one account: the one to give them${list.length ? `, not ${list.length}` : ""}.` : `Type ${items.length} accounts, one for each: ${list.length ? `you typed ${list.length}` : "the box is empty"}.`);
+        const norms = list.map((x) => x.email.toLowerCase());
+        const dup = list.find((x, i) => norms.indexOf(norms[i]) !== i);
+        if (dup) return again(`${dup.email} is in the box twice: each one gets an account of its own.`);
+        const self = list.find((x, i) => items.some((y) => y.e === norms[i]));
+        if (self) return again(`${self.email} is one of the accounts you're reassigning: type another.`);
+        const rows = await rowsOf(norms);
+        for (const [i, x] of list.entries()) {
+          const rs = rows.get(norms[i]), g = rs.find((r) => r.key_hash), other = rs.find((r) => r.store !== MASTER && !MASTER_STORES.has(r.store));
+          if (g) return again(`${x.email} is given to license …${g.key_last4 || ""}${g.profile ? `, ${g.profile}` : ""}: type a free one.`);
+          if (other) return again(`${x.email} is on your ${accountStoreName(other.store)} list too: type another.`);
+          if (!rs.some((r) => r.store === MASTER) && !x.password) return again(`${x.email} isn't on your list: write it as email:password to put it on.`);
+        }
+        // New ones go on the list first; one there already keeps its password, as Add keeps it (said, so the bot gets the
+        // right one). A free row with the email on Target's or Pokémon Center's own list from before goes, so its slots' rows
+        // can take the email (addToList does that for the ones it adds).
+        const typed = list.filter((x) => x.password);
+        const { results: had } = typed.length ? await env.DB.prepare(`SELECT email, email_norm, password FROM accounts WHERE store = '${MASTER}' AND email_norm IN (SELECT value FROM json_each(?))`)
+          .bind(JSON.stringify(typed.map((x) => x.email.toLowerCase()))).all() : { results: [] };
+        const kept = had.filter((h) => typed.some((x) => x.email.toLowerCase() === h.email_norm && x.password !== h.password)).map((h) => h.email);
+        if (kept.length) notes.push(`${few(kept)} ${kept.length === 1 ? "was" : "were"} on your list already, and kept ${kept.length === 1 ? "the password it had" : "the passwords they had"} (Edit changes ${kept.length === 1 ? "it" : "one"}).`);
+        if (typed.length) await addToList(env, MASTER, typed, "list:" + o.id, now);
+        await env.DB.batch(norms.map((e) => env.DB.prepare(`DELETE FROM accounts WHERE store IN ('target', 'pokemoncenter') AND email_norm = ? AND key_hash IS NULL AND ${OWN_ACCOUNT}`).bind(e)));
+        wants = norms;
+      }
+      // One at a time, each in a transaction of its own (swapAccount); one that didn't go is read again to say why. None of
+      // them gets an old one of this reassign.
+      const swapped = [], failed = [], olds = JSON.stringify(items.map((x) => x.e));
+      let none = "";
+      const stayFree = [];
+      for (const [i, x] of items.entries()) {
+        const want = wants ? wants[i] : null;
+        if (none && !want) { failed.push({ ...x, why: none }); continue; }
+        const n = await swapAccount(env, x.a, want, oldWay, now + i, since, olds);
+        if (n) { swapped.push({ ...x, n }); continue; }
+        sendingKeys.delete(x.a.key_hash);
+        const [s] = await reassignState([x.e]);
+        const why = s.why || (s.a.key_hash !== x.a.key_hash || s.a.profile !== x.a.profile ? "changed" : want ? "taken" : oldWay === "free" && swapped.length ? "noneOld" : "none");
+        if (why === "none" || why === "noneOld") none = why;
+        failed.push({ ...x, why });
+        if (want && why !== "taken") stayFree.push(want);
+      }
+      if (stayFree.length) notes.push(`${few(stayFree)} ${stayFree.length === 1 ? "stays" : "stay"} on your list, free.`);
+      if (swapped.length || wants) await stockCheck(env, MASTER, accountStoreName(MASTER), swapped.length > 0);
+      const target = swapped.some((x) => x.us.some((u) => u.store === "target"));
+      const gone = (k) => oldWay === "free" ? `${k === 1 ? "is" : "are"} free on your list again` : "came off your list";
+      if (swapped.length === 1) {
+        const x = swapped[0];
+        done = `Reassigned ${whom(x)}: ${slotsOf(x)} now use${x.us.length === 1 ? "s" : ""} ${x.n.email} in place of ${x.a.email}, which ${gone(1)}. Change the email in their profile in your bot${target ? " (and Target's login)" : ""}: the new account is ticked below, so Copy email:password copies it.`;
+      } else if (swapped.length) {
+        const pairs = [];
+        let len = 0;
+        for (const x of swapped) { const p = `${x.a.profile || "license …" + x.a.key_last4}: ${x.a.email} → ${x.n.email}`; if (len + p.length > 240) break; pairs.push(p); len += p.length + 2; }
+        done = `Reassigned ${swapped.length} accounts (${pairs.join("; ")}${pairs.length < swapped.length ? `; and ${swapped.length - pairs.length} more` : ""}). The old ones ${gone(2)}. Change the emails in those profiles in your bot${target ? " (and Target's logins)" : ""}: the new accounts are ticked below, so Copy email:password copies them.`;
+      }
+      err = [whyText([...skipped, ...failed]), ...notes].filter(Boolean).join(" ");
+      ticks = swapped.map((x) => MASTER + " " + x.n.email_norm);
+      // A note in the channel, beside the batches that went out with the old emails (never a password).
+      if (swapped.length) {
+        // Whole lines while they fit in one message (Discord takes 2000 characters), then how many more.
+        const k = swapped.length, head = `🔁 **Reassigned ${k} account${k === 1 ? "" : "s"}** on your list for Use Assigned Account`;
+        const foot = `-# The old ${k === 1 ? "one" : "ones"} ${gone(k)}. Batches already posted have the old email: change it in your bot.`;
+        const lines = [];
+        let len = head.length + foot.length + 40;
+        for (const x of swapped) { const l = `${md(whom(x))}: ${md(x.a.email)} → ${md(x.n.email)}`; if (len + l.length + 1 > 1900) break; lines.push(l); len += l.length + 1; }
+        await webhookPost(env, { content: [head, ...lines, ...(k > lines.length ? [`and ${k - lines.length} more`] : []), foot].join("\n") }).catch((e) => console.error("webhook", e));
+      }
     }
   } else if (email && store && (action === "edit" || ((action === "save" || action === "giveback") && post))) {
     const a = await one(store, email), on = listName(store);
@@ -2257,10 +2483,12 @@ async function accountListPage(request, env, url, id) {
     }
   }
   // After a change, back to the list by its link (303), with what happened, so reloading the page doesn't send it again.
-  if (post && (["remove", "giveback", "save", "add"].includes(action) || (action === "ask-many" && err))) {
+  if (post && (["remove", "giveback", "save", "add", "do-reassign"].includes(action) || (["ask-many", "reassign"].includes(action) && err))) {
     const q = new URLSearchParams({ t });
     if (done) q.set("done", done);
     if (err) q.set("err", err);
+    // Accounts a reassign gave out come ticked, for Copy email:password.
+    for (const k of ticks) q.append("tick", k);
     if (action === "add" && addTo(store) && addTo(store) !== MASTER) q.set("store", addTo(store));
     return new Response(null, { status: 303, headers: { location: `${url.pathname}?${q}`, "cache-control": "no-store", "referrer-policy": "no-referrer" } });
   }
@@ -2272,15 +2500,16 @@ async function accountListPage(request, env, url, id) {
   const usOf = (a) => usesIn(usesBy.get(a.email_norm + "|" + a.key_hash) || [], a);
   const byStore = new Map();
   for (const a of all) { if (!byStore.has(a.store)) byStore.set(a.store, []); byStore.get(a.store).push(a); }
+  const tickNow = new Set(action ? [] : url.searchParams.getAll("tick"));
   const own = (a) => !isReuse(a);
   const sections = [...byStore].map(([st, rows]) => {
     const mine = rows.filter(own), free = mine.filter((a) => !a.key_hash).length;
     // Each row carries what the search box looks in: its email, its store and its status, in lowercase without accents.
     return `<section class="store" data-store="${esc(st)}"><h3><input type="checkbox" class="all js" hidden data-store="${esc(st)}" aria-label="Tick every ${esc(accountStoreName(st))} account"> ${esc(accountStoreName(st))} <span class="count">${free} free of ${mine.length}</span></h3>
       <table><thead><tr><th class="pick"></th><th>Account</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((a) => `<tr${a.key_hash ? "" : ' class="free"'}${own(a) ? "" : " data-reuse"} data-q="${esc(searchText(`${a.email} ${accountStoreName(st)} ${statusText(a, usOf(a))}`))}">
-        <td class="pick"><input type="checkbox" name="pick" form="bulk" value="${esc(a.store + " " + a.email_norm)}" data-store="${esc(a.store)}" data-email="${esc(a.email)}" aria-label="Tick ${esc(a.email)}"></td>
+        <td class="pick"><input type="checkbox" name="pick" form="bulk" value="${esc(a.store + " " + a.email_norm)}" data-store="${esc(a.store)}" data-email="${esc(a.email)}" aria-label="Tick ${esc(a.email)}"${tickNow.has(a.store + " " + a.email_norm) ? " checked" : ""}></td>
         <td class="em">${esc(a.email)}</td><td>${statusCell(a, usOf(a))}</td>
-        <td class="act"><form method="get" action="${esc(url.pathname)}">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="ed" type="submit" name="action" value="edit">Edit</button></form><form method="get" action="${esc(url.pathname)}">${hidden}${keep("email", a.email_norm)}<button class="rm" type="submit" name="action" value="ask">Remove</button></form></td></tr>`).join("")}</tbody></table></section>`;
+        <td class="act"><form method="get" action="${esc(url.pathname)}">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="ed" type="submit" name="action" value="edit">Edit</button></form>${a.store === MASTER && a.key_hash ? `<form method="get" action="${esc(url.pathname)}">${hidden}${keep("email", a.email_norm)}<button class="ed" type="submit" name="action" value="reassign">Reassign</button></form>` : ""}<form method="get" action="${esc(url.pathname)}">${hidden}${keep("email", a.email_norm)}<button class="rm" type="submit" name="action" value="ask">Remove</button></form></td></tr>`).join("")}</tbody></table></section>`;
   }).join("");
   const total = all.filter(own).length;
   const pick = addTo(store) || MASTER;
@@ -2288,7 +2517,7 @@ async function accountListPage(request, env, url, id) {
   return page(200, "Your list for Use Assigned Account", done,
     `${err ? `<p class="err">${esc(err)}</p>` : ""}
      <p class="who">${total ? `${total} account${total === 1 ? "" : "s"}, ${all.filter((a) => own(a) && !a.key_hash).length} free` : "Your list is empty"}</p>
-     <p class="small">One list for Target and Pokémon Center: a buyer's slots at both stores for one profile get the same account, and no other buyer gets it while they have it. Edit sets a new password, or a new email while the account is free. One given to a buyer can be given back to your list from there. Tick accounts (Shift+click ticks a run of them) to copy or remove them together. Search matches emails, stores and what each says (Free, a buyer's license, a profile name). <a href="#add">Add accounts</a> is at the end. Changes count at once.</p>
+     <p class="small">One list for Target and Pokémon Center: a buyer's slots at both stores for one profile get the same account, and no other buyer gets it while they have it. Edit sets a new password, or a new email while the account is free. One given to a buyer can be given back to your list from there, or reassigned: Reassign gives their slots another account in its place, if something's wrong with it. Tick accounts (Shift+click ticks a run of them) to copy, reassign or remove them together. Search matches emails, stores and what each says (Free, a buyer's license, a profile name). <a href="#add">Add accounts</a> is at the end. Changes count at once.</p>
      ${all.length ? `<div class="find js" hidden><input type="search" id="find" placeholder="Search your list" aria-label="Search your list" autocomplete="off" spellcheck="false"><button type="button" class="ed" data-pickall>Tick all</button><span class="shown" id="shown" role="status"></span></div>
      <p class="small" id="none-match" hidden>No accounts match your search.</p>` : ""}
      ${sections}
@@ -2296,6 +2525,7 @@ async function accountListPage(request, env, url, id) {
        <span class="n">Ticked accounts</span><span class="msg" id="bulk-msg" role="status"></span>
        <button type="button" class="ed js" hidden data-copy="emails">Copy emails</button>
        <button type="button" class="ed js" hidden data-copy="logins">Copy email:password</button>
+       <button type="submit" class="ed" name="action" value="reassign">Reassign</button>
        <button type="submit" class="rm" name="action" value="ask-many">Remove</button>
        <button type="button" class="ed js" hidden data-clear>Clear</button>
      </form>${LIST_SCRIPT}` : ""}
@@ -3172,6 +3402,10 @@ function page(statusCode, title, msg, extra = "", wide = false) {
   form.edit input,form.edit select,form.edit textarea{display:block;width:100%;box-sizing:border-box;margin-top:6px;padding:10px 12px;border-radius:10px;border:1px solid #2a3f7a;background:#07102b;color:#e6ecff;font:15px system-ui,sans-serif}
   form.edit textarea{font-family:ui-monospace,Consolas,monospace;min-height:110px;resize:vertical}
   form.edit input[readonly]{color:#8090b8}
+  form.edit fieldset{border:0;margin:18px 0 0;padding:0;min-width:0} form.edit legend{padding:0;font-size:14px;color:#b9c6ea}
+  form.edit label.opt{display:flex;align-items:flex-start;gap:10px;margin-top:10px;font-size:15px;color:#e6ecff;cursor:pointer}
+  form.edit label.opt input{display:block;flex:none;width:18px;height:18px;margin:2px 0 0;padding:0;accent-color:#4a9dff}
+  form.edit label.opt input:disabled + span{opacity:.5}
   .hint{font-size:13px;margin:6px 0 0} .err{color:#ff8a80;font-weight:600} a{color:#9cc7ff} a.back{display:inline-block;margin-top:16px}
   @media (max-width:560px){
     main{padding:22px 18px}
