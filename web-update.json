@@ -1,10 +1,10 @@
 {
-  "version": "1.9.117",
-  "url": "index-1.9.117.html",
-  "sha256": "1ba54cbc35eacecfb966c1c09b4a69b1154b8a0302033ad0748e001a3addfa1f",
-  "signature": "uz13m5d2RpMEHyQv4tNx7HLgxD7uIBExzdK4O7WR8VcxfJK8ZzOS8z/hWGsNpioohE1pskAwRA5k/dujZrZQCw==",
+  "version": "1.9.118",
+  "url": "index-1.9.118.html",
+  "sha256": "d685dc843dfab21563395b225e47aa758c6fab4c845adb41f57e1d331e173bac",
+  "signature": "zwh/UdzvWd6gpHztDF/ToOKuUDzUI6Eq9wgDLf0xIiljOWQw31M/HLYSvtBvd40mAHAQlF6mHCu+959T84VsAw==",
   "minAppVersion": "0",
-  "notes": "New IMAP tab in the sidebar, under Store logins. It shows your slot limits for each store at a glance, and which of your store logins still need an inbox set up — without one, the bot can't read the sign-in code to log into the account, so those profiles may not get pulled (profiles on Use Assigned Account don't need one). In the desktop app each saved inbox shows Connected or Error with a Test button; on the web it lists the inboxes you've saved and reminds you the desktop app does the signing-in. Your inbox passwords never leave your device.",
+  "notes": "The IMAP tab now makes it clear, on the web, that pulling your orders from your email happens in the FAFO desktop app — the web version can't read email, so there you track orders by pasting their confirmation emails. Your inbox passwords still never leave your device.",
   "installerUrl": "",
-  "publishedAt": "2026-10-14T15:34:38.927Z"
+  "publishedAt": "2026-10-14T15:56:35.102Z"
 }
