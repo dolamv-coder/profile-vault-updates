@@ -10245,8 +10245,9 @@ function imapAgo(t){
 }
 function imapInboxStatus(i){
   if (!DESK) return `<span class="item-sub">Status shows in the desktop app</span>`;
-  if (i.syncError) return `<span style="color:var(--danger);font-weight:600"><span class="imap-dot" style="background:var(--danger)"></span>Error</span> <span class="item-sub">· ${esc(imapAgo(i.lastSync))}</span><div class="item-sub" style="color:var(--danger)">${esc(String(i.syncError).slice(0, 90))}</div>`;
-  return `<span style="color:var(--ok);font-weight:600"><span class="imap-dot" style="background:var(--ok)"></span>Connected</span> <span class="item-sub">· ${esc(imapAgo(i.lastSync))}</span>`;
+  if (i.syncError) return `<span style="color:var(--danger);font-weight:600"><span class="imap-dot" style="background:var(--danger)"></span>Error</span>${i.lastSync ? ` <span class="item-sub">· ${esc(imapAgo(i.lastSync))}</span>` : ""}<div class="item-sub" style="color:var(--danger)">${esc(String(i.syncError).slice(0, 90))}</div>`;
+  if (i.lastSync) return `<span style="color:var(--ok);font-weight:600"><span class="imap-dot" style="background:var(--ok)"></span>Connected</span> <span class="item-sub">· ${esc(imapAgo(i.lastSync))}</span>`;
+  return `<span class="item-sub">Not checked yet</span>`;
 }
 function renderImap(){
   const groups = storeGroups();
@@ -10255,7 +10256,7 @@ function renderImap(){
   const loginProfN = (lid) => S.profiles.filter(p => profileStores(p).some(e => e.loginId === lid)).length;
   const slotRow = (g) => {
     const used = g.sel.length, cap = g.cap, pct = Math.min(100, Math.round(used / Math.max(cap, 1) * 100));
-    return `<div class="imap-srow">${storeMark({store:g.key})}<span class="imap-sname">${esc(g.name)}</span>
+    return `<div class="imap-srow">${storeMark(g.rows[0] ? g.rows[0].e : {store:g.key})}<span class="imap-sname">${esc(g.name)}</span>
       <span class="imap-scount"><strong>${used}</strong> / ${cap}</span>
       <span class="imap-bar" aria-hidden="true"><span style="width:${pct}%"></span></span>
       <button class="link" data-act="view" data-id="submit">Add slots</button></div>`;
