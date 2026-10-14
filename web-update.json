@@ -1,10 +1,10 @@
 {
-  "version": "1.9.116",
-  "url": "index-1.9.116.html",
-  "sha256": "aabefa32503f4856676861c88fec440cd2d63fd559c4da92dd746b4c43c05020",
-  "signature": "1lYvMJZp5G84KUIR7ulD+/fT45MpeQYZdAfDsfmEqAaK8OBaZQXxzPD8L9S9Qmr0RpSQr7w9SVSqzayA6AxaAA==",
+  "version": "1.9.117",
+  "url": "index-1.9.117.html",
+  "sha256": "1ba54cbc35eacecfb966c1c09b4a69b1154b8a0302033ad0748e001a3addfa1f",
+  "signature": "uz13m5d2RpMEHyQv4tNx7HLgxD7uIBExzdK4O7WR8VcxfJK8ZzOS8z/hWGsNpioohE1pskAwRA5k/dujZrZQCw==",
   "minAppVersion": "0",
-  "notes": "On a phone, Orders now comes first in the tabs along the top, before Profiles. Orders without a product picture now get one by themselves, Target pre-orders and Pokémon Center orders included: FAFO looks the item up in TCGplayer's catalog and puts its picture on every order of it. A wrong one? Press Undo, or use Picture to change or remove it. Turn it off in Settings → Preferences → Find product pictures. Mass edit on Profiles can now Jig the selected profiles' shipping addresses, as on Generate: with Jig on, pick where they bill to under Billing address, and Change waits until you do. Generate's new Copy puts the selected drafts' names, address lines or cities on the clipboard.",
+  "notes": "New IMAP tab in the sidebar, under Store logins. It shows your slot limits for each store at a glance, and which of your store logins still need an inbox set up — without one, the bot can't read the sign-in code to log into the account, so those profiles may not get pulled (profiles on Use Assigned Account don't need one). In the desktop app each saved inbox shows Connected or Error with a Test button; on the web it lists the inboxes you've saved and reminds you the desktop app does the signing-in. Your inbox passwords never leave your device.",
   "installerUrl": "",
-  "publishedAt": "2026-10-14T14:42:51.015Z"
+  "publishedAt": "2026-10-14T15:34:38.927Z"
 }
