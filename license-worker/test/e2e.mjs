@@ -2527,8 +2527,10 @@ try {
     // Nothing ticked, or none that can be: back to the list, saying why.
     const none = await postPairs(lsLink, [["action", "reassign"]], "manual"); await none.text();
     assert.equal(none.status, 303); assert.match(none.headers.get("location"), /err=Tick\+the\+accounts\+to\+reassign\+first\./);
-    const onlyFree = await postPairs(lsLink, [["action", "reassign"], ["pick", "* " + free.email_norm]], "manual"); await onlyFree.text();
-    assert.ok((await after(onlyFree.headers.get("location"))).includes(`<p class="err">${free.email} is free, not given to a buyer.</p>`));
+    const stillFree = listRows().find((x) => x.store === "*" && !x.key_hash);   // read again: the reassign may have given out the one above
+    const onlyFree = await postPairs(lsLink, [["action", "reassign"], ["pick", "* " + stillFree.email_norm]], "manual"); await onlyFree.text();
+    assert.equal(onlyFree.status, 303);
+    assert.ok((await after(onlyFree.headers.get("location"))).includes(`<p class="err">${stillFree.email} is free, not given to a buyer.</p>`));
   });
   await test("Reassign waits while a batch of the buyer's is being sent, and says when the list has no free account left", async () => {
     const { a } = await rosaPair("Rosa G");
@@ -2573,6 +2575,20 @@ try {
     assert.deepEqual([back.key_hash, back.profile], [null, null], "the new one is free again");
     assert.deepEqual(slotRowsOf2(n.email_norm), []);
     assert.equal(rowsWith(a.email_norm), 0, "the old one stays off");
+  });
+  await test("reassigning several with the old ones put back free never gives one of them to another of its buyers", async () => {
+    const i1 = (await rosaPair("Rosa I")).a, j1 = (await rosaPair("Rosa J")).a;
+    const keep = listRows().find((x) => x.store === "*" && !x.key_hash);
+    sqlRun(`UPDATE accounts SET key_hash = 'held-for-test' WHERE store = '*' AND key_hash IS NULL AND email_norm <> '${keep.email_norm}'`);
+    try {
+      const r = await postPairs(lsLink, [["action", "do-reassign"], ["email", i1.email_norm], ["email", j1.email_norm], ["how", "list"], ["old", "free"], ["accounts", ""]], "manual");
+      assert.equal(r.status, 303); const loc = r.headers.get("location"); await r.text();
+      const page1 = await after(loc);
+      assert.ok(page1.includes(`their Target and Pokémon Center slots now use ${keep.email} in place of ${i1.email}, which is free on your list again.`), page1.slice(0, 1200));
+      assert.ok(page1.includes(`<p class="err">${j1.email} got no new account: your list has no free one left.</p>`), "not Rosa I's old one");
+      assert.deepEqual([masterOf(i1.email_norm).key_hash, masterOf(j1.email_norm).key_hash, masterOf(j1.email_norm).profile], [null, j1.key_hash, "Rosa J"]);
+      assert.deepEqual(slotRowsOf2(i1.email_norm), [], "no slot has Rosa I's old one");
+    } finally { sqlRun("UPDATE accounts SET key_hash = NULL WHERE key_hash = 'held-for-test'"); }
   });
   await test("the link stops working after 24 hours, and asks are limited to 10 a day per license", async () => {
     const id = lsLink.match(/\/accounts\/list\/([^?]+)/)[1];

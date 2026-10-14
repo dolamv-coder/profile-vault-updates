@@ -206,10 +206,11 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   goes back free. `do-reassign` (POST) runs `swapAccount` for each, one D1 batch: the new `*` row takes over the old one's
   license, profile, batch, `store_name` and `sent_at`, its slots' rows (`USE`) take its email, email_norm and password in
   the batches they're in, and `assigned_at` becomes now on both (order alerts drop orders from before the day before, so
-  one placed on the new account for someone else never reaches this buyer); the old `*` row is deleted or freed. Only
+  one placed on the new account for someone else never reaches this buyer); the old `*` row is deleted or freed, and a
+random pick never takes one of the same reassign's old accounts (`skip`), so one put back free can't go to the next buyer. Only
   while the old one is still that buyer's for that profile, it and its slots' rows were sent, and no batch of that license
   is being sent (a `submissions` row with no `webhook_message_id`, newer than `BATCH_SENDING_MS`, 10 minutes: a batch reads
-  its accounts before it posts); the new one has no row at any other store, so its slots' rows can take its email. Then
+  its accounts before it posts, and a failed post undoes its moves before that row goes); the new one has no row at any other store, so its slots' rows can take its email. Then
   the list says what changed with the new accounts ticked (`tick=` params, `checked` in the page) for Copy email:password,
   and the channel gets "🔁 Reassigned N accounts" with old → new, never a password: what was posted keeps the old
   email, so the owner changes it in their bot. Pulls, declines, slots sent again (`listAccount`) and order alerts then go

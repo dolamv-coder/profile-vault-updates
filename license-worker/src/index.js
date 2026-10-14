@@ -1024,12 +1024,13 @@ async function submission(request, env, url) {
     }
   } catch (e) { msgId = null; console.error("webhook", e); }
   if (!msgId) {
+    // Accounts that can't have reached the channel go back to the list (or to the batch they came from); if part of the
+    // batch went out, they're kept for this batch, and sending it again posts the same ones. Done before the batch's record
+    // goes, as above: while it's there, the batch counts as being sent, so a reassign (swapAccount) waits for this.
+    if (!postedAny) await undoMoves(env, lic, batch, moves).catch((e) => console.error("accounts", e));
+    if (picks.size) await settleAccounts(env, lic, batch, postedAny, Date.now()).catch((e) => console.error("accounts", e));
     await env.DB.prepare("DELETE FROM submissions WHERE id = ?").bind(s.id).run();
     if (reviewed) await env.DB.prepare("DELETE FROM submission_reviews WHERE id = ?").bind(s.id).run().catch((e) => console.error("review", e));
-    // Accounts that can't have reached the channel go back to the list (or to the batch they came from); if part of the
-    // batch went out, they're kept for this batch, and sending it again posts the same ones.
-    if (!postedAny) await undoMoves(env, lic, batch, moves).catch((e) => console.error("accounts", e));
-    if (picks.size) await settleAccounts(env, lic, batch, postedAny, Date.now());
     return json({ error: "couldn't post to the channel" }, 502);
   }
   await env.DB.prepare("UPDATE submissions SET webhook_message_id = ? WHERE id = ?").bind(msgId, s.id).run().catch((e) => console.error("record", e));
@@ -2048,8 +2049,9 @@ const LIST_SCRIPT = `<script>
 // that profile, it and its slots' rows were sent, and no batch of theirs is being sent (`since`): a batch reads its
 // accounts before it posts, so swapping meanwhile would post the old email. The new one has no row anywhere else (another
 // store's list, or a slot's row at Target or Pokémon Center), so its slots' rows can take its email. Its email and email_norm,
-// or null when nothing changed (the old one changed meanwhile, or no account could take its place).
-async function swapAccount(env, a, want, oldWay, stamp, since) {
+// or null when nothing changed (the old one changed meanwhile, or no account could take its place). `skip` (a JSON list of
+// email_norms) is never picked: the old accounts of the same reassign, so one put back free isn't given to the next buyer.
+async function swapAccount(env, a, want, oldWay, stamp, since, skip = "[]") {
   const binds = [a.email_norm, a.key_hash, a.profile ?? null, stamp];
   // The new one, once taken: given to the same buyer and profile at `stamp`.
   const taken = `EXISTS (SELECT 1 FROM accounts n WHERE n.store = '${MASTER}' AND n.key_hash = ?2 AND n.profile IS ?3 AND n.assigned_at = ?4 AND n.email_norm <> ?1)`;
@@ -2057,11 +2059,12 @@ async function swapAccount(env, a, want, oldWay, stamp, since) {
     env.DB.prepare(`UPDATE accounts SET (key_hash, key_last4, batch, store_name, profile, sent_at) = (SELECT o.key_hash, o.key_last4, o.batch, o.store_name, o.profile, o.sent_at
         FROM accounts o WHERE o.store = '${MASTER}' AND o.email_norm = ?1), assigned_at = ?4
       WHERE rowid = (SELECT m.rowid FROM accounts m WHERE m.store = '${MASTER}' AND m.key_hash IS NULL AND m.email_norm <> ?1 AND (?6 IS NULL OR m.email_norm = ?6)
+          AND m.email_norm NOT IN (SELECT value FROM json_each(?7))
           AND NOT EXISTS (SELECT 1 FROM accounts x WHERE x.email_norm = m.email_norm AND x.store <> '${MASTER}') ORDER BY random() LIMIT 1)
         AND EXISTS (SELECT 1 FROM accounts o WHERE o.store = '${MASTER}' AND o.email_norm = ?1 AND o.key_hash = ?2 AND o.profile IS ?3 AND o.sent_at IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM accounts u WHERE u.offer_id = '${USE}' AND u.email_norm = ?1 AND u.key_hash = ?2 AND u.sent_at IS NULL)
         AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.key_hash = ?2 AND s.webhook_message_id IS NULL AND s.created_at > ?5)
-      RETURNING email, email_norm`).bind(...binds, since, want ?? null),
+      RETURNING email, email_norm`).bind(...binds, since, want ?? null, skip),
     env.DB.prepare(`UPDATE accounts SET (email, email_norm, password) = (SELECT n.email, n.email_norm, n.password FROM accounts n WHERE n.store = '${MASTER}' AND n.key_hash = ?2
         AND n.profile IS ?3 AND n.assigned_at = ?4 AND n.email_norm <> ?1), assigned_at = ?4
       WHERE offer_id = '${USE}' AND email_norm = ?1 AND key_hash = ?2 AND ${taken}`).bind(...binds),
@@ -2183,6 +2186,8 @@ async function accountListPage(request, env, url, id) {
     return { list, bad };
   };
   const whom = (x) => `license …${x.a.key_last4 || ""}${x.a.profile ? `, ${x.a.profile}` : ""}`;
+  // A few emails by name, then how many more, so a message fits where it goes.
+  const few = (es) => es.slice(0, 3).join(", ") + (es.length > 3 ? ` and ${es.length - 3} more` : "");
   const slotsOf = (x) => { const st = [...new Set(x.us.map((u) => accountStoreName(u.store)))]; return st.length ? `their ${st.join(" and ")} slot${x.us.length === 1 ? "" : "s"}` : "their slots"; };
   // The question: which account each one's slots get instead (a free one from the list, picked at random, or the ones typed),
   // and what happens to the old ones. `vals` keeps what was sent when it's asked again with an error.
@@ -2317,23 +2322,24 @@ async function accountListPage(request, env, url, id) {
     // Reassign's question: for one account (its Reassign button, or its Edit page), or for the ones ticked (the bar's, by
     // POST), those on the one list that a buyer has.
     const ps = email ? [{ store: MASTER, email }] : picks();
-    const emails = [...new Set(ps.filter((p) => p.store === MASTER).map((p) => p.email))], cut = Math.max(0, emails.length - LIST_REASSIGN_MAX);
-    const state = await reassignState(emails.slice(0, LIST_REASSIGN_MAX)), items = state.filter((x) => !x.why);
+    const emails = [...new Set(ps.filter((p) => p.store === MASTER).map((p) => p.email))];
+    // At most LIST_REASSIGN_MAX of those that can be; the ones that can't don't count toward it.
+    const state = await reassignState(emails), ok = state.filter((x) => !x.why), items = ok.slice(0, LIST_REASSIGN_MAX), cut = ok.length - items.length;
     const others = [...new Set(ps.filter((p) => p.store !== MASTER).map((p) => p.email))].map((e) => ({ why: "own", email: e }));
     const skipped = [...state.filter((x) => x.why), ...others, ...Array.from({ length: cut }, () => ({ why: "over" }))];
     if (items.length) return reassignView(items, whyText(skipped), "");
     if (email) return page(200, "Reassign an account", "", `<p class="err">${esc(whyText(skipped))}</p>${back}`);
     err = ps.length ? whyText(skipped) : "Tick the accounts to reassign first.";
   } else if (action === "do-reassign" && post) {
-    const emails = emailsSent(), cut = Math.max(0, emails.length - LIST_REASSIGN_MAX);
-    const state = await reassignState(emails.slice(0, LIST_REASSIGN_MAX)), items = state.filter((x) => !x.why);
+    const emails = emailsSent();
+    const state = await reassignState(emails), ok = state.filter((x) => !x.why), items = ok.slice(0, LIST_REASSIGN_MAX), cut = ok.length - items.length;
     const skipped = [...state.filter((x) => x.why), ...Array.from({ length: cut }, () => ({ why: "over" }))];
     if (!items.length) err = emails.length ? whyText(skipped) : "Tick the accounts to reassign first.";
     else {
       const how = get("how"), oldWay = get("old") === "free" ? "free" : "remove", text = get("accounts").slice(0, 100_000), one = items.length === 1;
       const again = (e) => reassignView(items, whyText(skipped), e, { how, old: oldWay, accounts: text });
       if (how !== "list" && how !== "these") return again("Pick which account they get.");
-      if (how === "list" && text.trim()) return again(`You typed ${one ? "an account" : "accounts"}, but picked a free account from your list: pick "${one ? "This account" : "These accounts"}" to use what you typed, or empty the box.`);
+      if (how === "list" && text.trim()) return again(`You typed ${one ? "an account" : "accounts"}, but picked ${one ? "a free account" : "free accounts"} from your list: pick "${one ? "This account" : "These accounts"}" to use what you typed, or empty the box.`);
       let wants = null;
       const notes = [];
       if (how === "these") {
@@ -2358,26 +2364,30 @@ async function accountListPage(request, env, url, id) {
         const typed = list.filter((x) => x.password);
         const { results: had } = typed.length ? await env.DB.prepare(`SELECT email, email_norm, password FROM accounts WHERE store = '${MASTER}' AND email_norm IN (SELECT value FROM json_each(?))`)
           .bind(JSON.stringify(typed.map((x) => x.email.toLowerCase()))).all() : { results: [] };
-        for (const h of had) if (typed.some((x) => x.email.toLowerCase() === h.email_norm && x.password !== h.password)) notes.push(`${h.email} was on your list already, and kept the password it had (Edit changes it).`);
+        const kept = had.filter((h) => typed.some((x) => x.email.toLowerCase() === h.email_norm && x.password !== h.password)).map((h) => h.email);
+        if (kept.length) notes.push(`${few(kept)} ${kept.length === 1 ? "was" : "were"} on your list already, and kept ${kept.length === 1 ? "the password it had" : "the passwords they had"} (Edit changes one).`);
         if (typed.length) await addToList(env, MASTER, typed, "list:" + o.id, now);
         await env.DB.batch(norms.map((e) => env.DB.prepare(`DELETE FROM accounts WHERE store IN ('target', 'pokemoncenter') AND email_norm = ? AND key_hash IS NULL AND ${OWN_ACCOUNT}`).bind(e)));
         wants = norms;
       }
-      // One at a time, each in a transaction of its own (swapAccount); one that didn't go is read again to say why.
-      const swapped = [], failed = [];
+      // One at a time, each in a transaction of its own (swapAccount); one that didn't go is read again to say why. None of
+      // them gets an old one of this reassign.
+      const swapped = [], failed = [], olds = JSON.stringify(items.map((x) => x.e));
       let none = false;
+      const stayFree = [];
       for (const [i, x] of items.entries()) {
         const want = wants ? wants[i] : null;
         if (none && !want) { failed.push({ ...x, why: "none" }); continue; }
-        const n = await swapAccount(env, x.a, want, oldWay, now + i, since);
+        const n = await swapAccount(env, x.a, want, oldWay, now + i, since, olds);
         if (n) { swapped.push({ ...x, n }); continue; }
         sendingKeys.delete(x.a.key_hash);
         const [s] = await reassignState([x.e]);
         const why = s.why || (s.a.key_hash !== x.a.key_hash || s.a.profile !== x.a.profile ? "changed" : want ? "taken" : "none");
         if (why === "none") none = true;
         failed.push({ ...x, why });
-        if (want && why !== "taken") notes.push(`${want} stays on your list, free.`);
+        if (want && why !== "taken") stayFree.push(want);
       }
+      if (stayFree.length) notes.push(`${few(stayFree)} ${stayFree.length === 1 ? "stays" : "stay"} on your list, free.`);
       if (swapped.length || wants) await stockCheck(env, MASTER, accountStoreName(MASTER), swapped.length > 0);
       const target = swapped.some((x) => x.us.some((u) => u.store === "target"));
       const gone = (k) => oldWay === "free" ? `${k === 1 ? "is" : "are"} free on your list again` : "came off your list";
@@ -2394,9 +2404,13 @@ async function accountListPage(request, env, url, id) {
       ticks = swapped.map((x) => MASTER + " " + x.n.email_norm);
       // A note in the channel, beside the batches that went out with the old emails (never a password).
       if (swapped.length) {
-        const k = swapped.length, lines = swapped.slice(0, 20).map((x) => `${md(whom(x))}: ${md(x.a.email)} → ${md(x.n.email)}`);
-        await webhookPost(env, { content: `🔁 **Reassigned ${k} account${k === 1 ? "" : "s"}** on your list for Use Assigned Account\n${lines.join("\n")}${k > 20 ? `\nand ${k - 20} more` : ""}
--# The old ${k === 1 ? "one" : "ones"} ${gone(k)}. Batches already posted have the old email: change it in your bot.`.slice(0, 1990) }).catch((e) => console.error("webhook", e));
+        // Whole lines while they fit in one message (Discord takes 2000 characters), then how many more.
+        const k = swapped.length, head = `🔁 **Reassigned ${k} account${k === 1 ? "" : "s"}** on your list for Use Assigned Account`;
+        const foot = `-# The old ${k === 1 ? "one" : "ones"} ${gone(k)}. Batches already posted have the old email: change it in your bot.`;
+        const lines = [];
+        let len = head.length + foot.length + 40;
+        for (const x of swapped) { const l = `${md(whom(x))}: ${md(x.a.email)} → ${md(x.n.email)}`; if (len + l.length + 1 > 1900) break; lines.push(l); len += l.length + 1; }
+        await webhookPost(env, { content: [head, ...lines, ...(k > lines.length ? [`and ${k - lines.length} more`] : []), foot].join("\n") }).catch((e) => console.error("webhook", e));
       }
     }
   } else if (email && store && (action === "edit" || ((action === "save" || action === "giveback") && post))) {
