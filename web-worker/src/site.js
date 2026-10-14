@@ -4,6 +4,8 @@
 // FAFO's own screens with sample data); nothing of that site's is used. The same worker serves the app itself at
 // app.fafoaco.com (and app.orbit-app.workers.dev); see index.js.
 
+import { logoSVG } from "./brand.js";
+
 export const SITE_HOST = "fafoaco.com";
 export const APP_URL = "https://app.fafoaco.com";
 // The newest Windows download (the "Release desktop app" Action attaches it to each GitHub release), for /download.
@@ -77,11 +79,14 @@ export function sitePage(version, appUrl = APP_URL) {
 <meta name="description" content="FAFO keeps your checkout profiles, cards and store logins encrypted, sends your slots to your runner in one batch, and keeps your orders in one place.">
 <meta name="theme-color" content="#F8FAFC" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0B0F19" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <script>try{var t=localStorage.getItem("fafo-site-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t)}catch(e){}document.documentElement.className+=" js"</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bruno+Ace+SC&text=FAFOACO&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bruno+Ace+SC&text=FAFO&display=swap">
 <style>
 :root{
   --bg:#F8FAFC; --bg-2:#F1F5F9; --card:#FFFFFF; --card-2:#F8FAFC; --ink:#0F172A; --ink-2:#475569; --ink-3:#64748B;
@@ -94,6 +99,7 @@ export function sitePage(version, appUrl = APP_URL) {
   --shadow:0 1px 2px rgba(15,23,42,.06),0 10px 30px -14px rgba(15,23,42,.18);
   --shadow-lg:0 2px 6px rgba(15,23,42,.05),0 30px 70px -28px rgba(15,23,42,.32);
   --phone:#0F172A; --hero-glow:rgba(14,165,233,.13);
+  --lg1:#0EA5E9; --lg2:#0284C7; --lg3:#0369A1; --lg-aco:#0369A1; --lg-glow:0;
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
@@ -107,6 +113,7 @@ export function sitePage(version, appUrl = APP_URL) {
   --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px -14px rgba(0,0,0,.7);
   --shadow-lg:0 2px 6px rgba(0,0,0,.3),0 30px 70px -28px rgba(0,0,0,.9);
   --phone:#020617; --hero-glow:rgba(14,165,233,.16);
+  --lg1:#7DD3FC; --lg2:#38BDF8; --lg3:#0EA5E9; --lg-aco:#7DD3FC; --lg-glow:.35;
   color-scheme:dark;
 }}
 :root[data-theme="dark"]{
@@ -120,6 +127,7 @@ export function sitePage(version, appUrl = APP_URL) {
   --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px -14px rgba(0,0,0,.7);
   --shadow-lg:0 2px 6px rgba(0,0,0,.3),0 30px 70px -28px rgba(0,0,0,.9);
   --phone:#020617; --hero-glow:rgba(14,165,233,.16);
+  --lg1:#7DD3FC; --lg2:#38BDF8; --lg3:#0EA5E9; --lg-aco:#7DD3FC; --lg-glow:.35;
   color-scheme:dark;
 }
 *{box-sizing:border-box}
@@ -136,8 +144,11 @@ a{color:inherit}
 :focus-visible{outline:2px solid var(--focus);outline-offset:3px;border-radius:8px}
 .final :focus-visible{outline-color:#7DD3FC}
 .wordmark{font-family:"Bruno Ace SC",system-ui,sans-serif;letter-spacing:.02em;line-height:1;text-decoration:none;color:var(--ink)}
-.brand{display:inline-flex;flex-direction:column;align-items:center}
-.brand .aco{display:block;font-size:max(9px,.4em);letter-spacing:.35em;margin:.34em 0 0 .35em;color:var(--sky)}
+/* The logo (brand.js), in the theme's colours; --lh is its height. */
+.logo{--lh:40px;display:inline-flex;text-decoration:none;border-radius:8px}
+.logo-svg{display:block;height:var(--lh);width:calc(var(--lh) * 2.5264)}
+.logo-svg .lg1{stop-color:var(--lg1)}.logo-svg .lg2{stop-color:var(--lg2)}.logo-svg .lg3{stop-color:var(--lg3)}
+.logo-svg .lg-aco{fill:var(--lg-aco)}.logo-svg .lg-glow{opacity:var(--lg-glow)}
 .display{font-family:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;font-weight:700;letter-spacing:-.035em;line-height:1.02;margin:0;color:var(--ink);text-wrap:balance}
 p,.ticks li span,.qs summary{text-wrap:pretty}
 .grad{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;padding-bottom:.06em}
@@ -146,7 +157,7 @@ p,.ticks li span,.qs summary{text-wrap:pretty}
 .top{position:sticky;top:0;z-index:50;background:var(--glass);-webkit-backdrop-filter:saturate(1.6) blur(14px);backdrop-filter:saturate(1.6) blur(14px);border-bottom:1px solid transparent;transition:border-color .2s}
 .scrolled .top{border-bottom-color:var(--line)}
 .top .wrap{height:64px;display:flex;align-items:center;gap:16px}
-.top .wordmark{font-size:25px;margin-right:auto}
+.top .logo{margin-right:auto}
 .nav{position:absolute;left:50%;transform:translateX(-50%);display:flex;gap:4px}
 .nav a,.navlink{display:inline-flex;align-items:center;height:36px;padding:0 12px;border-radius:10px;color:var(--ink-2);font-size:14.5px;font-weight:500;text-decoration:none;white-space:nowrap}
 .nav a:hover,.navlink:hover{color:var(--ink);background:var(--bg-2)}
@@ -369,8 +380,7 @@ section.sec#features{background:var(--band);margin-top:120px;padding:104px 0 112
 .final{position:relative;isolation:isolate;overflow:hidden;margin-top:128px;border-radius:34px;background:linear-gradient(180deg,#08142B 0%,#0A1B36 60%,#0D2A4C 100%);box-shadow:0 60px 90px -50px rgba(56,189,248,.6);color:#F8FAFC;text-align:center;padding:100px 24px 104px}
 .final::before{content:"";position:absolute;inset:-30% -10%;z-index:-2;background:radial-gradient(42% 22% at 28% 74%,rgba(56,189,248,.55),transparent 70%),radial-gradient(36% 16% at 74% 36%,rgba(14,165,233,.45),transparent 72%),radial-gradient(70% 34% at 50% 112%,rgba(2,132,199,.85),transparent 70%),radial-gradient(40% 30% at 90% 90%,rgba(99,102,241,.35),transparent 70%);filter:blur(28px)}
 .waves{position:absolute;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none}
-.final .wordmark{color:#fff;font-size:44px;text-shadow:0 0 34px rgba(56,189,248,.55)}
-.final .brand .aco{color:#7DD3FC;text-shadow:none}
+.final .logo{--lh:76px;--lg1:#7DD3FC;--lg2:#38BDF8;--lg3:#0EA5E9;--lg-aco:#7DD3FC;--lg-glow:.35;filter:drop-shadow(0 0 26px rgba(56,189,248,.45))}
 .final h2{color:#fff;margin:26px auto 0;font-size:clamp(34px,3vw + 12px,56px);max-width:12em}
 .final p{margin:18px auto 0;max-width:30em;color:#CBD5E1;font-size:18px;line-height:1.6}
 .final .cta{justify-content:center}
@@ -378,7 +388,7 @@ section.sec#features{background:var(--band);margin-top:120px;padding:104px 0 112
 /* Footer */
 footer{margin-top:96px;border-top:1px solid var(--line)}
 .foot{display:grid;grid-template-columns:minmax(0,1.6fr) repeat(2,minmax(0,1fr));gap:40px;padding:56px 0 48px}
-.foot .wordmark{font-size:26px}
+.foot .logo{--lh:42px}
 .foot p{margin:16px 0 0;color:var(--ink-2)}
 .foot .fh{margin:0 0 14px;font-size:14.5px;font-weight:600;letter-spacing:0}
 .foot ul{list-style:none;margin:0;padding:0;display:grid;gap:12px}
@@ -411,7 +421,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
 }
 @media (max-width:760px){
   .wrap{padding-left:16px;padding-right:16px}
-  .top .wordmark{font-size:22px}
+  .top .logo{--lh:36px}
   .acts .btn-sm .long{display:none}
   .acts .btn-sm .short{display:inline}
   .acts{gap:4px}
@@ -434,7 +444,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
   .store{font-size:16px}
   section.sec#features{margin-top:88px;padding:72px 0 80px}
   .final{margin-top:96px;padding:72px 20px 76px;border-radius:26px}
-  .final .wordmark{font-size:36px}
+  .final .logo{--lh:62px}
   footer{margin-top:88px}
   .foot{grid-template-columns:repeat(2,minmax(0,1fr));gap:32px 20px}
   .foot>div:first-child{grid-column:1/-1}
@@ -450,7 +460,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
   <div class="wrap">
-    <a class="wordmark brand" href="/" aria-label="FAFO ACO home">FAFO<span class="aco">ACO</span></a>
+    <a class="logo" href="/" aria-label="FAFO ACO home">${logoSVG("lg-h")}</a>
     <nav class="nav" aria-label="Sections"><a href="#how">How it works</a><a href="#features">Features</a><a href="#faq">FAQ</a></nav>
     <div class="acts">
       <button class="tbtn" type="button" aria-label="Switch between light and dark" title="Light or dark">${ic("sun", "i-sun")}${ic("moon", "i-moon")}</button>
@@ -576,7 +586,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
   <div class="wrap">
     <section class="final" aria-labelledby="final-h">
       <svg class="waves" viewBox="0 0 1200 500" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="wg" x1="0" x2="1"><stop offset="0" stop-color="#38BDF8" stop-opacity="0"/><stop offset=".45" stop-color="#BAE6FD"/><stop offset="1" stop-color="#0EA5E9" stop-opacity="0"/></linearGradient><filter id="wb" filterUnits="userSpaceOnUse" x="-100" y="-100" width="1400" height="700"><feGaussianBlur stdDeviation="16"/></filter><filter id="wf" filterUnits="userSpaceOnUse" x="-100" y="-100" width="1400" height="700"><feGaussianBlur stdDeviation="1"/></filter></defs><g fill="none" stroke="url(#wg)"><path d="M-60 380C180 300 420 470 650 385S1040 270 1260 330" stroke-width="80" filter="url(#wb)" opacity=".6"/><path d="M-60 380C180 300 420 470 650 385S1040 270 1260 330" stroke-width="2" filter="url(#wf)"/><path d="M-60 430C250 360 470 505 720 420S1020 330 1260 395" stroke-width="46" filter="url(#wb)" opacity=".45"/><path d="M-60 430C250 360 470 505 720 420S1020 330 1260 395" stroke-width="1.4" filter="url(#wf)" opacity=".8"/><path d="M-60 150C300 210 600 90 1260 170" stroke-width="30" filter="url(#wb)" opacity=".25"/></g></svg>
-      <span class="wordmark brand" aria-hidden="true">FAFO<span class="aco">ACO</span></span>
+      <span class="logo">${logoSVG("lg-f")}</span>
       <h2 class="display" id="final-h">Ready for the next drop?</h2>
       <p>Log in with Discord, choose your master password and add your first profile.</p>
       <div class="cta">${loginBtn(app)}</div>
@@ -586,7 +596,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
 <footer>
   <div class="wrap">
     <div class="foot">
-      <div><a class="wordmark brand" href="/" aria-label="FAFO ACO home">FAFO<span class="aco">ACO</span></a><p>Cop it. Track it. FAFO.</p></div>
+      <div><a class="logo" href="/" aria-label="FAFO ACO home">${logoSVG("lg-o")}</a><p>Cop it. Track it. FAFO.</p></div>
       <div><h2 class="fh">FAFO</h2><ul><li><a href="#how">How it works</a></li><li><a href="#features">Features</a></li><li><a href="#faq">FAQ</a></li></ul></div>
       <div><h2 class="fh">Account</h2><ul><li><a href="${app}">Login with Discord</a></li><li><a href="${app}">Open FAFO</a></li></ul></div>
     </div>

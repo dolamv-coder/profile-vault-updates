@@ -248,7 +248,12 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   dark last call. Only the style is taken from that site, never its wording, logo or product photos, and what it says has
   to be true of the web version (no email sync there: orders come from pasted confirmation emails). It calls the seller
   the buyer's **runner** (the owner's word, 2026-10-13); the app itself still says seller. The page waits at
-  most 800 ms for the feed's version line. See "Web version and sync" below.
+  most 800 ms for the feed's version line. Since 2026-10-14 (the owner's pick of four) FAFO's logo there is "Speed": a
+  checked F, an arrow-tip A, motion lines trailing left and a small ACO under it (`web-worker/src/brand.js`, `logoSVG`,
+  drawn inline in the theme's colours; the app still shows its Bruno Ace SC wordmark, and the front page's mockups of it
+  too). The worker serves FAFO's icons on both fafoaco.com and app.fafoaco.com, which browsers ask for on their own, so
+  the app got them with no new page: `/favicon.svg` and `/favicon.ico` (the checked F alone, which stays sharp in a tab)
+  and `/apple-touch-icon.png` (FA over FO, 180 px). See "Web version and sync" below.
 - GitHub Releases: the app links new users to
   `releases/latest/download/FAFO-Windows.zip` on this repo (`Orbit-Windows.zip`
   until 1.9.75; each release also carries the same zip as `Orbit-Windows.zip` and

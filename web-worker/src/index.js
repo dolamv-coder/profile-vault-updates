@@ -11,7 +11,10 @@
 // wrangler.toml, so a deploy needs no access to the domain): app.fafoaco.com is the app, as app.orbit-app.workers.dev
 // still is for older pages and bookmarks; fafoaco.com is FAFO's front page (site.js), with /download for the newest
 // Windows download (since 2026-10-13 the page itself doesn't link it); www.fafoaco.com goes to fafoaco.com.
+// Both serve FAFO's icons (brand.js, since 2026-10-14): /favicon.ico, /favicon.svg and /apple-touch-icon.png, which
+// browsers ask for on their own, so the app's tab and home-screen icon need no new page.
 import { sitePage, SITE_HOST, DOWNLOAD_URL, APP_URL } from "./site.js";
+import { FAVICON_SVG, FAVICON_ICO_B64, APPLE_ICON_B64 } from "./brand.js";
 
 const UPDATE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/web-update.json";
 // The apps' update key (index.html's updater checks the same signature).
@@ -28,6 +31,15 @@ const HEADERS = {
   "strict-transport-security": "max-age=31536000",
 };
 
+const bytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+const APPLE_ICON = [bytes(APPLE_ICON_B64), "image/png"];
+const ICON_FILES = {
+  "/favicon.ico": [bytes(FAVICON_ICO_B64), "image/x-icon"],
+  "/favicon.svg": [FAVICON_SVG, "image/svg+xml"],
+  "/apple-touch-icon.png": APPLE_ICON,
+  "/apple-touch-icon-precomposed.png": APPLE_ICON,
+};
+
 let current = null;   // {version, sha256, html, checkedAt}: the last page that checked out
 
 export default {
@@ -39,6 +51,10 @@ export default {
     if (url.protocol === "http:" && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname)) { url.protocol = "https:"; return Response.redirect(url.toString(), 301); }
     const site = env.SITE_HOST || SITE_HOST;
     if (url.hostname === "www." + site) return Response.redirect(`${url.protocol}//${site}${url.pathname}${url.search}`, 301);
+    const icon = ICON_FILES[url.pathname];
+    if (icon) return new Response(request.method === "HEAD" ? null : icon[0], {
+      headers: { "content-type": icon[1], "cache-control": "public, max-age=86400", ...HEADERS, "content-security-policy": "default-src 'none'; frame-ancestors 'none'" },
+    });
     if (url.hostname === site) return frontPage(request, env, url, ctx);
     if (url.pathname === "/robots.txt") return text(200, "User-agent: *\nDisallow: /\n");
     if (url.pathname !== "/" && url.pathname !== "/index.html") return Response.redirect(url.origin + "/", 302);

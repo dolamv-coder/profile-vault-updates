@@ -122,6 +122,45 @@ try {
     const app = await get();
     assert.equal(await app.text(), page1); assert.equal(app.headers.get("x-orbit-version"), "1.9.0");
   });
+  await test("both addresses serve FAFO's icons (the tab's and the home screen's), and the front page shows the logo and names them", async () => {
+    const site = `http://localhost:${WORKER_PORT}`;
+    const u32 = (b, i) => (b[i] << 24 | b[i + 1] << 16 | b[i + 2] << 8 | b[i + 3]) >>> 0;
+    const isPng = (b, size) => [137, 80, 78, 71, 13, 10, 26, 10].every((x, i) => b[i] === x) && u32(b, 16) === size && u32(b, 20) === size;
+    for (const base of [BASE, site]) {
+      for (let round = 0; round < 2; round++) {   // the same bytes on every request
+        const ico = await fetch(base + "/favicon.ico", { redirect: "manual" });
+        assert.equal(ico.status, 200); assert.equal(ico.headers.get("content-type"), "image/x-icon");
+        assert.match(ico.headers.get("cache-control"), /max-age=86400/); assert.equal(ico.headers.get("x-content-type-options"), "nosniff");
+        const b = new Uint8Array(await ico.arrayBuffer()), n = b[4];
+        assert.deepEqual([...b.slice(0, 4)], [0, 0, 1, 0]); assert.equal(n, 3);
+        for (let i = 0; i < n; i++) {   // 16, 32 and 48 px PNGs, where the directory says
+          const e = 6 + 16 * i, size = b[e], len = b[e + 8] | b[e + 9] << 8 | b[e + 10] << 16, off = b[e + 12] | b[e + 13] << 8 | b[e + 14] << 16;
+          assert.equal(size, [16, 32, 48][i]); assert.ok(isPng(b.slice(off, off + len), size), "image " + i);
+        }
+        const svg = await fetch(base + "/favicon.svg", { redirect: "manual" });
+        assert.equal(svg.status, 200); assert.equal(svg.headers.get("content-type"), "image/svg+xml");
+        assert.match(svg.headers.get("content-security-policy"), /default-src 'none'/);
+        const s = await svg.text();
+        assert.match(s, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 512 512">/); assert.doesNotMatch(s, /<script|on\w+=|href="http/i);
+        for (const p of ["/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"]) {
+          const a = await fetch(base + p, { redirect: "manual" });
+          assert.equal(a.status, 200, p); assert.equal(a.headers.get("content-type"), "image/png");
+          assert.ok(isPng(new Uint8Array(await a.arrayBuffer()), 180), p);
+        }
+      }
+      const h = await fetch(base + "/favicon.ico", { method: "HEAD" });
+      assert.equal(h.status, 200); assert.equal(await h.text(), "");
+    }
+    const body = await (await fetch(site + "/")).text();
+    for (const l of ['<link rel="icon" href="/favicon.ico" sizes="32x32">', '<link rel="icon" href="/favicon.svg" type="image/svg+xml">', '<link rel="apple-touch-icon" href="/apple-touch-icon.png">']) assert.ok(body.includes(l), l);
+    // The logo in the header, the last call and the footer, each copy with ids of its own; the two links to the top are named.
+    const logos = [...body.matchAll(/<svg class="logo-svg" viewBox="0 0 418\.11 165\.5" aria-hidden="true" focusable="false"><defs><linearGradient id="([\w-]+)-m"/g)].map((m) => m[1]);
+    assert.deepEqual(logos, ["lg-h", "lg-f", "lg-o"]);
+    const ids = [...body.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+    assert.equal(new Set(ids).size, ids.length, "every id on the page is used once");
+    for (const id of ids) if (/^lg-/.test(id)) assert.ok(body.includes(`url(#${id})`), "used: " + id);
+    assert.equal((body.match(/<a class="logo" href="\/" aria-label="FAFO ACO home">/g) || []).length, 2);
+  });
   await test("www.fafoaco.com goes to fafoaco.com (the worker's code, called directly: wrangler dev keeps its own address)", async () => {
     const { default: worker } = await import("../src/index.js");
     const r = await worker.fetch(new Request("https://www.fafoaco.com/download?x=1"), {});
