@@ -212,7 +212,7 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   before the account was given out. It keeps the alert 60 days without the account (D1 `alerts`), and
   posts it to the buyer's own Discord webhook if they set one (`PUT /alerts/webhook`, D1
   `alert_webhooks`; Discord's URLs only, and a test post first). The buyer's Orbit checks
-  `GET /alerts?since=` every 5 minutes (cursor `settings.sellerSince`). It adds each alert as an order
+  `GET /alerts?since=` every 5 minutes (cursor `settings.sellerSince`; the web version too from 1.9.115, below). It adds each alert as an order
   with id `sa-<oid>`, `fromSeller` and `profile`, moves it along, and notifies (`sendAlert`).
   A deleted one stays deleted: from 1.9.69 the order editor's Delete also records `deletedOrders`.
   From 1.9.57 a store waiting for a login is linked to the saved login with the profile's email on
@@ -248,7 +248,12 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   dark last call. Only the style is taken from that site, never its wording, logo or product photos, and what it says has
   to be true of the web version (no email sync there: orders come from pasted confirmation emails). It calls the seller
   the buyer's **runner** (the owner's word, 2026-10-13); the app itself still says seller. The page waits at
-  most 800 ms for the feed's version line. See "Web version and sync" below.
+  most 800 ms for the feed's version line. Since 2026-10-14 (the owner's pick of four) FAFO's logo there is "Speed": a
+  checked F, an arrow-tip A, motion lines trailing left and a small ACO under it (`web-worker/src/brand.js`, `logoSVG`,
+  drawn inline in the theme's colours; the app still shows its Bruno Ace SC wordmark, and the front page's mockups of it
+  too). The worker serves FAFO's icons on both fafoaco.com and app.fafoaco.com, which browsers ask for on their own, so
+  the app got them with no new page: `/favicon.svg` and `/favicon.ico` (the checked F alone, which stays sharp in a tab)
+  and `/apple-touch-icon.png` (FA over FO, 180 px). See "Web version and sync" below.
 - GitHub Releases: the app links new users to
   `releases/latest/download/FAFO-Windows.zip` on this repo (`Orbit-Windows.zip`
   until 1.9.75; each release also carries the same zip as `Orbit-Windows.zip` and
@@ -387,7 +392,8 @@ release reaches the web the same way it reaches installed apps, and the
 worker itself only changes for its own fixes ("Deploy web app",
 `.github/workflows/deploy-web-app.yml`, on `web-worker/` changes to `main`).
 Opening it needs no license key (`licenseGate` only runs in the desktop app; from 1.9.107 sending slots to the seller
-uses the vault's, below; from 1.9.109 a browser with no vault opens on Continue with Discord, with Use this browser only),
+uses the vault's, below, as getting the seller's orders does from 1.9.115; from 1.9.109 a browser with no vault opens on
+Continue with Discord, with Use this browser only),
 and email sync and Clean emails stay in the desktop app.
 
 **The web version follows releases again from 1.9.106** (the owner's request, 2026-10-10: "add the web base project into
@@ -1032,6 +1038,39 @@ left as they are, and switching Jig for stops the other store's Jig. Nothing gai
 From 1.9.114 the phone's tabs along the top (`#mnav`) start with Orders, then Profiles, as the sidebar always has (the
 owner's request, 2026-10-13, with a screenshot of app.fafoaco.com: "Put Orders before Profiles"); FAFO already opens on
 Orders. Nothing gains a field.
+
+From 1.9.115 the web version gets the orders the seller places on accounts they gave the buyer (order alerts for buyers,
+the worker section above; the owner's request, 2026-10-13, once the front page said orders show up after the runner checks
+out): `scheduleSellerAlerts` and `pollSellerAlerts` ran only in the desktop app, with its license, so a buyer who only used
+app.fafoaco.com never saw one. They now run where `sellerAlertsCan`: the desktop app, or the web version on its own address
+(`WEB_SELF`, not claude.ai or a file) once the vault has a license key (`sellerLic()`, which `alertApi` now uses for every
+call; the seller's side stays in the desktop app), and only in the vault itself (`MODE`, not a code being filled in).
+`sellerAlertsWait` holds an ask back while a window is open or email syncs (`syncBlocked()`: the order editor saves its
+Status over a newer step), checked again once the answer is in (nothing goes in and `sellerSince` doesn't move, so the next
+ask gets the same alerts), and, with sync on, until the copy has caught up with the online one (`sellerCaughtUp`: the
+online copy read in the last 30 seconds by a round not left waiting for a window, `SYNC.gotAt`, which a round whose own
+upload failed still sets): it starts a round, unless sync is in trouble (offline, an error, a password to type), and asks
+the moment a round has caught up (`sellerAlertsSynced`, from `syncExclusive`, not a timer: a background tab or a minimized
+window only runs timers once a minute, by when the copy would count as behind again). On an older copy (before this
+device's first merge, a tab back in view, a hidden one) the alerts would add again orders deleted on another device, undo
+edits made there and alert again about orders other devices already had (the review's repro, 2026-10-13). `syncMerge` also
+keeps them deleted: a seller's order added on one side after the other deleted it, and one whose number was deleted on
+purpose since the two sides last agreed, whichever side has it (`u.v.fromSeller`; alerts never add one with a deleted
+number), as a 1.9.112 desktop can bring one back (its merge lacks the rule; a random run of a 1.9.112 desktop with a
+1.9.115 browser brought one back in 120 of 3000 runs without it, none with it). So deleting an order typed by hand with
+the same number as the seller's deletes the seller's copy too (`sync-merge.test.mjs` tests both). A browser tab in the
+background asks only if it can show a notification (`webCanNotify`: permission given, not Android, nor a browser whose
+`new Notification` threw once, `orbit-notify-failed` in localStorage, as Android's do even asking for desktop sites);
+otherwise the buyer's desktop gets the alert, with its Windows notification and the phone's, and the tab asks once it's
+shown again, as it does back online (`sellerAlertsBack`, at most once a minute; a phone's browser stops a background tab's
+timers). Each request gives up after 20 seconds, `sellerSince` never goes back when a merge brought a newer one meanwhile,
+nothing is applied to a vault locked meanwhile, and a new order gets its picture right away (`autoPicturesSoon`). FAFO
+neither asks for notification permission nor tries one where it can't show it (`NO_NOTIFY`). Clicking a notification
+about an order from the seller opens Orders on All, with every inbox and store and no search, not Needs attention. A device
+whose sync needs the new password (changed on another device) doesn't ask until it's typed. The web version has no
+Settings → Alerts, so the buyer's own Discord webhook for these is still set in the desktop app. Only slots on Use Assigned
+Account get these: an order on the buyer's own store login reaches FAFO through that login's inbox, which only the desktop
+app syncs. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
