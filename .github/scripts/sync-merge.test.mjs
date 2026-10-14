@@ -241,6 +241,18 @@ if (/u\.v\.fromSeller/.test(html.slice(start, end))) test("an order from the sel
   const manual = clone(stale); manual.orders[0] = { id: "o9", store: "target", orderNo: "912003760001", item: "Box" };
   assert.deepEqual(ids(merge(manual, online, base).state.orders), ["o9"], "one added by hand stays");
   assert.deepEqual(ids(merge(stale, base, base).state.orders), [sold.id], "with nothing deleted, it's kept");
+  // Both sides have it (one heard of it from its own alert before the deletion reached it, as a 1.9.112 desktop can): an
+  // order from the seller whose number was deleted since they agreed stays deleted, whichever side has the deletion.
+  const agreed = clone(stale);
+  const both = clone(agreed); both.deletedOrders = { [orderKey(sold)]: 1000 };
+  for (const [l, r] of [[both, agreed], [agreed, both]]) assert.deepEqual(merge(l, r, agreed).state.orders, []);
+  // An order typed by hand with the same number isn't the seller's: its deletion only takes the seller's copy with it.
+  const twins = clone(agreed); twins.orders.push({ id: "o9", store: "target", orderNo: "912003760001", item: "Box" });
+  const gone = clone(twins); gone.orders = gone.orders.filter((o) => o.id !== "o9"); gone.deletedOrders = { [orderKey(sold)]: 1000 };
+  assert.deepEqual(merge(gone, twins, twins).state.orders, []);
+  // Undo (the deletion record taken back) keeps it.
+  const undone = clone(both); undone.deletedOrders = {};
+  assert.deepEqual(ids(merge(undone, both, both).state.orders), [sold.id]);
 });
 
 test("items without an id, or with the same id twice, aren't lost", () => {

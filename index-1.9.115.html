@@ -10719,17 +10719,20 @@ const recentlyCanceled = (o) => { if (o.stage !== "canceled") return false; cons
 const needsAttention = (o) => !!orderStuck(o) || recentlyCanceled(o);
 
 // Android's browsers only show notifications through a service worker (`new Notification` throws there): none is asked for
-// or tried there.
-const ANDROID = /Android/i.test(navigator.userAgent || "");
+// or tried there, nor in a browser where it threw once (one asking for desktop sites doesn't say it's Android).
+const NOTIFY_FAILED = "orbit-notify-failed";   // localStorage, per browser
+let NO_NOTIFY = /Android/i.test(navigator.userAgent || "") || /Android/i.test((navigator.userAgentData || {}).platform || "")
+  || (() => { try { return localStorage.getItem(NOTIFY_FAILED) === "1"; } catch(e){ return false; } })();
 // Shows a Windows notification (and flashes the taskbar) plus sends the same alert to the phone app.
 function sendAlert(title, body, tag){
   try {
-    if ("Notification" in window && !ANDROID){
+    if ("Notification" in window && !NO_NOTIFY){
       // Opens Orders on the ones needing attention (an order from the seller: every order, whatever inbox, store or
       // search was picked), over all time, since a shorter Showing period could hide them.
       const show = () => { try { const n = new Notification(title, {body, tag}); n.onclick = () => { try { window.focus(); if (window.pvDesktop && window.pvDesktop.focusApp) window.pvDesktop.focusApp(); UI.view = "orders";
         if (tag === "pv-seller"){ UI.orderStage = "all"; UI.orderInbox = "all"; UI.store = "all"; UI.q = ""; const qb = $("#q"); if (qb) qb.value = ""; } else UI.orderStage = "attention";
-        if (S && orderPeriodCfg().p !== "all"){ S.settings.orderPeriod = Object.assign(orderPeriodCfg(), {p:"all"}); persist(); } render(); } catch(e){} n.close(); }; } catch(e){} };
+        if (S && orderPeriodCfg().p !== "all"){ S.settings.orderPeriod = Object.assign(orderPeriodCfg(), {p:"all"}); persist(); } render(); } catch(e){} n.close(); }; }
+        catch(e){ if (!DESK && e && e.name === "TypeError"){ NO_NOTIFY = true; try { localStorage.setItem(NOTIFY_FAILED, "1"); } catch(_){} } } };
       if (Notification.permission === "granted") show(); else if (Notification.permission !== "denied") Notification.requestPermission().then(p => { if (p === "granted") show(); });
     }
     if (window.pvDesktop && window.pvDesktop.attention) window.pvDesktop.attention().catch(() => {});
@@ -10784,7 +10787,7 @@ function scheduleAlerts(){
 const ALERT_STEPS = ["placed", "shipped", "arriving", "delivered", "canceled"];
 const ALERT_STEP_TEXT = {placed:"order placed", shipped:"order shipped", arriving:"order out for delivery", delivered:"order delivered", canceled:"order canceled"};
 const OALERT = {status:"", checkedAt:0, accounts:null, accountsAt:0, busy:false};   // the seller's side, not saved
-let SELLER_HOOK = null, sellerHookAt = 0, sellerBusy = false, sellerTimer = null, sellerSoonTimer = null, sellerAskedAt = 0;  // the buyer's side
+let SELLER_HOOK = null, sellerHookAt = 0, sellerBusy = false, sellerTimer = null, sellerSoonTimer = null, sellerAskedAt = 0, sellerWant = false;  // the buyer's side
 const orderAlertsOn = () => !!(S && S.settings.orderAlerts && S.settings.orderAlerts.on);
 // The desktop's license, or in a browser the vault's (the seller's side only runs in the desktop app).
 function alertApi(path, opts){
@@ -10870,19 +10873,28 @@ const sellerAlertsCan = () => !!S && MODE === "vault" && (DESK || WEB_SELF) && !
 // device's first merge, a tab back in view, a hidden one) would add again orders deleted on another device, undo edits
 // made there and alert again about orders other devices already added. While sync is in trouble (offline, a password to
 // type, an error), not until it's back.
-// `got`: the alerts are in, asked on a copy that had just caught up.
+// Caught up: the online copy was read (and merged) in the last 30 seconds, by a round that wasn't left waiting for a
+// window (SYNC.gotAt; a round whose own upload failed still counts).
+const sellerCaughtUp = () => !SYNC.waiting && !SYNC.oneStoreDue && Date.now() - Math.max(SYNC.gotAt || 0, +S._local.okAt || 0) <= 30000;
+// `got`: the alerts are in, asked on a copy that had just caught up. A copy behind starts a round (unless sync is in
+// trouble) and asks the moment a round has caught up (sellerAlertsSynced), not from a timer: a tab in the background or a
+// minimized window only runs timers once a minute, and by then the copy would count as behind again.
 function sellerAlertsWait(got){
   if (syncBlocked()) return 15000;
   if (!syncOn()) return 0;
-  if (SYNC.busy) return 3000;
-  if (got) return 0;
-  if (!SYNC.oneStoreDue && Date.now() - (+S._local.okAt || 0) <= 30000) return 0;
-  if (["offline", "error", "password", "license", "locked"].includes(SYNC.state)) return 60000;
-  syncSoon(0);
-  return 3000;
+  if (got) return SYNC.busy ? (sellerWant = true, 15000) : 0;
+  if (!SYNC.busy && sellerCaughtUp()) return 0;
+  sellerWant = true;
+  if (!SYNC.busy && !["offline", "error", "password", "license", "locked"].includes(SYNC.state)) syncSoon(0);
+  return 60000;
+}
+function sellerAlertsSynced(){
+  if (!sellerWant || !S || SYNC.busy || !syncOn() || !sellerCaughtUp()) return;
+  sellerWant = false; clearTimeout(sellerSoonTimer);
+  pollSellerAlerts();
 }
 // A browser shows a notification from a hidden tab only with permission (and not on Android).
-const webCanNotify = () => "Notification" in window && !ANDROID && Notification.permission === "granted";
+const webCanNotify = () => "Notification" in window && !NO_NOTIFY && Notification.permission === "granted";
 function scheduleSellerAlerts(){
   clearInterval(sellerTimer); clearTimeout(sellerSoonTimer);
   if (!S || !(DESK || WEB_SELF)) return;
@@ -13058,6 +13070,10 @@ function syncMerge(L, R, base, lmt, rmt, keyOf, orig){
       if (D[ok] && one(k) && base[k] !== undefined){ pick.delete(k); delete mt[k]; continue; }
       // Imported from email, or from the seller's order alerts (1.9.115), on one side after the other deleted it.
       if (D[ok] && fresh(k) && (u.v.inbox || u.v.fromSeller)){ pick.delete(k); delete mt[k]; continue; }
+      // An order from the seller whose number was deleted on purpose since the two sides last agreed stays deleted,
+      // whichever side has it (alerts never add one with a deleted number): a device that added it from its own alert
+      // before the deletion reached it, as a 1.9.112 desktop can, would otherwise keep it for good.
+      if (D[ok] && u.v.fromSeller && base[DP + ok] === undefined){ pick.delete(k); delete mt[k]; continue; }
       if (!u.v.orderNo || !fresh(k)) continue;
       if (!same.has(ok)) same.set(ok, []);
       same.get(ok).push(k);
@@ -13136,7 +13152,7 @@ function syncPruneMt(mt){ const o = {}, old = Date.now() - 90 * 86400000; for (c
 // baseC: the canonical JSON of each unit as the online copy last had it, in memory, so a unit this
 // device changes keeps its starting version (L.orig) for a field-by-field merge if another device
 // changes it too.
-const SYNC = { busy:false, again:false, timer:null, noteTimer:null, state:"", msg:"", ranAt:0, fails:0, retryAt:0, waiting:false, quiet:false, renderWait:false, gen:0, units:null, unitsGen:-1, baseC:new Map() };
+const SYNC = { busy:false, again:false, timer:null, noteTimer:null, state:"", msg:"", ranAt:0, gotAt:0, fails:0, retryAt:0, waiting:false, quiet:false, renderWait:false, gen:0, units:null, unitsGen:-1, baseC:new Map() };
 const syncBaseFrom = (u, only) => { const m = new Map(); for (const [k, x] of u.map) if (!only || only[k] === x.h) m.set(k, x.c); return m; };
 function syncHint(){ try { const h = JSON.parse(localStorage.getItem(SYNC_HINT) || "null"); return h && typeof h.lic === "string" && h.lic ? h : null; } catch(e){ return null; } }
 function syncHintWrite(h){ try { if (h) localStorage.setItem(SYNC_HINT, JSON.stringify(h)); else localStorage.removeItem(SYNC_HINT); } catch(e){} }
@@ -13239,7 +13255,7 @@ async function syncExclusive(fn){
   while (SYNC.busy) await syncSleep(100);
   SYNC.busy = true; clearTimeout(SYNC.timer);
   try { return await fn(); }
-  finally { SYNC.busy = false; if (SYNC.again && syncOn()) syncSoon(400); }
+  finally { SYNC.busy = false; if (SYNC.again && syncOn()) syncSoon(400); Promise.resolve().then(sellerAlertsSynced); }
 }
 // A sync round: fetch the online copy if it changed, merge it in, and send what this device has that it
 // doesn't. If another device saves in between, its save is merged too and this one tries again.
@@ -13289,6 +13305,7 @@ async function syncCycle(opts){
         syncNote();
         syncPersist();
       }
+      SYNC.gotAt = Date.now();   // caught up with the online copy (the seller's alerts go by it)
       // Up to date with the online copy (nothing new there): the first round after unlocking splits now.
       if (SYNC.oneStoreDue){ SYNC.oneStoreDue = false; if (oneStoreRun("first").changed){ changed = true; syncNote(); syncPersist(); } }
       if (!S._local.pending && !mustSend){ S._local.okAt = Date.now(); syncPersist(); SYNC.fails = 0; syncShow("ok"); return "ok"; }
@@ -13381,7 +13398,7 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && Da
 window.addEventListener("online", () => syncSoon(500));
 // Unlocked: catch up with the other devices first thing.
 function syncStart(){
-  SYNC.state = ""; SYNC.msg = ""; SYNC.fails = 0; SYNC.retryAt = 0; SYNC.ranAt = 0; SYNC.baseC = new Map();
+  SYNC.state = ""; SYNC.msg = ""; SYNC.fails = 0; SYNC.retryAt = 0; SYNC.ranAt = 0; SYNC.gotAt = 0; SYNC.baseC = new Map();
   if (S && S._local && S._local.base){ SYNC.unitsGen = -1; syncNote(); SYNC.baseC = syncBaseFrom(SYNC.units, S._local.base); }
   if (syncOn()){ const h = syncHint(); if (!h || h.lic !== S._local.lic) syncHintWrite({lic:S._local.lic, dirty:!!S._local.pending}); syncSoon(300); }
 }
