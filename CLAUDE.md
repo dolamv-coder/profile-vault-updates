@@ -1172,6 +1172,18 @@ handler (`login-sel`, `login-sel-all`, `login-view`, `login-group`, `edit`/`dele
 `data-lmenu` right-click menu, Import accounts, Add store login), the group chips, the unlinked-login alert and the
 Inboxes section. Additive and display-only; nothing gains a field, so the paused desktop app (1.9.112) is unaffected.
 
+From 1.9.123 the **Cards page** gets the same look (the owner's request, Cards after Store logins; "Keep going with
+Cards"): a KPI strip (`p-kpis`: cards, virtual, physical, in use, and expired when any) under the header, and each
+Comfortable card keeps its full visual (`ccHTML`) with the body slimmed to the shared design language (`renderCards`,
+`.card-item`): the card title and group up top with the reveal/copy/edit/delete actions, then a row of status pills
+(`.ci-pills`: Expired `.ppill-bad`, Virtual · provider `.ppill-info`, and Used by N profiles `.ppill-ok` / Not used
+yet), the virtual card's details on their own line (`.ci-sub`: Locked to … · Limit … · Funded by …) and its note below
+(`.ci-note`). Compact and List are unchanged, as are every handler (`card-sel`, `card-sel-all`, `card-view`,
+`card-group`, `card-group-menu`, `reveal`, `copy-card`, `edit-card`, `delete-card`, `export-cards`, `import-cards`,
+`new-card`, `new-card-group`), the group chips, card search (`cardMatches`), the Note column in List and the bulk bar
+(Edit names, Put in profiles, Export, Move to group, Delete). Additive and display-only; nothing gains a field, so the
+paused desktop app (1.9.112) is unaffected.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
