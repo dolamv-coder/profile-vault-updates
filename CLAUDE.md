@@ -21,14 +21,15 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   `url`, `sha256`, `signature`, `notes`, `publishedAt`). Apps accept an update
   only if the signature verifies against the publisher key built into them.
 - `web-update.json`: the same, signed the same way, for the web version (app.fafoaco.com, `web-worker/`): its own
-  feed since 2026-10-11, so the web gets releases while desktop updates are paused.
+  feed since 2026-10-11, so the web gets releases while desktop updates are paused (they were from 2026-10-11 to
+  2026-10-15).
 - `channels.json`: `{"desktop": "paused", "version", "sha256", "feedSha256"}` keeps `update.json` (installed apps)
   byte for byte on that release (`feedSha256` is the sha256 of `update.json` itself; the checks refuse any other
   `update.json`, a copied, re-signed or edited one too); `{"desktop": "follow"}` lets installed apps follow releases
-  again. It's required, and anything else in it fails the checks. **Desktop updates are paused since 2026-10-11, until further notice** (the
-  owner: "paused desktop updates until further notice. work only on fafoaco website"): work only on the fafoaco
-  website (the web version and the front page), and don't set `channels.json` to `follow`, publish a desktop download
-  ("Release desktop app") or change `desktop/` unless the owner asks.
+  again. It's required, and anything else in it fails the checks. **Installed apps follow releases again since
+  2026-10-15** (the owner: "Sync up desktop and website"; 1.9.126 brought them up from 1.9.112). The owner had paused
+  them on 2026-10-11 ("paused desktop updates until further notice. work only on fafoaco website"). Don't pause them
+  again, publish a desktop download ("Release desktop app") or change `desktop/` unless the owner asks.
 - `licenses.json`: signed list of SHA-256 hashes of license keys made by hand,
   fetched by the app from
   `raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/licenses.json`.
@@ -291,14 +292,17 @@ updates both as soon as a new page and its notes reach `main` (only
 ## Releases
 
 One commit per release, titled `Release X.Y.Z`, updates `web-update.json` (the web version) and `update.json`
-(installed apps). While `channels.json` says `"desktop": "paused"` (since 2026-10-11) it updates `web-update.json`
-only and is titled `Release X.Y.Z (web only)`; set back to `"follow"`, the next run brings installed apps up to the
-newest page (`Release X.Y.Z (installed apps)`), with that page's notes, so write them for desktop users catching up
-on everything since 1.9.112. The "Publish Orbit update" Action (`.github/workflows/publish-update.yml`) makes it:
+(installed apps). While `channels.json` says `"desktop": "paused"` (it did from 2026-10-11 to 2026-10-15) it updates
+`web-update.json` only and is titled `Release X.Y.Z (web only)`; set back to `"follow"`, the next run brings installed
+apps up to the newest page (`Release X.Y.Z (installed apps)`, or `Release X.Y.Z` when the web version gets it too), with
+that page's notes, so write them for desktop users catching up. The "Publish Orbit update" Action
+(`.github/workflows/publish-update.yml`) makes it:
 
 1. Copy the latest `index-*.html` to `index-X.Y.Z.html` and make the change.
 2. Add `release-notes/X.Y.Z.txt`: a sentence or two for the app's update notice.
-   Customers read it, so write it for them.
+   Customers read it, so write it for them. It's shown as one paragraph (line breaks become spaces), and keep it under
+   600 characters: a desktop app that installs an update by itself (1.9.100) keeps only the first 600 for its lock
+   screen's "Updated to version X" (`AUTO_UPD_LAST`'s `notes`), cutting a longer one mid-word. The web version shows none.
 3. Merge both into `main`. The Action signs the feeds over the committed
    page with the `UPDATE_SIGNING_KEY` secret, checks the signature against the
    key built into the app, commits them as `Release X.Y.Z`, and waits until
@@ -427,12 +431,12 @@ also while desktop updates are paused. A tab left open on an older page keeps ru
 desktop app that hasn't restarted, so a release that adds top-level vault keys or store modes still has to expect older
 devices syncing for a while.
 
-**Desktop updates are paused since 2026-10-11** (the owner's request, until further notice; `channels.json`): installed
-apps stay on 1.9.112 while the web version gets each release from `web-update.json`. A desktop on 1.9.112 syncs the same
-vault as a browser on a newer page, so pages in the meantime follow the rule the web kept while it was paused at 1.9.67,
-the other way round: new data goes where 1.9.112 syncs it as it is (new fields on existing items, new shared settings),
-and no new top-level vault keys or store modes, which a 1.9.112 device would undo. Features that need the desktop app
-(email sync, Clean emails, a new `pvDesktop` call) don't reach anyone until desktop updates follow again.
+**Desktop updates were paused from 2026-10-11 to 2026-10-15** (the owner's request; `channels.json`): installed apps
+stayed on 1.9.112 while the web version got each release from `web-update.json`, and 1.9.126 brought them up again (the
+owner: "Sync up desktop and website"). A desktop installs it only when it restarts (by itself once it's locked and no one
+is at the computer, 1.9.100), so for a while some still run 1.9.112 and sync the same vault as newer pages: keep to the
+rule pages kept during the pause, new data where 1.9.112 syncs it as it is (new fields on existing items, new shared
+settings) and no new top-level vault keys or store modes, which a 1.9.112 device would undo.
 
 From 1.9.71, **Generate** (sidebar, under Cards) makes profiles in bulk: one address, a name prefix
 (`<name> #n`, numbered after the highest in use), how many, and pasted emails (the first word of each
@@ -1238,6 +1242,23 @@ inbox on a phone. The rest of the page is as it was (its markup without the stri
 and every handler too (`edit-login`, `edit-inbox`, `view` to Submit). A slot limit the license worker changes reaches it
 too: `refreshSlotAllow` (at unlock, and every minute while Submit or IMAP is shown) redraws either page, where it redrew
 only Submit and ran only there. Nothing gains a field.
+
+From 1.9.126 installed apps follow releases again (the owner's request, 2026-10-15: "Sync up desktop and website"):
+`channels.json` is `{"desktop": "follow"}`, and 1.9.126 went to both feeds, bringing desktops up from 1.9.112 (its note
+is written for them, under 600 characters). First, a review of 1.9.113 to 1.9.125 for the desktop found no new
+`pvDesktop` call (so no new download: wrappers 10 to 13 run it), and it was run in the desktop app itself (Electron 33
+under Xvfb): a 1.9.112 app, locked, downloaded the signed page from a local feed, restarted itself into it and said so
+on its lock screen with the whole note, then every page opened with its desktop parts (Sync all, Delete N canceled with
+Trash, IMAP's Connected / Error and Test). 1.9.126 fixes what that review found only the desktop shows. There "Inbox
+connected" now means the inbox's last sign-in on this computer worked (`inboxCheck`: `syncError` gives Inbox error, red,
+with its reason on hover; no `lastSync` yet gives Not checked yet), on Store logins' cards (`loginInboxPill`) and both
+counts strips (`loginInboxCounts`, `inboxKpis`, with Inbox error and Not checked yet when there are any, so the counts
+still add up to Logins); it meant only a saved inbox, which is what it still means on the web. A sync's start and
+failure redraw IMAP and Store logins too (`syncViews`), and IMAP's card shows Connecting… and the sync's progress
+(`data-sync-status`) while the desktop signs in. The sidebar's IMAP comes after Store logins' groups, which hang under
+the item above them. And `syncMerge` keeps both sides of `autoPicsNo` with no version to go by, as for `itemPics` (Undo
+on found pictures on two devices before they agree; `sync-merge.test.mjs`). The web version's pages are 1.9.125's but
+for the sidebar. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

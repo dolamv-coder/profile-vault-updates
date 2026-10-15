@@ -375,4 +375,18 @@ if (html.includes("itemPics")) test("pictures added on two devices before they a
   assert.deepEqual(merge(a, b, blank(), { [k]: 1 }, { [k]: 2 }, {}).state.settings.someMap, { z: 3 });
 });
 
+// 1.9.126+: items whose found picture was undone (settings.autoPicsNo, hashes of the items) are named by their hash too,
+// so Undo on two devices before they agree on any list keeps both.
+if (html.includes(':autoPicsNo"')) test("items turned down on two devices before they agree on any keep both", () => {
+  for (const base of [blank(), null]) {
+    const a = blank(), b = blank();
+    a.settings.autoPicsNo = { h1111111: 1 }; b.settings.autoPicsNo = { h2222222: 2 };
+    const k = [...syncUnits(a).map.keys()].find((x) => x.endsWith(":autoPicsNo"));
+    for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+      const r = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, {});
+      assert.deepEqual(Object.keys(r.state.settings.autoPicsNo).sort(), ["h1111111", "h2222222"]);
+    }
+  }
+});
+
 console.log(`\n${passed} passed`);
