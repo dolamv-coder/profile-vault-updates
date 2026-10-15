@@ -1,10 +1,10 @@
 {
-  "version": "1.9.123",
-  "url": "index-1.9.123.html",
-  "sha256": "3762b4e97441ebdcc01f4945b5e47cb8ca3d5a6dbba166c8d6c314a7a1abd04b",
-  "signature": "qbNQozEKz8mSK3LIy0z8fa1oZg4b/DqjigS3AJzLUfDDi5F1xIFmHFPLNXuxwi81CwC+iaWOXFkkwa1kyHcGAw==",
+  "version": "1.9.124",
+  "url": "index-1.9.124.html",
+  "sha256": "cb50c94eab0cc7620a51db790f25fb2b939d238cfc0683535cd28a14a893bcf2",
+  "signature": "BGl9i9at25Si1lLBJZhoq8eaEm0U72P32YAorz4DLVDWqisnCAMo28dhGaXRiM5G3hTmnytJ0891CkBTy1/DBQ==",
   "minAppVersion": "0",
-  "notes": "A fresh look for the Cards page, to match Orders, Profiles and Store logins. Each card keeps its full look, now with a status pill that tells you at a glance whether it's in use, expired or a virtual card, and its note and virtual-card details read more clearly underneath. Counts along the top show how many cards you have, how many are virtual or physical, how many are in use and how many have expired. Groups, search, Edit names, Export and the Compact and List layouts all work as before.",
+  "notes": "A fresh look for the Submit and Generate pages, to match the rest of FAFO. Submit: counts along the top show how many slots you've selected and where your sent ones stand (approved, pending or declined). A panel up top says how many new picks are ready to send, with the Submit button and a bar for your slot allowance. Each store has a colour bar of its slots against its cap (green approved, yellow pending, red declined, blue staged), and each slot card is outlined in the same colour. Generate: counts along the top show how many drafts are ready to import, need attention or still share an address. Each draft shows Ready, or what it still needs, next to its group, and drafts that share an address are marked in blue so you know which to Jig. Everything works as before, and some coloured pills on other pages are easier to read in the Light, Dark and light Space themes.",
   "installerUrl": "",
-  "publishedAt": "2026-10-15T01:11:39.674Z"
+  "publishedAt": "2026-10-15T15:23:22.250Z"
 }
