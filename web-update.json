@@ -1,10 +1,10 @@
 {
-  "version": "1.9.124",
-  "url": "index-1.9.124.html",
-  "sha256": "cb50c94eab0cc7620a51db790f25fb2b939d238cfc0683535cd28a14a893bcf2",
-  "signature": "BGl9i9at25Si1lLBJZhoq8eaEm0U72P32YAorz4DLVDWqisnCAMo28dhGaXRiM5G3hTmnytJ0891CkBTy1/DBQ==",
+  "version": "1.9.125",
+  "url": "index-1.9.125.html",
+  "sha256": "9c03ca78cf608d5bf5d4b80917cea3e48e3d7540bfa1b1034f42e592c764e1ad",
+  "signature": "PIZxC9OcF+vsfs0JxgvziPf9Gxxz6pD1GHqeWHMtsLm4mF2ON9ozK2HpPsH4VwwbMg1gUPZUp6Nv6s0PcRYsCA==",
   "minAppVersion": "0",
-  "notes": "A fresh look for the Submit and Generate pages, to match the rest of FAFO. Submit: counts along the top show how many slots you've selected and where your sent ones stand (approved, pending or declined). A panel up top says how many new picks are ready to send, with the Submit button and a bar for your slot allowance. Each store has a colour bar of its slots against its cap (green approved, yellow pending, red declined, blue staged), and each slot card is outlined in the same colour. Generate: counts along the top show how many drafts are ready to import, need attention or still share an address. Each draft shows Ready, or what it still needs, next to its group, and drafts that share an address are marked in blue so you know which to Jig. Everything works as before, and some coloured pills on other pages are easier to read in the Light, Dark and light Space themes.",
+  "notes": "The IMAP page gets counts along the top, to match the rest of FAFO: the slots you have switched on out of your limit (red if you're over it), your store logins, how many have an inbox connected or still need one, and your saved inboxes. On a phone, IMAP is now one of the tabs along the top, after Logins, with the number of store logins that still need an inbox. A long email under Needs an inbox now wraps onto a second line instead of running under its Set up inbox button.",
   "installerUrl": "",
-  "publishedAt": "2026-10-15T15:23:22.250Z"
+  "publishedAt": "2026-10-15T19:47:50.405Z"
 }
