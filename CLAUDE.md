@@ -1184,6 +1184,44 @@ yet), the virtual card's details on their own line (`.ci-sub`: Locked to … · 
 (Edit names, Put in profiles, Export, Move to group, Delete). Additive and display-only; nothing gains a field, so the
 paused desktop app (1.9.112) is unaffected.
 
+From 1.9.124 the **Submit page** gets the same look (the owner's request, Submit after Cards; "ok lets do it"): a KPI
+strip (`p-kpis`: profiles, selected, then approved, submitted, pending approval, declined and in the latest batch when
+any; the sent slots split by `subState` so they add up to the old Submitted, "submitted" being those sent before
+approvals or as a code), an action panel (`.sub-act`: "N new picks ready to send", the reassurance and destination text
+as before, the Submit button, and the slot allowance as a meter, `slotAllowHTML`, which keeps its request status,
+over-limit warning and Request more slots), and each store (`.sub-store`) with its mark (`storeMark`), its cap link and
+count, "Cap reached" under the count (the section's edge in `--caution`), a meter of its switched-on slots by state
+against its cap (`.sub-meter`: approved/submitted `--ok`, pending `--caution`, declined `--danger`, staged `--info`) and a
+pill per state (`.sub-pills`; the old "N saved" chip repeated "N profiles" and is gone). Slot cards (`submitRowHTML`,
+`.sub-slot`) show their state as a pill (`ppill`, with the old icons, `.ppill-ic`), a card line and an account line
+(`.sl-line`), and when it was sent; a switched-on card's border is its state's colour (`st-ok`, `st-warn`, `st-bad`,
+`st-stage`). Staged is `--info` because `--accent` is red in the default and light themes and gold in space and
+space-light, where it would read as declined or pending. Over the slot allowance the panel says Too many slots switched
+on (Submit then opens the limit dialog, as before), and a meter's label names approved and submitted apart, as its pills
+do. Pill and label text is 4.5:1 or more in all five themes (measured on Submit, Cards, Profiles and Generate, its ticked
+rows too, compositing the pills' tints): the light theme keeps the dark themes' yellow, blue and violet, so `.ppill-warn`, `.ppill-stage`,
+`.ppill-info`, `.sub-full` and `.sl-seller` get a darker shade there; space-light darkens `.ppill-warn`, `.sub-full`,
+`.ppill-info` and `.sl-seller`; both light themes darken `.ppill-ok` and `.ppill-bad`; and the default theme (no
+`data-theme`, so `:root:not([data-theme])`) lightens `.ppill-bad` and `.ppill-info`. Space and space-blue are unchanged.
+Every handler is as it was (`slot`, `fold`, `cap`, `sel-store`,
+`desel-store`, `submit-slots`, `submit-to`, `slot-request`, `pulls-retry`), and so are the swap-at-cap and pull
+dialogs, the notes and the search. Additive and display-only; nothing gains a field, so the paused desktop app (1.9.112)
+is unaffected.
+Also from 1.9.124 the **Generate page** gets the same look (the owner's request, 2026-10-15: "Do Generate next then ship
+both of them at once", so both are in this one release): a KPI strip (`p-kpis`, as on Profiles: Drafts, Ready, Need
+attention, and Share an address when any; ready means `draftProblems` finds nothing), each draft's readiness pill under
+its name beside its group (`draftPill`, as `profilePill`: Ready, titled Ready to import, or its first problem, Needs a
+name or Needs an address in red, Name, Address, Email or Phone to fix and Needs an email or a phone in amber, with +N for
+more), and "Same as N other drafts" as a blue pill (`.ppill-stage`, the `--info` pill, matching the KPI's dot). The draft
+table stays a table: its rows are `tr[data-dmenu]`, which the right-click menu uses and Duplicate's scroll to the new
+drafts finds with `closest("tr")`. The Profile column is 23% (19% before), so the pill and the group usually share a
+line on wide screens (at 1180px about half the pairings still wrap); the narrow screens' cards get the pill line too.
+A ticked row is tinted with `--accent` (`.plist tr.is-sel td`), so a few pill shades are scoped to `.glist` to keep
+4.5:1 there in every theme (`.ppill-stage` in Dark and space-light, `.ppill-warn` in light, `.ppill-bad` in space and
+space-blue). Every handler is as it was (`gen-sel` with Shift+click, `gen-sel-all`,
+`gen-edit`, `gen-del` with Undo, `gen-open`, `gen-import`, `jig-for`, the bulk bar and the right-click menu), Copy reads
+the drafts, not the table, and the Jig for Pokémon Center note is unchanged. Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
