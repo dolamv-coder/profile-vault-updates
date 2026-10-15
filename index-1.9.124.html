@@ -1064,6 +1064,13 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .glist .gl-prof .gl-meta .tag{margin-top:0}
 .glist .gl-same{display:inline-flex;margin-top:5px;font-size:calc(11.5px*var(--fs));padding:2px 9px}
 .glist .gl-same::before{width:6px;height:6px}
+/* A ticked row is tinted with --accent (.plist tr.is-sel td), so the pills on it get a little more contrast, scoped to
+   this table: 4.5:1 or more ticked or not, in every theme. */
+:root:not([data-theme]) .glist .ppill-stage{color:color-mix(in srgb,var(--info) 78%,#fff)}
+:root[data-theme="space-light"] .glist .ppill-stage{color:color-mix(in srgb,var(--info) 85%,#000)}
+:root[data-theme="light"] .glist .ppill-warn{color:color-mix(in srgb,var(--caution) 50%,#000)}
+:root[data-theme="space"] .glist .ppill-bad{color:color-mix(in srgb,var(--danger) 82%,#fff)}
+:root[data-theme="space-blue"] .glist .ppill-bad{color:color-mix(in srgb,var(--danger) 88%,#fff)}
 .upd-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 16px;padding:12px 14px;border-radius:8px;background:var(--sheet);border:1px solid var(--line);box-shadow:inset 4px 0 0 var(--accent)}
 .upd-banner > div{padding-left:6px}
 .lock-upd{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 12px;padding:10px 12px;border-radius:10px;background:var(--sheet);color:var(--ink);border:1px solid var(--line);box-shadow:inset 4px 0 0 var(--accent);font-size:calc(14px*var(--fs))}
