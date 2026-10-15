@@ -1222,6 +1222,19 @@ space-blue). Every handler is as it was (`gen-sel` with Shift+click, `gen-sel-al
 `gen-edit`, `gen-del` with Undo, `gen-open`, `gen-import`, `jig-for`, the bulk bar and the right-click menu), Copy reads
 the drafts, not the table, and the Jig for Pokémon Center note is unchanged. Nothing gains a field.
 
+From 1.9.125 the **IMAP page** gets the same look, the last tab of the revamp (the owner's go-ahead, 2026-10-15, for a
+counts strip to match the other tabs): a KPI strip (`p-kpis`) under the header, led by Slots, the slots switched on of
+the license's limit (`slotsInUse` / `slotAllow`, as the Slots card says them; its dot `--violet`, `--danger` once over),
+then Store logins' Logins, Inbox connected, Need an inbox and Inboxes. Need an inbox counts the logins with no
+`inboxId`, as the page's Needs an inbox list and the sidebar badge do, where Store logins counts those without a
+connected inbox: they differ only for a login whose saved inbox is gone (one another device deleted, say). The slot bars
+are `--info` (they were `--accent`, which is red or gold in four themes, as Submit's staged slots moved to `--info` in
+1.9.124). The phone's tabs (`#mnav`) gain IMAP after Logins, with the sidebar's badge: from 1.9.117 it was only in the
+sidebar, which phones hide. A long email under Needs an inbox wraps (`.inbox-email` `overflow-wrap:anywhere`, the button
+`flex:none`; both classes are only on this page) instead of running under Set up inbox on a phone. The rest of the page
+is as it was (its markup without the strip is 1.9.124's), and every handler too (`edit-login`, `edit-inbox`, `view` to
+Submit). Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

@@ -1,0 +1,3 @@
+The IMAP page gets counts along the top, to match the rest of FAFO: the slots you have switched on out of your limit (red if you're over it), your store logins, how many have an inbox connected or still need one, and your saved inboxes. Each store's slot bar is now blue.
+
+On a phone, IMAP is now one of the tabs along the top, after Logins, with the number of store logins that still need an inbox. A long email under Needs an inbox now wraps onto a second line instead of running under its Set up inbox button.
