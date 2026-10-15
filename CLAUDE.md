@@ -1196,9 +1196,14 @@ pill per state (`.sub-pills`; the old "N saved" chip repeated "N profiles" and i
 `.sub-slot`) show their state as a pill (`ppill`, with the old icons, `.ppill-ic`), a card line and an account line
 (`.sl-line`), and when it was sent; a switched-on card's border is its state's colour (`st-ok`, `st-warn`, `st-bad`,
 `st-stage`). Staged is `--info` because `--accent` is red in the default and light themes and gold in space and
-space-light, where it would read as declined or pending. The light themes keep the dark themes' yellow, blue and violet,
-too pale for text on white, so `.ppill-warn`, `.ppill-stage`, `.ppill-info`, `.sub-full` and `.sl-seller` get darker text
-there (4.5:1 or more; the dark themes are unchanged). Every handler is as it was (`slot`, `fold`, `cap`, `sel-store`,
+space-light, where it would read as declined or pending. Over the slot allowance the panel says Too many slots switched
+on (Submit then opens the limit dialog, as before), and a meter's label names approved and submitted apart, as its pills
+do. Pill and label text is 4.5:1 or more in all five themes (measured on Submit, Cards and Profiles, compositing the
+pills' tints): the light theme keeps the dark themes' yellow, blue and violet, so `.ppill-warn`, `.ppill-stage`,
+`.ppill-info`, `.sub-full` and `.sl-seller` get a darker shade there; space-light darkens `.ppill-warn`, `.sub-full`,
+`.ppill-info` and `.sl-seller`; both light themes darken `.ppill-ok` and `.ppill-bad`; and the default theme (no
+`data-theme`, so `:root:not([data-theme])`) lightens `.ppill-bad` and `.ppill-info`. Space and space-blue are unchanged.
+Every handler is as it was (`slot`, `fold`, `cap`, `sel-store`,
 `desel-store`, `submit-slots`, `submit-to`, `slot-request`, `pulls-retry`), and so are the swap-at-cap and pull
 dialogs, the notes and the search. Additive and display-only; nothing gains a field, so the paused desktop app (1.9.112)
 is unaffected.

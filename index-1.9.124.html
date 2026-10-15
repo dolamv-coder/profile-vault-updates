@@ -1020,7 +1020,7 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .sub-full{font-size:calc(12px*var(--fs));font-weight:700;color:var(--caution);margin-top:2px}
 .sub-sum{padding:0 14px 12px}
 .sub-meter{display:flex;height:6px;border-radius:999px;overflow:hidden;background:var(--line-2)}
-.sub-meter > span{display:block;height:100%;flex:none}
+.sub-meter > span{display:block;height:100%;flex:none;min-width:4px}
 .sub-meter > span + span{box-shadow:inset 2px 0 0 var(--sheet)}
 .sub-pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .sub-store .store-body{padding-top:12px}
@@ -1030,16 +1030,23 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .sub-slot .sl-mi{display:inline-flex;flex:none;width:14px;height:14px;color:var(--ink-3)}
 .sub-slot .sl-mi svg{width:14px;height:14px}
 .sl-seller{color:var(--violet);font-weight:600}
-.sub-when{color:var(--ink-3);font-size:calc(12px*var(--fs))}
+.sub-when{color:var(--ink-2);font-size:calc(12px*var(--fs))}
 .slot.is-on.st-ok{border-color:color-mix(in srgb,var(--ok) 80%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ok) 80%,transparent)}
 .slot.is-on.st-warn{border-color:color-mix(in srgb,var(--caution) 80%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--caution) 80%,transparent)}
 .slot.is-on.st-bad{border-color:color-mix(in srgb,var(--danger) 80%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--danger) 80%,transparent)}
 .slot.is-on.st-stage{border-color:color-mix(in srgb,var(--info) 85%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--info) 85%,transparent)}
-/* The light themes keep the dark themes' yellow, blue and violet, which are too pale for text on white: darker text
-   for the pills and labels that use them (the dark themes are unchanged). */
+/* Pill and label text at 4.5:1 or more in every theme. The light theme keeps the dark themes' yellow, blue and violet,
+   too pale for text on white, and the light themes' green and red and the default theme's red and violet fall just short: those
+   get a darker (or, on the default theme's dark background, lighter) shade of the same colour. Space and space-blue,
+   which already pass, are unchanged. */
 :root[data-theme="light"] .ppill-warn,:root[data-theme="space-light"] .ppill-warn,:root[data-theme="light"] .sub-full,:root[data-theme="space-light"] .sub-full{color:color-mix(in srgb,var(--caution) 58%,#000)}
 :root[data-theme="light"] .ppill-stage{color:color-mix(in srgb,var(--info) 62%,#000)}
-:root[data-theme="light"] .ppill-info,:root[data-theme="light"] .sl-seller{color:color-mix(in srgb,var(--violet) 70%,#000)}
+:root[data-theme="light"] .ppill-info,:root[data-theme="light"] .sl-seller{color:color-mix(in srgb,var(--violet) 62%,#000)}
+:root[data-theme="space-light"] .ppill-info,:root[data-theme="space-light"] .sl-seller{color:color-mix(in srgb,var(--violet) 80%,#000)}
+:root[data-theme="light"] .ppill-ok,:root[data-theme="space-light"] .ppill-ok{color:color-mix(in srgb,var(--ok) 78%,#000)}
+:root[data-theme="light"] .ppill-bad,:root[data-theme="space-light"] .ppill-bad{color:color-mix(in srgb,var(--danger) 85%,#000)}
+:root:not([data-theme]) .ppill-bad{color:color-mix(in srgb,var(--danger) 80%,#fff)}
+:root:not([data-theme]) .ppill-info{color:color-mix(in srgb,var(--violet) 85%,#fff)}
 @media (max-width:560px){
   .sub-act > .btn-primary{width:100%;justify-content:center}
   .sub-store .sub-head{padding:12px}
@@ -15868,8 +15875,8 @@ function renderSubmit(){
     const stG = (st) => g.sub.filter(r => subState(S.subs[slotKey(r.p.id, g.key)]) === st).length;
     const waitG = stG("wait"), noG = stG("no"), okG = stG("ok"), sentG = g.sub.length - waitG - noG - okG, freshG = g.fresh.length;
     // The meter: the store's switched-on slots by state, against its cap (or against them, over a cap lowered since).
-    const m = {ok:0, wait:0, no:0, stage:0};
-    g.sel.forEach(r => { const s = subState(subOf(slotKey(r.p.id, g.key))); m[s === "wait" ? "wait" : s === "no" ? "no" : s ? "ok" : "stage"]++; });
+    const m = {ok:0, sent:0, wait:0, no:0, stage:0};
+    g.sel.forEach(r => { m[subState(subOf(slotKey(r.p.id, g.key))) || "stage"]++; });
     const den = Math.max(g.cap, g.sel.length, 1), seg = (n, col) => n ? `<span style="width:${(n / den * 100).toFixed(2)}%;background:${col}"></span>` : "";
     const pills = (okG ? `<span class="ppill ppill-ok">${okG} approved</span>` : "") + (sentG ? `<span class="ppill ppill-ok">${sentG} submitted</span>` : "")
       + (waitG ? `<span class="ppill ppill-warn">${waitG} pending approval</span>` : "") + (noG ? `<span class="ppill ppill-bad">${noG} declined</span>` : "") + (freshG ? `<span class="ppill ppill-stage">${freshG} staged</span>` : "");
@@ -15878,7 +15885,7 @@ function renderSubmit(){
         <button class="icon-btn" data-act="fold" data-id="${esc(g.key)}" aria-expanded="${open}" aria-label="${open ? "Collapse" : "Expand"} ${esc(g.name)}">${ic(open ? "chevD" : "chevR")}</button>
         <span class="sub-mark">${storeMark(g.rows[0].e)}</span>
         <div class="sub-ttl">
-          <div class="store-title">${esc(g.name)}</div>
+          <div class="store-title" title="${esc(g.name)}">${esc(g.name)}</div>
           <div class="item-sub"><button class="link" data-act="cap" data-id="${esc(g.key)}" style="font-size:calc(13px*var(--fs))">${plural(g.cap, "slot")} cap</button> · ${plural(g.rows.length, "profile")}</div>
         </div>
         <div class="store-right">
@@ -15887,7 +15894,7 @@ function renderSubmit(){
         </div>
       </header>
       <div class="sub-sum">
-        <div class="sub-meter" role="img" aria-label="${esc(g.name)}: ${g.sel.length} of ${g.cap} slots switched on${m.ok ? `, ${m.ok} submitted` : ""}${m.wait ? `, ${m.wait} pending approval` : ""}${m.no ? `, ${m.no} declined` : ""}${m.stage ? `, ${m.stage} staged` : ""}">${seg(m.ok, "var(--ok)")}${seg(m.wait, "var(--caution)")}${seg(m.no, "var(--danger)")}${seg(m.stage, "var(--info)")}</div>
+        <div class="sub-meter" role="img" aria-label="${esc(g.name)}: ${g.sel.length} of ${g.cap} slots switched on${m.ok ? `, ${m.ok} approved` : ""}${m.sent ? `, ${m.sent} submitted` : ""}${m.wait ? `, ${m.wait} pending approval` : ""}${m.no ? `, ${m.no} declined` : ""}${m.stage ? `, ${m.stage} staged` : ""}">${seg(m.ok + m.sent, "var(--ok)")}${seg(m.wait, "var(--caution)")}${seg(m.no, "var(--danger)")}${seg(m.stage, "var(--info)")}</div>
         ${pills ? `<div class="sub-pills">${pills}</div>` : ""}
       </div>
       ${open ? `<div class="store-body">
@@ -15900,7 +15907,7 @@ function renderSubmit(){
   }).join("");
   const to = S.submitTo, viaCSV = csvToSeller(), seller = viaCSV ? null : submitToSeller();
   const action = `<div class="sub-act">
-      <div class="sub-act-txt"><div class="sub-act-ttl">${freshN ? `${plural(freshN, "new pick")} ready to send` : selN ? "Nothing new to send" : "Switch profiles on to stage them"}</div>
+      <div class="sub-act-txt"><div class="sub-act-ttl">${selN > slotAllow() ? "Too many slots switched on" : freshN ? `${plural(freshN, "new pick")} ready to send` : selN ? "Nothing new to send" : "Switch profiles on to stage them"}</div>
         <p class="item-sub">Toggle profiles on, then submit. Only new picks are sent, so nothing is ever sent twice.${viaCSV ? ` Going straight to the seller's Discord channel as AYCD and Shikari files. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Send somewhere else</button>` : seller ? ` Going straight to the seller, encrypted so only they can open it. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Send somewhere else</button>` : to ? ` Going to <strong>${esc(to.keyId)}</strong>. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Change</button>` : ` <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Set who receives them</button>`}</p></div>
       <button class="btn btn-primary" data-act="submit-slots" ${freshN ? "" : "disabled"}>${ic("exp")}Submit ${freshN ? plural(freshN, "slot") : "slots"}</button>
       ${slotAllowHTML()}
