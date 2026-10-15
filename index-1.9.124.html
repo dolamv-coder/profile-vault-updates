@@ -1056,6 +1056,14 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
   .sub-cnt-w{display:none}
   .sub-sum{padding:0 12px 12px}
 }
+/* Generate revamp (1.9.124): a KPI strip, each draft's readiness pill beside its group under the name, and "Same as N
+   other drafts" as a blue pill (.ppill-stage is the --info pill, also Submit's staged). */
+.glist .gl-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;margin-top:5px;min-width:0}
+.glist .gl-meta .ppill{max-width:100%;font-size:calc(11.5px*var(--fs));padding:2px 9px}
+.glist .gl-meta .ppill::before{width:6px;height:6px}
+.glist .gl-prof .gl-meta .tag{margin-top:0}
+.glist .gl-same{display:inline-flex;margin-top:5px;font-size:calc(11.5px*var(--fs));padding:2px 9px}
+.glist .gl-same::before{width:6px;height:6px}
 .upd-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 16px;padding:12px 14px;border-radius:8px;background:var(--sheet);border:1px solid var(--line);box-shadow:inset 4px 0 0 var(--accent)}
 .upd-banner > div{padding-left:6px}
 .lock-upd{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 12px;padding:10px 12px;border-radius:10px;background:var(--sheet);color:var(--ink);border:1px solid var(--line);box-shadow:inset 4px 0 0 var(--accent);font-size:calc(14px*var(--fs))}
@@ -6894,6 +6902,19 @@ function genEmails(text){
   return {list, bad, dup};
 }
 
+// A draft's readiness (1.9.124), as profilePill on Profiles: Ready (to import, as the KPI strip says), or its first
+// problem and how many more.
+function draftPill(d){
+  const probs = draftProblems(d);
+  if (!probs.length) return `<span class="ppill ppill-ok" title="Ready to import">Ready</span>`;
+  const [name, detail] = probs[0]; let label, bad = false;
+  if (name === "Name"){ bad = detail === "missing"; label = bad ? "Needs a name" : "Name to fix"; }
+  else if (name === "Address"){ bad = !String(d.line1 || "").trim(); label = bad ? "Needs an address" : "Address to fix"; }
+  else if (name === "Email") label = detail === "missing" ? "Needs an email" : "Email to fix";
+  else if (name === "Phone") label = detail === "missing" ? "Needs a phone" : "Phone to fix";
+  else label = name + " to fix";
+  return `<span class="ppill ppill-${bad ? "bad" : "warn"}">${esc(label)}${probs.length > 1 ? " +" + (probs.length - 1) : ""}</span>`;
+}
 function renderGenerate(){
   for (const id of Array.from(UI.genSel)) if (!genDrafts()[id]) UI.genSel.delete(id);
   const all = draftList(), list = visibleDrafts();
@@ -6906,9 +6927,14 @@ function renderGenerate(){
   else body = draftTableHTML(list, same);
   const sub = !all.length ? "Profiles made in bulk wait here until you import them"
     : plural(all.length, "draft") + (sharing ? ` · ${sharing} still share an address` : all.length > 1 ? " · every address is different" : "");
+  // KPI strip (1.9.124), as on Profiles: drafts ready to import, those to fix first, and those still sharing an address
+  // (Jig them apart; blue, as their "Same as" pills).
+  const ready = all.filter(d => !draftProblems(d).length).length;
+  const kpi = (color, label, n) => `<span class="p-kpi"><span class="p-kpi-dot" style="background:${color}"></span>${label} <strong>${n}</strong></span>`;
+  const kpiStrip = all.length ? `<div class="p-kpis">${kpi("var(--ink-3)", "Drafts", all.length)}${kpi("var(--ok)", "Ready", ready)}${all.length > ready ? kpi("var(--caution)", "Need attention", all.length - ready) : ""}${sharing ? kpi("var(--info)", "Share an address", sharing) : ""}</div>` : "";
   return `<div class="view-head"><div><h1 class="view-title">Generate</h1><p class="view-sub">${esc(sub)}</p></div>
     <div class="view-tools">${list.length ? `<label class="selall"><input type="checkbox" data-act="gen-sel-all" ${allSel ? "checked" : ""} style="width:17px;height:17px;accent-color:var(--accent);margin:0">Select all</label>` : ""}${all.length ? `<button class="btn" data-act="gen-import">${ic("imp")}Import to profiles</button>` : ""}<button class="btn btn-primary" data-act="gen-open">${ic("plus")}Generate</button></div></div>
-    ${all.length ? `<div class="gen-tipbar"><p class="item-sub gen-tip">Select drafts and right-click to Jig their addresses, Mass edit them or copy their names, address lines or cities, or open one to edit it. Import them when they're ready.</p>${jigForHTML()}</div>
+    ${kpiStrip}${all.length ? `<div class="gen-tipbar"><p class="item-sub gen-tip">Select drafts and right-click to Jig their addresses, Mass edit them or copy their names, address lines or cities, or open one to edit it. Import them when they're ready.</p>${jigForHTML()}</div>
     <p class="gen-pkc pkc-only"><strong>Jig for Pokémon Center:</strong> up to ${PKC_PER} drafts per address, each with its own unit on line 2 (Ste, #fl, Bldg, Ofc, Room…), a number on line 1, or the street type the other way. Drafts at one address with the same name get a letter doubled inside it. Billing keeps the real address and name.</p>` : ""}${body}`;
 }
 function draftTableHTML(list, same){
@@ -6917,16 +6943,16 @@ function draftTableHTML(list, same){
     const sel = UI.genSel.has(d.id), others = (same.get(draftAddrKey(d)) || 1) - 1;
     return `<tr class="${sel ? "is-sel" : ""}" data-dmenu="${esc(d.id)}">
       <td class="pl-sel"><input type="checkbox" data-act="gen-sel" data-id="${esc(d.id)}" ${sel ? "checked" : ""} aria-label="Select ${esc(d.name)}"></td>
-      <td class="gl-prof"><span class="gl-pn">${issueIcon(draftProblems(d))}<button type="button" class="gl-open" data-act="gen-edit" data-id="${esc(d.id)}" title="${esc(d.name)}">${esc(d.name)}</button></span>${d.group ? `<span class="tag" title="${esc(d.group)}">${esc(d.group)}</span>` : ""}</td>
+      <td class="gl-prof"><span class="gl-pn">${issueIcon(draftProblems(d))}<button type="button" class="gl-open" data-act="gen-edit" data-id="${esc(d.id)}" title="${esc(d.name)}">${esc(d.name)}</button></span><span class="gl-meta">${draftPill(d)}${d.group ? `<span class="tag" title="${esc(d.group)}">${esc(d.group)}</span>` : ""}</span></td>
       <td class="gl-name">${cell([d.first, d.last].filter(Boolean).join(" "))}</td>
-      <td class="gl-addr">${cell(draftAddrLine(d))}${others ? `<span class="gl-same">Same as ${plural(others, "other draft")}</span>` : ""}</td>
+      <td class="gl-addr">${cell(draftAddrLine(d))}${others ? `<span class="ppill ppill-stage gl-same">Same as ${plural(others, "other draft")}</span>` : ""}</td>
       <td class="gl-email">${cell(d.email)}</td>
       <td class="gl-phone">${cell(fmtPhone(d.phone))}</td>
       <td class="pl-act"><button class="icon-btn" data-act="gen-edit" data-id="${esc(d.id)}" aria-label="Edit ${esc(d.name)}" title="Edit">${ic("edit")}</button><button class="icon-btn" data-act="gen-del" data-id="${esc(d.id)}" aria-label="Delete ${esc(d.name)}" title="Delete">${ic("trash")}</button></td>
     </tr>`;
   }).join("");
   return `<div class="plist-wrap"><table class="plist glist">
-    <colgroup><col style="width:34px"><col style="width:19%"><col style="width:15%"><col style="width:29%"><col style="width:21%"><col style="width:14%"><col style="width:84px"></colgroup>
+    <colgroup><col style="width:34px"><col style="width:23%"><col style="width:14%"><col style="width:27%"><col style="width:20%"><col style="width:14%"><col style="width:84px"></colgroup>
     <thead><tr><th class="pl-sel"><span class="sr">Select</span></th><th>Profile</th><th>Name</th><th>Address</th><th>Email</th><th>Phone</th><th class="pl-act"><span class="sr">Actions</span></th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }

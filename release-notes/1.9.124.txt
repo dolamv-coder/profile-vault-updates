@@ -1,3 +1,7 @@
-A fresh look for the Submit page, to match the rest of FAFO.
+A fresh look for the Submit and Generate pages, to match the rest of FAFO.
 
-Counts along the top show how many slots you've selected and where your sent ones stand: approved, pending approval or declined. A panel up top says how many new picks are ready to send, with the Submit button and a bar for how much of your slot allowance you're using. Each store has a colour bar of its slots against its cap (green approved, yellow pending, red declined, blue staged), and every slot card is outlined in the same colour, so you can see at a glance what still needs you. Submitting, pulling, caps and swapping work exactly as before, and coloured labels are easier to read in the light and default themes.
+Submit: counts along the top show how many slots you've selected and where your sent ones stand (approved, pending approval or declined). A panel up top says how many new picks are ready to send, with the Submit button and a bar for how much of your slot allowance you're using. Each store has a colour bar of its slots against its cap (green approved, yellow pending, red declined, blue staged), and every slot card is outlined in the same colour, so you can see at a glance what still needs you.
+
+Generate: counts along the top show how many drafts are ready to import, how many need attention and how many still share an address. Each draft shows Ready, or what it still needs, next to its group, and drafts that share an address are marked so you know which to Jig.
+
+Submitting, pulling, caps, Jig, Mass edit and importing work exactly as before, and coloured labels are easier to read in the light and default themes.

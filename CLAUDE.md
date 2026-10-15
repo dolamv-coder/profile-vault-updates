@@ -1207,6 +1207,17 @@ Every handler is as it was (`slot`, `fold`, `cap`, `sel-store`,
 `desel-store`, `submit-slots`, `submit-to`, `slot-request`, `pulls-retry`), and so are the swap-at-cap and pull
 dialogs, the notes and the search. Additive and display-only; nothing gains a field, so the paused desktop app (1.9.112)
 is unaffected.
+Also from 1.9.124 the **Generate page** gets the same look (the owner's request, 2026-10-15: "Do Generate next then ship
+both of them at once", so both are in this one release): a KPI strip (`p-kpis`, as on Profiles: Drafts, Ready, Need
+attention, and Share an address when any; ready means `draftProblems` finds nothing), each draft's readiness pill under
+its name beside its group (`draftPill`, as `profilePill`: Ready, titled Ready to import, or its first problem, Needs a
+name or Needs an address in red, Name, Address, Email or Phone to fix and Needs an email or a phone in amber, with +N for
+more), and "Same as N other drafts" as a blue pill (`.ppill-stage`, the `--info` pill, matching the KPI's dot). The draft
+table stays a table: its rows are `tr[data-dmenu]`, which the right-click menu uses and Duplicate's scroll to the new
+drafts finds with `closest("tr")`. The Profile column is 23% (19% before) so the pill and the group fit on one line;
+the narrow screens' cards get the pill line too. Every handler is as it was (`gen-sel` with Shift+click, `gen-sel-all`,
+`gen-edit`, `gen-del` with Undo, `gen-open`, `gen-import`, `jig-for`, the bulk bar and the right-click menu), Copy reads
+the drafts, not the table, and the Jig for Pokémon Center note is unchanged. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
