@@ -4176,7 +4176,7 @@ function renderSide(){
     </div>` : ""}
     ${RT.isOwner && S.share && RT.db ? `<button class="nav-item" data-act="view" data-id="inbox" aria-current="${UI.view === "inbox"}"><span>Inbox</span><span class="n">${INBOX.length || ""}</span></button>` : ""}
     <button class="nav-item" data-act="view" data-id="logins" aria-current="${UI.view === "logins" && UI.loginGroup === "all"}"><span>Store logins</span><span class="n">${S.logins.length}</span></button>
-    <button class="nav-item" data-act="view" data-id="imap" aria-current="${UI.view === "imap"}"><span>IMAP</span><span class="n">${S.logins.filter(l => !l.inboxId).length || ""}</span></button>
+    <button class="nav-item" data-act="view" data-id="imap" aria-current="${UI.view === "imap"}"><span>IMAP</span><span class="n">${S.logins.filter(l => !inboxById(l.inboxId)).length || ""}</span></button>
     ${UI.view === "logins" ? `<div class="groups">
       ${loginGroupsSorted().map(x => `<button class="nav-item" data-act="login-group" data-id="${esc(x.id)}" data-gmenu="login" aria-current="${UI.loginGroup === x.id}"><span>${esc(x.name)}</span><span class="n">${S.logins.filter(l => l.groupId === x.id).length}</span></button>`).join("")}
       ${loginGroupList().length && S.logins.some(l => !loginGroupById(l.groupId)) ? `<button class="nav-item" data-act="login-group" data-id="none" data-gmenu="login" aria-current="${UI.loginGroup === "none"}"><span>Ungrouped</span><span class="n">${S.logins.filter(l => !loginGroupById(l.groupId)).length}</span></button>` : ""}
@@ -4197,7 +4197,7 @@ function renderSide(){
   const tab = (id, name, n) => `<button data-act="view" data-id="${id}" aria-current="${UI.view === id}">${name}<span class="n">${n}</span></button>`;
   // The phone's tabs: Orders first, as in the sidebar (1.9.114, the owner's request: "Put Orders before Profiles"). IMAP
   // after Logins (1.9.125: from 1.9.117 it was only in the sidebar, which phones hide), with the sidebar's badge.
-  $("#mnav").innerHTML = tab("orders","Orders",(S.orders || []).length) + tab("profiles","Profiles",S.profiles.length) + tab("logins","Logins",S.logins.length) + tab("imap","IMAP",S.logins.filter(l => !l.inboxId).length || "") + tab("cards","Cards",S.cards.length) + tab("generate","Generate",draftList().length || "") + tab("submit","Submit",(S.slots || []).length) + tab("settings-view","Settings","");
+  $("#mnav").innerHTML = tab("orders","Orders",(S.orders || []).length) + tab("profiles","Profiles",S.profiles.length) + tab("logins","Logins",S.logins.length) + tab("imap","IMAP",S.logins.filter(l => !inboxById(l.inboxId)).length || "") + tab("cards","Cards",S.cards.length) + tab("generate","Generate",draftList().length || "") + tab("submit","Submit",(S.slots || []).length) + tab("settings-view","Settings","");
   const q = $("#q");
   if (q) q.placeholder = UI.view === "profiles" ? "Search profiles" : UI.view === "clean" ? "Search" : UI.view === "orders" ? "Search orders" : UI.view === "settings-view" ? "Search" : UI.view === "submit" ? "Search profiles" : UI.view === "logins" ? "Search store logins" : UI.view === "imap" ? "Search" : UI.view === "generate" ? "Search drafts" : "Search cards by name, number or profile";
 }
@@ -10478,7 +10478,9 @@ function imapInboxStatus(i){
 function renderImap(){
   const groups = storeGroups();
   const inboxes = (S.inboxes || []).slice().sort((a, b) => natural(a.email, b.email));
-  const need = S.logins.filter(l => !l.inboxId);
+  // A login needs an inbox when it has none saved, or its saved inbox is gone (1.9.125, as Store logins counts it; an Undo
+  // or two devices' edits can leave one linked to a deleted inbox, which the editor already shows as none).
+  const need = S.logins.filter(l => !inboxById(l.inboxId));
   const loginProfN = (lid) => S.profiles.filter(p => profileStores(p).some(e => e.loginId === lid)).length;
   const slotRow = (g) => {
     const used = g.sel.length, cap = g.cap, pct = Math.min(100, Math.round(used / Math.max(cap, 1) * 100));
@@ -10505,9 +10507,9 @@ function renderImap(){
     <div style="margin-top:8px">${imapInboxStatus(i)}</div></div>
     <div class="item-actions">${DESK ? `<button class="btn" style="padding:4px 12px" data-act="edit-inbox" data-id="${i.id}">Test</button>` : `<button class="btn" style="padding:4px 12px;opacity:.5" disabled title="Test in the desktop app">Test</button>`}</div></div></article>`; }).join("")}</div>`
     : `<p class="item-sub">No inboxes saved yet. Add a store login and set up the inbox it reads sign-in codes from.</p>`;
-  // KPI strip (1.9.125), as on Store logins (the same counts; Need an inbox as this page's list and the sidebar badge count
-  // it), led by the slots in use of the license's limit, red once over it.
-  const connected = S.logins.filter(l => l.inboxId && inboxById(l.inboxId)).length, inUse = slotsInUse(), allow = slotAllow();
+  // KPI strip (1.9.125), as on Store logins (the same counts, so Inbox connected and Need an inbox add up to Logins), led
+  // by the slots in use of the license's limit, red once over it.
+  const connected = S.logins.length - need.length, inUse = slotsInUse(), allow = slotAllow();
   const kpi = (color, label, n) => `<span class="p-kpi"><span class="p-kpi-dot" style="background:${color}"></span>${label} <strong>${n}</strong></span>`;
   const kpiStrip = `<div class="p-kpis">${kpi(inUse > allow ? "var(--danger)" : "var(--violet)", "Slots", inUse + " / " + allow)}${S.logins.length ? kpi("var(--accent)", "Logins", S.logins.length) + kpi("var(--ok)", "Inbox connected", connected) : ""}${need.length ? kpi("var(--caution)", "Need an inbox", need.length) : ""}${inboxes.length ? kpi("var(--info)", "Inboxes", inboxes.length) : ""}</div>`;
   const webNote = DESK ? "" : `<p class="note" style="margin:0 0 16px">You're on the web version. FAFO signs in to check an inbox only in the desktop app, so <strong>Connected / Error</strong> and <strong>Test</strong> show there. Open FAFO on your computer to pull your orders from your email automatically — the web version can't read email, so here you track orders by pasting their confirmation emails. Your inbox passwords stay in your encrypted vault — they're never sent to the server.</p>`;
@@ -15798,9 +15800,10 @@ async function refreshSlotAllow(force){
   S.settings.slotAllow = next; persist();
   if (prev.limit && next.limit > prev.limit) toast(`You can now use ${next.limit} slots`);
   else if (prev.request && prev.request.status === "pending" && next.request && next.request.status === "denied") toast("Your request for more slots was declined", "err");
-  if (UI.view === "submit") renderMain();
+  if (UI.view === "submit" || UI.view === "imap") renderMain();
 }
-setInterval(() => { if (S && UI.view === "submit") refreshSlotAllow(false); }, 60000);
+// While Submit or IMAP (its Slots card and counts, 1.9.125) is shown.
+setInterval(() => { if (S && (UI.view === "submit" || UI.view === "imap")) refreshSlotAllow(false); }, 60000);
 function slotLimitDialog(){
   const n = slotAllow(), inUse = slotsInUse(), q = slotReq(), pending = q && q.status === "pending", over = inUse > n;
   openLayer({
