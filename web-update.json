@@ -1,10 +1,10 @@
 {
-  "version": "1.9.122",
-  "url": "index-1.9.122.html",
-  "sha256": "f9f947a618bb1278d07a660086c912ec11a2e8bc44425c6c98a5067339578ada",
-  "signature": "OH32RF6i/izYNfgQKloOIRR2GwZwCNmJfOetxs23+lDkrYiGh3CicgFQs5KY2H+MIvwfBFvivUbRC1o66KMoDg==",
+  "version": "1.9.123",
+  "url": "index-1.9.123.html",
+  "sha256": "3762b4e97441ebdcc01f4945b5e47cb8ca3d5a6dbba166c8d6c314a7a1abd04b",
+  "signature": "qbNQozEKz8mSK3LIy0z8fa1oZg4b/DqjigS3AJzLUfDDi5F1xIFmHFPLNXuxwi81CwC+iaWOXFkkwa1kyHcGAw==",
   "minAppVersion": "0",
-  "notes": "A fresh look for the Store logins page, to match Orders and Profiles. Each login is now a clean card: the store and account email up top, a pill that shows at a glance whether its inbox is connected or still needs one, and how many profiles use it. Counts along the top tell you how many logins you have, how many have an inbox and how many still need one. Groups, search and the Compact and List layouts work as before, and your saved inboxes are listed underneath.",
+  "notes": "A fresh look for the Cards page, to match Orders, Profiles and Store logins. Each card keeps its full look, now with a status pill that tells you at a glance whether it's in use, expired or a virtual card, and its note and virtual-card details read more clearly underneath. Counts along the top show how many cards you have, how many are virtual or physical, how many are in use and how many have expired. Groups, search, Edit names, Export and the Compact and List layouts all work as before.",
   "installerUrl": "",
-  "publishedAt": "2026-10-14T22:32:33.721Z"
+  "publishedAt": "2026-10-15T01:11:39.674Z"
 }
