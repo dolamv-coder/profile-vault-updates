@@ -2,7 +2,7 @@ name: Publish Orbit update
 
 # Ships a new app version: signs the newest index-X.Y.Z.html into web-update.json (the web version at app.fafoaco.com)
 # and update.json (installed apps), and commits it to main as "Release X.Y.Z". While channels.json says
-# "desktop": "paused" (since 2026-10-11, the owner's request), update.json is left as it is and the commit is
+# "desktop": "paused" (as it did from 2026-10-11 to 2026-10-15), update.json is left as it is and the commit is
 # "Release X.Y.Z (web only)"; setting it to "follow" brings installed apps up to the newest page ("Release X.Y.Z
 # (installed apps)" when the web has it already). Runs when a page, its notes, a feed or channels.json land on main,
 # or by hand from the Actions tab. A page is published once release-notes/X.Y.Z.txt (the update notice shown in the

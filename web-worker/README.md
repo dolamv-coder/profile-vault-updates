@@ -14,11 +14,12 @@ serves it within a minute or so. The address it reads is `UPDATE_URL` in `wrangl
 
 ## Its own feed (since 2026-10-11)
 
-The owner paused desktop updates on 2026-10-11, until further notice, and asked for work on the fafoaco website only.
-Until then this worker read `update.json`, the same feed installed apps read, so any release reached both. Now it reads
-`web-update.json`. The "Publish Orbit update" Action signs each new page into it, and into `update.json` only while the
-repo's `channels.json` doesn't say `"desktop": "paused"`. So releases reach the web while installed apps stay where
-they are (1.9.112). See the Releases section of the repo's `CLAUDE.md`.
+The owner paused desktop updates on 2026-10-11 and resumed them on 2026-10-15 (1.9.126). Until the pause this worker
+read `update.json`, the same feed installed apps read, so any release reached both. Since then it reads
+`web-update.json`. The "Publish Orbit update" Action signs each new page into it, and into `update.json` too while the
+repo's `channels.json` says `"desktop": "follow"` (as it does again since 2026-10-15). While it says `"paused"`,
+releases reach the web and installed apps stay where they are (they stayed on 1.9.112 during the pause). See the
+Releases section of the repo's `CLAUDE.md`.
 
 ## Paused at 1.9.67 until 1.9.106
 
