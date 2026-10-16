@@ -1,3 +1,3 @@
-FAFO catches up with everything since 1.9.112. Every page has a new look, with counts along the top, and a new IMAP page shows your slot limits, which store logins still need an inbox, and whether each inbox is connected.
+FAFO catches up with everything since 1.9.112. Orders, Profiles, Store logins, Cards, Submit and Generate have a new look, with counts along the top, and a new IMAP page shows your slot limits, which store logins still need an inbox, and whether each inbox is connected.
 
-Orders without a picture now get the product's picture by themselves (Settings → Preferences → Find product pictures turns it off). Mass edit on Profiles can Jig addresses, Generate can copy drafts' names and addresses, and Clean emails catches more store sales.
+Orders of Pokémon products without a picture now get one from TCGplayer's catalog by themselves (Settings → Preferences → Find product pictures turns it off). Mass edit on Profiles can Jig addresses, Generate can copy drafts' names and addresses, and Clean emails catches more store sales.

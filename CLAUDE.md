@@ -1251,14 +1251,14 @@ under Xvfb): a 1.9.112 app, locked, downloaded the signed page from a local feed
 on its lock screen with the whole note, then every page opened with its desktop parts (Sync all, Delete N canceled with
 Trash, IMAP's Connected / Error and Test). 1.9.126 fixes what that review found only the desktop shows. There "Inbox
 connected" now means the inbox's last sign-in on this computer worked (`inboxCheck`: `syncError` gives Inbox error, red,
-with its reason on hover; no `lastSync` yet gives Not checked yet), on Store logins' cards (`loginInboxPill`) and both
-counts strips (`loginInboxCounts`, `inboxKpis`, with Inbox error and Not checked yet when there are any, so the counts
-still add up to Logins); it meant only a saved inbox, which is what it still means on the web. A sync's start and
-failure redraw IMAP and Store logins too (`syncViews`), and IMAP's card shows Connecting… and the sync's progress
-(`data-sync-status`) while the desktop signs in. The sidebar's IMAP comes after Store logins' groups, which hang under
-the item above them. And `syncMerge` keeps both sides of `autoPicsNo` with no version to go by, as for `itemPics` (Undo
-on found pictures on two devices before they agree; `sync-merge.test.mjs`). The web version's pages are 1.9.125's but
-for the sidebar. Nothing gains a field.
+with its reason on hover; no `lastSync` yet gives Not checked yet), on Store logins' cards (`loginInboxPill`), after the
+inbox in Compact and the List (`loginInboxMark`: Error, Not checked) and in both counts strips (`loginInboxCounts`,
+`inboxKpis`, with Inbox error and Not checked yet when there are any, so the counts still add up to Logins); it meant
+only a saved inbox, which is what it still means on the web. A sync's start and failure redraw IMAP and Store logins too
+(`syncViews`), and IMAP's card shows Connecting… and the sync's progress (`data-sync-status`) while the desktop signs
+in. The sidebar's IMAP comes after Store logins' groups, which hang under the item above them. And `syncMerge` keeps
+both sides of `autoPicsNo` with no version to go by, as for `itemPics` (Undo on found pictures on two devices before
+they agree; `sync-merge.test.mjs`). The web version's pages are 1.9.125's but for the sidebar. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

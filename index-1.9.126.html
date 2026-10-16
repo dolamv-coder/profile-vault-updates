@@ -594,6 +594,11 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .lc-inbox{display:flex;align-items:center;gap:5px;min-width:0;font-size:calc(12px*var(--fs));color:var(--ink-3)}
 .lc-inbox svg{width:13px;height:13px;flex:none}
 .lc-inbox span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 1.9.126: an inbox's state on the desktop (Error, Not checked) after its email in Compact and the List. */
+.lc-inbox .lst,.lst{flex:none;font-weight:600;color:var(--ink-3)}
+.lc-inbox .lst-err,.lst-err{color:var(--danger)}
+.ll-inbox-in{display:flex;align-items:center;gap:6px;min-width:0}
+.ll-inbox-in .pl-cell{min-width:0}
 
 /* Store logins list (table), styled like the Profiles list */
 .plist.llist{min-width:600px}
@@ -10396,7 +10401,7 @@ function loginCompactHTML(l){
       <div class="slip-head">${loginPick(l, sel)}<div class="lc-name" title="${esc(loginTitle(l) + (g ? " · " + g.name : ""))}"><span class="store-name">${esc(storeLabel(l))}</span>${g ? `<span class="tag">${esc(g.name)}</span>` : ""}${l.label ? `<span class="item-sub">${esc(l.label)}</span>` : ""}</div>
         <div class="item-actions">${loginActions(l, true)}</div></div>
       <div class="lc-email" title="${esc(l.email)}">${esc(l.email)}</div>
-      <div class="lc-inbox" title="${esc(inb ? `Inbox: ${inb.email} (${providerName(inb.provider)})` : "No inbox")}">${ic("mail")}<span>${inb ? esc(inb.email) : "No inbox"}</span></div>
+      <div class="lc-inbox" title="${esc(inb ? `Inbox: ${inb.email} (${providerName(inb.provider)})` : "No inbox")}">${ic("mail")}<span>${inb ? esc(inb.email) : "No inbox"}</span>${inb ? loginInboxMark(inb) : ""}</div>
       <div class="s-chips s-one">${loginChipsHTML(l, 2)}</div>
     </article>`;
 }
@@ -10412,7 +10417,7 @@ function loginTableHTML(list){
       <td class="ll-acct">${cell(l.email)}</td>
       <td class="ll-pw">${l.password ? `<div class="ll-pwbox"><span class="ll-dots" aria-hidden="true">••••••••</span><button class="icon-btn" data-act="copy-login-pw" data-id="${l.id}" aria-label="Copy account password" title="Copy password">${ic("copy")}</button></div>` : `<span class="pl-none">—</span>`}</td>
       ${hasG ? `<td class="ll-group">${g ? cell(g.name) : `<span class="pl-none">—</span>`}</td>` : ""}
-      <td class="ll-inbox">${inb ? cell(inb.email) : `<span class="pl-none">None</span>`}</td>
+      <td class="ll-inbox">${inb ? (loginInboxMark(inb) ? `<span class="ll-inbox-in">${cell(inb.email)}${loginInboxMark(inb)}</span>` : cell(inb.email)) : `<span class="pl-none">None</span>`}</td>
       <td class="ll-prof"><div class="s-chips s-one">${loginChipsHTML(l, 2)}</div></td>
       <td class="pl-act">${loginActions(l)}</td>
     </tr>`;
@@ -10481,6 +10486,12 @@ function loginInboxCounts(){
 // The counts strips' inbox part (Store logins and IMAP): Inbox connected, then on the desktop Inbox error and Not checked
 // yet when there are any, so with Need an inbox they add up to Logins.
 const inboxKpis = (kpi, c) => kpi("var(--ok)", "Inbox connected", c.ok) + (c.err ? kpi("var(--danger)", "Inbox error", c.err) : "") + (c.new ? kpi("var(--ink-3)", "Not checked yet", c.new) : "") + (c.need ? kpi("var(--caution)", "Need an inbox", c.need) : "");
+// The same, short, in Compact and the List, so the counts can be matched to rows in every layout; nothing on the web.
+function loginInboxMark(inb){
+  const st = inboxCheck(inb);
+  return st === "err" ? `<span class="lst lst-err" title="${esc("The desktop app couldn't sign in: " + inb.syncError)}">Error</span>`
+    : st === "new" ? `<span class="lst" title="The desktop app hasn't checked this inbox yet">Not checked</span>` : "";
+}
 function loginInboxPill(inb){
   const st = inboxCheck(inb);
   return st === "err" ? `<span class="ppill ppill-bad" title="${esc("The desktop app couldn't sign in: " + inb.syncError)}">Inbox error</span>`
