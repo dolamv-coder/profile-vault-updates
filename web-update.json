@@ -1,10 +1,10 @@
 {
-  "version": "1.9.125",
-  "url": "index-1.9.125.html",
-  "sha256": "9c03ca78cf608d5bf5d4b80917cea3e48e3d7540bfa1b1034f42e592c764e1ad",
-  "signature": "PIZxC9OcF+vsfs0JxgvziPf9Gxxz6pD1GHqeWHMtsLm4mF2ON9ozK2HpPsH4VwwbMg1gUPZUp6Nv6s0PcRYsCA==",
+  "version": "1.9.126",
+  "url": "index-1.9.126.html",
+  "sha256": "654c3788b79a08f28c9083ac05c9a14a5064ad9f4910856012881b074ba2bc44",
+  "signature": "resIzMyHtsShnDn4EAPZ34XTxKSWO3kw+7o6S8K4KIwLxGXWhz9xB0ZdH1nhw4wcYQEvfs6CoWIzuPk3k2jbBw==",
   "minAppVersion": "0",
-  "notes": "The IMAP page gets counts along the top, to match the rest of FAFO: the slots you have switched on out of your limit (red if you're over it), your store logins, how many have an inbox connected or still need one, and your saved inboxes. On a phone, IMAP is now one of the tabs along the top, after Logins, with the number of store logins that still need an inbox. A long email under Needs an inbox now wraps onto a second line instead of running under its Set up inbox button.",
+  "notes": "FAFO catches up with everything since 1.9.112. Orders, Profiles, Store logins, Cards, Submit and Generate have a new look, with counts along the top, and a new IMAP page shows your slot limits, which store logins still need an inbox, and whether each inbox is connected. Orders of Pokémon products without a picture now get one from TCGplayer's catalog by themselves (Settings → Preferences → Find product pictures turns it off). Mass edit on Profiles can Jig addresses, Generate can copy drafts' names and addresses, and Clean emails catches more store sales.",
   "installerUrl": "",
-  "publishedAt": "2026-10-15T19:47:50.405Z"
+  "publishedAt": "2026-10-16T00:56:32.373Z"
 }

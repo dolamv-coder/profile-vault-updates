@@ -1,10 +1,10 @@
 {
-  "version": "1.9.112",
-  "url": "index-1.9.112.html",
-  "sha256": "600d70ec8840041c9801291d025c45384e139f8661b7ec2f1220a85541b8366d",
-  "signature": "y2ci7D4B82wh/gRvdG6AT1HEapBKhPrltskWXSB80kw3BBt/7WI6AVWeI0BYepvKKUsxdWokJO6P0ctfGBbVBw==",
+  "version": "1.9.126",
+  "url": "index-1.9.126.html",
+  "sha256": "654c3788b79a08f28c9083ac05c9a14a5064ad9f4910856012881b074ba2bc44",
+  "signature": "resIzMyHtsShnDn4EAPZ34XTxKSWO3kw+7o6S8K4KIwLxGXWhz9xB0ZdH1nhw4wcYQEvfs6CoWIzuPk3k2jbBw==",
   "minAppVersion": "0",
-  "notes": "Every store login now needs the inbox its sign-in codes and order emails go to. Not sure how to set one up? Press Set it up step by step: FAFO shows you which inbox to use, how to make the app password your email wants, and in the desktop app checks that it signs in.",
+  "notes": "FAFO catches up with everything since 1.9.112. Orders, Profiles, Store logins, Cards, Submit and Generate have a new look, with counts along the top, and a new IMAP page shows your slot limits, which store logins still need an inbox, and whether each inbox is connected. Orders of Pokémon products without a picture now get one from TCGplayer's catalog by themselves (Settings → Preferences → Find product pictures turns it off). Mass edit on Profiles can Jig addresses, Generate can copy drafts' names and addresses, and Clean emails catches more store sales.",
   "installerUrl": "",
-  "publishedAt": "2026-10-11T21:05:54.348Z"
+  "publishedAt": "2026-10-16T00:56:32.373Z"
 }
