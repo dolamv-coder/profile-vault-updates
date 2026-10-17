@@ -86,7 +86,6 @@ export function sitePage(version, appUrl = APP_URL) {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bruno+Ace+SC&text=FAFO&display=swap">
 <style>
 :root{
   --bg:#F8FAFC; --bg-2:#F1F5F9; --card:#FFFFFF; --card-2:#F8FAFC; --ink:#0F172A; --ink-2:#475569; --ink-3:#64748B;
@@ -143,7 +142,8 @@ a{color:inherit}
 .skip:focus{top:12px}
 :focus-visible{outline:2px solid var(--focus);outline-offset:3px;border-radius:8px}
 .final :focus-visible{outline-color:#7DD3FC}
-.wordmark{font-family:"Bruno Ace SC",system-ui,sans-serif;letter-spacing:.02em;line-height:1;text-decoration:none;color:var(--ink)}
+/* The app's logo in the mockups of it (the app shows the logo from 1.9.128, where it had Bruno Ace SC's FAFO). */
+.wordmark{display:flex;justify-content:center;line-height:1}
 /* The logo (brand.js), in the theme's colours; --lh is its height. */
 .logo{--lh:40px;display:inline-flex;text-decoration:none;border-radius:8px}
 .logo-svg{display:block;height:var(--lh);width:calc(var(--lh) * 2.5264)}
@@ -208,7 +208,7 @@ p,.ticks li span,.qs summary{text-wrap:pretty}
 .url .i{font-size:11px}
 .app{display:grid;grid-template-columns:52px 1fr;min-height:430px}
 .side{border-right:1px solid var(--line-2);padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:4px}
-.side .wordmark{font-size:11px;padding:4px 0 12px}
+.side .wordmark{--lh:13px;padding:4px 0 12px}
 .side span{display:flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:10px;color:var(--ink-3)}
 .side span .i{font-size:16px}
 .side span.on{background:var(--sky-bg);color:var(--sky)}
@@ -306,15 +306,14 @@ section.sec#features{background:var(--band);margin-top:120px;padding:104px 0 112
 .pc-h small{color:var(--ink-3);font-weight:500;font-size:12.5px}
 .flow{display:flex;align-items:center;justify-content:center;gap:12px;margin:6px 0 18px}
 .tile{width:54px;height:54px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:26px;color:#fff;box-shadow:0 10px 24px -10px rgba(2,6,23,.5)}
-.tile.dc-t{background:#5865F2}.tile.ff{background:#0F172A;font-size:15px}
-.tile.ff .wordmark{color:#fff}
+.tile.dc-t{background:#5865F2}.tile.ff{background:#0F172A;--lh:17px;--lg1:#7DD3FC;--lg2:#38BDF8;--lg3:#0EA5E9;--lg-aco:#7DD3FC;--lg-glow:.35}
 .dash{width:70px;height:2px;background:repeating-linear-gradient(90deg,var(--ink-3) 0 6px,transparent 6px 11px);opacity:.6}
 .srow{display:flex;align-items:center;gap:12px;padding:11px 4px;border-top:1px solid var(--line-2)}
 .srow .t{width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:16px;flex:none}
 .srow b{display:block;font-size:13.5px;font-weight:600}
 .srow small{display:block;color:var(--ink-3);font-size:12px;margin-top:1px;font-variant-numeric:tabular-nums}
 .lock-c{text-align:center;padding:26px 22px}
-.lock-c .wordmark{font-size:34px}
+.lock-c .wordmark{--lh:56px}
 .lock-c p{margin:8px 0 18px;color:var(--ink-3);font-size:13px}
 .field{display:flex;align-items:center;justify-content:space-between;height:46px;padding:0 14px;border-radius:12px;border:1.5px solid #0EA5E9;box-shadow:0 0 0 4px rgba(14,165,233,.14);font-size:20px;letter-spacing:.12em;color:var(--ink);background:var(--card)}
 .field .i{font-size:17px;color:var(--ink-3);letter-spacing:0}
@@ -484,7 +483,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
         <div class="win">
           <div class="bar"><i></i><i></i><i></i><span class="url">${ic("lock")}${appHost}</span></div>
           <div class="app">
-            <div class="side"><span class="wordmark">FAFO</span><span>${ic("user")}</span><span>${ic("card")}</span><span>${ic("key")}</span><span class="on">${ic("send")}</span><span>${ic("box")}</span><span>${ic("layers")}</span></div>
+            <div class="side"><span class="wordmark">${logoSVG("lg-ms")}</span><span>${ic("user")}</span><span>${ic("card")}</span><span>${ic("key")}</span><span class="on">${ic("send")}</span><span>${ic("box")}</span><span>${ic("layers")}</span></div>
             <div class="main">
               <div class="mh"><div><h4>Submit</h4><small>Slots switched on go to your runner in one batch</small></div><div class="chips"><span class="chip on">All</span><span class="chip">${POKEBALL}<b>4</b></span><span class="chip">${BULLSEYE}<b>8</b></span></div></div>
               <div class="stats"><div class="stat"><span class="t sky">${ic("send")}</span><span><strong>12</strong><small>Selected</small></span></div><div class="stat"><span class="t wait">${ic("clock")}</span><span><strong>4</strong><small>Pending</small></span></div><div class="stat"><span class="t ok">${ic("check")}</span><span><strong>8</strong><small>Success</small></span></div></div>
@@ -511,7 +510,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
           <div><span class="num">1</span><h3 class="display">Log in with Discord</h3><p>Sign in with your Discord account. Once your runner approves you, your license arrives in FAFO on its own, even if you closed the page.</p>
             <ul class="ticks">${check("Nothing to install or copy")}${check("Your runner approves every new member")}</ul></div>
           <div class="art" aria-hidden="true"><div class="panel-card">
-            <div class="flow"><span class="tile dc-t">${DISCORD}</span><span class="dash"></span><span class="tile ff"><span class="wordmark">FAFO</span></span></div>
+            <div class="flow"><span class="tile dc-t">${DISCORD}</span><span class="dash"></span><span class="tile ff">${logoSVG("lg-mt")}</span></div>
             <div class="srow"><span class="t ok">${ic("check")}</span><span><b>Signed in with Discord</b><small>@yourname</small></span></div>
             <div class="srow"><span class="t ok">${ic("check")}</span><span><b>Approved by your runner</b><small>You're in</small></span></div>
             <div class="srow"><span class="t sky">${ic("key")}</span><span><b>License ready</b><small>PVLT-••••-••••-••••-7Q2C</small></span></div>
@@ -522,7 +521,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
             <ul class="ticks">${check("The same vault on your computer and your phone")}${check("No one can reset it, not even your runner")}</ul></div>
           <div class="art" aria-hidden="true">
             <span class="badge b1">${ic("lock")}Encrypted before it's saved</span>
-            <div class="panel-card lock-c"><span class="wordmark">FAFO</span><p>Cop it. Track it. FAFO.</p><div class="field"><span>••••••••••••</span>${ic("eye")}</div><div class="fake-btn">${ic("lock")}Unlock</div></div>
+            <div class="panel-card lock-c"><span class="wordmark">${logoSVG("lg-ml")}</span><p>Cop it. Track it. FAFO.</p><div class="field"><span>••••••••••••</span>${ic("eye")}</div><div class="fake-btn">${ic("lock")}Unlock</div></div>
             <span class="badge b2">${ic("sync")}Sealed before it syncs</span>
           </div>
         </article>

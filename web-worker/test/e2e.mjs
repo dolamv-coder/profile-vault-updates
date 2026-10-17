@@ -153,9 +153,10 @@ try {
     }
     const body = await (await fetch(site + "/")).text();
     for (const l of ['<link rel="icon" href="/favicon.ico" sizes="32x32">', '<link rel="icon" href="/favicon.svg" type="image/svg+xml">', '<link rel="apple-touch-icon" href="/apple-touch-icon.png">']) assert.ok(body.includes(l), l);
-    // The logo in the header, the last call and the footer, each copy with ids of its own; the two links to the top are named.
+    // The logo in the header, the mockups of the app (1.9.128 shows it), the last call and the footer, each copy with ids of
+    // its own; the two links to the top are named.
     const logos = [...body.matchAll(/<svg class="logo-svg" viewBox="0 0 418\.11 165\.5" aria-hidden="true" focusable="false"><defs><linearGradient id="([\w-]+)-m"/g)].map((m) => m[1]);
-    assert.deepEqual(logos, ["lg-h", "lg-f", "lg-o"]);
+    assert.deepEqual(logos, ["lg-h", "lg-ms", "lg-mt", "lg-ml", "lg-f", "lg-o"], "the header, the mockups of the app (its sidebar, the Discord tile, its lock screen), the last call and the footer");
     const ids = [...body.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
     assert.equal(new Set(ids).size, ids.length, "every id on the page is used once");
     for (const id of ids) if (/^lg-/.test(id)) assert.ok(body.includes(`url(#${id})`), "used: " + id);

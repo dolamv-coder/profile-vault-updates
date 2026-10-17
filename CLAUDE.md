@@ -284,8 +284,8 @@ alone (every store's rows of one account) from reading the whole table. Only
   the buyer's **runner** (the owner's word, 2026-10-13); the app itself still says seller. The page waits at
   most 800 ms for the feed's version line. Since 2026-10-14 (the owner's pick of four) FAFO's logo there is "Speed": a
   checked F, an arrow-tip A, motion lines trailing left and a small ACO under it (`web-worker/src/brand.js`, `logoSVG`,
-  drawn inline in the theme's colours; the app still shows its Bruno Ace SC wordmark, and the front page's mockups of it
-  too). The worker serves FAFO's icons on both fafoaco.com and app.fafoaco.com, which browsers ask for on their own, so
+  drawn inline in the theme's colours; the app shows it too from 1.9.128, below, and so do the front page's mockups of
+  the app). The worker serves FAFO's icons on both fafoaco.com and app.fafoaco.com, which browsers ask for on their own, so
   the app got them with no new page: `/favicon.svg` and `/favicon.ico` (the checked F alone, which stays sharp in a tab)
   and `/apple-touch-icon.png` (FA over FO, 180 px). See "Web version and sync" below.
 - GitHub Releases: the app links new users to
@@ -1288,6 +1288,15 @@ with premium. The seller's own FAFO (`owner`, on the desktop or the web) gets Se
 (`isPremiumOwner`, `askPremiumList`), whose Choose who's premium posts the worker's link to the channel. Pages before
 1.9.127 show Generate to everyone until they update, and it's hidden in the page, not locked: everything Generate does
 happens on the buyer's computer. Nothing gains a field.
+
+From 1.9.128 the app shows FAFO's logo, "Speed", where it had Bruno Ace SC's FAFO since 1.9.76 (the owner's request,
+2026-10-17, with a screenshot of app.fafoaco.com's top bar: "Change logo to current logo"): in the top bar, and on the lock,
+license and Continue with Discord screens (`logoHTML`, `logoSVG`: a copy of `web-worker/src/brand.js`'s, so keep the two
+the same; FAFO for screen readers). Its height is `--lh` times the text size (`--fs`): 44px in the top bar, 76px on the
+lock card. It takes the front page's colours (`--lg1..3`, `--lg-aco`, `--lg-glow`): the dark ones with their glow on a dark
+background, the light ones in the Light and Space light themes and on the paper lock card of Dark and Light. Bruno Ace SC
+still writes FAFO in the share image's footer. The front page's mockups of the app (its sidebar, the Discord-to-FAFO tile,
+its lock card) show the logo too, and no longer load Bruno Ace SC. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
