@@ -1,10 +1,10 @@
 {
-  "version": "1.9.127",
-  "url": "index-1.9.127.html",
-  "sha256": "0137156eafdb2da9bae88d1cb55c598dff09f4b8cd4680a05f8004f8390d7f50",
-  "signature": "aBKlAlGcBl1JcyWZoGsIrRF7wuUPe1Hvhn/t4Z6foY3Dbo1S7lEoz7eDmJb06n4hzMaNd1/r8BFZFfzbnlHuDw==",
+  "version": "1.9.128",
+  "url": "index-1.9.128.html",
+  "sha256": "1c84283215b55a66755ff88362076cf6095d6a11e63c9d28858815f74fd930b6",
+  "signature": "TV6Jk/HgL1s8R7V9Ne3OFNcc0Q80xqabLppmtfkB1TwYGyj2jgVJo/zfL8Nv9nx/eSw94JWj70tgZKvUCOFMDg==",
   "minAppVersion": "0",
-  "notes": "Generate, for making profiles in bulk, is now for premium buyers. If it's gone from your sidebar and you need it, ask your seller. Drafts you made there are kept, and they come back as soon as you're made premium.",
+  "notes": "FAFO now shows its new logo, the same one as on fafoaco.com, at the top of every page and on the lock screen.",
   "installerUrl": "",
-  "publishedAt": "2026-10-17T18:59:32.496Z"
+  "publishedAt": "2026-10-17T21:16:01.029Z"
 }
