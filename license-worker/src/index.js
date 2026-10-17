@@ -3027,22 +3027,20 @@ async function isPremium(env, hash) {
 }
 
 async function premiumGet(request, env) {
-  const lic = await slotLicense(request, env);
-  if (!lic) {
-    // A key that isn't in this database while the list of keys made by hand can't be read is unknown, not refused:
-    // 503, so the app keeps its last answer (a 401 takes Generate away).
-    const m = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") || "");
-    const norm = m ? m[1].toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
-    if (/^PVLT[A-Z0-9]{16}$/.test(norm)) {
-      const hash = await keyHash(norm);
-      if (!(await env.DB.prepare("SELECT 1 AS x FROM licenses WHERE key_hash = ?").bind(hash).first()) && (await ghListHas(env, hash)) === null)
-        return json({ error: "the list of keys made by hand can't be read just now" }, 503);
-    }
-    return json({ error: "license not recognized" }, 401);
-  }
+  // The license as slotLicense reads it, but from one look at each list: a key that isn't in this database while the
+  // list of keys made by hand can't be read is unknown, not refused (503, so the app keeps its last answer; a 401 takes
+  // Generate away).
+  const m = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") || "");
+  const norm = m ? m[1].toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+  if (!/^PVLT[A-Z0-9]{16}$/.test(norm)) return json({ error: "license not recognized" }, 401);
+  const hash = await keyHash(norm);
+  const row = await env.DB.prepare("SELECT revoked_at FROM licenses WHERE key_hash = ?").bind(hash).first();
+  const on = row ? !row.revoked_at : await ghListHas(env, hash);
+  if (on === null) return json({ error: "the list of keys made by hand can't be read just now" }, 503);
+  if (!on) return json({ error: "license not recognized" }, 401);
   // owner: this license sends order alerts, so it's the seller's own FAFO, which offers Settings → Premium buyers.
-  const s = await currentAlertSender(env), owner = !!(s && s.key_hash === lic.hash);
-  return json({ premium: owner || await isPremium(env, lic.hash), owner }, 200, { "cache-control": "no-store" });
+  const s = await currentAlertSender(env), owner = !!(s && s.key_hash === hash);
+  return json({ premium: owner || await isPremium(env, hash), owner }, 200, { "cache-control": "no-store" });
 }
 
 async function premiumListAsk(request, env, ctx, url) {
@@ -3145,9 +3143,12 @@ async function premiumListPage(request, env, url, id) {
     known.add(x.hash);
     const l = off.get(x.hash);
     if (l) rows.push({ hash: x.hash, user: l.username, last4: last4Of(l.license_key), since: l.issued_at, off: true });
-    else rows.push({ hash: x.hash, user: x.user || "", last4: x.last4, since: 0, hand: true, gone: (await ghListHas(env, x.hash)) === false });
+    else {
+      const on = await ghListHas(env, x.hash), listed = !!(ghList && ghList.keys.has(x.hash));
+      rows.push({ hash: x.hash, user: x.user || "", last4: x.last4, since: 0, hand: true, expired: on === false && listed, gone: on === false && !listed });
+    }
   }
-  for (const r of rows) { r.name = sent.get(r.hash) || ""; r.sender = !!(sender && sender.key_hash === r.hash); r.premium = premSet.has(r.hash) || r.sender; r.out = !!(r.off || r.gone); }
+  for (const r of rows) { r.name = sent.get(r.hash) || ""; r.sender = !!(sender && sender.key_hash === r.hash); r.premium = premSet.has(r.hash) || r.sender; r.out = !!(r.off || r.gone || r.expired); }
   rows.sort((a, b) => (a.out - b.out) || (b.sender - a.sender) || (b.premium - a.premium) || (b.since - a.since));
   const day = (x) => new Date(x).toISOString().slice(0, 10);
   const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
@@ -3155,19 +3156,18 @@ async function premiumListPage(request, env, url, id) {
     ? `<button class="rm" type="submit" name="action" value="remove">Remove premium</button>` : `<button class="ed" type="submit" name="action" value="grant">Make premium</button>`}</form>`;
   const fold = (x) => String(x).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   const who = (r) => r.user ? "@" + r.user + (r.name ? " · " + r.name : "") : r.name || "Key made by hand";
-  const state = (r) => r.off ? "License turned off" : r.gone ? "Not on the list of keys any more" : r.sender ? "Premium · your FAFO (it sends order alerts)" : r.premium ? "Premium" : "Not premium";
-  // Searched by these words, so "premium" finds only the premium ones ("Not premium" would match it too).
-  const token = (r) => r.off ? "off" : r.gone ? "gone" : r.sender ? "premium yours" : r.premium ? "premium" : "standard";
+  // Not premium reads Standard, so the search's "premium" finds only the premium ones.
+  const state = (r) => r.off ? "License turned off" : r.expired ? "Key expired" : r.gone ? "Not on the list of keys any more" : r.sender ? "Premium · your FAFO (it sends order alerts)" : r.premium ? "Premium" : "Standard";
   // Three cells, as See my list's rows lay out on a phone: the buyer (with the license under it), premium or not, the button.
   const lic = (r) => `License …${r.last4}${r.since ? `, issued ${day(r.since)}` : r.hand ? ", made by hand" : ""}`;
-  const body = rows.map((r) => `<tr data-q="${esc(fold(`${who(r)} ${r.last4} ${token(r)}`))}"><td class="em">${esc(who(r))}<br><span style="font-size:12px;color:#8090b8">${esc(lic(r))}</span></td><td${r.out ? ' style="color:#ff8a80"' : r.premium ? ' style="color:#5fd39a"' : ""}>${esc(state(r))}</td><td class="act">${btn(r)}</td></tr>`).join("");
+  const body = rows.map((r) => `<tr data-q="${esc(fold(`${who(r)} ${r.last4} ${state(r)}`))}"><td class="em">${esc(who(r))}<br><span style="font-size:12px;color:#8090b8">${esc(lic(r))}</span></td><td${r.out ? ' style="color:#ff8a80"' : r.premium ? ' style="color:#5fd39a"' : ""}>${esc(state(r))}</td><td class="act">${btn(r)}</td></tr>`).join("");
   // Buyers: not the seller's own FAFO, nor a license that's off or gone.
   const buyers = rows.filter((r) => !r.sender && !r.out), n = buyers.filter((r) => r.premium).length;
   return page(200, "Premium buyers", "",
     `${msg ? `<p class="hint" style="color:#5fd39a;font-weight:600">${esc(msg)}</p>` : ""}${err ? `<p class="hint err">${esc(err)}</p>` : ""}
      <p class="who">${n} of ${buyers.length} ${buyers.length === 1 ? "buyer" : "buyers"} ${n === 1 ? "is" : "are"} premium</p>
      <p class="small">Generate (making profiles in bulk) shows in FAFO only for premium buyers. Their FAFO picks a change up within 10 minutes, or when it's next unlocked. Your own FAFO is premium while it sends order alerts for buyers.</p>
-     ${rows.length ? `<div class="find"><input type="search" id="find" placeholder="Search by name, last 4, or premium" aria-label="Search buyers by Discord name, the name they send slots under, the license's last 4, or premium"><span class="shown" id="shown"></span></div>
+     ${rows.length ? `<div class="find"><input type="search" id="find" placeholder="Search by name, last 4, premium or standard" aria-label="Search buyers by Discord name, the name they send slots under, the license's last 4, premium or standard"><span class="shown" id="shown"></span></div>
      <table><thead><tr><th>Buyer</th><th>Premium</th><th></th></tr></thead><tbody>${body}</tbody></table>` : `<p>No buyers have a license yet.</p>`}
      <h3>A key made by hand</h3>
      <form class="edit" method="post">${hidden}<label>License key<input name="license" autocomplete="off" spellcheck="false" placeholder="PVLT-XXXX-XXXX-XXXX-XXXX"></label>

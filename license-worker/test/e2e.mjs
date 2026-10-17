@@ -2775,7 +2775,8 @@ try {
     for (const l of lics) assert.ok(text.includes(`<td class="em">@${l.username}`), "every buyer: " + l.username);
     assert.ok(text.includes("Premium · your FAFO (it sends order alerts)"), "the owner's own FAFO");
     assert.ok(text.includes(`0 of ${lics.length - 1} buyers are premium`), "the count: buyers only, not the owner's own FAFO");
-    assert.ok(/<tr data-q="@bob[^"]* premium yours">/.test(text) && /<tr data-q="@gina[^"]* standard">/.test(text), "searched as premium or standard, so \"premium\" doesn't find the rest");
+    assert.ok(/<tr data-q="@bob[^"]* premium · your fafo \(it sends order alerts\)">/.test(text) && /<tr data-q="@gina[^"]* standard">/.test(text), "searched by what it shows: premium or standard, so \"premium\" doesn't find the rest");
+    assert.ok(/<td>Standard<\/td>/.test(text) && !text.includes("Not premium"), "a buyer who isn't premium reads Standard");
     assert.ok(text.includes('sessionStorage.setItem(KEY, f.value)'), "the search is kept for the tab");
     assert.ok(!text.includes(ginaKey) && !text.includes(bobKey), "never a whole license key");
     assert.ok(text.includes('<input type="search" id="find"'), "a search box");
@@ -2821,7 +2822,7 @@ try {
     assert.equal((await getAuth("/premium", offKey)).status, 401, "a turned-off license isn't told premium");
     const t = unescape(await (await fetch(premiumLink)).text());
     assert.ok(/<td class="em">@quinn[^<]*<br><span[^>]*>License …\w{4}, issued [\d-]+<\/span><\/td><td style="color:#ff8a80">License turned off<\/td>/.test(t), "named, and turned off: not a key made by hand");
-    assert.ok(/<tr data-q="@quinn[^"]* off">/.test(t), "searched as off");
+    assert.ok(/<tr data-q="@quinn[^"]* license turned off">/.test(t), "searched by what it shows");
     assert.ok(/0 of \d+ buyers are premium/.test(t), "not counted");
     assert.ok(!(await premiumPost(premiumLink, { action: "grant", key: offHash })).text.includes("is premium now"), "can't be made premium while off");
     const gone = await premiumPost(premiumLink, { action: "remove", key: offHash });

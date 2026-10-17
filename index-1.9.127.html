@@ -3773,7 +3773,7 @@ function writeStore(rec){
   catch(e){ STORAGE_OK = false; return false; }
 }
 // Erase vault: the vault, and what this device noted about its items (the picture finder's list, hashes of item names).
-function clearStore(){ try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(AUTO_PIC_STORE); localStorage.removeItem(PREMIUM_STORE); premiumMem = null; } catch(e){} }
+function clearStore(){ premiumMem = null; try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(AUTO_PIC_STORE); localStorage.removeItem(PREMIUM_STORE); } catch(e){} }
 
 // The vault key and the sync token (1.9.65+) come from one PBKDF2 run: the key is its 256 bits, the
 // same key deriveKey made before, and the token an HMAC of them, which the sync service can check

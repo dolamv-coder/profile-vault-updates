@@ -259,12 +259,13 @@ alone (every store's rows of one account) from reading the whole table. Only
   `{premium, owner}`, where `owner` is the license that sends order alerts (`currentAlertSender`), the seller's own FAFO,
   which is premium too. `POST /premium/list {name}` (10 a day per license, D1 `premium_lists`) posts a link to the channel,
   and `/premium/list/:id?t=…` (24 hours; views GET, changes POST) lists every license that isn't turned off, by Discord name
-  and the name it last sent slots under, with Make premium or Remove premium, a search box (`data-q` says `premium` or
-  `standard`, kept per tab in sessionStorage), and a box for a key made by hand (checked against the GitHub list). A premium
-  license that's turned off shows as "License turned off" (and one made by hand gone from the list as "Not on the list of
-  keys any more") until premium is removed, and isn't counted in "N of M buyers are premium", nor is the owner's own FAFO.
-  Never a whole key on the page. While the GitHub list can't be read (`ghListHas` answers `null`: nothing read yet), a key
-  that isn't in D1 gets 503 from `/premium`, not 401, so the app keeps its last answer. `/admin/premium` lists them. Page
+  and the name it last sent slots under, with Make premium or Remove premium (one that isn't premium reads Standard, so
+  searching "premium" finds only premium ones; the search is kept per tab in sessionStorage), and a box for a key made by
+  hand (checked against the GitHub list). A premium license that's turned off shows as "License turned off" (one made by
+  hand as "Key expired", or "Not on the list of keys any more") until premium is removed, and isn't counted in "N of M
+  buyers are premium", nor is the owner's own FAFO. Never a whole key on the page. While the GitHub list can't be read
+  (`ghListHas` answers `null`: nothing read yet), a key that isn't in D1 gets 503 from `/premium` (`premiumGet` decides
+  from one look at each list), not 401, so the app keeps its last answer. `/admin/premium` lists them. Page
   1.9.127 below.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
