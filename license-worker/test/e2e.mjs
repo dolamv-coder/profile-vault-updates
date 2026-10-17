@@ -2741,6 +2741,114 @@ try {
     assert.doesNotMatch(JSON.stringify(d), /ORD-1001|Booster|review_token/);
   });
 
+  console.log("\nPremium buyers (app 1.9.127)");
+  // Bob's FAFO sends order alerts now (above), so it's the owner's here.
+  const { createHash } = await import("node:crypto");
+  const hashOf = (k) => createHash("sha256").update("pvlt:" + k.toUpperCase().replace(/[^A-Z0-9]/g, "")).digest("hex");
+  const premiumAsk = async (key) => { const r = await getAuth("/premium", key); assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store"); return r.json(); };
+  const premiumOf = async (key) => (await premiumAsk(key)).premium;
+  const premiumLinkIn = (content) => (content.match(/\((http[^)]+\/premium\/list\/[^)]+)\)/) || [])[1];
+  const premiumPost = async (link, body) => { const r = await fetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), ...body }) }); return { status: r.status, text: unescape(await r.text()) }; };
+  let premiumLink;
+  await test("premium: a license is needed; no buyer is premium to start, but the FAFO that sends order alerts is", async () => {
+    assert.equal((await fetch(BASE + "/premium")).status, 401);
+    assert.equal((await getAuth("/premium", "PVLT-NOPE-NOPE-NOPE-NOPE")).status, 401);
+    assert.equal(await premiumOf(ginaKey), false);
+    assert.equal(await premiumOf(frankKey), false, "it stopped sending alerts above");
+    assert.deepEqual(await premiumAsk(bobKey), { premium: true, owner: true }, "the license that sends order alerts: the owner's");
+    assert.deepEqual(await premiumAsk(ginaKey), { premium: false, owner: false });
+    assert.equal((await fetch(BASE + "/premium", { method: "OPTIONS" })).status, 204);
+  });
+  await test("asking for the Premium buyers page posts its link to the channel; the page lists every buyer", async () => {
+    assert.equal((await slots("/premium/list", null, {})).status, 401);
+    const before = webhookPosts.length;
+    const r = await slots("/premium/list", bobKey, { name: "Owner" });
+    assert.equal(r.status, 200); assert.deepEqual(await r.json(), { status: "sent" });
+    assert.equal(webhookPosts.length, before + 1);
+    const m = webhookPosts.at(-1).content;
+    assert.match(m, /^⭐ \*\*Premium buyers\*\*\nAsked by \*\*Owner\*\* · @bob · license …\w{4}\n\[Choose who's premium\]\(http[^)]+\/premium\/list\/[A-Za-z0-9_-]+\?t=[A-Za-z0-9_-]+\) · the link works for 24 hours$/, m);
+    premiumLink = premiumLinkIn(m); assert.ok(premiumLink);
+    const p = await fetch(premiumLink), text = unescape(await p.text());
+    assert.equal(p.status, 200); assert.equal(p.headers.get("cache-control"), "no-store");
+    const lics = dbRows("SELECT username FROM licenses WHERE revoked_at IS NULL");
+    assert.ok(lics.length > 3);
+    for (const l of lics) assert.ok(text.includes(`<td class="em">@${l.username}`), "every buyer: " + l.username);
+    assert.ok(text.includes("Premium · your FAFO (it sends order alerts)"), "the owner's own FAFO");
+    assert.ok(text.includes(`0 of ${lics.length - 1} buyers are premium`), "the count: buyers only, not the owner's own FAFO");
+    assert.ok(/<tr data-q="@bob[^"]* premium · your fafo \(it sends order alerts\)">/.test(text) && /<tr data-q="@gina[^"]* standard">/.test(text), "searched by what it shows: premium or standard, so \"premium\" doesn't find the rest");
+    assert.ok(/<td>Standard<\/td>/.test(text) && !text.includes("Not premium"), "a buyer who isn't premium reads Standard");
+    assert.ok(text.includes('sessionStorage.setItem(KEY, f.value)'), "the search is kept for the tab");
+    assert.ok(!text.includes(ginaKey) && !text.includes(bobKey), "never a whole license key");
+    assert.ok(text.includes('<input type="search" id="find"'), "a search box");
+    assert.equal((await fetch(premiumLink.replace(/t=[^&]+/, "t=wrong"))).status, 404, "a wrong token");
+    assert.equal((await fetch(premiumLink.replace(/\/premium\/list\/[^?]+/, "/premium/list/nope1234"))).status, 404, "a wrong id");
+    assert.equal((await fetch(premiumLink, { method: "PUT" })).status, 405);
+  });
+  await test("Make premium and Remove premium change what that buyer's FAFO is told", async () => {
+    const g = hashOf(ginaKey);
+    const made = await premiumPost(premiumLink, { action: "grant", key: g });
+    assert.equal(made.status, 200); assert.ok(made.text.includes("@gina is premium now."), made.text.slice(0, 400));
+    assert.deepEqual(await premiumAsk(ginaKey), { premium: true, owner: false }, "premium, not the owner");
+    assert.equal(await premiumOf(frankKey), false, "only that buyer");
+    assert.ok(/1 of \d+ buyers is premium/.test(made.text), "the count follows");
+    assert.equal((await premiumPost(premiumLink, { action: "grant", key: g })).status, 200, "again changes nothing");
+    assert.equal(dbRows(`SELECT COUNT(*) AS n FROM premium WHERE key_hash = '${g}'`)[0].n, 1);
+    const gone = await premiumPost(premiumLink, { action: "remove", key: g });
+    assert.ok(gone.text.includes(`License …${ginaKey.slice(-4)} isn't premium any more.`));
+    assert.equal(await premiumOf(ginaKey), false);
+    const bad = await premiumPost(premiumLink, { action: "grant", key: "0".repeat(64) });
+    assert.ok(bad.text.includes("That license isn't on the list any more."), "only a license on the list");
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM premium")[0].n, 0);
+    assert.equal((await premiumPost(premiumLink.replace(/t=[^&]+/, "t=wrong"), { action: "grant", key: g })).status, 404, "no change with a wrong token");
+    assert.equal(await premiumOf(ginaKey), false);
+  });
+  await test("a key made by hand is made premium by its key; anything else isn't", async () => {
+    const r = await premiumPost(premiumLink, { action: "add", license: GH_KEY.toLowerCase() });
+    assert.ok(r.text.includes(`License …${GH_KEY.slice(-4)} is premium now.`), r.text.slice(0, 400));
+    assert.equal(await premiumOf(GH_KEY), true);
+    assert.ok(r.text.includes("Key made by hand") && r.text.includes(`License …${GH_KEY.slice(-4)}, made by hand`), "listed");
+    assert.ok(/1 of \d+ buyers is premium/.test(r.text), "and counted");
+    assert.ok((await premiumPost(premiumLink, { action: "add", license: "PVLT-NOPE-NOPE-NOPE-NOPE" })).text.includes("FAFO doesn't know that license key, or it was turned off."));
+    assert.ok((await premiumPost(premiumLink, { action: "add", license: "hello" })).text.includes("That isn't a license key."));
+    const off = await premiumPost(premiumLink, { action: "remove", key: hashOf(GH_KEY) });
+    assert.ok(off.text.includes(`License …${GH_KEY.slice(-4)} isn't premium any more.`));
+    assert.equal(await premiumOf(GH_KEY), false);
+  });
+  await test("a premium license that's turned off shows as turned off, isn't counted, and its FAFO isn't premium", async () => {
+    const offKey = dbRows("SELECT license_key FROM licenses WHERE username = 'quinn' AND revoked_at IS NULL")[0].license_key, offHash = hashOf(offKey);
+    assert.ok((await premiumPost(premiumLink, { action: "grant", key: offHash })).text.includes("@quinn is premium now."));
+    assert.equal(await premiumOf(offKey), true);
+    await admin("/admin/revoke", { key: offKey });
+    assert.equal((await getAuth("/premium", offKey)).status, 401, "a turned-off license isn't told premium");
+    const t = unescape(await (await fetch(premiumLink)).text());
+    assert.ok(/<td class="em">@quinn[^<]*<br><span[^>]*>License …\w{4}, issued [\d-]+<\/span><\/td><td style="color:#ff8a80">License turned off<\/td>/.test(t), "named, and turned off: not a key made by hand");
+    assert.ok(/<tr data-q="@quinn[^"]* license turned off">/.test(t), "searched by what it shows");
+    assert.ok(/0 of \d+ buyers are premium/.test(t), "not counted");
+    assert.ok(!(await premiumPost(premiumLink, { action: "grant", key: offHash })).text.includes("is premium now"), "can't be made premium while off");
+    const gone = await premiumPost(premiumLink, { action: "remove", key: offHash });
+    assert.ok(gone.text.includes(`License …${offKey.slice(-4)} isn't premium any more.`) && !/@quinn[^<]*<br>/.test(gone.text), "Remove premium takes it off the page");
+    await admin("/admin/restore", { key: offKey });
+    assert.equal(await premiumOf(offKey), false, "turned back on, it's not premium once removed");
+  });
+  await test("the owner's admin view lists the premium licenses; the link lasts 24 hours and 10 are asked a day", async () => {
+    await premiumPost(premiumLink, { action: "grant", key: hashOf(ginaKey) });
+    const d = await (await admin("/admin/premium")).json();
+    assert.deepEqual(d.premium.map((x) => [x.key_last4, x.username]), [[ginaKey.slice(-4), "gina"]]);
+    assert.deepEqual(d.alertSender, { key_last4: bobKey.slice(-4), username: "bob" });
+    assert.equal((await fetch(BASE + "/admin/premium")).status, 401);
+    const id = premiumLink.match(/\/premium\/list\/([^?]+)/)[1];
+    sqlRun(`UPDATE premium_lists SET created_at = created_at - ${25 * 3600 * 1000} WHERE id = '${id}'`);
+    const late = await fetch(premiumLink); assert.equal(late.status, 410);
+    assert.match(await late.text(), /This link has expired\. Ask again from FAFO: Settings → Premium buyers\./);
+    assert.equal((await premiumPost(premiumLink, { action: "remove", key: hashOf(ginaKey) })).status, 410, "and changes nothing");
+    assert.equal(await premiumOf(ginaKey), true);
+    let n = dbRows(`SELECT COUNT(*) AS n FROM premium_lists WHERE key_hash = '${hashOf(bobKey)}' AND created_at > ${Date.now() - 86400000}`)[0].n;
+    while (n < 10) { assert.equal((await slots("/premium/list", bobKey, { name: "Owner" })).status, 200); n++; }
+    const before = webhookPosts.length;
+    assert.equal((await slots("/premium/list", bobKey, { name: "Owner" })).status, 429, "the 11th today");
+    assert.equal(webhookPosts.length, before, "nothing posted");
+  });
+
   console.log("\nProduct pictures (app 1.9.113)");
   await startWorker("pictures", APPROVAL_PORT + 3, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", "PICTURES_LIST_MS=4000", "PICTURES_ASKS_PER_DAY=60"]);
   const pic = (q, key = GH_KEY) => fetch(BASE + "/pictures/find?q=" + encodeURIComponent(q), { headers: key ? { authorization: "Bearer " + key } : {}, cache: "no-store" });

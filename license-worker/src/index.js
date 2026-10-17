@@ -105,7 +105,13 @@
 //                              reassign or remove; POST action=copy answers the ticked ones' email:password as
 //                              JSON, the only place a password leaves the worker; 24 hours
 //   GET/POST /alerts/review/ID?t=TOKEN    allow or refuse a license sending order alerts to buyers
+//   GET  /premium              {premium}: whether this license gets Generate (license Bearer; pages 1.9.127+): the owner
+//                              made it premium, or it's the license allowed to send order alerts (the owner's own FAFO)
+//   POST /premium/list         {name}: posts a link to the Premium buyers page to the owner's channel (license Bearer)
+//   GET/POST /premium/list/ID?t=TOKEN     every buyer, premium or not, with Make premium / Remove premium, and a key made
+//                              by hand made premium by its key; 24 hours
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
+//   GET  /admin/premium        the premium licenses (last 4, when, Discord name) and the license that sends order alerts
 //   GET  /admin/applications   every request and decision
 //   GET  /admin/submissions    collecting keys (with review links), submissions sent (whether approved or declined,
 //                              with their review links) and slots pulled
@@ -175,6 +181,9 @@ export default {
       if (path.startsWith("/accounts/removal/")) return await accountRemovalReview(request, env, ctx, url, path.slice("/accounts/removal/".length));
       if (path === "/accounts/list" && request.method === "POST") return await accountListAsk(request, env, ctx, url);
       if (path.startsWith("/accounts/list/")) return await accountListPage(request, env, url, path.slice("/accounts/list/".length));
+      if (path === "/premium" && request.method === "GET") return await premiumGet(request, env);
+      if (path === "/premium/list" && request.method === "POST") return await premiumListAsk(request, env, ctx, url);
+      if (path.startsWith("/premium/list/")) return await premiumListPage(request, env, url, path.slice("/premium/list/".length));
       if (path === "/alerts/sender" && request.method === "GET") return await alertSenderGet(request, env);
       if (path === "/alerts/sender" && request.method === "POST") return await alertSenderPost(request, env, ctx, url);
       if (path.startsWith("/alerts/review/")) return await alertSenderReview(request, env, ctx, url, path.slice("/alerts/review/".length));
@@ -573,7 +582,8 @@ async function ghListHas(env, hash) {
       }
     } catch (e) { console.error("github license list", e); }
   }
-  if (!ghList || !ghList.keys.has(hash)) return false;
+  if (!ghList) return null;   // couldn't be read, and no copy yet: unknown (falsy, so a key is refused as before)
+  if (!ghList.keys.has(hash)) return false;
   const exp = ghList.keys.get(hash);
   return !exp || new Date(exp) > new Date();
 }
@@ -3001,6 +3011,171 @@ async function vaultDelete(request, env) {
 
 // ---- owner tools ---------------------------------------------------------------------
 
+// ---- premium buyers --------------------------------------------------------------------------
+// Generate is for premium buyers (2026-10-17, the owner's request: "only allow premium buyers to use it"; the owner picks
+// them by hand). Pages from 1.9.127 ask GET /premium with their license and show Generate only when it says premium. The
+// owner picks buyers on a page their FAFO asks for (POST /premium/list posts its link to the channel, for 24 hours, as
+// See my list does). The license allowed to send order alerts (the owner's own FAFO) is premium too, so the owner keeps it.
+const PREMIUM_LISTS_PER_DAY = 10;
+const PREMIUM_LIST_TTL_MS = 24 * 3600 * 1000;
+const last4Of = (k) => String(k || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(-4);
+
+async function isPremium(env, hash) {
+  if (await env.DB.prepare("SELECT 1 AS p FROM premium WHERE key_hash = ?").bind(hash).first()) return true;
+  const s = await currentAlertSender(env);
+  return !!(s && s.key_hash === hash);
+}
+
+async function premiumGet(request, env) {
+  // The license as slotLicense reads it, but from one look at each list: a key that isn't in this database while the
+  // list of keys made by hand can't be read is unknown, not refused (503, so the app keeps its last answer; a 401 takes
+  // Generate away).
+  const m = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") || "");
+  const norm = m ? m[1].toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+  if (!/^PVLT[A-Z0-9]{16}$/.test(norm)) return json({ error: "license not recognized" }, 401);
+  const hash = await keyHash(norm);
+  const row = await env.DB.prepare("SELECT revoked_at FROM licenses WHERE key_hash = ?").bind(hash).first();
+  const on = row ? !row.revoked_at : await ghListHas(env, hash);
+  if (on === null) return json({ error: "the list of keys made by hand can't be read just now" }, 503);
+  if (!on) return json({ error: "license not recognized" }, 401);
+  // owner: this license sends order alerts, so it's the seller's own FAFO, which offers Settings → Premium buyers.
+  const s = await currentAlertSender(env), owner = !!(s && s.key_hash === hash);
+  return json({ premium: owner || await isPremium(env, hash), owner }, 200, { "cache-control": "no-store" });
+}
+
+async function premiumListAsk(request, env, ctx, url) {
+  const lic = await slotLicense(request, env);
+  if (!lic) return json({ error: "license not recognized" }, 401);
+  if (!env.DISCORD_WEBHOOK_URL) return json({ error: "the Discord channel isn't set up" }, 503);
+  const text = await request.text();
+  if (text.length > 2000) return json({ error: "too large" }, 413);
+  let b; try { b = JSON.parse(text) || {}; } catch { b = {}; }
+  const now = Date.now();
+  await env.DB.prepare("DELETE FROM premium_lists WHERE created_at < ?").bind(now - 7 * 86400000).run();
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM premium_lists WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 86400000).first();
+  if (recent && recent.n >= PREMIUM_LISTS_PER_DAY) return json({ error: "too many tries today" }, 429);
+  const o = { id: randomId(12), key_hash: lic.hash, key_last4: lic.last4, username: lic.username,
+    name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60), view_token: randomId(24), created_at: now };
+  await env.DB.prepare("INSERT INTO premium_lists (id, key_hash, key_last4, name, username, view_token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(o.id, o.key_hash, o.key_last4, o.name, o.username, o.view_token, o.created_at).run();
+  const who = [o.name ? `**${md(o.name)}**` : "", o.username ? `@${md(o.username)}` : "", `license …${o.key_last4}`].filter(Boolean).join(" · ");
+  const id = await webhookPost(env, { content: `⭐ **Premium buyers**\nAsked by ${who}\n[Choose who's premium](${url.origin}/premium/list/${o.id}?t=${o.view_token}) · the link works for 24 hours` });
+  if (!id) { await env.DB.prepare("DELETE FROM premium_lists WHERE id = ?").bind(o.id).run(); return json({ error: "couldn't post to the channel" }, 502); }
+  return json({ status: "sent" });
+}
+
+// The page: every buyer with a license from Continue with Discord (not turned off), premium or not, with a button to change
+// it; premium keys made by hand (licenses.json) too, and a box to make one premium by its key. Changes only by POST.
+// The search is kept for the tab (sessionStorage), as on See my list, so it's still there after Make or Remove premium
+// sends the page again.
+const PREMIUM_SCRIPT = `<script>
+(() => {
+  const f = document.getElementById("find"), rows = [...document.querySelectorAll("tr[data-q]")], shown = document.getElementById("shown");
+  const KEY = "premium-find:" + location.pathname;
+  const fold = (x) => x.toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "");
+  const filter = () => {
+    const w = fold(f.value).split(/\\s+/).filter(Boolean); let n = 0;
+    rows.forEach((r) => { r.hidden = !w.every((x) => r.dataset.q.includes(x)); if (!r.hidden) n++; });
+    shown.textContent = w.length ? n + " of " + rows.length + " shown" : "";
+    try { sessionStorage.setItem(KEY, f.value); } catch (e) {}
+  };
+  f.addEventListener("input", filter);
+  f.addEventListener("keydown", (e) => { if (e.key === "Escape" && f.value) { f.value = ""; filter(); } });
+  let q0 = null; try { q0 = sessionStorage.getItem(KEY); } catch (e) {}
+  if (q0) f.value = q0;
+  filter();
+  addEventListener("pageshow", filter);
+})();
+</script>`;
+async function premiumListPage(request, env, url, id) {
+  const o = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM premium_lists WHERE id = ?").bind(id).first() : null;
+  let t = url.searchParams.get("t") || "", form = null;
+  if (request.method === "POST") {
+    form = await request.formData().catch(() => null);
+    t = form && String(form.get("t") || "") || t;
+  } else if (request.method !== "GET") {
+    return page(405, "Not allowed", "");
+  }
+  if (!o || !(await sameText(t, o.view_token))) return page(404, "Not found", "This link isn't valid.");
+  const now = Date.now();
+  if (now > o.created_at + PREMIUM_LIST_TTL_MS) return page(410, "Premium buyers", "This link has expired. Ask again from FAFO: Settings → Premium buyers.");
+  let msg = "", err = "";
+  if (form) {
+    const action = String(form.get("action") || ""), key = String(form.get("key") || "");
+    const grant = (hash, last4) => env.DB.prepare("INSERT OR IGNORE INTO premium (key_hash, key_last4, granted_at) VALUES (?, ?, ?)").bind(hash, last4, now).run();
+    if (action === "grant" && /^[0-9a-f]{64}$/.test(key)) {
+      const row = await env.DB.prepare("SELECT username, license_key FROM licenses WHERE key_hash = ? AND revoked_at IS NULL").bind(key).first();
+      if (row) { await grant(key, last4Of(row.license_key)); msg = `@${row.username} is premium now.`; }
+      else err = "That license isn't on the list any more.";
+    } else if (action === "remove" && /^[0-9a-f]{64}$/.test(key)) {
+      const row = await env.DB.prepare("SELECT key_last4 FROM premium WHERE key_hash = ?").bind(key).first();
+      await env.DB.prepare("DELETE FROM premium WHERE key_hash = ?").bind(key).run();
+      msg = row ? `License …${row.key_last4} isn't premium any more.` : "";
+    } else if (action === "add") {
+      const norm = String(form.get("license") || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (!/^PVLT[A-Z0-9]{16}$/.test(norm)) err = "That isn't a license key. One looks like PVLT-XXXX-XXXX-XXXX-XXXX.";
+      else {
+        const hash = await keyHash(norm), row = await env.DB.prepare("SELECT revoked_at FROM licenses WHERE key_hash = ?").bind(hash).first();
+        const onList = row ? !row.revoked_at : await ghListHas(env, hash);
+        if (onList === null) err = "The list of keys made by hand couldn't be read just now. Try again in a minute.";
+        else if (!onList) err = "FAFO doesn't know that license key, or it was turned off.";
+        else { await grant(hash, norm.slice(-4)); msg = `License …${norm.slice(-4)} is premium now.`; }
+      }
+    }
+  }
+  const [lics, prem, named] = await env.DB.batch([
+    env.DB.prepare("SELECT username, license_key, key_hash, issued_at, revoked_at FROM licenses ORDER BY issued_at DESC"),
+    env.DB.prepare("SELECT key_hash, key_last4, granted_at FROM premium ORDER BY granted_at DESC"),
+    // The name each license last sent slots under (SQLite takes the bare column from the row with the latest time).
+    env.DB.prepare("SELECT key_hash, name, MAX(created_at) AS at FROM submissions WHERE name <> '' GROUP BY key_hash"),
+  ]);
+  const sender = await currentAlertSender(env), sent = new Map(named.results.map((x) => [x.key_hash, x.name]));
+  const premSet = new Map(prem.results.map((p) => [p.key_hash, p]));
+  const off = new Map(lics.results.filter((l) => l.revoked_at).map((l) => [l.key_hash, l]));
+  // Every license that isn't turned off. One that is shows only while it's still premium ("License turned off": its
+  // FAFO isn't told premium, and turned back on it would be again), as does a key made by hand gone from the list.
+  const rows = lics.results.filter((l) => !l.revoked_at).map((l) => ({ hash: l.key_hash, user: l.username, last4: last4Of(l.license_key), since: l.issued_at }));
+  const known = new Set(rows.map((r) => r.hash));
+  const extra = prem.results.map((p) => ({ hash: p.key_hash, last4: p.key_last4 }));
+  if (sender) extra.push({ hash: sender.key_hash, last4: sender.key_last4, user: sender.username });
+  for (const x of extra) {
+    if (known.has(x.hash)) continue;
+    known.add(x.hash);
+    const l = off.get(x.hash);
+    if (l) rows.push({ hash: x.hash, user: l.username, last4: last4Of(l.license_key), since: l.issued_at, off: true });
+    else {
+      const on = await ghListHas(env, x.hash), listed = !!(ghList && ghList.keys.has(x.hash));
+      rows.push({ hash: x.hash, user: x.user || "", last4: x.last4, since: 0, hand: true, expired: on === false && listed, gone: on === false && !listed });
+    }
+  }
+  for (const r of rows) { r.name = sent.get(r.hash) || ""; r.sender = !!(sender && sender.key_hash === r.hash); r.premium = premSet.has(r.hash) || r.sender; r.out = !!(r.off || r.gone || r.expired); }
+  rows.sort((a, b) => (a.out - b.out) || (b.sender - a.sender) || (b.premium - a.premium) || (b.since - a.since));
+  const day = (x) => new Date(x).toISOString().slice(0, 10);
+  const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  const btn = (r) => r.sender ? "" : `<form method="post">${hidden}<input type="hidden" name="key" value="${esc(r.hash)}">${r.premium
+    ? `<button class="rm" type="submit" name="action" value="remove">Remove premium</button>` : `<button class="ed" type="submit" name="action" value="grant">Make premium</button>`}</form>`;
+  const fold = (x) => String(x).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const who = (r) => r.user ? "@" + r.user + (r.name ? " · " + r.name : "") : r.name || "Key made by hand";
+  // Not premium reads Standard, so the search's "premium" finds only the premium ones.
+  const state = (r) => r.off ? "License turned off" : r.expired ? "Key expired" : r.gone ? "Not on the list of keys any more" : r.sender ? "Premium · your FAFO (it sends order alerts)" : r.premium ? "Premium" : "Standard";
+  // Three cells, as See my list's rows lay out on a phone: the buyer (with the license under it), premium or not, the button.
+  const lic = (r) => `License …${r.last4}${r.since ? `, issued ${day(r.since)}` : r.hand ? ", made by hand" : ""}`;
+  const body = rows.map((r) => `<tr data-q="${esc(fold(`${who(r)} ${r.last4} ${state(r)}`))}"><td class="em">${esc(who(r))}<br><span style="font-size:12px;color:#8090b8">${esc(lic(r))}</span></td><td${r.out ? ' style="color:#ff8a80"' : r.premium ? ' style="color:#5fd39a"' : ""}>${esc(state(r))}</td><td class="act">${btn(r)}</td></tr>`).join("");
+  // Buyers: not the seller's own FAFO, nor a license that's off or gone.
+  const buyers = rows.filter((r) => !r.sender && !r.out), n = buyers.filter((r) => r.premium).length;
+  return page(200, "Premium buyers", "",
+    `${msg ? `<p class="hint" style="color:#5fd39a;font-weight:600">${esc(msg)}</p>` : ""}${err ? `<p class="hint err">${esc(err)}</p>` : ""}
+     <p class="who">${n} of ${buyers.length} ${buyers.length === 1 ? "buyer" : "buyers"} ${n === 1 ? "is" : "are"} premium</p>
+     <p class="small">Generate (making profiles in bulk) shows in FAFO only for premium buyers. Their FAFO picks a change up within 10 minutes, or when it's next unlocked. Your own FAFO is premium while it sends order alerts for buyers.</p>
+     ${rows.length ? `<div class="find"><input type="search" id="find" placeholder="Search by name, last 4, premium or standard" aria-label="Search buyers by Discord name, the name they send slots under, the license's last 4, premium or standard"><span class="shown" id="shown"></span></div>
+     <table><thead><tr><th>Buyer</th><th>Premium</th><th></th></tr></thead><tbody>${body}</tbody></table>` : `<p>No buyers have a license yet.</p>`}
+     <h3>A key made by hand</h3>
+     <form class="edit" method="post">${hidden}<label>License key<input name="license" autocomplete="off" spellcheck="false" placeholder="PVLT-XXXX-XXXX-XXXX-XXXX"></label>
+     <p class="go"><button class="go" type="submit" name="action" value="add">Make premium</button></p></form>
+     <p class="hint">The link works until ${esc(new Date(o.created_at + PREMIUM_LIST_TTL_MS).toISOString().replace("T", " ").slice(0, 16))} UTC.</p>
+     ${rows.length ? PREMIUM_SCRIPT : ""}`, true);
+}
+
 async function admin(request, env, path) {
   const auth = request.headers.get("authorization") || "";
   if (!env.ADMIN_TOKEN || !(await sameText(auth, "Bearer " + env.ADMIN_TOKEN))) return json({ error: "unauthorized" }, 401);
@@ -3010,6 +3185,12 @@ async function admin(request, env, path) {
     const cached = await env.DB.prepare("SELECT q, product_id, name, until, at FROM picture_finds WHERE q = ?").bind(picKeyOf(words)).first();
     const r = new Set(words.filter((w) => !isSeries(w))).size < 2 ? { product: null, short: true } : await pictureSearch(env, words, Date.now(), trace);
     return json({ q, words, cached, result: r, ...trace }, 200, NO_STORE);
+  }
+  if (request.method === "GET" && path === "/admin/premium") {
+    const { results } = await env.DB.prepare(
+      "SELECT p.key_last4, p.granted_at, l.username FROM premium p LEFT JOIN licenses l ON l.key_hash = p.key_hash ORDER BY p.granted_at DESC").all();
+    const s = await currentAlertSender(env);
+    return json({ premium: results, alertSender: s ? { key_last4: s.key_last4, username: s.username || null } : null });
   }
   if (request.method === "GET" && path === "/admin/licenses") {
     const { results } = await env.DB.prepare(
