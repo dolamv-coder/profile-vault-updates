@@ -1,10 +1,10 @@
 {
-  "version": "1.9.126",
-  "url": "index-1.9.126.html",
-  "sha256": "654c3788b79a08f28c9083ac05c9a14a5064ad9f4910856012881b074ba2bc44",
-  "signature": "resIzMyHtsShnDn4EAPZ34XTxKSWO3kw+7o6S8K4KIwLxGXWhz9xB0ZdH1nhw4wcYQEvfs6CoWIzuPk3k2jbBw==",
+  "version": "1.9.127",
+  "url": "index-1.9.127.html",
+  "sha256": "0137156eafdb2da9bae88d1cb55c598dff09f4b8cd4680a05f8004f8390d7f50",
+  "signature": "aBKlAlGcBl1JcyWZoGsIrRF7wuUPe1Hvhn/t4Z6foY3Dbo1S7lEoz7eDmJb06n4hzMaNd1/r8BFZFfzbnlHuDw==",
   "minAppVersion": "0",
-  "notes": "FAFO catches up with everything since 1.9.112. Orders, Profiles, Store logins, Cards, Submit and Generate have a new look, with counts along the top, and a new IMAP page shows your slot limits, which store logins still need an inbox, and whether each inbox is connected. Orders of Pokémon products without a picture now get one from TCGplayer's catalog by themselves (Settings → Preferences → Find product pictures turns it off). Mass edit on Profiles can Jig addresses, Generate can copy drafts' names and addresses, and Clean emails catches more store sales.",
+  "notes": "Generate, for making profiles in bulk, is now for premium buyers. If it's gone from your sidebar and you need it, ask your seller. Drafts you made there are kept, and they come back as soon as you're made premium.",
   "installerUrl": "",
-  "publishedAt": "2026-10-16T00:56:32.373Z"
+  "publishedAt": "2026-10-17T18:59:32.496Z"
 }
