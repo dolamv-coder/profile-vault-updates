@@ -259,8 +259,13 @@ alone (every store's rows of one account) from reading the whole table. Only
   `{premium, owner}`, where `owner` is the license that sends order alerts (`currentAlertSender`), the seller's own FAFO,
   which is premium too. `POST /premium/list {name}` (10 a day per license, D1 `premium_lists`) posts a link to the channel,
   and `/premium/list/:id?t=…` (24 hours; views GET, changes POST) lists every license that isn't turned off, by Discord name
-  and the name it last sent slots under, with Make premium or Remove premium, a search box, and a box for a key made by hand
-  (checked against the GitHub list). Never a whole key on the page. `/admin/premium` lists them. Page 1.9.127 below.
+  and the name it last sent slots under, with Make premium or Remove premium, a search box (`data-q` says `premium` or
+  `standard`, kept per tab in sessionStorage), and a box for a key made by hand (checked against the GitHub list). A premium
+  license that's turned off shows as "License turned off" (and one made by hand gone from the list as "Not on the list of
+  keys any more") until premium is removed, and isn't counted in "N of M buyers are premium", nor is the owner's own FAFO.
+  Never a whole key on the page. While the GitHub list can't be read (`ghListHas` answers `null`: nothing read yet), a key
+  that isn't in D1 gets 503 from `/premium`, not 401, so the app keeps its last answer. `/admin/premium` lists them. Page
+  1.9.127 below.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 
@@ -1270,9 +1275,11 @@ they agree; `sync-merge.test.mjs`). The web version's pages are 1.9.125's but fo
 From 1.9.127 **Generate is only for premium buyers** (the owner's request, 2026-10-17: "How do I hide the generate tab?
 And only allow premium buyers to use it"; they chose to mark buyers themselves and to hide it from the rest). The page
 asks the license worker's `GET /premium` with `sellerLic()` at unlock, then every 10 minutes while it's shown and within a
-minute of the license changing (`refreshPremium`), and keeps the last answer per device for that license (`orbit-premium`
-in localStorage: `{h, p, o, at}`, `h` a `syncHash` of the key, never the key; cleared by Erase vault), so offline the last
-answer holds; a 401 counts as not premium, other errors change nothing. `canGenerate()` (that answer, in the vault itself,
+minute of the license changing (`refreshPremium`; a failed ask goes again a minute later, and at once on `online`), and
+keeps the last answer per device for that license (`orbit-premium` in localStorage: `{h, p, o, at}`, `h` a `syncHash` of the
+key, never the key; also in memory, `premiumMem`, for a browser that blocks storage; cleared by Erase vault), so offline the
+last answer holds; a 401 counts as not premium, other errors (the worker's 503 included) change nothing. Another tab of the
+browser follows the stored answer (a `storage` event); `premiumApply` redraws against what this tab drew (`premiumShown`). `canGenerate()` (that answer, in the vault itself,
 `MODE`) decides the sidebar's Generate and the phone's tab; `leaveGenerate` sends a view still on Generate to Orders
 (`renderSide`, `renderMain`, a stale click, `openGenerate`). Without a license key (Use this browser only, a code being
 filled in, a claude.ai copy) there's no Generate. Drafts (`genDrafts`) aren't touched: they sync as before and come back

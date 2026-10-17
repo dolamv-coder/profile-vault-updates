@@ -3773,7 +3773,7 @@ function writeStore(rec){
   catch(e){ STORAGE_OK = false; return false; }
 }
 // Erase vault: the vault, and what this device noted about its items (the picture finder's list, hashes of item names).
-function clearStore(){ try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(AUTO_PIC_STORE); localStorage.removeItem(PREMIUM_STORE); } catch(e){} }
+function clearStore(){ try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(AUTO_PIC_STORE); localStorage.removeItem(PREMIUM_STORE); premiumMem = null; } catch(e){} }
 
 // The vault key and the sync token (1.9.65+) come from one PBKDF2 run: the key is its 256 bits, the
 // same key deriveKey made before, and the token an HMAC of them, which the sync service can check
@@ -4169,6 +4169,7 @@ function countIn(gid){
 
 function renderSide(){
   leaveGenerate();   // Generate is for premium buyers (1.9.127)
+  premiumShown = premiumState();
   const groups = S.groups.slice().sort((a,b) => natural(a.name, b.name));
   const ungrouped = countIn("none");
   // data-gmenu: right-click, long-press or Shift+F10 opens the group menu (Ungrouped's only renames it, 1.9.88+).
@@ -15855,17 +15856,22 @@ setInterval(() => { if (S && (UI.view === "submit" || UI.view === "imap")) refre
 // them themselves). Generate is only for the licenses the seller makes premium on the license worker's Premium buyers
 // page, and for the seller's own FAFO (the one that sends order alerts). The worker answers GET /premium {premium, owner}
 // for the license; this device keeps the last answer for that license (orbit-premium in localStorage: a hash of the key,
-// never the key), so Generate shows at once at unlock and offline. Asked at unlock, then every 10 minutes while FAFO is
-// shown, and within a minute of the license changing. Without a license key (Use this browser only, a code being filled
-// in) there's no Generate. Drafts stay as they are, synced, and come back with premium. It hides Generate in this page;
-// it isn't a lock, since everything Generate does happens on this computer.
+// never the key; and in memory, for a browser that blocks storage), so Generate shows at once at unlock and offline, and
+// another tab of this browser follows an answer one tab got (a storage event). Asked at unlock, then every 10 minutes
+// while FAFO is shown (a failed ask again a minute later, and when back online), and within a minute of the license
+// changing. A 401 means not premium (not a license, or turned off); anything else, including the worker's 503 while it
+// can't read the list of keys made by hand, keeps the last answer. Without a license key (Use this browser only, a code
+// being filled in) there's no Generate. Drafts stay as they are, synced, and come back with premium. It hides Generate in
+// this page; it isn't a lock, since everything Generate does happens on this computer.
 const PREMIUM_STORE = "orbit-premium", PREMIUM_EVERY_MS = 10 * 60000;
-let premiumAt = 0, premiumFor = "", premiumBusy = false;
+let premiumAt = 0, premiumFor = "", premiumBusy = false, premiumMem = null, premiumShown = "";
 const premiumHash = (k) => syncHash("pvlt:" + licNorm(k));
 function premiumRead(){
   const k = sellerLic(); if (!k) return null;
+  const h = premiumHash(k);
+  if (premiumMem && premiumMem.h === h) return premiumMem;
   let v = null; try { v = JSON.parse(localStorage.getItem(PREMIUM_STORE) || "null"); } catch(e){}
-  return v && v.h === premiumHash(k) ? v : null;
+  return v && v.h === h ? (premiumMem = v) : null;
 }
 const canGenerate = () => !!S && MODE === "vault" && !!(premiumRead() || {}).p;
 const isPremiumOwner = () => !!S && MODE === "vault" && !!(premiumRead() || {}).o;
@@ -15875,12 +15881,29 @@ function leaveGenerate(){
   UI.view = "orders"; UI.q = ""; UI.genSel.clear(); { const q = $("#q"); if (q) q.value = ""; }
   return true;
 }
+const premiumState = () => (canGenerate() ? "g" : "") + (isPremiumOwner() ? "o" : "");
+// Redraws what an answer changes, against what this tab drew last (renderSide notes it), not against the stored answer,
+// which another tab may have written already.
+function premiumApply(){
+  if (!S || premiumState() === premiumShown) return;
+  if (leaveGenerate()){ render(); window.scrollTo(0, 0); return; }
+  renderSide();
+  // Settings gains or loses Premium buyers; not while something typed there is unsaved.
+  if (UI.view === "settings-view" && !typedUnsaved()) renderMain();
+}
+window.addEventListener("storage", (e) => {
+  if (e.key !== PREMIUM_STORE) return;
+  try { premiumMem = JSON.parse(e.newValue || "null"); } catch(err){ premiumMem = null; }
+  premiumApply();
+});
 async function refreshPremium(force){
   const k = sellerLic();
   if (!S || !k || premiumBusy) return;
   const h = premiumHash(k);
   if (!force && h === premiumFor && Date.now() - premiumAt < PREMIUM_EVERY_MS) return;
-  premiumBusy = true; premiumAt = Date.now(); premiumFor = h;
+  premiumBusy = true; premiumFor = h;
+  // A failed ask goes again at the next minute's check; an answer waits 10 minutes.
+  premiumAt = Date.now() - PREMIUM_EVERY_MS + 60000;
   let d = null;
   try {
     const ac = new AbortController(), t = setTimeout(() => ac.abort(), 20000);
@@ -15891,16 +15914,15 @@ async function refreshPremium(force){
     } finally { clearTimeout(t); }
   } catch(e){}
   finally { premiumBusy = false; }
-  if (!d || typeof d.premium !== "boolean" || !S || sellerLic() !== k) return;   // offline, or locked or a new key meanwhile
-  const was = premiumRead() || {}, now = {h, p:d.premium, o:d.owner === true, at:Date.now()};
-  try { localStorage.setItem(PREMIUM_STORE, JSON.stringify(now)); } catch(e){}
-  if (!!was.p === now.p && !!was.o === now.o) return;
-  if (leaveGenerate()){ render(); window.scrollTo(0, 0); return; }
-  renderSide();
-  // Settings gains or loses Premium buyers; not while something typed there is unsaved.
-  if (UI.view === "settings-view" && !typedUnsaved()) renderMain();
+  if (!d || typeof d.premium !== "boolean") return;   // offline or an error: the last answer holds
+  if (sellerLic() !== k) return;   // a new key meanwhile (or, in a browser, locked)
+  premiumAt = Date.now();
+  premiumMem = {h, p:d.premium, o:d.owner === true, at:Date.now()};
+  try { localStorage.setItem(PREMIUM_STORE, JSON.stringify(premiumMem)); } catch(e){}
+  premiumApply();
 }
 setInterval(() => { if (S && document.visibilityState !== "hidden") refreshPremium(false); }, 60000);
+window.addEventListener("online", () => { if (S) refreshPremium(true); });
 
 // Settings → Premium buyers (the seller's FAFO only): the license worker posts a link to the seller's Discord channel, as
 // See my list does, and the page there makes buyers premium or not. The link works for 24 hours.

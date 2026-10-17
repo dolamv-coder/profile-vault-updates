@@ -2774,7 +2774,9 @@ try {
     assert.ok(lics.length > 3);
     for (const l of lics) assert.ok(text.includes(`<td class="em">@${l.username}`), "every buyer: " + l.username);
     assert.ok(text.includes("Premium · your FAFO (it sends order alerts)"), "the owner's own FAFO");
-    assert.ok(text.includes(`1 premium of ${lics.length} buyers`), "the count");
+    assert.ok(text.includes(`0 of ${lics.length - 1} buyers are premium`), "the count: buyers only, not the owner's own FAFO");
+    assert.ok(/<tr data-q="@bob[^"]* premium yours">/.test(text) && /<tr data-q="@gina[^"]* standard">/.test(text), "searched as premium or standard, so \"premium\" doesn't find the rest");
+    assert.ok(text.includes('sessionStorage.setItem(KEY, f.value)'), "the search is kept for the tab");
     assert.ok(!text.includes(ginaKey) && !text.includes(bobKey), "never a whole license key");
     assert.ok(text.includes('<input type="search" id="find"'), "a search box");
     assert.equal((await fetch(premiumLink.replace(/t=[^&]+/, "t=wrong"))).status, 404, "a wrong token");
@@ -2787,7 +2789,7 @@ try {
     assert.equal(made.status, 200); assert.ok(made.text.includes("@gina is premium now."), made.text.slice(0, 400));
     assert.deepEqual(await premiumAsk(ginaKey), { premium: true, owner: false }, "premium, not the owner");
     assert.equal(await premiumOf(frankKey), false, "only that buyer");
-    assert.ok(made.text.includes("2 premium of"), "the count follows");
+    assert.ok(/1 of \d+ buyers is premium/.test(made.text), "the count follows");
     assert.equal((await premiumPost(premiumLink, { action: "grant", key: g })).status, 200, "again changes nothing");
     assert.equal(dbRows(`SELECT COUNT(*) AS n FROM premium WHERE key_hash = '${g}'`)[0].n, 1);
     const gone = await premiumPost(premiumLink, { action: "remove", key: g });
@@ -2803,12 +2805,29 @@ try {
     const r = await premiumPost(premiumLink, { action: "add", license: GH_KEY.toLowerCase() });
     assert.ok(r.text.includes(`License …${GH_KEY.slice(-4)} is premium now.`), r.text.slice(0, 400));
     assert.equal(await premiumOf(GH_KEY), true);
-    assert.ok(r.text.includes("Key made by hand"), "listed");
+    assert.ok(r.text.includes("Key made by hand") && r.text.includes(`License …${GH_KEY.slice(-4)}, made by hand`), "listed");
+    assert.ok(/1 of \d+ buyers is premium/.test(r.text), "and counted");
     assert.ok((await premiumPost(premiumLink, { action: "add", license: "PVLT-NOPE-NOPE-NOPE-NOPE" })).text.includes("FAFO doesn't know that license key, or it was turned off."));
     assert.ok((await premiumPost(premiumLink, { action: "add", license: "hello" })).text.includes("That isn't a license key."));
     const off = await premiumPost(premiumLink, { action: "remove", key: hashOf(GH_KEY) });
     assert.ok(off.text.includes(`License …${GH_KEY.slice(-4)} isn't premium any more.`));
     assert.equal(await premiumOf(GH_KEY), false);
+  });
+  await test("a premium license that's turned off shows as turned off, isn't counted, and its FAFO isn't premium", async () => {
+    const offKey = dbRows("SELECT license_key FROM licenses WHERE username = 'quinn' AND revoked_at IS NULL")[0].license_key, offHash = hashOf(offKey);
+    assert.ok((await premiumPost(premiumLink, { action: "grant", key: offHash })).text.includes("@quinn is premium now."));
+    assert.equal(await premiumOf(offKey), true);
+    await admin("/admin/revoke", { key: offKey });
+    assert.equal((await getAuth("/premium", offKey)).status, 401, "a turned-off license isn't told premium");
+    const t = unescape(await (await fetch(premiumLink)).text());
+    assert.ok(/<td class="em">@quinn[^<]*<br><span[^>]*>License …\w{4}, issued [\d-]+<\/span><\/td><td style="color:#ff8a80">License turned off<\/td>/.test(t), "named, and turned off: not a key made by hand");
+    assert.ok(/<tr data-q="@quinn[^"]* off">/.test(t), "searched as off");
+    assert.ok(/0 of \d+ buyers are premium/.test(t), "not counted");
+    assert.ok(!(await premiumPost(premiumLink, { action: "grant", key: offHash })).text.includes("is premium now"), "can't be made premium while off");
+    const gone = await premiumPost(premiumLink, { action: "remove", key: offHash });
+    assert.ok(gone.text.includes(`License …${offKey.slice(-4)} isn't premium any more.`) && !/@quinn[^<]*<br>/.test(gone.text), "Remove premium takes it off the page");
+    await admin("/admin/restore", { key: offKey });
+    assert.equal(await premiumOf(offKey), false, "turned back on, it's not premium once removed");
   });
   await test("the owner's admin view lists the premium licenses; the link lasts 24 hours and 10 are asked a day", async () => {
     await premiumPost(premiumLink, { action: "grant", key: hashOf(ginaKey) });
