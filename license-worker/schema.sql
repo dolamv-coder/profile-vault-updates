@@ -332,3 +332,23 @@ CREATE TABLE IF NOT EXISTS picture_asks (
   n        INTEGER NOT NULL,
   PRIMARY KEY (key_hash, day)
 );
+
+-- Premium buyers (2026-10-17, the owner's request: Generate only for premium buyers). A license is premium while it has
+-- a row here, or while it's the FAFO allowed to send order alerts (the owner's own). Pages from 1.9.127 ask GET /premium.
+CREATE TABLE IF NOT EXISTS premium (
+  key_hash   TEXT PRIMARY KEY,
+  key_last4  TEXT NOT NULL,
+  granted_at INTEGER NOT NULL
+);
+
+-- Links to the Premium buyers page, posted to the owner's channel when their FAFO asks (24 hours, like account_lists).
+CREATE TABLE IF NOT EXISTS premium_lists (
+  id          TEXT PRIMARY KEY,
+  key_hash    TEXT NOT NULL,                     -- the license that asked
+  key_last4   TEXT NOT NULL,
+  name        TEXT NOT NULL DEFAULT '',
+  username    TEXT,
+  view_token  TEXT NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS premium_lists_key ON premium_lists (key_hash, created_at);

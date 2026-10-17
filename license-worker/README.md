@@ -562,6 +562,32 @@ hear about it in their FAFO without ever seeing the account:
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/alerts
 ```
 
+## Premium buyers
+
+From FAFO 1.9.127, **Generate** (making profiles in bulk, Jig and Mass edit on drafts) is only for the buyers you
+make premium. The others don't see it: no Generate in the sidebar or the phone's tabs. Drafts they made before are
+kept and come back if you make them premium.
+
+1. In your FAFO, open **Settings → Premium buyers → Choose who's premium**. Your channel gets a link that works for
+   24 hours (10 a day). Only the FAFO that sends order alerts (`owner`) shows Premium buyers in Settings.
+2. The page lists every buyer with a license, by Discord name and the name they last sent slots under, each with
+   **Make premium** or **Remove premium**, and a search box. A key you made by hand is added by pasting it under
+   **A key made by hand**.
+3. A buyer's FAFO asks `GET /premium` (their license as `Authorization: Bearer`; it answers `{premium, owner}`) when it
+   opens and every 10 minutes, so a change reaches them within that.
+
+- **Your own FAFO is always premium while it sends order alerts** (the license you allowed under Order alerts for
+  buyers). If another license sends them, make yours premium on the page.
+- **It hides Generate in the app; it isn't a lock.** Someone who edits the page in their browser could show it
+  again, since everything Generate does happens on their own computer.
+- Who's premium is in the `premium` table, and the links in `premium_lists`, which `npm run db:init` (and the deploy
+  Action) adds. A buyer whose key you turn off isn't premium on that key any more.
+
+```
+# Who's premium, and which license sends order alerts
+curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/premium
+```
+
 ## The web version's synced vaults
 
 From Orbit 1.9.65, a desktop app can keep an encrypted copy of its vault here (Settings → Web

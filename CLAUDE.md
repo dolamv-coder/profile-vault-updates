@@ -254,6 +254,13 @@ alone (every store's rows of one account) from reading the whole table. Only
   used meanwhile) and answers a week, nothing found 6 hours (an hour when a list couldn't be read) (`picture_finds`); a
   license gets `PIC_ASKS_PER_DAY` (300) asks a day not answered from those (`picture_asks`, a count per day, kept two
   days; 429 past it). `/admin/pictures?q=` shows what a name finds and why.
+  Since 2026-10-17 (the owner's request: "hide the generate tab… only allow premium buyers to use it"; they mark them
+  themselves) it keeps who's **premium** (D1 `premium`, by `key_hash`): `GET /premium` (license Bearer) answers
+  `{premium, owner}`, where `owner` is the license that sends order alerts (`currentAlertSender`), the seller's own FAFO,
+  which is premium too. `POST /premium/list {name}` (10 a day per license, D1 `premium_lists`) posts a link to the channel,
+  and `/premium/list/:id?t=…` (24 hours; views GET, changes POST) lists every license that isn't turned off, by Discord name
+  and the name it last sent slots under, with Make premium or Remove premium, a search box, and a box for a key made by hand
+  (checked against the GitHub list). Never a whole key on the page. `/admin/premium` lists them. Page 1.9.127 below.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 
@@ -1259,6 +1266,20 @@ only a saved inbox, which is what it still means on the web. A sync's start and 
 in. The sidebar's IMAP comes after Store logins' groups, which hang under the item above them. And `syncMerge` keeps
 both sides of `autoPicsNo` with no version to go by, as for `itemPics` (Undo on found pictures on two devices before
 they agree; `sync-merge.test.mjs`). The web version's pages are 1.9.125's but for the sidebar. Nothing gains a field.
+
+From 1.9.127 **Generate is only for premium buyers** (the owner's request, 2026-10-17: "How do I hide the generate tab?
+And only allow premium buyers to use it"; they chose to mark buyers themselves and to hide it from the rest). The page
+asks the license worker's `GET /premium` with `sellerLic()` at unlock, then every 10 minutes while it's shown and within a
+minute of the license changing (`refreshPremium`), and keeps the last answer per device for that license (`orbit-premium`
+in localStorage: `{h, p, o, at}`, `h` a `syncHash` of the key, never the key; cleared by Erase vault), so offline the last
+answer holds; a 401 counts as not premium, other errors change nothing. `canGenerate()` (that answer, in the vault itself,
+`MODE`) decides the sidebar's Generate and the phone's tab; `leaveGenerate` sends a view still on Generate to Orders
+(`renderSide`, `renderMain`, a stale click, `openGenerate`). Without a license key (Use this browser only, a code being
+filled in, a claude.ai copy) there's no Generate. Drafts (`genDrafts`) aren't touched: they sync as before and come back
+with premium. The seller's own FAFO (`owner`, on the desktop or the web) gets Settings → **Premium buyers**
+(`isPremiumOwner`, `askPremiumList`), whose Choose who's premium posts the worker's link to the channel. Pages before
+1.9.127 show Generate to everyone until they update, and it's hidden in the page, not locked: everything Generate does
+happens on the buyer's computer. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
