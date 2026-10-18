@@ -3556,8 +3556,12 @@ try {
     assert.equal((await fetchOnce(billLink.replace(/\/billing\/list\/[^?]+/, "/billing/list/nope1234"))).status, 404);
     assert.equal((await fetchOnce(billLink, { method: "PUT" })).status, 405);
   });
-  const billPost = async (link, body) => { const r = await fetchOnce(link.split("?")[0], { method: "POST", redirect: "manual", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), ...body }) });
-    const text = await r.text(); return { status: r.status, location: r.headers.get("location") || "", text: unescape(text) }; };
+  // A 500 here is the local database still held by the test's own `wrangler d1 execute` a moment before (never a thing
+  // in Cloudflare): tried once more a second later.
+  const billPost = async (link, body, tries = 2) => { const r = await fetchOnce(link.split("?")[0], { method: "POST", redirect: "manual", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), ...body }) });
+    const text = await r.text();
+    if (r.status === 500 && tries > 1) { await new Promise((ok) => setTimeout(ok, 1000)); return billPost(link, body, tries - 1); }
+    return { status: r.status, location: r.headers.get("location") || "", text: unescape(text) }; };
   const doneOf = (loc) => new URL(loc, BASE).searchParams.get("done"), errOf = (loc) => new URL(loc, BASE).searchParams.get("err");
   await test("Billing page: Friends and Family pauses a live monthly plan on Stripe, Charge resumes it; Stripe saying no changes nothing", async () => {
     const b = tessHash.slice(0, 16);
