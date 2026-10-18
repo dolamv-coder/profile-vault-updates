@@ -265,8 +265,8 @@ alone (every store's rows of one account) from reading the whole table. Only
   hand as "Key expired", or "Not on the list of keys any more") until premium is removed, and isn't counted in "N of M
   buyers are premium", nor is the owner's own FAFO. Never a whole key on the page. While the GitHub list can't be read
   (`ghListHas` answers `null`: nothing read yet), a key that isn't in D1 gets 503 from `/premium` (`premiumGet` decides
-  from one look at each list), not 401, so the app keeps its last answer. `/admin/premium` lists them. Page
-  1.9.127 below.
+  from one look at each list), not 401, so the app keeps its last answer. `/admin/premium` lists them. Pages
+  1.9.127 and 1.9.129 below.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 
@@ -1297,6 +1297,15 @@ lock card. It takes the front page's colours (`--lg1..3`, `--lg-aco`, `--lg-glow
 background, the light ones in the Light and Space light themes and on the paper lock card of Dark and Light. Bruno Ace SC
 still writes FAFO in the share image's footer. The front page's mockups of the app (its sidebar, the Discord-to-FAFO tile,
 its lock card) show the logo too, and no longer load Bruno Ace SC. Nothing gains a field.
+
+From 1.9.129 **Jig on Profiles is only for premium buyers** too (the owner's request, 2026-10-18: "Take away jig options in
+profile unless they are premium user"), by the same answer as Generate (`canJig`, which is `canGenerate`): without it the
+profile editor has no Jig links, Jig all, Jig for or its note (`addrBlock`'s `jig`; its click handler checks again, so a
+Jig link left in an editor drawn before premium was taken off does nothing), a profile's ⋯ and right-click menus have no
+Jig address (`profileMenuItems`, and `jigProfile` checks), and Mass edit has no Jig on Address line 1 or 2, Jig for
+Pokémon Center, Jig on City or ZIP code, Jig for or its note (`PM_JIG`; Random phone numbers and New random first and last
+names stay). Generate's Jig goes with Generate. With premium every page, menu and window is as 1.9.128 drew it. Hidden,
+not locked, as Generate is. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
