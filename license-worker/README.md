@@ -594,6 +594,122 @@ kept and come back if you make them premium.
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/premium
 ```
 
+## Payments (Stripe)
+
+From FAFO 1.9.130 your buyers can pay you for checkouts through Stripe (the owner's decisions, 2026-10-18): **$10 per
+checkout**, or a **monthly plan, $25 for 10 slots switched on at once** with nothing per checkout, plus **15 more slots
+for another $25** (25 slots, $50 a month). It stays off until you add the two Stripe secrets below; until then nothing
+changes anywhere.
+
+- **Who pays.** Anyone who isn't Friends and Family and isn't on a paid monthly plan pays $10 for each checkout on the
+  slots they sent: an order on an account you gave them (from your FAFO's order alerts), an order on their own account
+  while it was out as one of their slots (their FAFO finds it in their email and reports it; this worker checks the
+  account was out then), or one you add on the Billing page. One order is one checkout, whatever the quantity. Each is
+  due 3 days after the order, and free if the store cancels it before it's paid. Orders from before payments came on
+  are never billed, and neither are checkouts on a declined batch's slots (add one by hand if you ran it), nor ones
+  after a slot was pulled (once your channel was told of the pull).
+- **The monthly plan** covers a month once Stripe says its invoice is paid (and stops covering when it ends, if you
+  cancel it at once in Stripe). Checkouts while a renewal is being charged, or retried after it failed, wait: free if
+  it's paid, $10 each if the plan ends unpaid.
+- **Who can submit.** A buyer has to pick a plan in FAFO's **Invoice** page first. Submit stays off for them while a
+  checkout is overdue, their monthly payment has failed, or a payment is disputed with their bank, and a monthly buyer
+  can't have more slots on than their plan has (10 or 25; they add the extra 15 in Invoice instead of asking you). A
+  batch refused this way is never posted, and your channel hears about it (at most every 6 hours per buyer). FAFOs older
+  than 1.9.130 can't say why; the channel's message says so.
+- **Friends and Family** are never charged, Submit is never off for them, and their slot limits stay as you approved
+  them. Everyone you approved before payments came on is Friends and Family (the first request that sees the Stripe
+  keys notes when that was), and so is every key you made by hand. The Billing page moves anyone either way: **Charge**
+  makes a buyer pay like one approved after payments began, for checkouts from then on (never for ones from while they
+  were Friends and Family). If you make a buyer with a monthly plan Friends and Family, Stripe stops charging it (its
+  collection is paused) until you charge them again.
+- **Your own FAFO** (the license that sends order alerts) is never charged, and is the only one that can open the
+  Billing page.
+
+### Turning it on
+
+1. **A Stripe account.** Sign up at https://stripe.com and finish activating it (your business details and the bank
+   account payouts go to). Stripe decides which businesses it takes; check yours is allowed before you charge anyone.
+   Under **Settings → Payments → Payment methods**, cards and Link are what FAFO uses.
+2. **A restricted key** (Developers → API keys → **Create restricted key**), with only what the worker needs:
+   - Checkout Sessions: **Write** (opens the payment page, and closes one that's no longer right)
+   - Customers: **Write** (one Stripe customer per buyer)
+   - Subscriptions: **Write** (the monthly plan: end it, add or remove the extra slots, pause it for Friends and Family)
+   - Products and Prices: **Write** (the worker makes "FAFO monthly plan (10 slots)" and "FAFO extra 15 slots" the first
+     time a buyer subscribes)
+   - Invoices: **Read** (the page to pay a failed monthly payment)
+   - Refunds: **Write** (when a buyer paid for a checkout the store canceled meanwhile, that $10 goes back by itself)
+   - PaymentIntents: **Read** (to tell whose payment a bank dispute is about)
+
+   A live key (its name has `_live_` in it) puts payments in **live mode**; a sandbox's test key, in **test mode**.
+3. **A webhook** (Developers → Webhooks → **Add destination**): your account's events, **snapshot** payloads, API
+   version **2026-09-30.endive** (it can't be changed later; make a new destination instead), sent to
+
+   ```
+   https://license.fafoaco.com/stripe/webhook
+   ```
+
+   with exactly these events:
+
+   ```
+   checkout.session.completed            checkout.session.async_payment_succeeded
+   checkout.session.expired              checkout.session.async_payment_failed
+   customer.subscription.created         customer.subscription.updated
+   customer.subscription.deleted         customer.subscription.paused
+   customer.subscription.resumed         invoice.paid
+   invoice.payment_failed                charge.dispute.created
+   charge.dispute.closed                 charge.refunded
+   ```
+
+   Then copy its **Signing secret**. Test mode (a sandbox) has its own webhooks and its own signing secret.
+   The webhook only makes things quicker: the worker asks Stripe again whenever a buyer's FAFO checks, so a missed one
+   changes nothing.
+4. **Add the two secrets** to the worker: in the Cloudflare dashboard, **Workers & Pages → orbit-license → Settings →
+   Variables and Secrets → Add**, type **Secret**, once for each; or here:
+
+   ```
+   npx wrangler secret put STRIPE_SECRET_KEY
+   npx wrangler secret put STRIPE_WEBHOOK_SECRET
+   ```
+
+   Never put them in `wrangler.toml` or anywhere in this repo: it's public. Payments are on as soon as both are there.
+5. **Try test mode first.** Use the sandbox's restricted key and its webhook's secret. In test mode only licenses you
+   mark **Tester** see plans and pay, for checkouts from when you marked them (everyone else carries on as if payments
+   were off), and nothing counts in live mode later. Take a second license of your own (yours is never charged), open the Billing page (step below), open that
+   buyer's **Details** and choose **Tester**. In that FAFO, pick a plan in Invoice and pay with Stripe's test card
+   **4242 4242 4242 4242** (any future date, any CVC and ZIP). When it all works, swap both secrets for the live ones.
+
+### The Billing page
+
+In your FAFO, **Settings → Billing → See billing**. Your channel gets a link that works for 24 hours (10 a day). It shows
+what's owed and overdue, what was paid in the last 30 days, whether your FAFO's order alerts are coming in (if they
+stop, checkouts on accounts you give out aren't billed: keep Order alerts for buyers on in your desktop FAFO), and every
+buyer with their plan and status. A buyer's **Details** has:
+
+- **Friends and Family** or **Charge**, **Tester** (in test mode), and **Clear dispute hold** after a bank dispute.
+- Their invoice, with **Waive**, **Undo waive**, **Mark paid** (paid some other way), **Charge again** (one canceled
+  because the store canceled it, if you think it wasn't; not one their monthly plan covered), and **Waive** or **Keep**
+  for a checkout they said wasn't yours ("Not my seller's checkout?" in their Invoice; your channel gets a link to
+  answer it).
+- **Add a checkout**, and their recent batches to match your bot's log against.
+
+**Paste checkouts** takes your bot's success log, one checkout per line: each line needs the account's email and the
+order number (a store's name and a date are read too, else the ones you pick). You see who each one goes to first (the
+buyer who had that email out as a slot that day, or a list to pick from when two did) and whether it would be billed;
+**Add** writes them. Pasted emails are only matched, never kept. If the store cancels one you added on a buyer's own
+account, their FAFO says so and it's free, as for the checkouts it reports itself (you can charge it again).
+
+- **Refunds** are made in your Stripe Dashboard; your channel hears about them. The prices are FAFO's own (the
+  `PRICE_*` numbers in `src/index.js`, also shown in the app), so changing one is a change here, not in Stripe. A new
+  checkout price applies to checkouts from then on: each one owed is paid at what it cost when it was added.
+- **Removing either secret turns payments off here, but Stripe keeps charging monthly plans.** Cancel those in Stripe
+  first if you're stopping for good. Checkouts from while they were gone aren't billed once you add them back.
+- Payments are in the `billing_*` tables, which `npm run db:init` (and the deploy Action) adds.
+
+```
+# Payments: on or off, the mode, since when, plans, what's owed, Stripe's price ids, the last order alerts from your FAFO
+curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/billing
+```
+
 ## The web version's synced vaults
 
 From Orbit 1.9.65, a desktop app can keep an encrypted copy of its vault here (Settings → Web
@@ -727,5 +843,7 @@ key pickup, repeat sign-in, cancelled and refused sign-ins, the account-age and 
 checks, revoke and restore, the rate limit, requests being posted, approved, denied
 and changed, slot limits, submissions and collecting keys, pulled slots, product pictures
 (against a stand-in catalog: exact names only, never a case, another edition or two that fit),
-and synced vaults (revisions, two devices saving at once, large vaults, a new password, and the lock
-after wrong passwords).
+synced vaults (revisions, two devices saving at once, large vaults, a new password, and the lock
+after wrong passwords), and payments against a stand-in Stripe (plans, invoices, Submit refused and allowed, sessions,
+signed webhooks, refunds, the monthly plan's states, disputes, the Billing page, test mode, and that the tables a
+database from the last release gets are the same as a new one's).
