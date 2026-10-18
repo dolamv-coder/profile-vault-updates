@@ -2182,7 +2182,15 @@ try {
   });
 
   console.log("\nSee my list (app 1.9.102+)");
-  const dbRows = (cmd) => JSON.parse(execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", cmd, "--json"], { cwd: root, env, stdio: "pipe" }).toString())[0].results;
+  // The running worker can hold the database for a moment ("database is locked"): tried again then, up to 5 times.
+  const d1Exec = (args, tries = 5) => {
+    try { return execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), ...args], { cwd: root, env, stdio: "pipe" }); }
+    catch (e) {
+      if (tries > 1 && /SQLITE_BUSY|database is locked/.test(String(e.stderr || "") + String(e.stdout || ""))) { execFileSync("sleep", ["1"]); return d1Exec(args, tries - 1); }
+      throw e;
+    }
+  };
+  const dbRows = (cmd) => JSON.parse(d1Exec(["--command", cmd, "--json"]).toString())[0].results;
   const listLink = (content) => (content.match(/\((http[^)]+\/accounts\/list\/[^)]+)\)/) || [])[1];
   // wrangler dev closes a connection left idle while a test reads the database (dbRows takes a few seconds), and fetch
   // can reuse it just as it closes: tried again then (up to three times, as more than one can be left idle), as the request
@@ -2198,7 +2206,7 @@ try {
   const listPost = (link, body) => fetchOnce(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), ...body }) });
   const askList = async (key = ivanKey) => { const r = await fetchOnce(BASE + "/accounts/list", { method: "POST", headers: { authorization: "Bearer " + key, "content-type": "application/json" }, body: JSON.stringify({ name: "Owner" }) }); return { status: r.status, body: await r.json(), m: webhookPosts.at(-1) }; };
   const unescape = (h) => h.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-  const sqlRun = (cmd) => execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "approval"), "--command", cmd], { cwd: root, env, stdio: "pipe" });
+  const sqlRun = (cmd) => d1Exec(["--command", cmd]);
   // The one list's accounts and their slots' rows, as the page reads them, and the status it shows for each.
   const listRows = () => dbRows("SELECT store, email, email_norm, key_hash, key_last4, profile, batch, offer_id, sent_at, password FROM accounts");
   const fold = (x) => x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
