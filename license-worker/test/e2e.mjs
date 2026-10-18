@@ -3593,7 +3593,8 @@ try {
     assert.equal(st.report.from, dayOf(charged + 14 * 3600000), "their FAFO reports orders from when they were charged on, not the five days before");
     const r = await (await api("/billing/checkouts", vicKey, { orders: [{ account: "vic.own@example.com", store: "target", orderNo: "VC-OWN-OLD", at: before, stage: "placed" }] })).json();
     assert.deepEqual([r.added, r.ignored], [0, 1]);
-    assert.equal(errOf((await billPost(billLink, { action: "add", key: vicHash, b, store: "target", order: "VC-ADD-OLD", date: before })).location),
+    // Yesterday: after payments began (two days back here) whatever the hour, before they were charged.
+    assert.equal(errOf((await billPost(billLink, { action: "add", key: vicHash, b, store: "target", order: "VC-ADD-OLD", date: dayOf(Date.now() - 86400000) })).location),
       "Not added: from before you charged them (friends and family then).");
     await billPost(billLink, { action: "family", key: vicHash, b });
     assert.equal((await billOf(vicKey)).exempt, "family");
