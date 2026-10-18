@@ -16432,7 +16432,7 @@ function keepTypedLic(lic, panel){
   const lf = panel && $("#ss-lic", panel); if (lf) lf.closest(".field").hidden = true;
   return kept;
 }
-function billRefused(bill, text, lic, panel){
+async function billRefused(bill, text, lic, panel){
   if (keepTypedLic(lic, panel)){ persist(); render(); }
   const k = sellerLic(); if (!S || !k) return;
   const reason = String(bill.reason || "");
@@ -16442,13 +16442,17 @@ function billRefused(bill, text, lic, panel){
       block:reason && reason !== "over-limit" ? {reason, text} : null, seeded:true};
     BILL.h = premiumHash(k); BILL.at = Date.now(); billApply();
   }
-  refreshBilling(true);
+  // The amounts come with GET /billing: waited for a moment (3 s at most), so Pay names what it charges.
+  await Promise.race([Promise.resolve(refreshBilling(true)).catch(() => {}), new Promise(r => setTimeout(r, 3000))]);
+  if (!S) return;
   if (reason === "over-limit"){
     const n = Math.floor(Number(bill.slots));
     if (n > 0){ S.settings.slotAllow = Object.assign({}, S.settings.slotAllow || {}, {limit:n}); persist(); if (UI.view === "submit") renderMain(); }
     slotLimitDialog(); return;
   }
-  billingBlockDialog(billingBlock() || {reason, text});
+  // The refusal's reason is the worker's word now; what this page had noted (maybe older) only fills in its text.
+  const cur = billingBlock();
+  billingBlockDialog(cur && cur.reason === reason ? cur : {reason, text});
 }
 // Submit's action panel: what stops it, or what's due.
 function billSubmitNote(){
@@ -17128,7 +17132,7 @@ async function openSubmitSlots(){
           catch(e){
             closers.forEach(x => x.disabled = false); b.disabled = false; b.innerHTML = `${ic("exp")}Try again`; $("#ss-send-err", panel).textContent = e.message;
             // Refused for the seller's payments (1.9.130): a key typed here is kept, and the way out opens over this window.
-            if (e.billing) billRefused(e.billing, e.message, viaCSV ? lic : "", panel);
+            if (e.billing) billRefused(e.billing, e.message, viaCSV ? lic : "", panel).catch(err => console.error(err));
             return;
           }
           closers.forEach(x => x.disabled = false);

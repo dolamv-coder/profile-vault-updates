@@ -4618,7 +4618,7 @@ async function billingListPage(request, env, ctx, url, id) {
   }
   const fold = (x) => String(x).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   const body = buyers.filter((x) => !x.off || x.tot.owed).map((x) => `<tr data-q="${esc(fold(`${x.name} ${x.last4} ${x.plan} ${x.status}`))}"><td class="em">${esc(x.name)}${x.last4 ? `<br><span style="font-size:12px;color:#8090b8">License …${esc(x.last4)}${x.tester ? " · Tester" : ""}</span>` : ""}</td>
-    <td>${esc(x.plan)}</td><td${/overdue|failed|hold/.test(x.status) ? ' style="color:#ff8a80"' : / owed/.test(x.status) ? ' style="color:#ffd27a"' : ""}>${esc(x.status)}</td>
+    <td>${esc(x.plan)}</td><td class="st"${/overdue|failed|hold/.test(x.status) ? ' style="color:#ff8a80"' : / owed/.test(x.status) ? ' style="color:#ffd27a"' : ""}>${esc(x.status)}</td>
     <td class="act"><a href="${esc(base)}&b=${x.h.slice(0, 16)}">Details</a></td></tr>`).join("");
   return page(200, "Billing", "", `${msgs}
     <p class="who">${c.mode === "test" ? "Test mode: only testers are charged" : "Payments are on"}</p>
@@ -5066,7 +5066,7 @@ function page(statusCode, title, msg, extra = "", wide = false) {
     table tr{display:grid;grid-template-columns:auto 1fr auto;column-gap:10px;padding:8px 0;border-bottom:1px solid #1c2c5c}
     table td{border:0;padding:2px 0}
     td.pick{grid-column:1;grid-row:1 / span 2;align-self:center}
-    td.em{grid-column:2;overflow-wrap:break-word;word-break:break-word} td.em + td{grid-column:2}
+    td.em{grid-column:2;overflow-wrap:break-word;word-break:break-word} td.em + td, td.st{grid-column:2}
     td.act{grid-column:3;grid-row:1 / span 2;align-self:center}
     td.act form{display:block;margin:4px 0}
   }
