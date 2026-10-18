@@ -1,10 +1,10 @@
 {
-  "version": "1.9.128",
-  "url": "index-1.9.128.html",
-  "sha256": "1c84283215b55a66755ff88362076cf6095d6a11e63c9d28858815f74fd930b6",
-  "signature": "TV6Jk/HgL1s8R7V9Ne3OFNcc0Q80xqabLppmtfkB1TwYGyj2jgVJo/zfL8Nv9nx/eSw94JWj70tgZKvUCOFMDg==",
+  "version": "1.9.129",
+  "url": "index-1.9.129.html",
+  "sha256": "5ed0a045c7dce39daca69d7a8f2c96d333d636e0400400145fe3f7e252e03eda",
+  "signature": "LxpptLMPdS1LF6QIPvxfRm5s6WLrDmhu6b/huP9AKF076Z6FkJE79LZRU3RcOmQwFSPXmyFQXR40jJcmNxu+Bw==",
   "minAppVersion": "0",
-  "notes": "FAFO now shows its new logo, the same one as on fafoaco.com, at the top of every page and on the lock screen.",
+  "notes": "Jig on Profiles, in the profile editor, a profile's menu and Mass edit, is now for premium buyers, like Generate. If you need it, ask your seller. Your profiles and their addresses stay as they are.",
   "installerUrl": "",
-  "publishedAt": "2026-10-17T21:16:01.029Z"
+  "publishedAt": "2026-10-18T03:42:12.321Z"
 }
