@@ -352,3 +352,183 @@ CREATE TABLE IF NOT EXISTS premium_lists (
   created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS premium_lists_key ON premium_lists (key_hash, created_at);
+
+-- Payments (2026-10-18, the owner's request: "$10 per checkout or $25 a month plan or 10 slots", paid with Stripe). Off until
+-- both Stripe secrets are set. Every column is here from the start, since db:init can't add columns later. Times are epoch
+-- ms; amounts are cents (usd); `mode` is "live" or "test" (the Stripe key's), and a mode's reads never see the other's rows.
+-- Per buyer, whatever the mode: Friends and Family (1 never charged, 0 charged; NULL: Friends and Family if approved before
+-- billing came on), a Tester (test mode reaches only them), since when they're charged after being Friends and Family
+-- (charge_from: the owner's Charge, or a Tester marked in test mode; orders dated before it aren't billed), when their FAFO
+-- last asked GET /billing, when a refused batch was last told to the channel, how many slots they last said were switched
+-- on, and when the channel was last told they hit the day's limit of reported checkouts.
+CREATE TABLE IF NOT EXISTS billing_people (
+  key_hash    TEXT PRIMARY KEY,
+  family      INTEGER,
+  tester      INTEGER NOT NULL DEFAULT 0,
+  charge_from INTEGER,
+  seen_at     INTEGER,
+  refused_at  INTEGER,
+  last_on     INTEGER,
+  last_on_at  INTEGER,
+  note_at     INTEGER,
+  updated_at  INTEGER NOT NULL
+);
+
+-- Plan and Stripe state per buyer per mode. plan: NULL (none picked) | checkout | monthly; next_plan: what a monthly plan set
+-- to end turns into (checkout, or NULL for none); sub_id: the current (or last) monthly subscription; dispute_hold: a card
+-- payment disputed with the bank, which turns Submit off until the owner clears it.
+CREATE TABLE IF NOT EXISTS billing (
+  key_hash     TEXT NOT NULL,
+  mode         TEXT NOT NULL,
+  plan         TEXT,
+  plan_at      INTEGER,
+  next_plan    TEXT,
+  customer_id  TEXT,
+  sub_id       TEXT,
+  dispute_hold INTEGER NOT NULL DEFAULT 0,
+  updated_at   INTEGER NOT NULL,
+  PRIMARY KEY (key_hash, mode)
+);
+CREATE INDEX IF NOT EXISTS billing_customer ON billing (customer_id);
+
+-- Every monthly subscription a buyer has had, as Stripe last said (the current one is billing.sub_id). Orders dated from
+-- started_at to paid_through are covered by the plan (paid_through moves on only once a period's invoice is paid);
+-- invoice_status: its latest invoice's (draft or open while a renewal is being paid); told: the state the channel was last
+-- told about.
+CREATE TABLE IF NOT EXISTS billing_subs (
+  sub_id         TEXT PRIMARY KEY,
+  key_hash       TEXT NOT NULL,
+  mode           TEXT NOT NULL,
+  status         TEXT NOT NULL,                     -- Stripe's: active | trialing | past_due | unpaid | incomplete | incomplete_expired | paused | canceled
+  cancel_at_end  INTEGER NOT NULL DEFAULT 0,
+  extras         INTEGER NOT NULL DEFAULT 0,         -- how many "15 more slots" it has
+  paused         INTEGER NOT NULL DEFAULT 0,         -- collection paused (Friends and Family)
+  started_at     INTEGER,
+  paid_through   INTEGER,
+  period_end     INTEGER,
+  ended_at       INTEGER,
+  latest_invoice TEXT,
+  invoice_status TEXT,                              -- Stripe's: draft | open | paid | uncollectible | void
+  told           TEXT,
+  synced_at      INTEGER NOT NULL,
+  created_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS billing_subs_key ON billing_subs (key_hash, mode);
+
+-- Invoice lines: one per order per buyer, $10 each, due 3 days after the order. An order belongs to one buyer.
+CREATE TABLE IF NOT EXISTS billing_lines (
+  id             TEXT PRIMARY KEY,
+  key_hash       TEXT NOT NULL,
+  mode           TEXT NOT NULL,
+  store          TEXT NOT NULL,                     -- the app's store key ("target", "pokemoncenter")
+  store_name     TEXT NOT NULL DEFAULT '',
+  order_no       TEXT NOT NULL,
+  item           TEXT NOT NULL DEFAULT '',
+  qty            TEXT NOT NULL DEFAULT '',
+  order_at       TEXT NOT NULL,                     -- the order's date, YYYY-MM-DD
+  acct_hash      TEXT NOT NULL DEFAULT '',          -- acctHash of the account it was placed on
+  profile        TEXT NOT NULL DEFAULT '',
+  source         TEXT NOT NULL,                     -- alert: an account the owner gave | buyer: their own account, reported by their FAFO | owner: added or pasted by the owner
+  amount         INTEGER NOT NULL,
+  created_at     INTEGER NOT NULL,
+  due_at         INTEGER NOT NULL,
+  held_sub       TEXT,                              -- set while the buyer's monthly payment is past due: not due yet (dropped if that invoice gets paid)
+  paid_at        INTEGER,
+  pay_id         TEXT,                              -- billing_payments.id, or 'manual'
+  canceled_at    INTEGER,
+  cancel_src     TEXT,                              -- alert | buyer | covered (by a monthly plan)
+  waived_at      INTEGER,
+  dispute_at     INTEGER,
+  dispute_note   TEXT NOT NULL DEFAULT '',
+  dispute_answer TEXT,                              -- waived | kept
+  UNIQUE (key_hash, mode, store, order_no)
+);
+CREATE INDEX IF NOT EXISTS billing_lines_key ON billing_lines (key_hash, mode, created_at);
+CREATE INDEX IF NOT EXISTS billing_lines_order ON billing_lines (store, order_no);
+
+-- A buyer's own accounts that were out as slots, and when (from the batch reaching the channel until a pull): the hash of
+-- the email only, which their FAFO's reported checkouts are checked against. Kept whether billing is on or off; a declined
+-- batch's go, and pulled ones go after 120 days.
+CREATE TABLE IF NOT EXISTS billing_accounts (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  key_hash   TEXT NOT NULL,
+  store      TEXT NOT NULL,
+  store_name TEXT NOT NULL,
+  profile    TEXT NOT NULL,
+  acct_hash  TEXT NOT NULL,
+  batch      TEXT NOT NULL,
+  sent_at    INTEGER NOT NULL,
+  pulled_at  INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS billing_accounts_one ON billing_accounts (key_hash, batch, store, acct_hash);
+CREATE INDEX IF NOT EXISTS billing_accounts_acct ON billing_accounts (key_hash, acct_hash);
+CREATE INDEX IF NOT EXISTS billing_accounts_slot ON billing_accounts (key_hash, store_name, profile);
+
+-- A slot on an account the owner gave that the buyer pulled: orders on it after the pull aren't billed.
+CREATE TABLE IF NOT EXISTS billing_pulled (
+  key_hash  TEXT NOT NULL,
+  store     TEXT NOT NULL,
+  profile   TEXT NOT NULL,
+  batch     TEXT NOT NULL,
+  pulled_at INTEGER NOT NULL,
+  PRIMARY KEY (key_hash, store, profile, batch)
+);
+
+-- Stripe Checkout sessions: 'pay' (what's owed for checkouts) and 'monthly' (signing up for the plan). One open per kind per
+-- buyer; a payment that covered lines no longer owed is refunded the difference.
+CREATE TABLE IF NOT EXISTS billing_payments (
+  id             TEXT PRIMARY KEY,
+  key_hash       TEXT NOT NULL,
+  mode           TEXT NOT NULL,
+  kind           TEXT NOT NULL,                     -- pay | monthly
+  extras         INTEGER NOT NULL DEFAULT 0,
+  session_id     TEXT,
+  url            TEXT,
+  line_ids       TEXT NOT NULL DEFAULT '[]',        -- JSON [billing_lines.id]
+  amount         INTEGER NOT NULL DEFAULT 0,
+  status         TEXT NOT NULL,                     -- open | paid | expired | failed
+  web            INTEGER,
+  created_at     INTEGER NOT NULL,
+  expires_at     INTEGER,
+  checked_at     INTEGER,
+  paid_at        INTEGER,
+  applied        INTEGER,
+  refund         INTEGER NOT NULL DEFAULT 0,
+  refund_id      TEXT,
+  refund_err     TEXT,
+  payment_intent TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS billing_payments_open ON billing_payments (key_hash, mode, kind) WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS billing_payments_key ON billing_payments (key_hash, mode, created_at);
+CREATE INDEX IF NOT EXISTS billing_payments_session ON billing_payments (session_id);
+CREATE INDEX IF NOT EXISTS billing_payments_pi ON billing_payments (payment_intent);
+
+-- Stripe webhook events handled (a log, not a gate), calls counted for limits, settings (when billing came on, and on again
+-- after the keys were gone, Stripe's price ids, when the owner's FAFO last sent order alerts), and links to the owner's
+-- Billing page (24 hours, like premium_lists).
+CREATE TABLE IF NOT EXISTS billing_events (
+  id         TEXT PRIMARY KEY,
+  type       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS billing_calls (
+  key_hash TEXT NOT NULL,
+  kind     TEXT NOT NULL,
+  at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS billing_calls_key ON billing_calls (key_hash, kind, at);
+CREATE TABLE IF NOT EXISTS billing_config (
+  k          TEXT PRIMARY KEY,
+  v          TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS billing_lists (
+  id          TEXT PRIMARY KEY,
+  key_hash    TEXT NOT NULL,                     -- the license that asked (the owner's, or a buyer's dispute)
+  key_last4   TEXT NOT NULL,
+  name        TEXT NOT NULL DEFAULT '',
+  username    TEXT,
+  view_token  TEXT NOT NULL,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS billing_lists_key ON billing_lists (key_hash, created_at);

@@ -1,0 +1,1 @@
+New: an Invoice page. If your seller charges for checkouts, you'll pick a plan there, $10 per checkout or $25 a month for 10 slots, and pay through Stripe. Buyers your seller had already approved are Friends and Family and aren't charged. Also, deleting a profile whose slot is out with your seller now pulls that slot, so your seller knows.

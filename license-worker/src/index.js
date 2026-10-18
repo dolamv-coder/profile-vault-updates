@@ -75,6 +75,19 @@
 //                              stage, at, createdAt}]}: this license's, newer than MS
 //   GET  /alerts/webhook       {set, lastOk, lastError}: this license's Discord webhook for its alerts
 //   PUT  /alerts/webhook       {url}: set it (it gets a test post first), or "" to remove it
+// Payments (Stripe; off until STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set; page 1.9.130+, license Bearer):
+//   GET  /billing              {on:false}, or {on, mode, exempt, plan, nextPlan, block, prices, sub, lines, owed, overdue,
+//                              paid30, payments, report}: this license's plan and invoice ($10 per checkout, or $25 a month)
+//   POST /billing/plan         {plan:"checkout"}: pay per checkout (a monthly plan ends first)
+//   POST /billing/checkouts    {orders:[{account, store, orderNo, at, stage}]}: checkouts their FAFO found on their own
+//                              accounts, billed when that account was out as one of their slots then
+//   POST /billing/checkout     {kind: pay | monthly | extras | cancel | resume | invoice, ...}: {url} of a Stripe page to
+//                              open, or GET /billing's answer
+//   POST /billing/dispute      {id, note}: "not my seller's checkout", for the owner to waive or keep
+//   GET  /billing/done         where Stripe sends the buyer back
+//   POST /stripe/webhook       Stripe's events (signed with STRIPE_WEBHOOK_SECRET)
+//   POST /submissions refuses a buyer who isn't paid up (402 {error, billing:{reason, ...}}); /slots/limit gives a monthly
+//                              plan's 10 or 25.
 // Web version and sync (app 1.9.65+). The app seals its vault (AES-GCM, with a key from the vault's
 // password) before it leaves the device, so what's kept here can't be read here. Every call takes the
 // license key (Bearer); reading or saving also takes the vault's access token (x-vault-auth), which
@@ -110,6 +123,9 @@
 //   POST /premium/list         {name}: posts a link to the Premium buyers page to the owner's channel (license Bearer)
 //   GET/POST /premium/list/ID?t=TOKEN     every buyer, premium or not, with Make premium / Remove premium, and a key made
 //                              by hand made premium by its key; 24 hours
+//   POST /billing/list         {name}: the owner's own FAFO posts a link to the Billing page to the channel
+//   GET/POST /billing/list/ID?t=TOKEN     every buyer's plan and invoice: Friends and Family or Charge, Tester (test mode), waive,
+//                              mark paid, charge again, disputes, add checkouts (one, or pasted from the bot's log); 24 hours
 //   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/premium        the premium licenses (last 4, when, Discord name) and the license that sends order alerts
 //   GET  /admin/applications   every request and decision
@@ -120,6 +136,7 @@
 //   GET  /admin/accounts       the account list: free and given out per store, who got which, offers
 //   GET  /admin/vaults         synced vaults: whose, how big, from which device, when (never their contents)
 //   GET  /admin/alerts         order alerts: who asked to send them and the decisions, and how many each buyer got
+//   GET  /admin/billing        payments: on or off, the mode, since when, plans, what's owed, prices, the last order alerts
 //   GET  /admin/pictures?q=NAME what a name's picture search reads: its words, the groups searched, every product that
 //                              fits and the answer (nothing kept or fetched for the picture)
 //   POST /admin/accounts/free  {email, store?}: give an account back to the list
@@ -170,7 +187,7 @@ export default {
       if (path === "/submit/key" && request.method === "GET") return await submitKeyGet(env, url);
       if (path === "/submit/key" && request.method === "POST") return await submitKeyPost(request, env, ctx, url);
       if (path.startsWith("/submit/review/")) return await submitKeyReview(request, env, ctx, url, path.slice("/submit/review/".length));
-      if (path === "/submissions" && request.method === "POST") return await submission(request, env, url);
+      if (path === "/submissions" && request.method === "POST") return await submission(request, env, url, ctx);
       if (path === "/submissions/status" && request.method === "GET") return await submissionStatus(request, env, url);
       if (path === "/submissions/batches" && request.method === "GET") return await submissionBatches(request, env, url);
       if (path.startsWith("/submissions/review/")) return await submissionReview(request, env, ctx, url, path.slice("/submissions/review/".length));
@@ -187,11 +204,20 @@ export default {
       if (path === "/alerts/sender" && request.method === "GET") return await alertSenderGet(request, env);
       if (path === "/alerts/sender" && request.method === "POST") return await alertSenderPost(request, env, ctx, url);
       if (path.startsWith("/alerts/review/")) return await alertSenderReview(request, env, ctx, url, path.slice("/alerts/review/".length));
-      if (path === "/alerts/accounts" && request.method === "GET") return await alertAccounts(request, env);
+      if (path === "/alerts/accounts" && request.method === "GET") return await alertAccounts(request, env, ctx);
       if (path === "/alerts/webhook" && request.method === "GET") return await alertWebhookGet(request, env);
       if (path === "/alerts/webhook" && request.method === "PUT") return await alertWebhookPut(request, env);
       if (path === "/alerts" && request.method === "GET") return await alertsGet(request, env, url);
       if (path === "/alerts" && request.method === "POST") return await alertsPost(request, env, ctx);
+      if (path === "/billing" && request.method === "GET") return await billingGet(request, env);
+      if (path === "/billing/plan" && request.method === "POST") return await billingPlan(request, env);
+      if (path === "/billing/checkouts" && request.method === "POST") return await billingCheckouts(request, env, ctx);
+      if (path === "/billing/checkout" && request.method === "POST") return await billingCheckout(request, env, ctx, url);
+      if (path === "/billing/dispute" && request.method === "POST") return await billingDispute(request, env, ctx, url);
+      if (path === "/billing/done" && request.method === "GET") return await billingDone(env, url);
+      if (path === "/billing/list" && request.method === "POST") return await billingListAsk(request, env, ctx, url);
+      if (path.startsWith("/billing/list/")) return await billingListPage(request, env, ctx, url, path.slice("/billing/list/".length));
+      if (path === "/stripe/webhook" && request.method === "POST") return await stripeWebhook(request, env);
       if (path === "/vault/info" && request.method === "GET") return await vaultInfo(request, env);
       if (path === "/vault" && request.method === "GET") return await vaultGet(request, env, url);
       if (path === "/vault" && request.method === "PUT") return await vaultPut(request, env, url);
@@ -609,12 +635,16 @@ async function slotLimit(request, env) {
   const lic = await slotLicense(request, env);
   if (!lic) return json({ error: "license not recognized" }, 401);
   const latest = await env.DB.prepare("SELECT * FROM slot_requests WHERE key_hash = ? ORDER BY created_at DESC LIMIT 1").bind(lic.hash).first();
+  // A monthly plan's slots (payments): 10, or 25 with the extra 15, which the buyer adds in Invoice rather than asking.
+  const plan = await planSlots(env, lic.hash).catch((e) => { console.error("billing", e); return null; });
+  if (plan) return json({ limit: plan, request: slotRequestOut(latest), canRequest: false, plan: "monthly" }, 200, { "cache-control": "no-store" });
   return json({ limit: await currentSlotLimit(env, lic.hash), request: slotRequestOut(latest), canRequest: !!env.DISCORD_WEBHOOK_URL }, 200, { "cache-control": "no-store" });
 }
 
 async function slotRequest(request, env, ctx, url) {
   const lic = await slotLicense(request, env);
   if (!lic) return json({ error: "license not recognized" }, 401);
+  if (await planSlots(env, lic.hash).catch(() => null)) return json({ error: "Add 15 slots in Invoice" }, 409);
   if (!env.DISCORD_WEBHOOK_URL) return json({ error: "requests aren't set up" }, 503);
   const b = await request.json().catch(() => ({}));
   const current = await currentSlotLimit(env, lic.hash);
@@ -858,7 +888,7 @@ const isPokemonCenterFile = (f, files) => {
   return [key.replace(/^other:/, ""), f.store].some((x) => /^pokemon ?cent(er|re)$/.test(plain(x)));
 };
 
-async function submission(request, env, url) {
+async function submission(request, env, url, ctx) {
   const lic = await slotLicense(request, env);
   if (!lic) return json({ error: "license not recognized" }, 401);
   if (!env.DISCORD_WEBHOOK_URL) return json({ error: "the Discord channel isn't set up" }, 503);
@@ -937,6 +967,10 @@ async function submission(request, env, url) {
     if (seen.key_hash !== lic.hash) return json({ error: "batch id taken" }, 409);
     return seen.webhook_message_id ? json({ ok: true, id: batch, duplicate: true, ...(seen.review ? { review: seen.review } : {}) }) : json({ error: "still sending" }, 425);
   }
+  // Payments: a buyer who isn't paid up can't send (402, before anything is recorded or posted).
+  // A billing error (D1) never stops a batch.
+  const refused = await billingGate(env, ctx, lic, b, files).catch((e) => { console.error("billing", e); return null; });
+  if (refused) return refused;
   const now = Date.now();
   const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM submissions WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 3600 * 1000).first();
   if (recent && recent.n >= SUBMISSIONS_PER_HOUR) return json({ error: "too many submissions this hour" }, 429);
@@ -953,6 +987,9 @@ async function submission(request, env, url) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(s.id, s.key_hash, s.key_last4, s.name, s.username, slots, bytes, s.key_id, now).run();
   if (!ins.meta || !ins.meta.changes) return json({ error: "still sending" }, 425);
+  // The buyer's own accounts on these slots, read before assigned accounts are filled in, and kept (as hashes) once the
+  // batch reaches the channel, so the checkouts their FAFO reports on them can be checked (payments). Never fails the batch.
+  const owns = files !== null ? await slotAccounts(files).catch((e) => { console.error("billing", e); return []; }) : [];
   // Slots on Use Assigned Account get accounts from the owner's list: {store name: {asked, got}}.
   const moves = [];
   let picks;
@@ -1043,7 +1080,8 @@ async function submission(request, env, url) {
     if (reviewed) await env.DB.prepare("DELETE FROM submission_reviews WHERE id = ?").bind(s.id).run().catch((e) => console.error("review", e));
     return json({ error: "couldn't post to the channel" }, 502);
   }
-  await env.DB.prepare("UPDATE submissions SET webhook_message_id = ? WHERE id = ?").bind(msgId, s.id).run().catch((e) => console.error("record", e));
+  const recorded = await env.DB.prepare("UPDATE submissions SET webhook_message_id = ? WHERE id = ?").bind(msgId, s.id).run().then(() => true, (e) => { console.error("record", e); return false; });
+  if (recorded && owns.length) await recordAccounts(env, lic.hash, batch, owns, Date.now()).catch((e) => console.error("billing", e));
   if (picks.size) await settleAccounts(env, lic, batch, true, Date.now()).catch((e) => console.error("accounts", e));
   // Each list the batch's slots took accounts from: the one list (Target and Pokémon Center), or a store's own.
   const lists = new Map((files || []).filter((f) => f.assigned > 0).map((f) => [listStoreOf(f.storeKey), f.store]));
@@ -1096,6 +1134,10 @@ async function submissionReview(request, env, ctx, url, id) {
       // Every decline, so a batch whose only accounts are reuses drops them too.
       if (status === "declined") {
         await freeBatch(env, r.key_hash, r.id);
+        // The buyer's own accounts in it never went out (payments): orders on them aren't billed, also those their FAFO
+        // already reported while the batch waited, unless another batch had that account out then.
+        await declineLines(env, r.key_hash, r.id).catch((e) => console.error("billing", e));
+        await env.DB.prepare("DELETE FROM billing_accounts WHERE key_hash = ? AND batch = ?").bind(r.key_hash, r.id).run().catch((e) => console.error("billing", e));
         for (const st of new Set([...back.map((a) => a.store), ...Object.values(REUSE_FROM), MASTER])) await stockCheck(env, st, accountStoreName(st), false);
       }
       const kept = eff.kept, freed = back.length - eff.kept + eff.released + eff.listBack;
@@ -1183,7 +1225,10 @@ const expireOffers = (env, now) => env.DB.prepare("UPDATE account_offers SET sta
 const assignLimit = (env) => { const n = Math.floor(Number(env.ASSIGNED_LIMIT)); return String(env.ASSIGNED_LIMIT ?? "").trim() !== "" && n >= 0 ? n : slotDefault(env); };
 async function accountLimit(env, hash) {
   const row = await env.DB.prepare("SELECT slot_limit FROM slot_limits WHERE key_hash = ?").bind(hash).first();
-  return row && row.slot_limit !== slotDefault(env) ? row.slot_limit : assignLimit(env);
+  const n = row && row.slot_limit !== slotDefault(env) ? row.slot_limit : assignLimit(env);
+  // On a monthly plan (payments), at least the plan's slots.
+  const plan = await planSlots(env, hash).catch((e) => { console.error("billing", e); return null; });
+  return plan ? Math.max(n, plan) : n;
 }
 // A pick whose batch never reached the channel is freed after this (ASSIGN_STALE_MS overrides it for tests).
 const assignStaleMs = (env) => Number(env.ASSIGN_STALE_MS) > 0 ? Number(env.ASSIGN_STALE_MS) : 60 * 60 * 1000;
@@ -2662,16 +2707,17 @@ async function alertSender(request, env) {
 }
 
 // The accounts given out, so the sender only sends orders placed on them.
-async function alertAccounts(request, env) {
-  const { error } = await alertSender(request, env);
+async function alertAccounts(request, env, ctx) {
+  const { error, lic } = await alertSender(request, env);
   if (error) return error;
+  ctx.waitUntil(alertsSeen(env, lic, Date.now()).catch((e) => console.error("billing", e)));
   // A slot's row at its store: the one list's account row itself (store "*") is at no store.
   const { results } = await env.DB.prepare(`SELECT email, store FROM accounts WHERE key_hash IS NOT NULL AND sent_at IS NOT NULL AND store <> '${MASTER}'`).all();
   return json({ accounts: results.map((a) => ({ email: a.email, store: a.store })) }, 200, { "cache-control": "no-store" });
 }
 
 async function alertsPost(request, env, ctx) {
-  const { error } = await alertSender(request, env);
+  const { error, lic } = await alertSender(request, env);
   if (error) return error;
   const text = await request.text();
   if (text.length > 300_000) return json({ error: "too large" }, 413);
@@ -2681,11 +2727,15 @@ async function alertsPost(request, env, ctx) {
   const clip = (v, n) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, n);
   const now = Date.now(), fresh = [];
   let unknown = 0, already = 0;
+  // Payments: each order on a given-out account goes on that buyer's invoice, and a canceled one comes off whoever's it is.
+  // Written together after the loop; a billing error never stops the alerts.
+  const bill = billingOn(env) ? billCtx(env, now) : null, billing = [];
   for (const ev of list) {
     const account = clip(ev && ev.account, 120).toLowerCase(), store = clip(ev && ev.store, 64), stage = clip(ev && ev.stage, 12);
     const orderNo = clip(ev && ev.orderNo, 40).toUpperCase(), at = /^\d{4}-\d{2}-\d{2}$/.test(String(ev && ev.at || "")) ? ev.at : "";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) || !store || !ALERT_STAGES.includes(stage) || !orderNo) { unknown++; continue; }
-    const a = await env.DB.prepare("SELECT key_hash, profile, store_name, assigned_at FROM accounts WHERE email_norm = ? AND store = ? AND key_hash IS NOT NULL AND sent_at IS NOT NULL")
+    if (bill && stage === "canceled") try { billing.push(cancelStmt(env, bill, store, orderNo)); } catch (e) { console.error("billing", e); }
+    const a = await env.DB.prepare("SELECT key_hash, profile, store_name, assigned_at, batch FROM accounts WHERE email_norm = ? AND store = ? AND key_hash IS NOT NULL AND sent_at IS NOT NULL")
       .bind(account, store).first();
     // Only orders from the day before it was given out on: an older one was placed for someone else.
     if (!a || (at && at < new Date((a.assigned_at || 0) - 86400000).toISOString().slice(0, 10))) { unknown++; continue; }
@@ -2695,7 +2745,18 @@ async function alertsPost(request, env, ctx) {
     const r = await env.DB.prepare(`INSERT OR IGNORE INTO alerts (id, key_hash, oid, store, store_name, profile, order_no, item, qty, total, stage, at, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(row.id, row.key_hash, oid, store, row.store_name, row.profile, orderNo, row.item, row.qty, row.total, stage, at, row.created_at).run();
     if (r.meta && r.meta.changes) fresh.push(row); else already++;   // that step was already sent
+    if (bill && stage !== "canceled") {
+      try { const l = await alertLine(env, bill, a, store, orderNo, { account, at, storeName: clip(ev.storeName, 40), item: row.item, qty: row.qty }); if (l) billing.push(l); }
+      catch (e) { console.error("billing", e); }
+    }
   }
+  if (billing.length) {
+    try {
+      const gone = (await env.DB.batch(billing)).flatMap((r) => (r.results || []).map((x) => x.id)).filter(Boolean);
+      if (gone.length) ctx.waitUntil(expireFor(env, bill, gone));
+    } catch (e) { console.error("billing", e); }
+  }
+  ctx.waitUntil(alertsSeen(env, lic, now).catch((e) => console.error("billing", e)));
   if (fresh.length) ctx.waitUntil(alertWebhooks(env, fresh).catch((e) => console.error("alert webhooks", e)));
   ctx.waitUntil(env.DB.prepare("DELETE FROM alerts WHERE created_at < ?").bind(now - ALERT_KEEP_MS).run().catch(() => {}));
   return json({ ok: true, sent: fresh.length, already, unknown });
@@ -2800,6 +2861,9 @@ async function pull(request, env, ctx) {
       store: clip(x && x.store, 40), profile: clip(x && x.profile, 80), email: clip(x && x.email, 120), card: clip(x && x.card, 30),
       // When it was sent, in epoch ms; left off if it isn't a date.
       sentAt: Number.isFinite(t) && t > 0 && t <= 8.64e15 ? t : 0,
+      // For payments: the store's key (page 1.9.130+), and the slot's own account (not "Assigned account").
+      storeKey: STORE_KEY.test(String(x && x.storeKey || "")) ? String(x.storeKey) : "",
+      own: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clip(x && x.email, 120)) ? clip(x && x.email, 120) : "",
     };
   }).filter((x) => x.store || x.profile);
   if (!slots.length) return json({ error: "slots" }, 400);
@@ -2808,11 +2872,11 @@ async function pull(request, env, ctx) {
   const asks = slots.filter((x) => x.email === "Assigned account" && x.profile);
   if (asks.length) {
     const found = await env.DB.batch(asks.map((x) => env.DB.prepare(
-      "SELECT email FROM accounts WHERE key_hash = ? AND store_name = ? AND profile = ? AND sent_at IS NOT NULL ORDER BY sent_at DESC, assigned_at DESC LIMIT 1"
+      `SELECT email, store, batch FROM accounts WHERE key_hash = ? AND store_name = ? AND profile = ? AND sent_at IS NOT NULL ORDER BY store = '${MASTER}', sent_at DESC, assigned_at DESC LIMIT 1`
     ).bind(lic.hash, x.store, x.profile)));
-    asks.forEach((x, i) => { const a = found[i].results[0]; if (a) x.email = `${a.email} (assigned account)`; });
+    // The slot's own row at its store comes first (an account from the one list has the same email on the list's row).
+    asks.forEach((x, i) => { const a = found[i].results[0]; if (a) { x.email = `${a.email} (assigned account)`; if (a.store !== MASTER) x.acct = { store: a.store, batch: a.batch }; } });
   }
-
   // Only slots this license sent through here reached the owner's list, so a pull of anything else
   // (sent as a code, or to another seller) isn't posted.
   const sent = await env.DB.prepare("SELECT 1 FROM submissions WHERE key_hash = ? AND key_id = ? AND webhook_message_id IS NOT NULL LIMIT 1")
@@ -2877,6 +2941,9 @@ async function pull(request, env, ctx) {
       return json({ error: "couldn't post to the channel" }, 502);
     }
     await env.DB.prepare("UPDATE pulls SET webhook_message_id = ? WHERE id = ?").bind(msgId, p.id).run().catch((e) => console.error("record", e));
+    // Payments: a pulled slot's own account stops being billed after the pull, and so does an account the owner gave, once
+    // the owner has heard of it (so they take it off). Kept whether billing is on or off, and never fails the pull.
+    try { await pullAccounts(env, lic.hash, slots, now); } catch (e) { console.error("billing", e); }
     return json({ ok: true, forwarded: true, id: p.id });
   })();
   ctx.waitUntil(work.catch((e) => console.error("pull", e)));
@@ -3176,6 +3243,1395 @@ async function premiumListPage(request, env, url, id) {
      ${rows.length ? PREMIUM_SCRIPT : ""}`, true);
 }
 
+// ---- payments (Stripe) --------------------------------------------------------------------------
+// The owner's decisions (2026-10-18): "$10 per checkout or $25 a month plan or 10 slots", paid with Stripe, plus "an
+// additional 15 slots for additional $25"; buyers already approved are Friends and Family and never charged; a buyer who
+// isn't paid up can't submit. Anyone else not on a paid monthly plan pays $10 for each checkout on slots they sent: an order
+// on an account the owner gave them (order alerts), or on their own account while it was out as a slot (their FAFO reports
+// those, checked against when it went out and was pulled: billing_accounts), or one the owner adds. Each is due 3 days
+// after the order and free if the store cancels it before it's paid. The worker keeps the invoice lines and plans, and
+// Stripe takes the money: a Checkout session for what's owed, or a subscription for the monthly plan. Webhooks only make it
+// quicker: each answer is checked with Stripe again (reconcile), so a lost one changes nothing. Off until both
+// STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set; a test key (not _live_) reaches only licenses marked Tester (and the
+// owner's own FAFO, which is never charged). Removing the keys turns it off here, while Stripe goes on billing subscriptions.
+const STRIPE_VERSION = "2026-09-30.endive";
+const stripeApi = (env) => String(env.STRIPE_API_BASE || "https://api.stripe.com").replace(/\/+$/, "");   // tests set it
+const PRICE_CHECKOUT = 1000, PRICE_MONTHLY = 2500, PRICE_EXTRA = 2500;   // cents, usd
+const MONTHLY_SLOTS = 10, EXTRA_SLOTS = 15, EXTRA_MAX = 1;
+const DUE_MS = 3 * 86400000;
+// An order's date is the day where whoever reported it is: windows and plans stretch this much either side, in the buyer's favour.
+const TZ_SLACK_MS = 14 * 3600000;
+const LOOKUP_BASE = "fafo_monthly_base", LOOKUP_EXTRA = "fafo_monthly_extra", PRODUCT_BASE = "fafo_monthly", PRODUCT_EXTRA = "fafo_extra_slots";
+const SESSION_TTL_S = 31 * 60;
+const PAY_METHODS = ["card", "link"];   // no bank debits or other delayed methods, so a paid session is paid
+const BILL_LIST_TTL_MS = 24 * 3600 * 1000, BILL_LISTS_PER_DAY = 10, REFUSE_NOTE_MS = 6 * 3600 * 1000;
+const REPORTS_PER_HOUR = 30, STRIPE_CALLS_PER_HOUR = 20, BUYER_LINES_PER_DAY = 300, DISPUTES_OPEN_MAX = 5, DISPUTES_PER_DAY = 10;
+const RECONCILE_MS = 60 * 1000, SUB_RESYNC_MS = 24 * 3600 * 1000;
+const LIVE_SUB = ["active", "trialing", "past_due", "unpaid", "incomplete", "paused"];
+// A line still owed (due, overdue or disputed), and one disputed and not answered yet (owed, never overdue).
+const OWED = "paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL AND held_sub IS NULL";
+const DISPUTED = "(dispute_at IS NOT NULL AND dispute_answer IS NULL)";
+const STORE_KEY = /^([a-z0-9]{2,24}|other:[^\r\n]{1,40})$/;
+const ORDER_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+const billingOn = (env) => !!(env.STRIPE_SECRET_KEY && env.STRIPE_WEBHOOK_SECRET);
+const stripeMode = (env) => /_live_/.test(String(env.STRIPE_SECRET_KEY || "")) ? "live" : "test";
+// An account as billing knows it (the page works it out the same way): never the email itself.
+const acctHash = (email) => sha256Hex("acct:" + String(email).trim().toLowerCase());
+const money = (c) => "$" + (c % 100 ? (c / 100).toFixed(2) : String(c / 100));
+const dayStart = (d) => Date.parse(d + "T00:00:00Z");
+const realDay = (d) => ORDER_DAY.test(String(d || "")) && Number.isFinite(dayStart(d));
+const storeKeyOfName = (name) => {
+  const p = String(name || "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
+  return p === "target" ? "target" : /^pokemon ?cent(er|re)$/.test(p) ? "pokemoncenter" : "";
+};
+const lineState = (l, now) => l.paid_at ? "paid" : l.canceled_at ? "canceled" : l.waived_at ? "waived" : l.held_sub ? "held"
+  : l.dispute_at && !l.dispute_answer ? "disputed" : l.due_at < now ? "overdue" : "due";
+const subEnded = (s) => s.status === "canceled" || s.status === "incomplete_expired" || (s.status === "unpaid" && !!s.ended_at);
+const subOut = (s) => s ? { status: s.status, cancelAtEnd: !!s.cancel_at_end, extras: s.extras, paused: !!s.paused, periodEnd: s.period_end, slots: MONTHLY_SLOTS + EXTRA_SLOTS * s.extras } : null;
+const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+
+// Who isn't charged, first that applies: the owner's own FAFO (the license that sends order alerts), then Friends and Family:
+// marked so, or (unless marked Charge) approved before billing came on, or a key made by hand. A Tester in test mode is
+// Friends and Family only when marked so, or test mode would have no one to try it with.
+const exemptOf = (hash, p, l, sender, since, mode) => sender && sender.key_hash === hash ? "owner"
+  : p && p.family === 1 ? "family"
+  : p && p.family === 0 ? null
+  : mode === "test" && p && p.tester ? null
+  : !l || l.issued_at < since ? "family" : null;
+
+// When billing first saw itself on in this mode (since): licenses issued before then are Friends and Family. Stamped once
+// (INSERT OR IGNORE). And since when orders are billed (from): then, or when it was on again after a request saw the keys
+// gone (off_seen), since no FAFO reported its checkouts meanwhile and they aren't billed late. {since, from}.
+let onSinceStamped = "";
+async function onSince(env, mode, now) {
+  if (onSinceStamped !== mode) {
+    await env.DB.prepare("INSERT OR IGNORE INTO billing_config (k, v, updated_at) VALUES (?, ?, ?)").bind("on_since:" + mode, String(now), now).run();
+    onSinceStamped = mode;
+  }
+  const { results } = await env.DB.prepare("SELECT k, v FROM billing_config WHERE k IN (?, ?, 'off_seen')").bind("on_since:" + mode, "back_on:" + mode).all();
+  const v = Object.fromEntries(results.map((r) => [r.k, Number(r.v)]));
+  const since = v["on_since:" + mode] || now;
+  let from = Math.max(since, v["back_on:" + mode] || 0);
+  if (v.off_seen > from) {
+    await env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) VALUES (?1, ?2, ?2) ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at
+      WHERE CAST(billing_config.v AS INTEGER) < ?3`).bind("back_on:" + mode, now, v.off_seen).run();
+    from = now;
+  }
+  return { since, from };
+}
+// Payments off (the keys taken away) after they were on: noted at most every 5 minutes, for onSince.
+let offStamped = 0;
+async function offSeen(env, now) {
+  if (now - offStamped < 5 * 60000) return;
+  const r = await env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) SELECT 'off_seen', ?1, ?1 WHERE EXISTS (SELECT 1 FROM billing_config WHERE k LIKE 'on_since:%')
+    ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at WHERE billing_config.updated_at < ?2`).bind(now, now - 5 * 60000).run();
+  if (r.meta && r.meta.changes) offStamped = now;
+}
+
+// What billing knows about licenses within one request, each read once: the mode, when billing started, the owner, and per
+// license whether billing reaches it (who) and its monthly subscriptions (subs).
+function billCtx(env, now = Date.now()) {
+  const mode = stripeMode(env), on = billingOn(env), memo = new Map(), subMemo = new Map();
+  let starts = null, sender;
+  const c = { mode, on, now };
+  c.since = async () => (await (starts || (starts = onSince(env, mode, now)))).since;
+  c.from = async () => (await (starts || (starts = onSince(env, mode, now)))).from;
+  c.sender = async () => sender !== undefined ? sender : (sender = await currentAlertSender(env));
+  c.forget = (hash) => { memo.delete(hash); subMemo.delete(hash); };
+  // {hash, on, tester, owner, exempt, person, bill}: on is billing on for this license (live, or test and a Tester, or the
+  // owner's own FAFO, which is never charged but gets Settings → Billing).
+  c.who = (hash) => {
+    if (!memo.has(hash)) memo.set(hash, (async () => {
+      const [p, b, l] = (await env.DB.batch([
+        env.DB.prepare("SELECT * FROM billing_people WHERE key_hash = ?").bind(hash),
+        env.DB.prepare("SELECT * FROM billing WHERE key_hash = ? AND mode = ?").bind(hash, mode),
+        env.DB.prepare("SELECT issued_at FROM licenses WHERE key_hash = ?").bind(hash),
+      ])).map((r) => r.results[0] || null);
+      const s = await c.sender(), owner = !!(s && s.key_hash === hash), tester = !!(p && p.tester);
+      const lon = on && (mode === "live" || tester || owner);
+      return { hash, on: lon, tester, owner, exempt: lon ? exemptOf(hash, p, l, s, await c.since(), mode) : null, person: p, bill: b };
+    })());
+    return memo.get(hash);
+  };
+  c.subs = (hash) => {
+    if (!subMemo.has(hash)) subMemo.set(hash, env.DB.prepare("SELECT * FROM billing_subs WHERE key_hash = ? AND mode = ?").bind(hash, mode).all().then((r) => r.results));
+    return subMemo.get(hash);
+  };
+  // The slots on accounts the owner gave that this license pulled (billing_pulled), read once per request.
+  const pullMemo = new Map();
+  c.pulled = (hash) => {
+    if (!pullMemo.has(hash)) pullMemo.set(hash, env.DB.prepare("SELECT store, profile, batch, pulled_at FROM billing_pulled WHERE key_hash = ?").bind(hash).all().then((r) => r.results));
+    return pullMemo.get(hash);
+  };
+  return c;
+}
+
+// ---- Stripe's API (form-encoded, pinned version, no SDK) ----
+class StripeError extends Error {
+  constructor(status, e) { super(e && e.message || `Stripe answered ${status}`); this.status = status; this.type = e && e.type || ""; this.code = e && e.code || ""; this.param = e && e.param || ""; }
+}
+class BillLimit extends Error {}
+// Nested parameters as Stripe reads them (a[b][0][c]=v), null or "" as an empty value (which unsets), booleans as true/false.
+function stripeForm(params, out = new URLSearchParams(), pre = "") {
+  for (const [k, v] of Object.entries(params || {})) {
+    const key = pre ? `${pre}[${k}]` : k;
+    if (v === undefined) continue;
+    if (v === null) out.append(key, "");
+    else if (Array.isArray(v)) v.forEach((x, i) => x !== null && typeof x === "object" ? stripeForm(x, out, `${key}[${i}]`) : out.append(`${key}[${i}]`, String(x)));
+    else if (typeof v === "object") stripeForm(v, out, key);
+    else out.append(key, String(v));
+  }
+  return out;
+}
+async function stripe(env, method, path, params, o = {}) {
+  const form = stripeForm(params), get = method === "GET";
+  let r;
+  try {
+    r = await fetch(stripeApi(env) + path + (get && [...form].length ? "?" + form : ""), { method,
+      headers: { authorization: "Bearer " + env.STRIPE_SECRET_KEY, "stripe-version": STRIPE_VERSION,
+        ...(get ? {} : { "content-type": "application/x-www-form-urlencoded" }), ...(o.idem ? { "idempotency-key": o.idem } : {}) },
+      body: get ? undefined : String(form), signal: AbortSignal.timeout(o.timeout || 8000) });
+  } catch (e) { throw new StripeError(0, { message: "Stripe couldn't be reached" }); }
+  const j = await r.json().catch(() => null);
+  if (!r.ok) throw new StripeError(r.status, j && j.error);
+  return j;
+}
+// What a buyer's FAFO is told when Stripe says no: a card declined (Stripe's own words), or try again.
+const stripeFail = (e) => e.type === "card_error" && e.status >= 400 && e.status < 500
+  ? json({ error: e.message }, 402, NO_STORE) : json({ error: "Stripe didn't answer. Try again in a minute." }, 502, NO_STORE);
+const missing = (e, what) => e instanceof StripeError && e.code === "resource_missing" && new RegExp(what).test(e.param);
+
+// Calls counted for a license's limits: at most `max` of `kind` in `ms`. False once it's reached (nothing counted then).
+async function billCount(env, hash, kind, max, ms, now) {
+  const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM billing_calls WHERE key_hash = ? AND kind = ? AND at > ?").bind(hash, kind, now - ms).first();
+  if (r && r.n >= max) return false;
+  await env.DB.prepare("INSERT INTO billing_calls (key_hash, kind, at) VALUES (?, ?, ?)").bind(hash, kind, now).run();
+  if (Math.random() < 0.05) await env.DB.prepare("DELETE FROM billing_calls WHERE at < ?").bind(now - 2 * 86400000).run();
+  return true;
+}
+
+// The name a buyer goes by in the channel: the one they last sent slots under, else their Discord name, else their license.
+async function billName(env, hash) {
+  const [l, s] = (await env.DB.batch([
+    env.DB.prepare("SELECT username, license_key FROM licenses WHERE key_hash = ?").bind(hash),
+    env.DB.prepare("SELECT name, key_last4 FROM submissions WHERE key_hash = ? ORDER BY created_at DESC LIMIT 1").bind(hash),
+  ])).map((r) => r.results[0] || null);
+  return md(s && s.name || (l ? "@" + l.username : s ? `license …${s.key_last4}` : "a key made by hand"));
+}
+const billNote = (env, content) => webhookPost(env, { content }).catch((e) => console.error("billing note", e));
+
+// ---- coverage, lines, state ----
+// Since when a buyer the owner moved from Friends and Family to Charge (or marked Tester, in test mode) is charged: orders
+// from before then were placed while they weren't. 0 when that isn't so.
+const chargeFrom = (c, p) => p && p.charge_from && (p.family === 0 || (c.mode === "test" && p.tester && p.family == null)) ? p.charge_from : 0;
+// Whether an order dated `d` goes on this license's invoice: billing reaches it and it isn't exempt, it's from after billing
+// came on (and after they were charged), and no monthly plan of theirs covers that day. `held`: their monthly plan is waiting
+// on a payment (one that failed, or a renewal still being paid) and the order is after what they paid for, so it waits for
+// that payment (covered if it's paid, due if the plan ends). {ok, held} or {why}.
+async function billable(c, w, d) {
+  if (!w.on) return { why: "off" };
+  if (w.exempt) return { why: w.exempt };
+  const start = dayStart(d), end = start + 86400000, charged = chargeFrom(c, w.person);
+  if (await c.from() + TZ_SLACK_MS >= end) return { why: "before" };
+  if (charged && charged + TZ_SLACK_MS >= end) return { why: "charge" };
+  const subs = await c.subs(w.hash);
+  if (subs.some((s) => s.started_at != null && s.paid_through != null && s.started_at - TZ_SLACK_MS < end && s.paid_through + TZ_SLACK_MS >= start)) return { why: "monthly" };
+  const cur = w.bill && w.bill.sub_id ? subs.find((s) => s.sub_id === w.bill.sub_id) : null;
+  const waiting = cur && !cur.ended_at && (cur.status === "past_due" || cur.status === "unpaid"
+    || ((cur.status === "active" || cur.status === "trialing") && cur.started_at != null && (cur.invoice_status === "draft" || cur.invoice_status === "open")));
+  const held = waiting && (cur.paid_through == null || cur.paid_through + TZ_SLACK_MS < start);
+  return { ok: true, held: held ? cur.sub_id : null };
+}
+// The statement that puts one order on a buyer's invoice (billable already checked): $10, due 3 days after the order's day
+// (or after now, if that's later). One order belongs to one buyer, so an alert or the owner never adds one that an alert or
+// the owner put on another buyer's invoice (another buyer's own report doesn't count: it's only their word). An alert or the
+// owner takes over a line the buyer's FAFO reported, unless their FAFO said the store canceled it (the owner can charge it
+// again); a buyer's report never touches one from an alert or the owner. Nothing if it's there already.
+function lineStmt(env, c, l) {
+  const due = Math.max(dayStart(l.orderAt) + 86400000, c.now) + DUE_MS;
+  const solo = l.source === "buyer" ? "1" : "NOT EXISTS (SELECT 1 FROM billing_lines o WHERE o.store = ?3 AND o.order_no = ?4 AND o.mode = ?2 AND o.key_hash <> ?1 AND o.source <> 'buyer')";
+  return env.DB.prepare(`INSERT INTO billing_lines (id, key_hash, mode, store, store_name, order_no, item, qty, order_at, acct_hash, profile, source, amount, created_at, due_at, held_sub)
+    SELECT ?5, ?1, ?2, ?3, ?6, ?4, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16 WHERE ${solo}
+    ON CONFLICT (key_hash, mode, store, order_no) DO UPDATE SET source = excluded.source, acct_hash = excluded.acct_hash, due_at = excluded.due_at
+    WHERE billing_lines.source = 'buyer' AND excluded.source <> 'buyer' AND billing_lines.paid_at IS NULL AND billing_lines.waived_at IS NULL AND billing_lines.canceled_at IS NULL`)
+    .bind(l.hash, c.mode, l.store, l.orderNo, randomId(12), String(l.storeName || "").slice(0, 40), String(l.item || "").slice(0, 120), String(l.qty || "").slice(0, 6),
+      l.orderAt, l.acctHash || "", String(l.profile || "").slice(0, 80), l.source, PRICE_CHECKOUT, c.now, due, l.held || null);
+}
+const orderNoOf = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toUpperCase().slice(0, 40);
+// A canceled order: unpaid lines go (free), from an alert (any buyer's line from an alert or the owner) or from the buyer's
+// own report (only their own lines: one their FAFO reported, or one the owner added on an account of theirs that was out as a
+// slot, as from the bot's log; the owner sees who canceled it and can charge it again). Returns the statement (RETURNING the
+// lines' ids).
+const cancelStmt = (env, c, store, orderNo, hash) => hash
+  ? env.DB.prepare(`UPDATE billing_lines SET canceled_at = ?1, cancel_src = 'buyer' WHERE key_hash = ?2 AND mode = ?3 AND store = ?4 AND order_no = ?5
+      AND (source = 'buyer' OR (source = 'owner' AND EXISTS (SELECT 1 FROM billing_accounts a WHERE a.key_hash = ?2 AND a.acct_hash = billing_lines.acct_hash)))
+      AND paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL RETURNING id`).bind(c.now, hash, c.mode, store, orderNo)
+  : env.DB.prepare(`UPDATE billing_lines SET canceled_at = ?, cancel_src = 'alert' WHERE mode = ? AND store = ? AND order_no = ? AND source IN ('alert', 'owner')
+      AND paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL RETURNING id`).bind(c.now, c.mode, store, orderNo);
+// A line that stops being owed (canceled, waived, marked paid) while a pay session holds it: that session is expired, so the
+// buyer pays the rest in a new one (best effort: if it's paid anyway, the difference is refunded).
+async function expireFor(env, c, ids) {
+  if (!ids.length) return;
+  try {
+    const { results } = await env.DB.prepare(`SELECT id, session_id FROM billing_payments WHERE kind = 'pay' AND status = 'open' AND mode = ? AND session_id IS NOT NULL
+      AND EXISTS (SELECT 1 FROM json_each(billing_payments.line_ids) j WHERE j.value IN (SELECT value FROM json_each(?)))`).bind(c.mode, JSON.stringify(ids)).all();
+    for (const p of results) {
+      try {
+        const s = await stripe(env, "POST", `/v1/checkout/sessions/${encodeURIComponent(p.session_id)}/expire`);
+        if (s.status === "expired") await env.DB.prepare("UPDATE billing_payments SET status = 'expired' WHERE id = ? AND status = 'open'").bind(p.id).run();
+      } catch (e) { console.error("billing expire", e && e.message); }
+    }
+  } catch (e) { console.error("billing expire", e && e.message); }
+}
+
+// What a buyer owes: owed (due, overdue and disputed), overdue (never a disputed one), n (lines owed), late (lines overdue).
+async function lineTotals(env, c, hash) {
+  const r = await env.DB.prepare(`SELECT COALESCE(SUM(amount), 0) AS owed, COUNT(*) AS n,
+    COALESCE(SUM(CASE WHEN due_at < ?1 AND NOT ${DISPUTED} THEN amount END), 0) AS overdue, COALESCE(SUM(CASE WHEN due_at < ?1 AND NOT ${DISPUTED} THEN 1 END), 0) AS late
+    FROM billing_lines WHERE key_hash = ?2 AND mode = ?3 AND ${OWED}`).bind(c.now, hash, c.mode).first();
+  return { owed: r.owed, overdue: r.overdue, n: r.n, late: r.late };
+}
+
+// A buyer's billing as GET /billing and the Submit check read it. block: why they can't submit, first that applies (null when
+// billing is off for them or they're exempt). A monthly plan is checked with Stripe once a day, once its period has ended,
+// and every minute while it waits on a payment (one that failed, a renewal or more slots being paid, a plan being set up),
+// so a payment made counts without its webhook; if Stripe doesn't answer, what's kept stands.
+async function billingState(env, c, hash) {
+  let w = await c.who(hash);
+  const out = { on: w.on, mode: c.mode, exempt: w.exempt, tester: w.tester, plan: null, nextPlan: null, sub: null, monthlyOk: false, block: null, owed: 0, overdue: 0, n: 0, late: 0 };
+  if (!w.on) return out;
+  let s = w.bill && w.bill.sub_id ? (await c.subs(hash)).find((x) => x.sub_id === w.bill.sub_id) : null;
+  const waiting = (x) => !w.exempt && !x.ended_at && x.synced_at < c.now - RECONCILE_MS
+    && (["past_due", "unpaid", "incomplete", "paused"].includes(x.status) || x.invoice_status === "draft" || x.invoice_status === "open");
+  if (s && (w.bill.plan === "monthly" || s.status === "incomplete") && (s.synced_at < c.now - SUB_RESYNC_MS || (s.period_end && s.period_end < c.now) || waiting(s))) {
+    try {
+      await syncSubscription(env, c, s.sub_id, { timeout: 4000 });
+      c.forget(hash); w = await c.who(hash);
+      s = w.bill && w.bill.sub_id ? (await c.subs(hash)).find((x) => x.sub_id === w.bill.sub_id) : null;
+    } catch (e) { console.error("billing resync", e && e.message); }
+  }
+  const b = w.bill;
+  Object.assign(out, { exempt: w.exempt, plan: b ? b.plan : null, nextPlan: b ? b.next_plan : null, sub: s && !subEnded(s) ? subOut(s) : null });
+  out.monthlyOk = out.plan === "monthly" && !!s && (s.status === "active" || s.status === "trialing");
+  if (w.exempt) return out;
+  Object.assign(out, await lineTotals(env, c, hash));
+  if (b && b.dispute_hold) out.block = { reason: "disputed-payment", text: "A payment is disputed with your bank. Contact your seller." };
+  else if (out.late) out.block = { reason: "overdue", text: `${plural(out.late, "checkout")} overdue: ${money(out.overdue)}.` };
+  else if (out.plan === "monthly" && s && ["past_due", "unpaid", "incomplete", "paused"].includes(s.status) && !s.paused) out.block = { reason: "past-due", text: "Your monthly payment didn't go through." };
+  else if (!out.plan && s && s.status === "incomplete") out.block = { reason: "setting-up", text: "Your monthly plan is being set up on Stripe." };
+  else if (!out.plan) out.block = { reason: "no-plan", text: "Pick a plan to submit." };
+  return out;
+}
+
+// The slots a monthly plan gives (10, or 25 with the extra 15) to a license billed on one: while its plan is monthly (whatever
+// its subscription's state), and for 30 days after one ended with no plan picked. Null otherwise: Friends and Family and pay
+// per checkout keep the limit the owner approved, or the default.
+async function planSlots(env, hash) {
+  if (!billingOn(env)) return null;
+  const c = billCtx(env), w = await c.who(hash);
+  if (!w.on || w.exempt || !w.bill || !w.bill.sub_id) return null;
+  const s = (await c.subs(hash)).find((x) => x.sub_id === w.bill.sub_id);
+  if (!s) return null;
+  return w.bill.plan === "monthly" || (!w.bill.plan && s.ended_at && s.ended_at > c.now - 30 * 86400000) ? MONTHLY_SLOTS + EXTRA_SLOTS * s.extras : null;
+}
+
+// ---- own accounts out as slots (recorded whether billing is on or off) ----
+// A batch's own accounts, read from its profiles CSVs before assigned accounts are filled in: each row with an email (a store
+// login's, or Pokémon Center's checkout email), as its store, profile and the email's hash.
+async function slotAccounts(files) {
+  const out = [];
+  for (const f of files) {
+    if (f.kind !== "profiles") continue;
+    const rows = parseCsv(f.text), col = (rows[0] || []).map((h) => h.replace(/^﻿/, "").trim().toLowerCase()).indexOf("email");
+    const store = f.storeKey || storeKeyOfName(f.store);
+    if (col < 0 || !store) continue;
+    for (const r of rows.slice(1)) {
+      const email = String(r[col] || "").trim();
+      if (email) out.push({ store, storeName: f.store, profile: String(r[0] || "").slice(0, 80), acct: await acctHash(email) });
+    }
+  }
+  return out;
+}
+// Written once the batch reached the channel, so nothing needs undoing when it doesn't.
+async function recordAccounts(env, hash, batch, rows, now) {
+  for (let i = 0; i < rows.length; i += 100) await env.DB.batch(rows.slice(i, i + 100).map((x) => env.DB.prepare(
+    "INSERT OR IGNORE INTO billing_accounts (key_hash, store, store_name, profile, acct_hash, batch, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(hash, x.store, x.storeName, x.profile, x.acct, batch, now)));
+}
+// Pulled slots: an own account's window closes (by the slot's store and profile, else by its email), and a slot on an account
+// the owner gave is noted, so orders on it after the pull aren't billed. `x.acct` is that account's row ({store, batch}).
+async function pullAccounts(env, hash, slots, now) {
+  const stmts = [];
+  for (const x of slots) {
+    stmts.push(env.DB.prepare("UPDATE billing_accounts SET pulled_at = ? WHERE key_hash = ? AND store_name = ? AND profile = ? AND pulled_at IS NULL").bind(now, hash, x.store, x.profile));
+    const store = x.storeKey || storeKeyOfName(x.store);
+    if (x.own && store) stmts.push(env.DB.prepare(`UPDATE billing_accounts SET pulled_at = ? WHERE key_hash = ? AND store = ? AND acct_hash = ? AND pulled_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM billing_accounts s WHERE s.key_hash = ? AND s.store_name = ? AND s.profile = ? AND s.pulled_at = ?)`).bind(now, hash, store, await acctHash(x.own), hash, x.store, x.profile, now));
+    if (x.acct) stmts.push(env.DB.prepare("INSERT OR IGNORE INTO billing_pulled (key_hash, store, profile, batch, pulled_at) VALUES (?, ?, ?, ?, ?)").bind(hash, x.acct.store, x.profile, x.acct.batch, now));
+  }
+  for (let i = 0; i < stmts.length; i += 100) await env.DB.batch(stmts.slice(i, i + 100));
+  if (Math.random() < 0.05) await env.DB.batch([
+    env.DB.prepare("DELETE FROM billing_accounts WHERE pulled_at < ?").bind(now - 120 * 86400000),
+    env.DB.prepare("DELETE FROM billing_pulled WHERE pulled_at < ?").bind(now - 120 * 86400000)]);
+}
+// Whether an own account (by its hash) was out as one of this license's slots at that store on that day, among its windows.
+const inWindow = (wins, store, acct, d) => wins.some((x) => x.store === store && x.acct_hash === acct && x.sent_at < dayStart(d) + 86400000 + TZ_SLACK_MS
+  && (x.pulled_at == null || x.pulled_at >= dayStart(d) - TZ_SLACK_MS));
+
+// A declined batch's own accounts: the lines the buyer's FAFO reported on them, unpaid, come off (cancel_src 'declined',
+// so the owner can still Charge again one they did run), unless another batch of theirs had that account out that day.
+async function declineLines(env, keyHash, batch) {
+  const { results: lines } = await env.DB.prepare(`SELECT id, mode, store, acct_hash, order_at FROM billing_lines WHERE key_hash = ? AND source = 'buyer'
+    AND paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL AND acct_hash IN (SELECT acct_hash FROM billing_accounts WHERE key_hash = ? AND batch = ?)`)
+    .bind(keyHash, keyHash, batch).all();
+  if (!lines.length) return;
+  const { results: wins } = await env.DB.prepare(`SELECT store, acct_hash, sent_at, pulled_at FROM billing_accounts WHERE key_hash = ? AND batch <> ?
+    AND acct_hash IN (SELECT acct_hash FROM billing_accounts WHERE key_hash = ? AND batch = ?)`).bind(keyHash, batch, keyHash, batch).all();
+  const off = lines.filter((l) => !inWindow(wins, l.store, l.acct_hash, l.order_at)), now = Date.now();
+  if (!off.length) return;
+  await env.DB.batch(off.map((l) => env.DB.prepare("UPDATE billing_lines SET canceled_at = ?, cancel_src = 'declined' WHERE id = ? AND paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL")
+    .bind(now, l.id)));
+  for (const mode of new Set(off.map((l) => l.mode))) await expireFor(env, { mode }, off.filter((l) => l.mode === mode).map((l) => l.id));
+}
+
+// An order alert's line (the owner's FAFO saw an order on an account given to a buyer): placed from the day it was given out
+// on (no day before, for billing), and not after the buyer pulled that slot. The statement, or null.
+async function alertLine(env, c, a, store, orderNo, ev) {
+  const d = realDay(ev.at) ? ev.at : day(c.now);
+  if (a.assigned_at && a.assigned_at >= dayStart(d) + 86400000) return null;
+  const w = await c.who(a.key_hash), ok = await billable(c, w, d);
+  if (!ok.ok) return null;
+  if ((await c.pulled(a.key_hash)).some((x) => x.store === store && x.profile === (a.profile || "") && x.batch === a.batch && x.pulled_at + TZ_SLACK_MS < dayStart(d))) return null;
+  return lineStmt(env, c, { hash: a.key_hash, store, storeName: ev.storeName || a.store_name || store, orderNo, item: ev.item, qty: ev.qty, orderAt: d,
+    acctHash: await acctHash(ev.account), profile: a.profile || "", source: "alert", held: ok.held });
+}
+// The owner's FAFO is sending order alerts: noted at most every 5 minutes, for the Billing page (and, with payments off, that
+// they are: onSince).
+const alertsSeen = (env, lic, now) => billingOn(env) ? env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) VALUES ('alerts_seen', ?, ?)
+  ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at WHERE billing_config.updated_at < ?`).bind(JSON.stringify({ at: now, last4: lic.last4 }), now, now - 5 * 60000).run() : offSeen(env, now);
+
+// ---- POST /submissions: who can send ----
+const REFUSAL_WORDS = { "no-plan": () => "they haven't picked a plan", "past-due": () => "their monthly payment didn't go through",
+  "setting-up": () => "their monthly plan is still being set up on Stripe", "disputed-payment": () => "a payment is disputed with their bank",
+  overdue: (x) => `${plural(x.late, "checkout")} overdue (${money(x.overdue)})`, "over-limit": (x) => `their plan has ${x.slots} slots and they'd have ${x.on} switched on` };
+// Billing on for this license and not exempt: a buyer who isn't paid up gets 402 (block), as does a monthly buyer sending
+// more slots than their plan has. Nothing is recorded or posted then. The channel hears of a refusal at most every 6 hours.
+async function billingGate(env, ctx, lic, b, files) {
+  if (!billingOn(env)) return null;
+  const c = billCtx(env), w = await c.who(lic.hash);
+  if (!w.on || w.exempt) return null;
+  await reconcile(env, c, lic.hash);
+  const st = await billingState(env, c, lic.hash);
+  const on = typeof b.on === "number" && Number.isFinite(b.on) ? Math.max(0, Math.floor(b.on)) : null;
+  if (on !== null) await env.DB.prepare(`INSERT INTO billing_people (key_hash, last_on, last_on_at, updated_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT (key_hash) DO UPDATE SET last_on = excluded.last_on, last_on_at = excluded.last_on_at, updated_at = excluded.updated_at`).bind(lic.hash, on, c.now, c.now).run();
+  let billing = null, error = "";
+  if (st.block) { billing = { reason: st.block.reason, due: st.owed, overdue: st.overdue, n: st.n }; error = st.block.text; }
+  else if (st.monthlyOk) {
+    const rows = files ? files.filter((f) => f.kind === "profiles").reduce((n, f) => n + parseCsv(f.text).length - 1, 0) : Math.floor(Number(b.slots)) || 0;
+    const all = on !== null ? Math.max(on, rows) : rows, slots = st.sub.slots;
+    if (all > slots) { billing = { reason: "over-limit", slots, on: all }; error = `Your plan has ${slots} slots. Switch ${all - slots} off first.`; }
+  }
+  if (!billing) return null;
+  await env.DB.prepare("INSERT OR IGNORE INTO billing_people (key_hash, updated_at) VALUES (?, ?)").bind(lic.hash, c.now).run();
+  const claim = await env.DB.prepare("UPDATE billing_people SET refused_at = ? WHERE key_hash = ? AND (refused_at IS NULL OR refused_at < ?)").bind(c.now, lic.hash, c.now - REFUSE_NOTE_MS).run();
+  if (claim.meta && claim.meta.changes) {
+    const name = md(String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60) || (lic.username ? "@" + lic.username : `license …${lic.last4}`));
+    const n = Math.floor(Number(b.slots)) || 0;
+    await billNote(env, `⛔ **${name}** tried to send ${plural(n, "slot")}: ${REFUSAL_WORDS[billing.reason]({ ...st, ...billing })}${on === null ? " · on an older FAFO that can't show why: ask them to restart FAFO or reload app.fafoaco.com" : ""}`);
+  }
+  return json({ error, billing }, 402, NO_STORE);
+}
+
+// ---- reconcile: Stripe's answer without waiting for a webhook ----
+// From GET /billing, the Submit check and /billing/checkout, at most every minute per payment: each open session is asked
+// about (a paid one is fulfilled, an expired one marked). A monthly plan's lazy check is in billingState. Stripe not
+// answering changes nothing.
+async function reconcile(env, c, hash) {
+  const { results } = await env.DB.prepare("SELECT * FROM billing_payments WHERE key_hash = ? AND mode = ? AND status = 'open' AND session_id IS NOT NULL AND (checked_at IS NULL OR checked_at < ?)")
+    .bind(hash, c.mode, c.now - RECONCILE_MS).all();
+  for (const p of results) {
+    const claim = await env.DB.prepare("UPDATE billing_payments SET checked_at = ? WHERE id = ? AND status = 'open' AND (checked_at IS NULL OR checked_at < ?)").bind(c.now, p.id, c.now - RECONCILE_MS).run();
+    if (!(claim.meta && claim.meta.changes)) continue;
+    try {
+      const s = await stripe(env, "GET", `/v1/checkout/sessions/${encodeURIComponent(p.session_id)}`);
+      if (s.status === "complete") await fulfillSession(env, c, s);
+      else if (s.status === "expired") await env.DB.prepare("UPDATE billing_payments SET status = 'expired' WHERE id = ? AND status = 'open'").bind(p.id).run();
+    } catch (e) { console.error("billing reconcile", e && e.message); }
+  }
+  c.forget(hash);
+}
+
+// ---- fulfilling a paid session ----
+// A session Stripe says is done. Monthly: the subscription is synced and the sign-up marked paid. Pay: its lines are marked
+// paid (only those still owed, and only by the request that marks the payment paid), and whatever it paid for lines no
+// longer owed (canceled, waived or paid another way meanwhile) is refunded. The channel hears once. {kind, state}.
+async function fulfillSession(env, c, s) {
+  if (typeof s === "string") s = await stripe(env, "GET", `/v1/checkout/sessions/${encodeURIComponent(s)}`);
+  const payId = String(s.metadata && s.metadata.fafo_pay || s.client_reference_id || "");
+  const row = payId ? await env.DB.prepare("SELECT * FROM billing_payments WHERE id = ?").bind(payId).first() : null;
+  const paid = s.payment_status === "paid" || s.payment_status === "no_payment_required";
+  if (s.mode === "subscription") {
+    if (s.status !== "complete" || !s.subscription) return { kind: "monthly", state: s.status === "expired" ? "expired" : "processing" };
+    const sub = await syncSubscription(env, c, typeof s.subscription === "string" ? s.subscription : s.subscription.id);
+    if (row && paid) await env.DB.prepare("UPDATE billing_payments SET status = 'paid', paid_at = ? WHERE id = ? AND status <> 'paid'").bind(c.now, row.id).run();
+    return { kind: "monthly", state: sub && (sub.status === "active" || sub.status === "trialing") ? "on" : "processing" };
+  }
+  if (s.status !== "complete" || s.payment_status !== "paid") return { kind: "pay", state: s.status === "expired" ? "expired" : "processing" };
+  if (!row || row.kind !== "pay" || row.mode !== c.mode) return { kind: "pay", state: "paid" };
+  const pi = typeof s.payment_intent === "string" ? s.payment_intent : s.payment_intent && s.payment_intent.id || null;
+  const name = await billName(env, row.key_hash);
+  if (s.amount_total !== row.amount || s.currency !== "usd") {
+    const r = await env.DB.prepare("UPDATE billing_payments SET status = 'paid', paid_at = ?, payment_intent = ?, applied = 0 WHERE id = ? AND status <> 'paid' RETURNING id").bind(c.now, pi, row.id).first();
+    if (r) await billNote(env, `⚠️ **${name}** paid ${money(s.amount_total || 0)} ${String(s.currency || "").toUpperCase()} on Stripe for an invoice of ${money(row.amount)}: nothing was marked paid. Check it in Stripe.`);
+    return { kind: "pay", state: "paid" };
+  }
+  const [first] = await env.DB.batch([
+    env.DB.prepare("UPDATE billing_payments SET status = 'paid', paid_at = ?, payment_intent = ? WHERE id = ? AND status <> 'paid' RETURNING id").bind(c.now, pi, row.id),
+    env.DB.prepare(`UPDATE billing_lines SET paid_at = ?1, pay_id = ?2 WHERE id IN (SELECT value FROM json_each(?3)) AND key_hash = ?4 AND paid_at IS NULL AND canceled_at IS NULL
+      AND waived_at IS NULL AND EXISTS (SELECT 1 FROM billing_payments p WHERE p.id = ?2 AND p.paid_at = ?1)`).bind(c.now, row.id, row.line_ids, row.key_hash),
+  ]);
+  const fresh = !!(first.results && first.results.length);
+  // What it paid for: the same on every try, since a paid line never changes.
+  const got = await env.DB.prepare("SELECT COALESCE(SUM(amount), 0) AS applied, COUNT(*) AS n FROM billing_lines WHERE pay_id = ?").bind(row.id).first();
+  const refund = Math.max(0, (s.amount_total || 0) - got.applied);
+  await env.DB.prepare("UPDATE billing_payments SET applied = ?, refund = ? WHERE id = ?").bind(got.applied, refund, row.id).run();
+  const cur = await env.DB.prepare("SELECT refund_id, refund_err FROM billing_payments WHERE id = ?").bind(row.id).first();
+  if (refund > 0 && !cur.refund_id) {
+    try {
+      if (!pi) throw new Error("no payment to refund");
+      const had = await stripe(env, "GET", "/v1/refunds", { payment_intent: pi, limit: 20 });
+      const r = (had.data || []).find((x) => x.metadata && x.metadata.fafo_pay === row.id)
+        || await stripe(env, "POST", "/v1/refunds", { payment_intent: pi, amount: refund, metadata: { fafo_pay: row.id } }, { idem: `refund:${row.id}` });
+      await env.DB.prepare("UPDATE billing_payments SET refund_id = ?, refund_err = NULL WHERE id = ?").bind(r.id, row.id).run();
+    } catch (e) {
+      console.error("billing refund", e && e.message);
+      await env.DB.prepare("UPDATE billing_payments SET refund_err = ? WHERE id = ?").bind(String(e && e.message || "failed").slice(0, 300), row.id).run();
+      if (!cur.refund_err) await billNote(env, `⚠️ Couldn't refund ${money(refund)} to **${name}**: refund it in Stripe.`);
+    }
+  }
+  const k = JSON.parse(row.line_ids || "[]").length - got.n;
+  if (fresh) await billNote(env, `💳 **${name}** paid ${money(s.amount_total)} for ${plural(got.n, "checkout")}${refund ? ` · refunded ${money(refund)} for ${k} canceled, waived or already paid` : ""}`);
+  return { kind: "pay", state: "paid" };
+}
+
+// ---- a monthly subscription, as Stripe has it ----
+// Kept in billing_subs, whatever its state; then for its license: live (active, trialing) makes it their plan (unless they
+// have another live one: the newer is canceled, since Stripe allows two), with held lines it now covers canceled; ended makes
+// their plan what they picked for after (pay per checkout) or none, and held lines due. It covers a period only once that
+// period's invoice is paid: a renewal is made (and the subscription still active) about an hour before it's charged, and
+// that charge can fail. The channel hears of each change once. Returns Stripe's subscription, or null when it's no license's.
+async function syncSubscription(env, c, subId, o = {}) {
+  const sub = await stripe(env, "GET", `/v1/subscriptions/${encodeURIComponent(subId)}`, { expand: ["latest_invoice"] }, { timeout: o.timeout });
+  const cus = typeof sub.customer === "string" ? sub.customer : sub.customer && sub.customer.id;
+  let hash = sub.metadata && /^[0-9a-f]{64}$/.test(sub.metadata.fafo_license || "") ? sub.metadata.fafo_license : null;
+  if (!hash && cus) { const b = await env.DB.prepare("SELECT key_hash FROM billing WHERE customer_id = ? AND mode = ?").bind(cus, c.mode).first(); hash = b && b.key_hash; }
+  if (!hash) return null;
+  const prices = await cachedPrices(env, c.mode), items = sub.items && sub.items.data || [];
+  const extras = items.filter((i) => i.price && (i.price.lookup_key === LOOKUP_EXTRA || (prices && i.price.id === prices.extra))).reduce((n, i) => n + (i.quantity || 0), 0);
+  const ends = items.map((i) => i.current_period_end).filter((x) => x > 0), periodEnd = ends.length ? Math.min(...ends) * 1000 : null;
+  const live = sub.status === "active" || sub.status === "trialing", paused = sub.pause_collection ? 1 : 0;
+  const ended = subEnded({ status: sub.status, ended_at: sub.ended_at });
+  const inv = typeof sub.latest_invoice === "string" ? sub.latest_invoice : sub.latest_invoice && sub.latest_invoice.id || null;
+  const invStatus = sub.latest_invoice && typeof sub.latest_invoice === "object" ? String(sub.latest_invoice.status || "") || null : null;
+  const before = await env.DB.prepare("SELECT * FROM billing_subs WHERE sub_id = ?").bind(subId).first();
+  // Paid through the end of the period once its invoice is paid (not while it's paused, when Stripe voids them); it never
+  // moves on otherwise, and back only to when it ended, if it was ended before then (canceled at once in Stripe).
+  await env.DB.prepare(`INSERT INTO billing_subs (sub_id, key_hash, mode, status, cancel_at_end, extras, paused, started_at, paid_through, period_end, ended_at, latest_invoice, invoice_status, synced_at, created_at)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?14, ?13, ?13)
+    ON CONFLICT (sub_id) DO UPDATE SET status = excluded.status, cancel_at_end = excluded.cancel_at_end, extras = excluded.extras, paused = excluded.paused,
+      started_at = COALESCE(billing_subs.started_at, excluded.started_at),
+      paid_through = CASE WHEN excluded.ended_at IS NOT NULL AND billing_subs.paid_through > excluded.ended_at THEN excluded.ended_at
+        WHEN excluded.paid_through IS NULL THEN billing_subs.paid_through WHEN billing_subs.paid_through IS NULL OR excluded.paid_through > billing_subs.paid_through
+        THEN excluded.paid_through ELSE billing_subs.paid_through END,
+      period_end = excluded.period_end, ended_at = excluded.ended_at, latest_invoice = excluded.latest_invoice, invoice_status = excluded.invoice_status, synced_at = excluded.synced_at`)
+    .bind(subId, hash, c.mode, sub.status, sub.cancel_at_period_end ? 1 : 0, extras, paused, live ? Math.min(c.now, sub.start_date ? sub.start_date * 1000 : c.now) : null,
+      live && !paused && invStatus === "paid" ? periodEnd : null, periodEnd, ended ? (sub.ended_at ? sub.ended_at * 1000 : c.now) : null, inv, c.now, invStatus).run();
+  const row = await env.DB.prepare("SELECT * FROM billing_subs WHERE sub_id = ?").bind(subId).first();
+  const b = await env.DB.prepare("SELECT * FROM billing WHERE key_hash = ? AND mode = ?").bind(hash, c.mode).first();
+  c.forget(hash);
+  const name = () => billName(env, hash);
+  if (live) {
+    const other = b && b.sub_id && b.sub_id !== subId ? await env.DB.prepare("SELECT * FROM billing_subs WHERE sub_id = ?").bind(b.sub_id).first() : null;
+    // (One that was never paid, left being set up, doesn't count: the paid one takes its place.)
+    if (other && LIVE_SUB.includes(other.status) && !other.ended_at && other.started_at != null) {
+      const gone = await stripe(env, "DELETE", `/v1/subscriptions/${encodeURIComponent(subId)}`, null, { idem: `dupcancel:${subId}` });
+      // It never covered anything: canceled before anyone could use it.
+      await env.DB.prepare("UPDATE billing_subs SET status = ?, ended_at = ?, started_at = NULL, paid_through = NULL WHERE sub_id = ?").bind(gone.status || "canceled", c.now, subId).run();
+      if (await env.DB.prepare("UPDATE billing_subs SET told = 'dup' WHERE sub_id = ? AND told IS NOT 'dup' RETURNING sub_id").bind(subId).first())
+        await billNote(env, `⚠️ **${await name()}** paid for a second monthly plan; it was canceled. Refund its first payment in Stripe.`);
+      return gone;
+    }
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO billing (key_hash, mode, plan, plan_at, customer_id, sub_id, updated_at) VALUES (?1, ?2, 'monthly', ?3, ?4, ?5, ?3)
+        ON CONFLICT (key_hash, mode) DO UPDATE SET sub_id = excluded.sub_id, plan = 'monthly', plan_at = CASE WHEN billing.plan = 'monthly' THEN billing.plan_at ELSE excluded.plan_at END,
+          next_plan = CASE WHEN billing.plan = 'monthly' THEN billing.next_plan ELSE NULL END, customer_id = COALESCE(billing.customer_id, excluded.customer_id), updated_at = excluded.updated_at`)
+        .bind(hash, c.mode, c.now, cus || null, subId),
+      env.DB.prepare("UPDATE billing_lines SET canceled_at = ?, cancel_src = 'covered' WHERE held_sub = ? AND paid_at IS NULL AND canceled_at IS NULL AND order_at <= ?")
+        .bind(c.now, subId, day((row.paid_through || 0) + TZ_SLACK_MS)),
+    ]);
+  } else if (!ended && !(b && b.sub_id === subId)) {
+    // Not paid up yet (being set up) or any more: theirs while they have no other, so Invoice can say so and offer its invoice.
+    await env.DB.prepare(`INSERT INTO billing (key_hash, mode, customer_id, sub_id, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
+      ON CONFLICT (key_hash, mode) DO UPDATE SET sub_id = excluded.sub_id, customer_id = COALESCE(billing.customer_id, excluded.customer_id), updated_at = excluded.updated_at
+      WHERE billing.sub_id IS NULL OR NOT EXISTS (SELECT 1 FROM billing_subs s WHERE s.sub_id = billing.sub_id AND s.status IN ('${LIVE_SUB.join("', '")}') AND s.ended_at IS NULL)`)
+      .bind(hash, c.mode, cus || null, subId, c.now).run();
+  } else if (ended && b && b.sub_id === subId) {
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE billing SET plan = CASE WHEN next_plan = 'checkout' THEN 'checkout' ELSE NULL END, plan_at = ?1, next_plan = NULL, updated_at = ?1
+        WHERE key_hash = ?2 AND mode = ?3 AND sub_id = ?4 AND plan = 'monthly'`).bind(c.now, hash, c.mode, subId),
+      env.DB.prepare("UPDATE billing_lines SET held_sub = NULL, due_at = ? WHERE held_sub = ? AND paid_at IS NULL AND canceled_at IS NULL").bind(c.now + DUE_MS, subId),
+    ]);
+  }
+  // The channel, once per change (told is claimed): started, more or fewer slots, set to end, payment failed, ended.
+  const told = `${row.status}:${row.extras}:${row.cancel_at_end}`, was = before && before.told || "", [ws, wx, wc] = was.split(":");
+  if (was !== "dup" && told !== was && await env.DB.prepare("UPDATE billing_subs SET told = ? WHERE sub_id = ? AND told IS NOT ? RETURNING sub_id").bind(told, subId, told).first()) {
+    const slots = MONTHLY_SLOTS + EXTRA_SLOTS * row.extras, wasLive = ws === "active" || ws === "trialing";
+    const out = async () => { const p = await env.DB.prepare("SELECT last_on FROM billing_people WHERE key_hash = ?").bind(hash).first(); return p && p.last_on != null ? ` · about ${plural(p.last_on, "slot")} out` : ""; };
+    let msg = "";
+    if (live && !wasLive && ws !== "past_due" && ws !== "unpaid") msg = `🗓️ **${await name()}** started the monthly plan (${slots} slots)`;
+    else if (live && wasLive && String(row.extras) !== wx) msg = `🗓️ **${await name()}**'s monthly plan is now ${slots} slots`;
+    else if (live && wasLive && row.cancel_at_end && wc !== "1") msg = `🗓️ **${await name()}**'s monthly plan will end <t:${Math.floor((row.period_end || c.now) / 1000)}:D>`;
+    else if ((row.status === "past_due" || row.status === "unpaid") && !ended && ws !== "past_due" && ws !== "unpaid") msg = `⚠️ **${await name()}**'s monthly payment failed${await out()}`;
+    else if (ended && row.started_at && b && b.sub_id === subId) {
+      const pl = await env.DB.prepare("SELECT plan FROM billing WHERE key_hash = ? AND mode = ?").bind(hash, c.mode).first();
+      msg = `🗓️ **${await name()}**'s monthly plan ended · ${pl && pl.plan === "checkout" ? "pay per checkout" : "no plan"}${await out()}`;
+    }
+    if (msg) await billNote(env, msg);
+  }
+  return sub;
+}
+
+// Stripe's ids for the monthly plan's prices, kept per mode; made the first time they're needed (products with fixed ids,
+// prices found again by their lookup keys). `n`: made again after Stripe said it no longer has them (a new idempotency key,
+// or Stripe would answer with the one that's gone).
+async function cachedPrices(env, mode) {
+  const row = await env.DB.prepare("SELECT v FROM billing_config WHERE k = ?").bind("prices:" + mode).first();
+  try { const v = row && JSON.parse(row.v); return v && v.base && v.extra ? v : null; } catch { return null; }
+}
+async function ensurePrices(env, c, call, n = 0) {
+  const kept = await cachedPrices(env, c.mode);
+  if (kept) return kept;
+  const list = await call("GET", "/v1/prices", { lookup_keys: [LOOKUP_BASE, LOOKUP_EXTRA], limit: 10 });
+  const found = Object.fromEntries((list.data || []).map((p) => [p.lookup_key, p.id]));
+  const make = async (lookup, product, name, amount) => {
+    try { await call("POST", "/v1/products", { id: product, name }); }
+    catch (e) { if (!(e instanceof StripeError && e.code === "resource_already_exists")) throw e; }
+    return (await call("POST", "/v1/prices", { product, unit_amount: amount, currency: "usd", recurring: { interval: "month" }, lookup_key: lookup }, { idem: `price:${c.mode}:${lookup}${n ? ":" + n : ""}` })).id;
+  };
+  const v = { base: found[LOOKUP_BASE] || await make(LOOKUP_BASE, PRODUCT_BASE, "FAFO monthly plan (10 slots)", PRICE_MONTHLY),
+    extra: found[LOOKUP_EXTRA] || await make(LOOKUP_EXTRA, PRODUCT_EXTRA, "FAFO extra 15 slots", PRICE_EXTRA) };
+  await env.DB.prepare("INSERT INTO billing_config (k, v, updated_at) VALUES (?, ?, ?) ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at")
+    .bind("prices:" + c.mode, JSON.stringify(v), c.now).run();
+  return v;
+}
+const dropPrices = (env, mode) => env.DB.prepare("DELETE FROM billing_config WHERE k = ?").bind("prices:" + mode).run();
+// One Stripe customer per license and mode, made the first time it's needed (`n` as for ensurePrices).
+async function customerFor(env, c, lic, call, n = 0) {
+  const b = await env.DB.prepare("SELECT customer_id FROM billing WHERE key_hash = ? AND mode = ?").bind(lic.hash, c.mode).first();
+  if (b && b.customer_id) return b.customer_id;
+  const cus = await call("POST", "/v1/customers", { name: lic.username || `License …${lic.last4}`, metadata: { fafo_license: lic.hash } }, { idem: `cus:${c.mode}:${lic.hash}${n ? ":" + n : ""}` });
+  await env.DB.prepare(`INSERT INTO billing (key_hash, mode, customer_id, updated_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT (key_hash, mode) DO UPDATE SET customer_id = COALESCE(billing.customer_id, excluded.customer_id), updated_at = excluded.updated_at`).bind(lic.hash, c.mode, cus.id, c.now).run();
+  return (await env.DB.prepare("SELECT customer_id FROM billing WHERE key_hash = ? AND mode = ?").bind(lic.hash, c.mode).first()).customer_id;
+}
+const dropCustomer = (env, c, hash) => env.DB.prepare("UPDATE billing SET customer_id = NULL WHERE key_hash = ? AND mode = ?").bind(hash, c.mode).run();
+// A customer or price Stripe no longer has (deleted in the Dashboard, or with a sandbox's test data) is made again, once:
+// `fn(n)` with n = 0, then 1 after the one that's gone is forgotten.
+async function remade(env, c, hash, fn) {
+  try { return await fn(0); }
+  catch (e) {
+    if (missing(e, "customer")) await dropCustomer(env, c, hash);
+    else if (missing(e, "price")) await dropPrices(env, c.mode);
+    else throw e;
+    return fn(1);
+  }
+}
+
+// ---- buyer routes ----
+// The license as premiumGet reads it (one look at each list): a key not in this database while the list of keys made by hand
+// can't be read is unknown (503, so the page keeps its last answer), not refused.
+async function billingLicense(request, env) {
+  const m = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") || "");
+  const norm = m ? m[1].toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+  if (!/^PVLT[A-Z0-9]{16}$/.test(norm)) return { error: json({ error: "license not recognized" }, 401, NO_STORE) };
+  const hash = await keyHash(norm);
+  const row = await env.DB.prepare("SELECT discord_id, username, revoked_at FROM licenses WHERE key_hash = ?").bind(hash).first();
+  const on = row ? !row.revoked_at : await ghListHas(env, hash);
+  if (on === null) return { error: json({ error: "the list of keys made by hand can't be read just now" }, 503, NO_STORE) };
+  if (!on) return { error: json({ error: "license not recognized" }, 401, NO_STORE) };
+  return { lic: { hash, last4: norm.slice(-4), discordId: row ? row.discord_id : null, username: row ? row.username : null } };
+}
+const PRICES = { checkout: PRICE_CHECKOUT, monthly: PRICE_MONTHLY, extra: PRICE_EXTRA, monthlySlots: MONTHLY_SLOTS, extraSlots: EXTRA_SLOTS, extraMax: EXTRA_MAX, dueDays: DUE_MS / 86400000 };
+// GET /billing's answer: the plan, the invoice (lines still owed, held or disputed, and the rest from the last 60 days, newest
+// first), what's owed, the last day's payments, and which of their own accounts their FAFO should report checkouts on (those
+// out as slots in the last 45 days, from the earliest day one was).
+async function billingBody(env, c, lic) {
+  const st = await billingState(env, c, lic.hash);
+  if (!st.on) return { on: false };
+  const out = { on: true, mode: c.mode, exempt: st.exempt, plan: st.plan, nextPlan: st.nextPlan, block: st.block, now: c.now, prices: PRICES, sub: st.sub,
+    lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null };
+  if (st.exempt) return out;
+  const [lines, paid, pays, wins] = await env.DB.batch([
+    env.DB.prepare(`SELECT * FROM billing_lines WHERE key_hash = ? AND mode = ? AND ((paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL) OR created_at > ?)
+      ORDER BY (paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL) DESC, created_at DESC LIMIT 300`).bind(lic.hash, c.mode, c.now - 60 * 86400000),
+    env.DB.prepare("SELECT COALESCE(SUM(amount), 0) AS s FROM billing_lines WHERE key_hash = ? AND mode = ? AND paid_at > ?").bind(lic.hash, c.mode, c.now - 30 * 86400000),
+    env.DB.prepare("SELECT id, kind, status, amount, refund FROM billing_payments WHERE key_hash = ? AND mode = ? AND created_at > ? ORDER BY created_at DESC LIMIT 20").bind(lic.hash, c.mode, c.now - 86400000),
+    env.DB.prepare("SELECT acct_hash, MIN(sent_at) AS first FROM billing_accounts WHERE key_hash = ? AND (pulled_at IS NULL OR pulled_at > ?) GROUP BY acct_hash").bind(lic.hash, c.now - 45 * 86400000),
+  ]);
+  out.lines = lines.results.sort((a, b) => b.created_at - a.created_at).map((l) => {
+    const state = lineState(l, c.now);
+    return { id: l.id, store: l.store, storeName: l.store_name, orderNo: l.order_no, item: l.item, qty: l.qty, orderAt: l.order_at, source: l.source, amount: l.amount,
+      createdAt: l.created_at, dueAt: l.due_at, state, paidAt: l.paid_at, acctHash: l.acct_hash, profile: l.profile,
+      disputable: l.source === "buyer" && !l.dispute_at && (state === "due" || state === "overdue") };
+  });
+  Object.assign(out, { owed: st.owed, overdue: st.overdue, paid30: paid.results[0].s, payments: pays.results });
+  // Not from before billing came on (or on again), nor from before the owner charged them: none of those are billed.
+  if (wins.results.length) {
+    const from = Math.max(await c.from(), chargeFrom(c, (await c.who(lic.hash)).person)) + TZ_SLACK_MS;
+    out.report = { from: day(Math.max(c.now - 45 * 86400000, Math.min(...wins.results.map((x) => x.first)) - TZ_SLACK_MS, from)), accts: wins.results.map((x) => x.acct_hash) };
+  }
+  return out;
+}
+
+async function billingGet(request, env) {
+  const { lic, error } = await billingLicense(request, env);
+  if (error) return error;
+  if (!billingOn(env)) {
+    await offSeen(env, Date.now()).catch((e) => console.error("billing", e));
+    return json({ on: false }, 200, NO_STORE);
+  }
+  const c = billCtx(env), w = await c.who(lic.hash);
+  if (!w.on) return json({ on: false }, 200, NO_STORE);
+  // When their FAFO last asked (the Billing page tells an older FAFO apart), once a day.
+  await env.DB.prepare(`INSERT INTO billing_people (key_hash, seen_at, updated_at) VALUES (?1, ?2, ?2) ON CONFLICT (key_hash) DO UPDATE SET seen_at = excluded.seen_at
+    WHERE billing_people.seen_at IS NULL OR billing_people.seen_at < ?3`).bind(lic.hash, c.now, c.now - 86400000).run();
+  if (!w.exempt) await reconcile(env, c, lic.hash);
+  return json(await billingBody(env, c, lic), 200, NO_STORE);
+}
+
+// Billing on for this license, and not exempt (`family` lets a Friends and Family buyer through, for cancelling a plan paused
+// for them): {c, w}, or the answer to give.
+async function billingBuyer(env, lic, family) {
+  const c = billCtx(env), w = await c.who(lic.hash);
+  if (!c.on || !w.on) return { error: json({ error: "Your seller doesn't take payments here.", on: false }, 409, NO_STORE) };
+  if (w.exempt && !(family && w.exempt === "family")) return { error: json({ error: "Your seller doesn't charge you.", exempt: w.exempt }, 409, NO_STORE) };
+  return { c, w };
+}
+const readBody = async (request, max) => {
+  const text = await request.text();
+  if (text.length > max) return null;
+  try { return JSON.parse(text) || {}; } catch { return {}; }
+};
+const liveSubOf = async (env, c, w) => {
+  const s = w.bill && w.bill.sub_id ? (await c.subs(w.hash)).find((x) => x.sub_id === w.bill.sub_id) : null;
+  return s && !subEnded(s) ? s : null;
+};
+
+// POST /billing/plan {plan:"checkout"}: pay per checkout. From a monthly plan: one that's paid up ends at its period's end
+// and they pay per checkout after; one that isn't paid up is canceled now. Stripe saying no changes nothing.
+async function billingPlan(request, env) {
+  const { lic, error } = await billingLicense(request, env);
+  if (error) return error;
+  const b = await readBody(request, 2000);
+  if (!b) return json({ error: "too large" }, 413, NO_STORE);
+  if (b.plan !== "checkout") return json({ error: "plan" }, 400, NO_STORE);
+  const g = await billingBuyer(env, lic, false);
+  if (g.error) return g.error;
+  const { c, w } = g;
+  let message = "";
+  try {
+    const s = w.bill && w.bill.plan === "monthly" ? await liveSubOf(env, c, w) : null;
+    if (s) {
+      const sub = await syncSubscription(env, c, s.sub_id);
+      const now = await env.DB.prepare("SELECT * FROM billing_subs WHERE sub_id = ?").bind(s.sub_id).first();
+      if (sub && (now.status === "active" || now.status === "trialing")) {
+        if (!now.cancel_at_end) await stripe(env, "POST", `/v1/subscriptions/${encodeURIComponent(s.sub_id)}`, { cancel_at_period_end: true });
+        await env.DB.prepare("UPDATE billing SET next_plan = 'checkout', updated_at = ? WHERE key_hash = ? AND mode = ?").bind(c.now, lic.hash, c.mode).run();
+        await syncSubscription(env, c, s.sub_id);
+        message = `Your monthly plan ends ${day(now.period_end || c.now)}; after that you pay per checkout.`;
+      } else if (sub && !subEnded(now)) {
+        await stripe(env, "DELETE", `/v1/subscriptions/${encodeURIComponent(s.sub_id)}`, null, { idem: `subcancel:${s.sub_id}` });
+        // What it ends into, before it's synced (which tells the channel).
+        await env.DB.prepare("UPDATE billing SET next_plan = 'checkout', updated_at = ? WHERE key_hash = ? AND mode = ?").bind(c.now, lic.hash, c.mode).run();
+        await syncSubscription(env, c, s.sub_id);
+      }
+    }
+  } catch (e) {
+    if (e instanceof StripeError) { console.error("billing plan", e.message); return stripeFail(e); }
+    throw e;
+  }
+  // Pay per checkout now, unless a paid-up monthly plan runs to its end first.
+  await env.DB.prepare(`INSERT INTO billing (key_hash, mode, plan, plan_at, updated_at) VALUES (?1, ?2, 'checkout', ?3, ?3)
+    ON CONFLICT (key_hash, mode) DO UPDATE SET plan = 'checkout', plan_at = CASE WHEN billing.plan = 'checkout' THEN billing.plan_at ELSE excluded.plan_at END, next_plan = NULL, updated_at = excluded.updated_at
+    WHERE billing.plan IS NULL OR billing.plan = 'checkout' OR (billing.next_plan IS NULL AND NOT EXISTS (SELECT 1 FROM billing_subs s WHERE s.sub_id = billing.sub_id AND s.status IN ('active', 'trialing')))`)
+    .bind(lic.hash, c.mode, c.now).run();
+  return json({ ...(await billingBody(env, billCtx(env), lic)), ...(message ? { message } : {}) }, 200, NO_STORE);
+}
+
+// POST /billing/checkouts {orders:[{account, store, orderNo, at, stage, item?, qty?}]}: orders on the buyer's own accounts that
+// their FAFO found (1.9.130+). Placed: a line, if that account was out as one of their slots at that store on that day.
+// Canceled: their reported line goes, if unpaid. Placed ones before canceled ones; the same report again adds nothing.
+async function billingCheckouts(request, env, ctx) {
+  const { lic, error } = await billingLicense(request, env);
+  if (error) return error;
+  const b = await readBody(request, 200_000);
+  if (!b) return json({ error: "too large" }, 413, NO_STORE);
+  const list = Array.isArray(b.orders) ? b.orders : null;
+  if (!list || !list.length || list.length > 200) return json({ error: "orders" }, 400, NO_STORE);
+  const none = { ok: true, added: 0, canceled: 0, ignored: list.length };
+  if (!billingOn(env)) return json(none, 200, NO_STORE);
+  const c = billCtx(env), w = await c.who(lic.hash);
+  if (!w.on || w.exempt) return json(none, 200, NO_STORE);
+  if (!(await billCount(env, lic.hash, "report", REPORTS_PER_HOUR, 3600 * 1000, c.now))) return json({ error: "too many reports this hour" }, 429, NO_STORE);
+  const clip = (v, n) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, n);
+  const orders = [];
+  let ignored = 0, added = 0, canceled = 0, capped = false;
+  for (const o of list) {
+    const x = { account: clip(o && o.account, 120).toLowerCase(), store: clip(o && o.store, 64), orderNo: orderNoOf(o && o.orderNo), at: String(o && o.at || ""),
+      stage: o && o.stage, item: clip(o && o.item, 120), qty: clip(o && o.qty, 6) };
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x.account) || !STORE_KEY.test(x.store) || !x.orderNo || !realDay(x.at) || (x.stage !== "placed" && x.stage !== "canceled")) ignored++;
+    else orders.push(x);
+  }
+  const [today, wins] = await env.DB.batch([
+    env.DB.prepare("SELECT COUNT(*) AS n FROM billing_lines WHERE key_hash = ? AND mode = ? AND source = 'buyer' AND created_at > ?").bind(lic.hash, c.mode, c.now - 86400000),
+    env.DB.prepare("SELECT store, acct_hash, sent_at, pulled_at FROM billing_accounts WHERE key_hash = ?").bind(lic.hash),
+  ]);
+  const placed = [];
+  for (const x of orders.filter((o) => o.stage === "placed")) {
+    const acct = await acctHash(x.account), ok = await billable(c, w, x.at);
+    if (ok.ok && inWindow(wins.results, x.store, acct, x.at)) placed.push({ x, acct, ok }); else ignored++;
+  }
+  // New ones only count toward the day's limit (the same report again is common).
+  const had = new Set(placed.length ? (await env.DB.prepare("SELECT store, order_no FROM billing_lines WHERE key_hash = ? AND mode = ? AND order_no IN (SELECT value FROM json_each(?))")
+    .bind(lic.hash, c.mode, JSON.stringify(placed.map((p) => p.x.orderNo))).all()).results.map((r) => r.store + "|" + r.order_no) : []);
+  let room = BUYER_LINES_PER_DAY - today.results[0].n;
+  const adds = [];
+  for (const { x, acct, ok } of placed) {
+    const k = x.store + "|" + x.orderNo;
+    if (had.has(k)) { ignored++; continue; }
+    had.add(k);
+    if (room <= 0) { capped = true; ignored++; continue; }
+    room--;
+    adds.push(lineStmt(env, c, { hash: lic.hash, store: x.store, storeName: accountStoreName(x.store), orderNo: x.orderNo, item: x.item, qty: x.qty, orderAt: x.at,
+      acctHash: acct, profile: "", source: "buyer", held: ok.held }));
+  }
+  for (const r of adds.length ? await env.DB.batch(adds) : []) if (r.meta && r.meta.changes) added++; else ignored++;
+  const cancels = orders.filter((o) => o.stage === "canceled"), gone = [];
+  (cancels.length ? await env.DB.batch(cancels.map((x) => cancelStmt(env, c, x.store, x.orderNo, lic.hash))) : []).forEach((r) => {
+    const ids = (r.results || []).map((x) => x.id);
+    if (ids.length) { canceled += ids.length; gone.push(...ids); } else ignored++;
+  });
+  if (gone.length) ctx.waitUntil(expireFor(env, c, gone));
+  if (capped) {
+    await env.DB.prepare("INSERT OR IGNORE INTO billing_people (key_hash, updated_at) VALUES (?, ?)").bind(lic.hash, c.now).run();
+    if ((await env.DB.prepare("UPDATE billing_people SET note_at = ? WHERE key_hash = ? AND (note_at IS NULL OR note_at < ?)").bind(c.now, lic.hash, c.now - 86400000).run()).meta.changes)
+      await billNote(env, `⚠️ **${await billName(env, lic.hash)}**'s FAFO reported more than ${BUYER_LINES_PER_DAY} checkouts on their own accounts today; the rest weren't added. Add any that should be from the Billing page.`);
+  }
+  return json({ ok: true, added, canceled, ignored }, 200, NO_STORE);
+}
+
+// POST /billing/checkout {kind, extras?, on?, web?, then?}: whatever needs Stripe. pay: a Checkout session for what's owed
+// (one at a time; the same one again while it's good). monthly: a Checkout session for the plan. extras: add or remove the
+// extra 15 slots. cancel / resume: a monthly plan set to end at its period's end, or not. invoice: the open invoice of a
+// plan whose payment failed. {url} to open, or GET /billing's answer. `web` (the web version's address) sends the buyer back
+// there after Stripe.
+async function billingCheckout(request, env, ctx, url) {
+  const { lic, error } = await billingLicense(request, env);
+  if (error) return error;
+  const b = await readBody(request, 4000);
+  if (!b) return json({ error: "too large" }, 413, NO_STORE);
+  const kind = String(b.kind || "");
+  if (!["pay", "monthly", "extras", "cancel", "resume", "invoice"].includes(kind)) return json({ error: "kind" }, 400, NO_STORE);
+  const g = await billingBuyer(env, lic, kind === "cancel" || kind === "resume");
+  if (g.error) return g.error;
+  const { c } = g;
+  const web = WEB_APPS.indexOf(String(b.web || "")), back = web >= 0 ? `&w=${web}` : "";
+  const on = typeof b.on === "number" && Number.isFinite(b.on) ? Math.max(0, Math.floor(b.on)) : null;
+  await reconcile(env, c, lic.hash);
+  // Only calls that reach Stripe count toward the hour's limit (once per request).
+  let counted = false;
+  const call = async (...a) => {
+    if (!counted) { if (!(await billCount(env, lic.hash, "stripe", STRIPE_CALLS_PER_HOUR, 3600 * 1000, c.now))) throw new BillLimit(); counted = true; }
+    return stripe(env, ...a);
+  };
+  const body = async (status = 200, extra = {}) => json({ ...(await billingBody(env, billCtx(env), lic)), ...extra }, status, NO_STORE);
+  const redirect = { success_url: `${url.origin}/billing/done?s={CHECKOUT_SESSION_ID}${back}`, cancel_url: `${url.origin}/billing/done?c=1${back}`, expires_at: Math.floor(c.now / 1000) + SESSION_TTL_S };
+  try {
+    const w = await c.who(lic.hash);
+    if (kind === "pay" || kind === "monthly") {
+      const extras = kind === "monthly" ? Math.floor(Number(b.extras)) || 0 : 0;
+      let lines = [], want = "";
+      if (kind === "pay") {
+        const owed = () => env.DB.prepare(`SELECT id, store, store_name, order_no, amount FROM billing_lines WHERE key_hash = ? AND mode = ? AND ${OWED} AND NOT ${DISPUTED} ORDER BY created_at LIMIT 300`)
+          .bind(lic.hash, c.mode).all().then((r) => r.results);
+        lines = await owed();
+        if (!lines.length) return body(409, { error: "Nothing to pay" });
+        // A session already open: paid meanwhile (fulfilled, then what's left), still going through, still good for the same
+        // lines (its link again), or replaced (expired first).
+        const old = await openPayment(env, c, lic.hash, "pay");
+        if (old && old.session_id) {
+          const r = await settleOpen(env, c, old, call, (s) => old.line_ids === JSON.stringify(lines.map((l) => l.id)) && s.expires_at * 1000 - c.now > 5 * 60000);
+          if (r.reuse) return json({ url: old.url, pay: old.id, amount: old.amount, n: lines.length }, 200, NO_STORE);
+          if (r.busy) return json({ error: "Your last payment is still going through." }, 409, NO_STORE);
+          if (r.paid) { lines = await owed(); if (!lines.length) return body(409, { error: "Nothing to pay" }); }
+        } else if (old) return json({ error: "Try again in a moment." }, 409, NO_STORE);
+        want = JSON.stringify(lines.map((l) => l.id));
+      } else {
+        if (on === null) return json({ error: "on" }, 400, NO_STORE);
+        if (extras < 0 || extras > EXTRA_MAX) return json({ error: "extras" }, 400, NO_STORE);
+        const slots = MONTHLY_SLOTS + EXTRA_SLOTS * extras;
+        if (on > slots) return json({ error: `You have ${on} slots switched on; this plan covers ${slots}. Switch ${on - slots} off on Submit first.`, on, slots }, 409, NO_STORE);
+        const subs = await remade(env, c, lic.hash, async (n) => call("GET", "/v1/subscriptions", { customer: await customerFor(env, c, lic, call, n), status: "all", limit: 20 }));
+        const have = (subs.data || []).find((s) => s.status !== "canceled" && s.status !== "incomplete_expired");
+        if (have) { await syncSubscription(env, c, have.id); return body(409, { error: "You already have a monthly plan." }); }
+        const old = await openPayment(env, c, lic.hash, "monthly");
+        if (old && old.session_id) {
+          const r = await settleOpen(env, c, old, call, (s) => old.extras === extras && s.expires_at * 1000 - c.now > 5 * 60000);
+          if (r.reuse) return json({ url: old.url, pay: old.id }, 200, NO_STORE);
+          if (r.busy || r.paid) return body(409, { error: "Your monthly plan is being set up on Stripe." });
+        } else if (old) return json({ error: "Try again in a moment." }, 409, NO_STORE);
+      }
+      // Claimed before Stripe is asked: a second request meanwhile gets this one's link (one open per kind, by the index).
+      const id = randomId(12), amount = kind === "pay" ? lines.reduce((n, l) => n + l.amount, 0) : PRICE_MONTHLY + PRICE_EXTRA * extras;
+      const ins = await env.DB.prepare(`INSERT OR IGNORE INTO billing_payments (id, key_hash, mode, kind, extras, line_ids, amount, status, web, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`)
+        .bind(id, lic.hash, c.mode, kind, extras, kind === "pay" ? want : "[]", amount, web >= 0 ? web : null, c.now).run();
+      if (!(ins.meta && ins.meta.changes)) {
+        const win = await openPayment(env, c, lic.hash, kind);
+        return win && win.url ? json({ url: win.url, pay: win.id, ...(kind === "pay" ? { amount: win.amount, n: JSON.parse(win.line_ids).length } : {}) }, 200, NO_STORE)
+          : json({ error: "Try again in a moment." }, 409, NO_STORE);
+      }
+      try {
+        // Each line at the amount it was written at (one Stripe line per amount), so what's paid is the row's amount even if
+        // the price changed since.
+        const groups = [...lines.reduce((m, l) => m.set(l.amount, [...(m.get(l.amount) || []), l]), new Map())];
+        const s = await remade(env, c, lic.hash, async (n) => {
+          const customer = await customerFor(env, c, lic, call, n);
+          const prices = kind === "monthly" ? await ensurePrices(env, c, call, n) : null;
+          const params = kind === "pay"
+            ? { mode: "payment", customer, line_items: groups.map(([unit, ls]) => ({ price_data: { currency: "usd", unit_amount: unit, product_data: { name: "FAFO checkouts",
+                description: `${plural(ls.length, "checkout")}: ${ls.map((l) => `${l.store_name || accountStoreName(l.store)} #${l.order_no}`).join(", ")}`.slice(0, 500) } }, quantity: ls.length })),
+                payment_intent_data: { metadata: { fafo_pay: id } } }
+            : { mode: "subscription", customer, line_items: [{ price: prices.base, quantity: 1 }, ...(extras ? [{ price: prices.extra, quantity: 1 }] : [])],
+                subscription_data: { metadata: { fafo_license: lic.hash } } };
+          return call("POST", "/v1/checkout/sessions", { ...params, allowed_payment_method_types: PAY_METHODS, client_reference_id: id, metadata: { fafo_license: lic.hash, fafo_pay: id }, ...redirect },
+            { idem: `${kind}:${id}${n ? ":" + n : ""}` });
+        });
+        await env.DB.prepare("UPDATE billing_payments SET session_id = ?, url = ?, expires_at = ? WHERE id = ?").bind(s.id, s.url, (s.expires_at || 0) * 1000, id).run();
+        return json(kind === "pay" ? { url: s.url, pay: id, amount, n: lines.length } : { url: s.url, pay: id }, 200, NO_STORE);
+      } catch (e) {
+        await env.DB.prepare("UPDATE billing_payments SET status = 'failed' WHERE id = ?").bind(id).run();
+        throw e;
+      }
+    }
+    const st = await billingState(env, c, lic.hash), s = await liveSubOf(env, c, w);
+    if (!s) return body(409, { error: "You don't have a monthly plan." });
+    const path = `/v1/subscriptions/${encodeURIComponent(s.sub_id)}`;
+    if (kind === "extras") {
+      if (!st.monthlyOk) return body(409, { error: "Your monthly plan needs to be paid up for that." });
+      const want = Math.floor(Number(b.extras)) || 0;
+      if (want < 0 || want > EXTRA_MAX) return json({ error: "extras" }, 400, NO_STORE);
+      if (want < s.extras) {
+        if (on === null) return json({ error: "on" }, 400, NO_STORE);
+        if (on > MONTHLY_SLOTS) return json({ error: `You have ${on} slots switched on. Switch ${on - MONTHLY_SLOTS} off first.`, on, slots: MONTHLY_SLOTS }, 409, NO_STORE);
+        const prices = await cachedPrices(env, c.mode), cur = await call("GET", path);
+        const item = (cur.items && cur.items.data || []).find((i) => i.price && (i.price.lookup_key === LOOKUP_EXTRA || (prices && i.price.id === prices.extra)));
+        if (item) await call("POST", path, { items: [{ id: item.id, deleted: true }], proration_behavior: "create_prorations" });
+      } else if (want > s.extras) {
+        // Charged now for the rest of the month; a card that needs the buyer (3D Secure) waits on its invoice's page.
+        const sub = await call("POST", path, { items: [{ price: (await ensurePrices(env, c, call)).extra, quantity: 1 }], proration_behavior: "always_invoice", payment_behavior: "pending_if_incomplete" });
+        if (sub.pending_update) {
+          const inv = typeof sub.latest_invoice === "string" ? sub.latest_invoice : sub.latest_invoice && sub.latest_invoice.id;
+          const i = inv ? await call("GET", `/v1/invoices/${encodeURIComponent(inv)}`) : null;
+          if (i && i.hosted_invoice_url) return json({ url: i.hosted_invoice_url }, 200, NO_STORE);
+        }
+      }
+      await syncSubscription(env, c, s.sub_id);
+      return body();
+    }
+    if (kind === "cancel" || kind === "resume") {
+      await call("POST", path, { cancel_at_period_end: kind === "cancel" });
+      await env.DB.prepare("UPDATE billing SET next_plan = ?, updated_at = ? WHERE key_hash = ? AND mode = ?")
+        .bind(kind === "cancel" && b.then === "checkout" ? "checkout" : null, c.now, lic.hash, c.mode).run();
+      await syncSubscription(env, c, s.sub_id);
+      return body();
+    }
+    // invoice: the oldest open invoice of a plan whose payment failed (or that's being set up), to pay on Stripe's page.
+    const open = await call("GET", "/v1/invoices", { subscription: s.sub_id, status: "open", limit: 10 });
+    const inv = (open.data || []).filter((i) => i.hosted_invoice_url).sort((x, y) => x.created - y.created)[0];
+    if (inv) return json({ url: inv.hosted_invoice_url }, 200, NO_STORE);
+    await syncSubscription(env, c, s.sub_id);
+    return body();
+  } catch (e) {
+    if (e instanceof BillLimit) return json({ error: "Too many tries this hour. Try again later." }, 429, NO_STORE);
+    if (e instanceof StripeError) { console.error("billing checkout", kind, e.message); return stripeFail(e); }
+    throw e;
+  }
+}
+const openPayment = async (env, c, hash, kind) => {
+  // A claim whose session was never made (its worker stopped) stops holding the place after 2 minutes.
+  await env.DB.prepare("UPDATE billing_payments SET status = 'failed' WHERE key_hash = ? AND mode = ? AND kind = ? AND status = 'open' AND url IS NULL AND created_at < ?")
+    .bind(hash, c.mode, kind, c.now - 120000).run();
+  return env.DB.prepare("SELECT * FROM billing_payments WHERE key_hash = ? AND mode = ? AND kind = ? AND status = 'open'").bind(hash, c.mode, kind).first();
+};
+// An open session asked about before another is made: {reuse} (still good: `good(session)`), {busy} (paid but still going
+// through), {paid} (fulfilled now), or {} once it's expired (marked only once Stripe says so).
+async function settleOpen(env, c, p, call, good) {
+  let s = await call("GET", `/v1/checkout/sessions/${encodeURIComponent(p.session_id)}`);
+  if (s.status === "open" && good(s)) return { reuse: true };
+  if (s.status === "open") {
+    try { s = await call("POST", `/v1/checkout/sessions/${encodeURIComponent(p.session_id)}/expire`); }
+    catch (e) { if (!(e instanceof StripeError && e.status >= 400 && e.status < 500)) throw e; s = await call("GET", `/v1/checkout/sessions/${encodeURIComponent(p.session_id)}`); }
+  }
+  if (s.status === "complete") {
+    if (s.payment_status !== "paid" && s.payment_status !== "no_payment_required") return { busy: true };
+    await fulfillSession(env, c, s);
+    return { paid: true };
+  }
+  if (s.status !== "expired") return { busy: true };
+  await env.DB.prepare("UPDATE billing_payments SET status = 'expired' WHERE id = ? AND status = 'open'").bind(p.id).run();
+  return {};
+}
+
+// POST /billing/dispute {id, note}: "Not my seller's checkout?" on a line their FAFO reported. It still counts as owed, never
+// as overdue, until the owner answers (Waive or Keep) from the Billing page, whose link the channel gets with the note.
+async function billingDispute(request, env, ctx, url) {
+  const { lic, error } = await billingLicense(request, env);
+  if (error) return error;
+  const b = await readBody(request, 4000);
+  if (!b) return json({ error: "too large" }, 413, NO_STORE);
+  const g = await billingBuyer(env, lic, false);
+  if (g.error) return g.error;
+  const { c } = g;
+  const l = /^[A-Za-z0-9_-]{8,40}$/.test(String(b.id || "")) ? await env.DB.prepare("SELECT * FROM billing_lines WHERE id = ? AND key_hash = ? AND mode = ?").bind(b.id, lic.hash, c.mode).first() : null;
+  if (!l || l.source !== "buyer" || l.paid_at || l.canceled_at || l.waived_at || l.held_sub || l.dispute_at) return json({ error: "That checkout can't be disputed." }, 409, NO_STORE);
+  const open = await env.DB.prepare(`SELECT COUNT(*) AS n FROM billing_lines WHERE key_hash = ? AND mode = ? AND ${DISPUTED} AND paid_at IS NULL AND waived_at IS NULL AND canceled_at IS NULL`).bind(lic.hash, c.mode).first();
+  if (open && open.n >= DISPUTES_OPEN_MAX) return json({ error: `You have ${DISPUTES_OPEN_MAX} waiting for your seller already.` }, 429, NO_STORE);
+  if (!(await billCount(env, lic.hash, "dispute", DISPUTES_PER_DAY, 86400000, c.now))) return json({ error: "too many today" }, 429, NO_STORE);
+  const note = String(b.note || "").replace(/\s+/g, " ").trim().slice(0, 300);
+  const r = await env.DB.prepare("UPDATE billing_lines SET dispute_at = ?, dispute_note = ? WHERE id = ? AND dispute_at IS NULL AND paid_at IS NULL").bind(c.now, note, l.id).run();
+  if (r.meta && r.meta.changes) {
+    const { link } = await billingListLink(env, lic, url.origin, "", c.now);
+    await billNote(env, `❓ **${await billName(env, lic.hash)}** says ${md(l.store_name || accountStoreName(l.store))} #${md(l.order_no)} (${l.order_at}) wasn't your checkout${note ? `: "${md(note)}"` : ""} · [Answer](${link}&b=${lic.hash.slice(0, 16)})`);
+  }
+  return json(await billingBody(env, billCtx(env), lic), 200, NO_STORE);
+}
+
+// GET /billing/done: where Stripe sends the buyer back (no license needed). A paid session is fulfilled at once.
+async function billingDone(env, url) {
+  const i = /^\d$/.test(url.searchParams.get("w") || "") ? WEB_APPS[Number(url.searchParams.get("w"))] : "";
+  const msg = i ? "You can close this tab and go back to FAFO." : "Go back to the FAFO app. It updates by itself.", back = i ? backToWeb(i) : "";
+  if (url.searchParams.get("c")) return page(200, "No payment was made", msg, back);
+  const id = url.searchParams.get("s") || "";
+  let r = null;
+  if (billingOn(env) && /^cs_[A-Za-z0-9_]{6,200}$/.test(id)) { try { r = await fulfillSession(env, billCtx(env), id); } catch (e) { console.error("billing done", e && e.message); } }
+  return page(200, r && r.state === "paid" ? "Payment received" : r && r.state === "on" ? "Your monthly plan is on" : "Payment is processing", msg, back);
+}
+
+// ---- POST /stripe/webhook ----
+// Signed with the endpoint's secret (Stripe-Signature: t=…,v1=…, HMAC-SHA256 of "t.body", any v1, within 5 minutes). Every
+// valid delivery runs: each handler asks Stripe again and writes only what changes, so a repeat does nothing. A Stripe or D1
+// error answers 500 (Stripe tries again); an object that's no license's, or that Stripe no longer has, 200.
+async function stripeSigned(env, header, raw, now) {
+  let t = "";
+  const v1 = [];
+  for (const part of String(header).split(",")) {
+    const i = part.indexOf("="), k = part.slice(0, i).trim(), v = part.slice(i + 1).trim();
+    if (k === "t") t = v; else if (k === "v1" && v) v1.push(v);
+  }
+  if (!/^\d{1,12}$/.test(t) || !v1.length || Math.floor(now / 1000) - Number(t) > 300) return false;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.STRIPE_WEBHOOK_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${t}.${raw}`))), (x) => x.toString(16).padStart(2, "0")).join("");
+  let ok = false;
+  for (const v of v1) if (await sameText(v, mac)) ok = true;
+  return ok;
+}
+async function stripeWebhook(request, env) {
+  if (!billingOn(env)) return json({ error: "payments aren't set up" }, 503);
+  const raw = await request.text();
+  if (raw.length > 1_000_000) return json({ error: "too large" }, 413);
+  const c = billCtx(env);
+  if (!(await stripeSigned(env, request.headers.get("stripe-signature") || "", raw, c.now))) return json({ error: "bad signature" }, 400);
+  let ev; try { ev = JSON.parse(raw); } catch { return json({ error: "bad event" }, 400); }
+  if (!!ev.livemode !== (c.mode === "live")) return json({ received: true });
+  try { await stripeEvent(env, c, ev); }
+  catch (e) {
+    if (e instanceof StripeError && (e.code === "resource_missing" || e.status === 404)) return json({ received: true });
+    console.error("stripe webhook", ev.type, e && e.message);
+    return json({ error: "try again" }, 500);
+  }
+  await env.DB.prepare("INSERT OR IGNORE INTO billing_events (id, type, created_at) VALUES (?, ?, ?)").bind(String(ev.id || randomId(12)).slice(0, 100), String(ev.type || "").slice(0, 100), c.now)
+    .run().catch((e) => console.error("billing events", e));
+  return json({ received: true });
+}
+// A payment's license: its payment row (by the PaymentIntent, or the PaymentIntent's fafo_pay), else the Stripe customer's.
+async function licenseOfPayment(env, c, pi, customer) {
+  if (pi) {
+    const p = await env.DB.prepare("SELECT key_hash FROM billing_payments WHERE payment_intent = ? AND mode = ?").bind(pi, c.mode).first();
+    if (p) return p.key_hash;
+    if (!customer) {
+      const intent = await stripe(env, "GET", `/v1/payment_intents/${encodeURIComponent(pi)}`);
+      const q = intent.metadata && intent.metadata.fafo_pay ? await env.DB.prepare("SELECT key_hash FROM billing_payments WHERE id = ?").bind(intent.metadata.fafo_pay).first() : null;
+      if (q) return q.key_hash;
+      customer = typeof intent.customer === "string" ? intent.customer : intent.customer && intent.customer.id;
+    }
+  }
+  const b = customer ? await env.DB.prepare("SELECT key_hash FROM billing WHERE customer_id = ? AND mode = ?").bind(customer, c.mode).first() : null;
+  return b ? b.key_hash : null;
+}
+async function stripeEvent(env, c, ev) {
+  const o = ev.data && ev.data.object || {}, idOf = (x) => typeof x === "string" ? x : x && x.id || null;
+  const seen = async () => !!(await env.DB.prepare("SELECT 1 AS s FROM billing_events WHERE id = ?").bind(String(ev.id || "")).first());
+  switch (ev.type) {
+    case "checkout.session.completed": case "checkout.session.async_payment_succeeded":
+      return fulfillSession(env, c, String(o.id || ""));
+    case "checkout.session.expired": case "checkout.session.async_payment_failed":
+      return env.DB.prepare("UPDATE billing_payments SET status = ? WHERE (session_id = ? OR id = ?) AND status = 'open'")
+        .bind(ev.type === "checkout.session.expired" ? "expired" : "failed", String(o.id || ""), String(o.metadata && o.metadata.fafo_pay || "")).run();
+    case "customer.subscription.created": case "customer.subscription.updated": case "customer.subscription.deleted":
+    case "customer.subscription.paused": case "customer.subscription.resumed":
+      return syncSubscription(env, c, String(o.id || ""));
+    case "invoice.paid": case "invoice.payment_failed": {
+      const sub = idOf(o.parent && o.parent.subscription_details && o.parent.subscription_details.subscription);
+      return sub ? syncSubscription(env, c, sub) : null;
+    }
+    case "charge.dispute.created": case "charge.dispute.closed": {
+      const hash = await licenseOfPayment(env, c, idOf(o.payment_intent), null);
+      if (!hash) return null;
+      if (ev.type === "charge.dispute.created") {
+        await env.DB.prepare("INSERT OR IGNORE INTO billing (key_hash, mode, updated_at) VALUES (?, ?, ?)").bind(hash, c.mode, c.now).run();
+        const r = await env.DB.prepare("UPDATE billing SET dispute_hold = 1, updated_at = ? WHERE key_hash = ? AND mode = ? AND dispute_hold = 0 RETURNING key_hash").bind(c.now, hash, c.mode).first();
+        if (r) await billNote(env, `⚠️ **${await billName(env, hash)}** disputed ${money(o.amount || 0)} with their bank. Submit is off for them until you clear it on the Billing page.`);
+      } else if (!(await seen())) await billNote(env, `⚖️ **${await billName(env, hash)}**'s dispute of ${money(o.amount || 0)} was closed (${md(o.status || "closed")}). Clear their hold on the Billing page if they should submit again.`);
+      return null;
+    }
+    case "charge.refunded": {
+      const pi = idOf(o.payment_intent);
+      if (!pi || await seen()) return null;
+      const hash = await licenseOfPayment(env, c, pi, idOf(o.customer));
+      if (!hash) return null;
+      // Not for the refunds the worker made itself (what a payment paid for lines no longer owed).
+      const ours = new Set((await env.DB.prepare("SELECT refund_id FROM billing_payments WHERE payment_intent = ? AND refund_id IS NOT NULL").bind(pi).all()).results.map((x) => x.refund_id));
+      const theirs = ((await stripe(env, "GET", "/v1/refunds", { payment_intent: pi, limit: 20 })).data || []).filter((r) => !ours.has(r.id) && r.status !== "failed" && r.status !== "canceled")
+        .sort((x, y) => y.created - x.created);
+      if (theirs.length) await billNote(env, `↩️ Refunded ${money(theirs[0].amount)} to **${await billName(env, hash)}**`);
+      return null;
+    }
+  }
+  return null;
+}
+
+// ---- the owner's Billing page ----
+// A link to it, posted by the owner's FAFO (POST /billing/list) or by a buyer's dispute, for 24 hours. Null if it couldn't be posted.
+async function billingListLink(env, lic, origin, name, now) {
+  const o = { id: randomId(12), key_hash: lic.hash, key_last4: lic.last4, username: lic.username, name, view_token: randomId(24), created_at: now };
+  await env.DB.prepare("INSERT INTO billing_lists (id, key_hash, key_last4, name, username, view_token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(o.id, o.key_hash, o.key_last4, o.name, o.username, o.view_token, o.created_at).run();
+  return { id: o.id, link: `${origin}/billing/list/${o.id}?t=${o.view_token}` };
+}
+// POST /billing/list {name}: the owner's own FAFO only (the license that sends order alerts), once payments are set up (either
+// mode), 10 a day.
+async function billingListAsk(request, env, ctx, url) {
+  const { lic, error } = await billingLicense(request, env);
+  if (error) return error;
+  const s = await currentAlertSender(env);
+  if (!s || s.key_hash !== lic.hash) return json({ error: "Only your own FAFO can open billing" }, 403, NO_STORE);
+  if (!billingOn(env)) return json({ error: "payments aren't set up" }, 503, NO_STORE);
+  if (!env.DISCORD_WEBHOOK_URL) return json({ error: "the Discord channel isn't set up" }, 503, NO_STORE);
+  const b = await readBody(request, 2000);
+  if (!b) return json({ error: "too large" }, 413, NO_STORE);
+  const now = Date.now();
+  await env.DB.prepare("DELETE FROM billing_lists WHERE created_at < ?").bind(now - 7 * 86400000).run();
+  const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM billing_lists WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 86400000).first();
+  if (recent && recent.n >= BILL_LISTS_PER_DAY) return json({ error: "too many tries today" }, 429, NO_STORE);
+  const o = await billingListLink(env, lic, url.origin, String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60), now);
+  const id = await webhookPost(env, { content: `💳 **Billing**\n[See billing](${o.link}) · the link works for 24 hours` });
+  if (!id) { await env.DB.prepare("DELETE FROM billing_lists WHERE id = ?").bind(o.id).run(); return json({ error: "couldn't post to the channel" }, 502, NO_STORE); }
+  return json({ status: "sent" }, 200, NO_STORE);
+}
+// A line of the bot's success log, pasted on the Billing page: an email, an order number (a word with a digit, 6 to 25 long,
+// that isn't the email or the date), a store's name (else the store picked), and a date (YYYY-MM-DD, M/D or M/D/YY, else the
+// date picked).
+function pasteLine(line, store, date) {
+  const text = String(line).replace(/\s+/g, " ").trim(), plain = text.normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const email = (text.match(/[^\s@<>()"',;:|]+@[^\s@<>()"',;:|]+\.[A-Za-z]{2,}/) || [""])[0];
+  let rest = email ? text.replace(email, " ") : text, d = date;
+  const iso = rest.match(/\b\d{4}-\d{2}-\d{2}\b/), us = !iso && rest.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{4}|\d{2}))?\b/);
+  if (iso) { d = iso[0]; rest = rest.replace(iso[0], " "); }
+  else if (us) { d = `${us[3] ? (us[3].length === 2 ? "20" + us[3] : us[3]) : date.slice(0, 4)}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`; rest = rest.replace(us[0], " "); }
+  const order = rest.split(/[\s,;|]+/).map((x) => x.replace(/^[#(\[]+|[)\].:]+$/g, "")).find((x) => /\d/.test(x) && x.length >= 6 && x.length <= 25 && /^[A-Za-z0-9-]+$/.test(x)) || "";
+  return { text: text.slice(0, 300), email: email.toLowerCase(), store: /pokemon/i.test(plain) ? "pokemoncenter" : /\btarget\b/i.test(plain) ? "target" : store,
+    date: realDay(d) ? d : "", orderNo: orderNoOf(order) };
+}
+// The buyers who had that email out at that store that day: as their own account (a slot's login or checkout email) or as an
+// account the owner gave them (sent, and not pulled before that day, as for order alerts). The email is only hashed for the
+// first; the second is the owner's own list.
+async function pasteMatches(env, x) {
+  if (!x.email || !x.orderNo || !x.date) return [];
+  const acct = await acctHash(x.email), start = dayStart(x.date);
+  const [own, given] = await env.DB.batch([
+    env.DB.prepare("SELECT key_hash, profile FROM billing_accounts WHERE acct_hash = ? AND store = ? AND sent_at < ? AND (pulled_at IS NULL OR pulled_at >= ?)")
+      .bind(acct, x.store, start + 86400000 + TZ_SLACK_MS, start - TZ_SLACK_MS),
+    env.DB.prepare(`SELECT a.key_hash, a.profile FROM accounts a WHERE a.email_norm = ?1 AND a.store = ?2 AND a.key_hash IS NOT NULL AND a.sent_at IS NOT NULL AND a.assigned_at < ?3
+      AND NOT EXISTS (SELECT 1 FROM billing_pulled p WHERE p.key_hash = a.key_hash AND p.store = a.store AND p.profile = COALESCE(a.profile, '') AND p.batch = a.batch AND p.pulled_at + ?4 < ?5)`)
+      .bind(x.email, x.store, start + 86400000, TZ_SLACK_MS, start),
+  ]);
+  const m = new Map();
+  for (const r of [...own.results, ...given.results]) if (!m.has(r.key_hash)) m.set(r.key_hash, { hash: r.key_hash, profile: r.profile || "", acct });
+  return [...m.values()];
+}
+const WHY_TEXT = { off: "Billing is off for them (test mode)", owner: "Your FAFO", family: "Friends and Family", before: "Before billing started", monthly: "Monthly plan, not billed",
+  charge: "From before you charged them (Friends and Family then)" };
+// Whether an order the owner adds would go on that buyer's invoice: {ok, held} or {why} in words. Their own report of it is
+// taken over, unless it's paid, waived, or their FAFO said the store canceled it (Charge again on their invoice undoes that).
+async function ownerOutcome(env, c, hash, x) {
+  const ok = await billable(c, await c.who(hash), x.date);
+  if (!ok.ok) return { why: WHY_TEXT[ok.why] || ok.why };
+  const { results } = await env.DB.prepare("SELECT key_hash, source, paid_at, waived_at, canceled_at FROM billing_lines WHERE mode = ? AND store = ? AND order_no = ?").bind(c.mode, x.store, x.orderNo).all();
+  const mine = results.find((l) => l.key_hash === hash);
+  if (mine && (mine.source !== "buyer" || mine.paid_at || mine.waived_at)) return { why: "Already on the invoice" };
+  if (mine && mine.canceled_at) return { why: "Canceled by the store, their FAFO said" };
+  if (results.some((l) => l.key_hash !== hash && l.source !== "buyer")) return { why: "On another buyer's invoice" };
+  return { ok: true, held: ok.held };
+}
+
+const SOURCE_TEXT = { alert: "Account you gave", buyer: "Their account", owner: "Added by you" };
+const STATE_TEXT = { paid: "Paid", canceled: "Canceled · no charge", covered: "Covered by their monthly plan", waived: "Waived", held: "On hold", disputed: "Disputed", overdue: "Overdue", due: "Due" };
+const STATE_COLOR = { paid: "#5fd39a", overdue: "#ff8a80", disputed: "#9cc7ff", due: "#ffd27a" };
+// The page (24 hours): what's owed, every buyer with their plan, a buyer's invoice (?b=: their key's hash, first 16), and the
+// bot's success log pasted to add checkouts. Views answer GET; changes only POST, then back to the view (303), so reloading
+// doesn't send them again. Never a whole key, and pasted emails are only matched, never kept.
+async function billingListPage(request, env, ctx, url, id) {
+  const o = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM billing_lists WHERE id = ?").bind(id).first() : null;
+  let t = url.searchParams.get("t") || "", form = null;
+  if (request.method === "POST") {
+    form = await request.formData().catch(() => null);
+    t = form && String(form.get("t") || "") || t;
+  } else if (request.method !== "GET") {
+    return page(405, "Not allowed", "");
+  }
+  if (!o || !(await sameText(t, o.view_token))) return page(404, "Not found", "This link isn't valid.");
+  const now = Date.now();
+  if (now > o.created_at + BILL_LIST_TTL_MS) return page(410, "Billing", "This link has expired. Ask again from FAFO: Settings → Billing.");
+  if (!billingOn(env)) return page(503, "Billing", "Payments aren't set up: the Stripe keys aren't there.");
+  const c = billCtx(env, now);
+  const get = (k) => String((form ? form.get(k) : url.searchParams.get(k)) ?? "");
+  const action = form ? get("action") : "", bq = get("b").replace(/[^0-9a-f]/g, "").slice(0, 16);
+  const key = /^[0-9a-f]{64}$/.test(get("key")) ? get("key") : "", lineId = get("line").slice(0, 40);
+  const today = day(now), date = realDay(get("date")) ? get("date") : today, pickStore = get("store") === "pokemoncenter" ? "pokemoncenter" : "target";
+  let done = "", err = "", preview = null;
+  const lineOf = async () => lineId ? env.DB.prepare("SELECT * FROM billing_lines WHERE id = ? AND mode = ?").bind(lineId, c.mode).first() : null;
+  const known = async (h) => !!h && !!(await env.DB.prepare(`SELECT 1 AS k FROM licenses WHERE key_hash = ?1 AND revoked_at IS NULL UNION ALL SELECT 1 FROM billing_people WHERE key_hash = ?1
+    UNION ALL SELECT 1 FROM billing WHERE key_hash = ?1`).bind(h).first());
+  if (form) {
+    if ((action === "family" || action === "charge") && await known(key)) {
+      // A live monthly plan stops being charged while they're Friends and Family (Stripe pauses its collection), and starts
+      // again when they're charged; if Stripe says no, nothing changes.
+      const b = await env.DB.prepare("SELECT sub_id FROM billing WHERE key_hash = ? AND mode = ?").bind(key, c.mode).first();
+      const s = b && b.sub_id ? await env.DB.prepare("SELECT * FROM billing_subs WHERE sub_id = ?").bind(b.sub_id).first() : null;
+      try {
+        if (s && !subEnded(s)) {
+          await stripe(env, "POST", `/v1/subscriptions/${encodeURIComponent(s.sub_id)}`, { pause_collection: action === "family" ? { behavior: "void" } : "" });
+          await syncSubscription(env, c, s.sub_id).catch((e) => console.error("billing sync", e && e.message));
+        }
+        // Charged from now on: orders from while they were Friends and Family aren't billed (chargeFrom). A second Charge keeps the first's time.
+        await env.DB.prepare(`INSERT INTO billing_people (key_hash, family, charge_from, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (key_hash) DO UPDATE SET family = excluded.family,
+          charge_from = CASE WHEN excluded.charge_from IS NULL OR billing_people.family = 0 THEN billing_people.charge_from ELSE excluded.charge_from END, updated_at = excluded.updated_at`)
+          .bind(key, action === "family" ? 1 : 0, action === "charge" ? now : null, now).run();
+        done = action === "family" ? "They're Friends and Family now: never charged, and Submit is never off for them."
+          : "They're charged now, like any buyer approved after payments began, for checkouts from now on.";
+        if (s && !subEnded(s)) done += action === "family" ? " Stripe stopped charging their monthly plan." : " Stripe charges their monthly plan again.";
+      } catch (e) { err = e instanceof StripeError ? `Stripe said no: ${e.message}` : "That didn't work. Try again."; if (!(e instanceof StripeError)) console.error("billing", e); }
+    } else if ((action === "tester" || action === "untester") && await known(key)) {
+      // In test mode, billing reaches a Tester from now on (unless the owner charged them already, from then).
+      const from = action === "tester" && c.mode === "test" ? now : null;
+      await env.DB.prepare(`INSERT INTO billing_people (key_hash, tester, charge_from, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (key_hash) DO UPDATE SET tester = excluded.tester,
+        charge_from = CASE WHEN excluded.charge_from IS NULL OR billing_people.family = 0 THEN billing_people.charge_from ELSE excluded.charge_from END, updated_at = excluded.updated_at`)
+        .bind(key, action === "tester" ? 1 : 0, from, now).run();
+      done = action === "tester" ? "Marked as a tester: in test mode they pick a plan and pay with Stripe's test cards." : "Not a tester any more.";
+    } else if (action === "clear-hold" && await known(key)) {
+      await env.DB.prepare("UPDATE billing SET dispute_hold = 0, updated_at = ? WHERE key_hash = ? AND mode = ?").bind(now, key, c.mode).run();
+      done = "Hold cleared: they can submit again.";
+    } else if (["waive", "unwaive", "mark-paid", "charge-again", "dispute-waive", "dispute-keep"].includes(action)) {
+      const l = await lineOf();
+      const sql = {
+        waive: ["UPDATE billing_lines SET waived_at = ?1 WHERE id = ?2 AND paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL", "Waived."],
+        unwaive: ["UPDATE billing_lines SET waived_at = NULL, dispute_answer = CASE WHEN dispute_answer = 'waived' THEN NULL ELSE dispute_answer END WHERE id = ?2 AND paid_at IS NULL AND waived_at IS NOT NULL AND ?1 > 0", "Waive undone: it's owed again."],
+        "mark-paid": ["UPDATE billing_lines SET paid_at = ?1, pay_id = 'manual' WHERE id = ?2 AND paid_at IS NULL AND canceled_at IS NULL", "Marked paid."],
+        "charge-again": [`UPDATE billing_lines SET canceled_at = NULL, cancel_src = NULL, held_sub = NULL, due_at = ?1 + ${DUE_MS} WHERE id = ?2 AND paid_at IS NULL AND canceled_at IS NOT NULL
+          AND COALESCE(cancel_src, '') <> 'covered'`, "It's owed again, due in 3 days."],
+        "dispute-waive": [`UPDATE billing_lines SET dispute_answer = 'waived', waived_at = ?1 WHERE id = ?2 AND ${DISPUTED} AND paid_at IS NULL`, "Waived: not their checkout."],
+        "dispute-keep": [`UPDATE billing_lines SET dispute_answer = 'kept', due_at = MAX(due_at, ?1 + ${DUE_MS}) WHERE id = ?2 AND ${DISPUTED} AND paid_at IS NULL`, "Kept: it's owed, due in 3 days at the earliest."],
+      }[action];
+      const r = l ? await env.DB.prepare(sql[0]).bind(now, l.id).run() : null;
+      if (r && r.meta && r.meta.changes) {
+        done = sql[1];
+        if (["waive", "mark-paid", "dispute-waive"].includes(action)) ctx.waitUntil(expireFor(env, c, [l.id]));
+      } else err = "That checkout changed meanwhile, so nothing was done.";
+    } else if (action === "add" && await known(key)) {
+      // Add a checkout: the owner's word, so no slot has to have been out; exemption and plans still count.
+      const x = { store: pickStore, orderNo: orderNoOf(get("order")), date: realDay(get("date")) ? get("date") : "" };
+      const item = [get("item"), get("note")].map((v) => v.replace(/\s+/g, " ").trim()).filter(Boolean).join(" · ");
+      if (!x.orderNo || !x.date) err = "Fill in the order number and its date.";
+      else {
+        const out = await ownerOutcome(env, c, key, x);
+        if (!out.ok) err = `Not added: ${out.why.toLowerCase().replace(/\bfafo\b/g, "FAFO")}.`;
+        else {
+          const r = await lineStmt(env, c, { hash: key, store: x.store, storeName: accountStoreName(x.store), orderNo: x.orderNo, item, qty: "", orderAt: x.date, source: "owner", held: out.held }).run();
+          if (r.meta && r.meta.changes) done = `Added ${accountStoreName(x.store)} #${x.orderNo} to their invoice.`; else err = "Not added: already on the invoice.";
+        }
+      }
+    } else if (action === "paste-preview" || action === "paste-add") {
+      const lines = get("paste").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 300);
+      const rows = [];
+      for (const [i, text] of lines.entries()) {
+        const x = pasteLine(text, pickStore, date), m = await pasteMatches(env, x), pick = get("pick" + i);
+        const chosen = m.length === 1 ? m[0] : m.find((y) => y.hash === pick) || null;
+        rows.push({ i, x, m, chosen, out: !x.email || !x.orderNo || !x.date ? { why: !x.email ? "No email in this line" : !x.orderNo ? "No order number in this line" : "No date" }
+          : !m.length ? { why: "No slot out with this email on that date" } : !chosen ? { why: "Pick a buyer" } : await ownerOutcome(env, c, chosen.hash, x) });
+      }
+      if (action === "paste-preview") preview = { rows, paste: get("paste"), store: pickStore, date };
+      else {
+        let added = 0;
+        for (const r of rows.filter((y) => y.out.ok)) {
+          const res = await lineStmt(env, c, { hash: r.chosen.hash, store: r.x.store, storeName: accountStoreName(r.x.store), orderNo: r.x.orderNo, item: "", qty: "", orderAt: r.x.date,
+            acctHash: r.chosen.acct, profile: r.chosen.profile, source: "owner", held: r.out.held }).run();
+          if (res.meta && res.meta.changes) added++;
+        }
+        done = `Added ${plural(added, "checkout")}.`;
+        if (rows.length > added) err = `${plural(rows.length - added, "line")} weren't added (preview them to see why).`;
+      }
+    }
+    // After a change, back to the view by its link (303), with what happened.
+    if (action !== "paste-preview") {
+      const q = new URLSearchParams({ t });
+      if (bq) q.set("b", bq);
+      if (done) q.set("done", done);
+      if (err) q.set("err", err);
+      return new Response(null, { status: 303, headers: { location: `${url.pathname}?${q}`, "cache-control": "no-store", "referrer-policy": "no-referrer" } });
+    }
+  } else { done = get("done").slice(0, 600); err = get("err").slice(0, 600); }
+
+  const [lics, people, bills, subs, totals, named, paid30, seenRow] = await env.DB.batch([
+    env.DB.prepare("SELECT username, license_key, key_hash, issued_at, revoked_at FROM licenses"),
+    env.DB.prepare("SELECT * FROM billing_people"),
+    env.DB.prepare("SELECT * FROM billing WHERE mode = ?").bind(c.mode),
+    env.DB.prepare("SELECT s.* FROM billing_subs s JOIN billing b ON b.sub_id = s.sub_id WHERE b.mode = ?").bind(c.mode),
+    env.DB.prepare(`SELECT key_hash, SUM(amount) AS owed, SUM(CASE WHEN due_at < ? AND NOT ${DISPUTED} THEN amount ELSE 0 END) AS overdue FROM billing_lines WHERE mode = ? AND ${OWED} GROUP BY key_hash`).bind(now, c.mode),
+    env.DB.prepare("SELECT key_hash, name, key_last4, MAX(created_at) AS at FROM submissions GROUP BY key_hash"),
+    env.DB.prepare("SELECT COALESCE(SUM(amount), 0) AS s FROM billing_lines WHERE mode = ? AND paid_at > ?").bind(c.mode, now - 30 * 86400000),
+    env.DB.prepare("SELECT v FROM billing_config WHERE k = 'alerts_seen'"),
+  ]);
+  const since = await c.since(), sender = await c.sender();
+  const L = new Map(lics.results.map((l) => [l.key_hash, l])), P = new Map(people.results.map((p) => [p.key_hash, p])), B = new Map(bills.results.map((b) => [b.key_hash, b]));
+  const S = new Map(subs.results.map((s) => [s.sub_id, s])), T = new Map(totals.results.map((x) => [x.key_hash, x])), N = new Map(named.results.map((x) => [x.key_hash, x]));
+  const keys = new Set([...lics.results.filter((l) => !l.revoked_at).map((l) => l.key_hash), ...P.keys(), ...B.keys(), ...T.keys()]);
+  const when = (x) => new Date(x).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+  const buyers = [...keys].map((h) => {
+    const l = L.get(h), p = P.get(h), b = B.get(h), s = b && b.sub_id ? S.get(b.sub_id) : null, tot = T.get(h) || { owed: 0, overdue: 0 }, n = N.get(h);
+    const exempt = exemptOf(h, p, l, sender, since, c.mode), tester = !!(p && p.tester), reach = c.mode === "live" || tester || exempt === "owner";
+    const last4 = l ? last4Of(l.license_key) : n ? n.key_last4 : "";
+    const name = [l ? "@" + l.username : "", n && n.name || ""].filter(Boolean).join(" · ") || (last4 ? `License …${last4}` : "A key made by hand");
+    const live = s && !subEnded(s);
+    const plan = exempt === "owner" ? "Your FAFO" : exempt === "family" ? "Friends and Family" + (live ? " · monthly plan paused" : "")
+      : !b || !b.plan ? "No plan" : b.plan === "checkout" ? "Pay per checkout"
+      : `Monthly · ${s ? MONTHLY_SLOTS + EXTRA_SLOTS * s.extras : MONTHLY_SLOTS} slots${s && s.period_end ? ` · ${s.cancel_at_end ? "ends" : "renews"} ${day(s.period_end)}` : ""}`;
+    const status = exempt ? "Not charged" : !reach ? "Not a tester" : b && b.dispute_hold ? "Dispute hold" : tot.overdue ? `${money(tot.overdue)} overdue`
+      : b && b.plan === "monthly" && s && ["past_due", "unpaid", "incomplete", "paused"].includes(s.status) && !s.paused ? "Payment failed"
+      : tot.owed ? `${money(tot.owed)} owed` : !(p && p.seen_at) ? "Older FAFO" : "Paid up";
+    return { h, l, p, b, s, tot, exempt, tester, reach, last4, name, plan, status, off: !!(l && l.revoked_at), monthly: !exempt && b && b.plan === "monthly" && live };
+  });
+  buyers.sort((x, y) => (y.tot.overdue - x.tot.overdue) || (y.tot.owed - x.tot.owed) || ((x.exempt === "owner") - (y.exempt === "owner")) || x.name.localeCompare(y.name));
+  const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  const base = `${url.pathname}?t=${encodeURIComponent(t)}`;
+  const btn = (fields, action, text, cls = "ed") => `<form method="post" action="${esc(url.pathname)}">${hidden}${bq ? `<input type="hidden" name="b" value="${esc(bq)}">` : ""}${Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join("")}<button class="${cls}" type="submit" name="action" value="${action}">${esc(text)}</button></form>`;
+  const msgs = `${done ? `<p class="hint" style="color:#5fd39a;font-weight:600">${esc(done)}</p>` : ""}${err ? `<p class="hint err">${esc(err)}</p>` : ""}`;
+  const storeSelect = (cur) => `<select name="store"><option value="target"${cur === "target" ? " selected" : ""}>Target</option><option value="pokemoncenter"${cur === "pokemoncenter" ? " selected" : ""}>Pokémon Center</option></select>`;
+
+  const one = bq.length === 16 ? buyers.find((x) => x.h.startsWith(bq)) : null;
+  if (one) {
+    const [lines, batches] = await env.DB.batch([
+      env.DB.prepare("SELECT * FROM billing_lines WHERE key_hash = ? AND mode = ? ORDER BY created_at DESC LIMIT 200").bind(one.h, c.mode),
+      env.DB.prepare(`SELECT batch, store_name, COUNT(*) AS n, GROUP_CONCAT(profile, ', ') AS profiles, MIN(sent_at) AS sent, MAX(pulled_at) AS pulled,
+        SUM(CASE WHEN pulled_at IS NULL THEN 0 ELSE 1 END) AS pulled_n FROM billing_accounts WHERE key_hash = ? GROUP BY batch, store_name ORDER BY sent DESC LIMIT 20`).bind(one.h),
+    ]);
+    const k = { key: one.h };
+    const acts = one.exempt === "owner" ? "" : [one.exempt === "family" ? btn(k, "charge", "Charge") : btn(k, "family", "Friends and Family"),
+      c.mode === "test" ? (one.tester ? btn(k, "untester", "Not a tester") : btn(k, "tester", "Tester")) : "",
+      one.b && one.b.dispute_hold ? btn(k, "clear-hold", "Clear dispute hold", "ok") : ""].join("");
+    const rows = lines.results.map((l) => {
+      // A held line its monthly plan's payment then covered was never owed: no Charge again for it.
+      const st = lineState(l, now) === "canceled" && l.cancel_src === "covered" ? "covered" : lineState(l, now), f = { line: l.id };
+      const a = st === "due" || st === "overdue" ? btn(f, "waive", "Waive") + btn(f, "mark-paid", "Mark paid")
+        : st === "disputed" ? btn(f, "dispute-waive", "Waive") + btn(f, "dispute-keep", "Keep", "rm") : st === "waived" ? btn(f, "unwaive", "Undo waive")
+        : st === "canceled" ? btn(f, "charge-again", "Charge again") : st === "held" ? btn(f, "waive", "Waive") : "";
+      const note = l.dispute_at ? `<br><span style="font-size:12px">“${esc(l.dispute_note || "No note")}”${l.dispute_answer ? ` · ${l.dispute_answer === "waived" ? "you waived it" : "you kept it"}` : ""}</span>` : "";
+      return `<tr><td>${esc(l.order_at)}</td><td class="em">${esc(l.store_name || accountStoreName(l.store))} #${esc(l.order_no)}<br><span style="font-size:12px">${esc([l.item + (l.qty && l.qty !== "1" ? ` ×${l.qty}` : ""), l.profile, SOURCE_TEXT[l.source] || l.source].filter((x) => String(x).trim()).join(" · "))}</span></td>
+        <td><span style="color:${STATE_COLOR[st] || "#b9c6ea"}">${esc(STATE_TEXT[st])}</span>${st === "due" || st === "overdue" ? `<br><span style="font-size:12px">due ${esc(day(l.due_at))}</span>` : ""}${note}</td><td>${money(l.amount)}</td><td class="act">${a}</td></tr>`;
+    }).join("");
+    const bat = batches.results.map((x) => `<tr><td>${esc(day(x.sent))}</td><td class="em">${esc(x.store_name)}: ${esc(String(x.profiles || "").slice(0, 300))}</td><td>${x.pulled_n ? `${x.pulled_n} of ${x.n} pulled, last ${esc(day(x.pulled))}` : "Still out"}</td></tr>`).join("");
+    return page(200, "Billing", "", `${msgs}<p><a class="back" href="${esc(base)}">← All buyers</a></p>
+      <p class="who">${esc(one.name)}</p>
+      <p class="small">${one.last4 ? `License …${esc(one.last4)} · ` : ""}${esc(one.plan)} · ${esc(one.status)}${one.off ? " · License turned off" : ""}${one.tester ? " · Tester" : ""}</p>
+      ${acts ? `<div class="row">${acts}</div>` : ""}
+      <p class="small">Friends and Family are never charged and Submit is never off for them. Charge makes them pay like any buyer approved after payments began, for checkouts from then on.${c.mode === "test" ? " In test mode only testers see plans and pay, with Stripe's test cards." : ""}</p>
+      <h3>Their invoice</h3>
+      ${rows ? `<table><thead><tr><th>Date</th><th>Checkout</th><th>State</th><th>Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="small">No checkouts yet.</p>`}
+      <h3>Add a checkout</h3>
+      <form class="edit" method="post" action="${esc(url.pathname)}">${hidden}<input type="hidden" name="b" value="${esc(bq)}"><input type="hidden" name="key" value="${esc(one.h)}">
+        <label>Store${storeSelect("target")}</label><label>Order number<input name="order" maxlength="40" autocomplete="off" spellcheck="false"></label>
+        <label>Date<input name="date" type="date" value="${esc(today)}"></label><label>Item<input name="item" maxlength="80"></label><label>Note<input name="note" maxlength="60"></label>
+        <p class="go"><button class="go" type="submit" name="action" value="add">Add to their invoice</button></p></form>
+      ${bat ? `<h3>Recent batches</h3><table><thead><tr><th>Sent</th><th>Slots on their own accounts</th><th>Pulled</th></tr></thead><tbody>${bat}</tbody></table>` : ""}
+      <p class="hint">The link works until ${esc(when(o.created_at + BILL_LIST_TTL_MS))}.</p>`, true);
+  }
+
+  let seen = null;
+  try { seen = seenRow.results[0] ? JSON.parse(seenRow.results[0].v) : null; } catch {}
+  const ago = (x) => { const m = Math.max(0, Math.round((now - x) / 60000)); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
+  const alerts = !sender || !seen || now - seen.at > 86400000
+    ? `<p class="hint err">Checkouts on accounts you give out aren't being billed: turn on Order alerts for buyers in your desktop FAFO and keep it running.${seen ? ` Last from your FAFO ${esc(ago(seen.at))}.` : ""}</p>`
+    : `<p class="small">Order alerts: last from your FAFO ${esc(ago(seen.at))}.</p>`;
+  const sum = (f) => buyers.filter((x) => !x.exempt).reduce((n, x) => n + f(x), 0);
+  const fam = buyers.filter((x) => x.exempt === "family" && !x.off).length, monthly = buyers.filter((x) => x.monthly).length;
+  let pastePart;
+  if (preview) {
+    const ok = preview.rows.filter((r) => r.out.ok).length;
+    const who = (h) => (buyers.find((x) => x.h === h) || { name: "A buyer" }).name;
+    pastePart = `<h3>Paste checkouts: check before adding</h3>
+      <form class="edit" method="post" action="${esc(url.pathname)}">${hidden}<input type="hidden" name="store" value="${esc(preview.store)}"><input type="hidden" name="date" value="${esc(preview.date)}">
+      <textarea name="paste" hidden>${esc(preview.paste)}</textarea>
+      <table><thead><tr><th>Line</th><th>Buyer</th><th>Outcome</th></tr></thead><tbody>${preview.rows.map((r) => `<tr><td class="em">${esc(r.x.text)}<br><span style="font-size:12px">${esc([accountStoreName(r.x.store), r.x.orderNo ? "#" + r.x.orderNo : "", r.x.date].filter(Boolean).join(" · "))}</span></td>
+        <td>${r.m.length > 1 ? `<select name="pick${r.i}" aria-label="Pick a buyer"><option value="">Pick a buyer</option>${r.m.map((y) => `<option value="${esc(y.hash)}"${r.chosen && r.chosen.hash === y.hash ? " selected" : ""}>${esc(who(y.hash))}${y.profile ? ` · ${esc(y.profile)}` : ""}</option>`).join("")}</select>`
+          : r.chosen ? `${esc(who(r.chosen.hash))}${r.chosen.profile ? `<br><span style="font-size:12px">${esc(r.chosen.profile)}</span>` : ""}` : ""}</td>
+        <td${r.out.ok ? ' style="color:#5fd39a"' : ""}>${esc(r.out.ok ? (r.out.held ? "Will add (on hold: their monthly payment failed)" : "Will add") : r.out.why)}</td></tr>`).join("")}</tbody></table>
+      <div class="row"><button class="ok" type="submit" name="action" value="paste-add">Add ${plural(ok, "checkout")}</button><button class="ed" style="width:auto" type="submit" name="action" value="paste-preview">Check again</button></div></form>
+      <p><a class="back" href="${esc(base)}">← Start over</a></p>`;
+  } else {
+    pastePart = `<h3>Paste checkouts</h3>
+      <form class="edit" method="post" action="${esc(url.pathname)}">${hidden}
+        <label>Your bot's success log, one checkout per line<textarea name="paste" rows="5" spellcheck="false" autocomplete="off" placeholder="Each line needs the account's email and the order number"></textarea></label>
+        <label>Store, for lines that don't name one${storeSelect("target")}</label><label>Date, for lines without one<input name="date" type="date" value="${esc(today)}"></label>
+        <p class="hint">Each line is matched to the buyer who had that email out as a slot that day (their own account, or one you gave them). Nothing is added until you check and confirm.</p>
+        <p class="go"><button class="go" type="submit" name="action" value="paste-preview">Check</button></p></form>`;
+  }
+  const fold = (x) => String(x).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const body = buyers.filter((x) => !x.off || x.tot.owed).map((x) => `<tr data-q="${esc(fold(`${x.name} ${x.last4} ${x.plan} ${x.status}`))}"><td class="em">${esc(x.name)}${x.last4 ? `<br><span style="font-size:12px;color:#8090b8">License …${esc(x.last4)}${x.tester ? " · Tester" : ""}</span>` : ""}</td>
+    <td>${esc(x.plan)}</td><td class="st"${/overdue|failed|hold/.test(x.status) ? ' style="color:#ff8a80"' : / owed/.test(x.status) ? ' style="color:#ffd27a"' : ""}>${esc(x.status)}</td>
+    <td class="act"><a href="${esc(base)}&b=${x.h.slice(0, 16)}">Details</a></td></tr>`).join("");
+  return page(200, "Billing", "", `${msgs}
+    <p class="who">${c.mode === "test" ? "Test mode: only testers are charged" : "Payments are on"}</p>
+    <p class="small">Owed ${money(sum((x) => x.tot.owed))} · Overdue ${money(sum((x) => x.tot.overdue))} · Paid in the last 30 days ${money(paid30.results[0].s)} · ${plural(monthly, "monthly plan")} · ${fam} Friends and Family</p>
+    ${alerts}
+    <p class="small">$10 per checkout, due 3 days after it (free if the store cancels it first), or $25 a month for 10 slots ($50 for 25). Buyers you approved before payments began are Friends and Family and never charged; Details moves anyone either way. Refunds are made in your Stripe Dashboard; the prices are set in FAFO (a change to the license worker).</p>
+    ${pastePart}
+    <h3>Buyers</h3>
+    ${body ? `<div class="find"><input type="search" id="find" placeholder="Search by name, last 4, plan or status" aria-label="Search buyers"><span class="shown" id="shown"></span></div>
+    <table><thead><tr><th>Buyer</th><th>Plan</th><th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table>${PREMIUM_SCRIPT}` : "<p>No buyers yet.</p>"}
+    <p class="hint">The link works until ${esc(when(o.created_at + BILL_LIST_TTL_MS))}.</p>`, true);
+}
+
 async function admin(request, env, path) {
   const auth = request.headers.get("authorization") || "";
   if (!env.ADMIN_TOKEN || !(await sameText(auth, "Bearer " + env.ADMIN_TOKEN))) return json({ error: "unauthorized" }, 401);
@@ -3185,6 +4641,22 @@ async function admin(request, env, path) {
     const cached = await env.DB.prepare("SELECT q, product_id, name, until, at FROM picture_finds WHERE q = ?").bind(picKeyOf(words)).first();
     const r = new Set(words.filter((w) => !isSeries(w))).size < 2 ? { product: null, short: true } : await pictureSearch(env, words, Date.now(), trace);
     return json({ q, words, cached, result: r, ...trace }, 200, NO_STORE);
+  }
+  if (request.method === "GET" && path === "/admin/billing") {
+    const mode = stripeMode(env), now = Date.now();
+    const [people, plans, owed, cfg] = await env.DB.batch([
+      env.DB.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN family = 1 THEN 1 ELSE 0 END), 0) AS family, COALESCE(SUM(CASE WHEN family = 0 THEN 1 ELSE 0 END), 0) AS charge,
+        COALESCE(SUM(tester), 0) AS testers, COALESCE(SUM(CASE WHEN seen_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS seen FROM billing_people`),
+      env.DB.prepare("SELECT COALESCE(plan, 'none') AS plan, COUNT(*) AS n FROM billing WHERE mode = ? GROUP BY plan").bind(mode),
+      env.DB.prepare(`SELECT COALESCE(SUM(amount), 0) AS owed, COALESCE(SUM(CASE WHEN due_at < ? AND NOT ${DISPUTED} THEN amount END), 0) AS overdue, COUNT(*) AS lines
+        FROM billing_lines WHERE mode = ? AND ${OWED}`).bind(now, mode),
+      env.DB.prepare("SELECT k, v FROM billing_config"),
+    ]);
+    const conf = Object.fromEntries(cfg.results.map((x) => [x.k, x.v])), parse = (v) => { try { return JSON.parse(v); } catch { return null; } };
+    const num = (k) => conf[k] ? Number(conf[k]) : null;
+    return json({ on: billingOn(env), mode, onSince: { live: num("on_since:live"), test: num("on_since:test") }, backOn: { live: num("back_on:live"), test: num("back_on:test") }, offSeen: num("off_seen"),
+      alertsSeen: parse(conf.alerts_seen || "null"), prices: { live: parse(conf["prices:live"] || "null"), test: parse(conf["prices:test"] || "null") },
+      people: people.results[0], plans: Object.fromEntries(plans.results.map((x) => [x.plan, x.n])), owed: owed.results[0] }, 200, NO_STORE);
   }
   if (request.method === "GET" && path === "/admin/premium") {
     const { results } = await env.DB.prepare(
@@ -3594,7 +5066,7 @@ function page(statusCode, title, msg, extra = "", wide = false) {
     table tr{display:grid;grid-template-columns:auto 1fr auto;column-gap:10px;padding:8px 0;border-bottom:1px solid #1c2c5c}
     table td{border:0;padding:2px 0}
     td.pick{grid-column:1;grid-row:1 / span 2;align-self:center}
-    td.em{grid-column:2;overflow-wrap:break-word;word-break:break-word} td.em + td{grid-column:2}
+    td.em{grid-column:2;overflow-wrap:break-word;word-break:break-word} td.em + td, td.st{grid-column:2}
     td.act{grid-column:3;grid-row:1 / span 2;align-self:center}
     td.act form{display:block;margin:4px 0}
   }

@@ -267,6 +267,48 @@ alone (every store's rows of one account) from reading the whole table. Only
   (`ghListHas` answers `null`: nothing read yet), a key that isn't in D1 gets 503 from `/premium` (`premiumGet` decides
   from one look at each list), not 401, so the app keeps its last answer. `/admin/premium` lists them. Pages
   1.9.127 and 1.9.129 below.
+  Since 2026-10-18 (the owner's request: "Create payment option. $10 per checkout or $25 a month plan or 10 slots") it
+  takes **payments through Stripe**, dormant until the owner adds the secrets `STRIPE_SECRET_KEY` and
+  `STRIPE_WEBHOOK_SECRET` (`billingOn`; setup in `license-worker/README.md` → Payments). Plans: $10 per checkout (one
+  order is one checkout, due 3 days after it, free if the store cancels it before it's paid; no automatic refund after),
+  or monthly, $25 for 10 slots switched on at once with nothing per checkout, plus one add-on of 15 slots for another $25.
+  The owner's words: "Buyers that I already approved should not be charged for anything", so **Friends and Family**
+  (`exemptOf`): everyone issued a license before payments came on (`on_since:<mode>` in `billing_config`, stamped by the
+  first request that sees the keys), every hand-made key, and anyone the owner moves there, is never charged or refused
+  and keeps their slot limits; the owner's own FAFO (`currentAlertSender`) too. Anyone else not covered by a paid month
+  pays per checkout on the slots they sent, plan picked or not (the owner's choice); a plan only decides whether they
+  can submit. Checkouts (`billing_lines`, unique per buyer, mode, store and order number): orders on accounts the owner
+  gave out, from POST /alerts (placed from the day given out, not after the buyer pulled that slot, `billing_pulled`;
+  any sender's 'canceled' voids by order number); orders on the buyer's own accounts reported by their FAFO
+  (`POST /billing/checkouts`), billed only while that account was out as one of their slots (`billing_accounts`: the
+  slots CSVs' emails, hashed with `acctHash`, recorded once a batch is posted, closed by a pull the owner was told of,
+  deleted with the lines reported on them when the batch is declined, `declineLines`); and the owner's, added by hand or
+  pasted from the bot's success log on the Billing page. A buyer cancel only voids their own reported lines (and the
+  owner's on their own accounts). Coverage (`billable`): from `on_since` (or `charge_from`, when the owner moves a buyer
+  out of Friends and Family), not on a day a paid monthly invoice covers (`billing_subs.paid_through`, which only moves
+  once Stripe says the invoice is paid); a checkout while a renewal is being charged or retried is held (`held_sub`),
+  then free if it's paid or due if the plan ends. **Submit** refuses with **402** `{error, billing:{reason, …}}` (never
+  401 or 503, which older pages read otherwise) before the batch is claimed (`billingGate`): `no-plan`, `overdue`,
+  `past-due`, `setting-up`, `disputed-payment` (a bank dispute holds Submit until the owner clears it), or `over-limit`
+  (a monthly buyer with more on than the plan: 1.9.130 sends `on`, and the worker counts the CSV rows too); the channel
+  hears of a refusal at most every 6 hours per buyer, saying when it came from a FAFO too old to explain it.
+  `/slots/limit` answers a monthly buyer's plan slots with `canRequest:false` (POST /slots/request 409s "Add 15 slots in
+  Invoice"). Stripe: `Stripe-Version: 2026-09-30.endive` pinned (`stripe`), Checkout sessions with card and Link only, one
+  open 'pay' session per buyer (a partial unique index on `billing_payments`), the amounts worked out here, one Customer
+  per buyer and mode, prices made by lookup key (`ensurePrices`). It never trusts a webhook's payload: each event makes it
+  fetch the session or subscription again (`fulfillSession`, `syncSubscription`), so repeats and order don't matter, and
+  `reconcile` asks Stripe again from GET /billing and Submit, so a missed webhook changes nothing. A payment for lines
+  canceled, waived or paid meanwhile refunds the difference by itself. A second monthly subscription is canceled at
+  once (the owner refunds it). `stripeMode` (a key with `_live_` in it is live) keeps test and live rows apart, and in test
+  mode only licenses the owner marks **Tester** see billing. The buyer's page asks `GET /billing` (state, lines, what to
+  report, `report.accts`), `/billing/plan`, `/billing/checkout` (`pay`, `monthly`, `extras`, `cancel`, `resume`,
+  `invoice`; answers a Stripe URL the page shows as a link), `/billing/dispute` ("Not my seller's checkout?", answered
+  Waive or Keep by the owner). The owner's **Billing page** (`POST /billing/list` from the owner's FAFO only, 10 a day;
+  `/billing/list/:id?t=…`, 24 hours, changes by POST then 303): what's owed, overdue and paid, whether order alerts are
+  coming in (without them assigned-account checkouts aren't billed), every buyer's plan and status, and per buyer Friends
+  and Family / Charge, Tester, Clear dispute hold, the invoice with Waive, Undo waive, Mark paid, Charge again and the
+  dispute answers, Add a checkout, and Paste checkouts (preview, then Add). `/billing/done` is Stripe's return page (Back
+  to FAFO for the web). `/admin/billing` sums it up. Tables `billing_*` (12, new only). Page 1.9.130 below.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 
@@ -1306,6 +1348,36 @@ Jig address (`profileMenuItems`, and `jigProfile` checks), and Mass edit has no 
 Pokémon Center, Jig on City or ZIP code, Jig for or its note (`PM_JIG`; Random phone numbers and New random first and last
 names stay). Generate's Jig goes with Generate. With premium every page, menu and window is as 1.9.128 drew it. Hidden,
 not locked, as Generate is. Nothing gains a field.
+
+From 1.9.130 the app has **Invoice** (the owner's request, 2026-10-18: payment plans through Stripe, the license worker
+section above), shown only once the worker says payments are on for this license (`GET /billing` → `on:true`; with them
+off every view's markup is 1.9.129's). `refreshBilling` asks at unlock, every 5 minutes while shown, when Invoice or Submit
+is drawn, on coming back to the tab or online, and every 4 seconds for 3 minutes after Stripe was opened; a 401 counts as
+off, other errors keep the last answer. Only `{h, on, plan, exempt, block reason}` goes to localStorage (`orbit-billing`,
+for other tabs and a fresh unlock); the invoice and amounts stay in memory and go at lock. `renderInvoice` (sidebar after
+Submit, with "!" when blocked or the number owed; phone tab after Submit) shows Friends and Family ("Nothing to pay"), no
+plan (the two plan cards: Pay per checkout, or Monthly with "Add 15 more slots"), pay per checkout (counts strip, the
+invoice table: date, store, order, item, whose account — "Your account" with the login it matches, "Account your seller
+gave you" or "Added by your seller" — due by, Due / Overdue / Paid / Canceled · no charge / Waived / Disputed / On hold,
+and Pay $x on Stripe), or "Monthly subscription plan" with Nothing due (or what's still owed), renews or ends, add or
+remove the extra 15 slots, Cancel plan (asking what comes after), Switch to pay per checkout, and Payment failed / Pay
+now or Finish payment. Stripe opens from a window that asks the worker as it opens and then shows a real link (`openStripe`;
+a fresh click, so no popup blocking; the desktop opens it in the system browser), and closes itself once the payment
+shows. Submit (`openSubmitSlots`) asks again when a block is cached and opens `billingBlockDialog` (Open Invoice and the
+direct action); both send paths carry `on: slotsInUse()`, and a 402 keeps a key typed into Submit (`keepTypedLic`) and
+opens the same window, or the plan's slot-limit window for over-limit (`planLimitDialog`, which offers the extra slots in
+place of Request more slots). `reportCheckouts` tells the worker about orders on the buyer's own accounts that were out as
+slots: an order's `sentTo || inbox` whose hash is in `report.accts`, or, for one with neither, the one profile on its store
+shipping to its address (`billAccountOf`); never `fromSeller` orders, nor pasted ones whose date is only the paste day
+(`atGuess`, cleared when the confirmation syncs); 'placed' then 'canceled' (only when a store email canceled it, `o.dates.canceled`),
+each once (`o.billTold`, synced like `buyerTold`); cancels of orders deleted before they went wait in `S.billCancels`
+(this device only, never synced, like `pulls`). Notices: new checkouts on the invoice and ones due within a day (synced
+settings `billToldAt`, `billRemindAt`, so one device tells). A submitted slot keeps the account it was sent with
+(`subs[].acct`), and pulls send it with `storeKey`, so the worker closes the right window. **Deleting a profile whose slot
+is out now pulls the slot first** (`pullDeleted`, every delete path; the confirm says so), billing on or off, so the
+seller is told. The owner's FAFO gets Settings → Billing (`billingSectionHTML`, See billing → `askBillingList`), with a
+warning when order alerts aren't on there. Orders gain `billTold` and `atGuess`, subs `acct`, settings `billToldAt` and
+`billRemindAt`, which 1.9.112 keeps; `billCancels` is device-only.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
