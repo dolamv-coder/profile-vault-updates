@@ -4155,6 +4155,7 @@ function renderLock(msg){
 
 function lock(msg){
   S = null; KEY = null; SYNC_AUTH = null; clearTimeout(SYNC.timer); UI.selected.clear(); UI.orderSel.clear(); UI.reveal.clear(); UI.q = "";
+  PROF_CLIP = null;   // profiles copied to paste (1.9.133)
   BILL.d = null; BILL.shown = ""; BILL.watch = 0; BILL.wait = null; BILL.names.clear(); ACCT_HASH.clear();   // the invoice and emails stay unlocked only
   renderLock(msg || "Locked.");
   setTimeout(webReloadOnLock, 400);   // the web version, with a newer release out (1.9.108)
@@ -6286,17 +6287,23 @@ function dupMenuItems(p){
 }
 // Copy and Paste on Profiles (1.9.133, the owner's request: "copy everything in Jigless and paste into another group
 // without losing data in Jigless group"). Copy keeps the profiles' ids in this tab only (PROF_CLIP, never saved or
-// synced, gone at lock); Paste puts a copy of each into the group picked, made as Duplicate makes one for its own store
+// synced, gone at lock: a weak reference to the vault, so a locked vault isn't kept in memory); Paste puts a copy of each into the group picked, made as Duplicate makes one for its own store
 // (copyProfile: the same card, store and login, phone, size and Only one checkout, addresses of their own; slots and
 // checkouts stay with the originals), and leaves the originals as they are. Two profiles on one store can't share a
 // name (the license worker pairs a buyer's Target and Pokémon Center profiles by name), so each copy's name gets what's
 // typed added at its end (pasteNames), numbered where a profile on its store has that name.
 let PROF_CLIP = null;
-const clipProfiles = () => { if (!PROF_CLIP || PROF_CLIP.vault !== S) return []; const ids = new Set(PROF_CLIP.ids); return S.profiles.filter(p => ids.has(p.id)); };
+const clipProfiles = () => {
+  const v = PROF_CLIP && (PROF_CLIP.vault.deref ? PROF_CLIP.vault.deref() : PROF_CLIP.vault);
+  if (!S || v !== S) return [];
+  // ...and a copied profile's other stores, split off it since (oneStorePass and splitNow give them the id <id>.<store>)
+  const ids = new Set(PROF_CLIP.ids), known = PROF_CLIP.known;
+  return S.profiles.filter(p => ids.has(p.id) || (!known.has(p.id) && ids.has(osRoot(p.id))));
+};
 function copyProfiles(ids){
   const want = new Set(ids), list = S.profiles.filter(p => want.has(p.id));
   if (!list.length) return;
-  PROF_CLIP = {ids:list.map(p => p.id), vault:S};
+  PROF_CLIP = {ids:list.map(p => p.id), known:new Set(S.profiles.map(p => p.id)), vault:typeof WeakRef === "function" ? new WeakRef(S) : S};
   render();
   toast(`Copied ${plural(list.length, "profile")}. Open the group they go in and use Paste.`);
 }

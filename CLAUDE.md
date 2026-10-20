@@ -1421,8 +1421,9 @@ From 1.9.133 Profiles has **Copy and Paste** (the owner's request, 2026-10-20, w
 profiles: "copy everything in Jigless and pasting into another group without losing data in Jigless group"). Copy is on
 the selection bar (before Mass edit), in the right-click menu of selected profiles and of one profile ("Copy", above Copy
 as JSON), in a profile group's menu (and Ungrouped's: "Copy its N profiles") and Ctrl+C (with profiles selected, no text
-selected and no box being typed in). It keeps their ids in this tab only (`PROF_CLIP`, tied to the vault object, so it's
-gone at lock; never saved or synced). Paste is a "Paste N profiles" button on Profiles while something is copied, in a
+selected and no box being typed in). It keeps their ids in this tab only (`PROF_CLIP`, with a weak reference to the vault
+object, emptied at lock; never saved or synced), and a copied profile's other stores that a split makes later (an old
+vault's profile on two stores, `<id>.<store>`) go with it. Paste is a "Paste N profiles" button on Profiles while something is copied, in a
 group's menu ("Paste N profiles here…"), in those right-click menus and Ctrl+V (`openPasteProfiles`): it asks for the
 group (the one shown to start; New group… is made only on Paste) and what to add to each name, previews the names, and
 makes a copy of each profile in that group as Duplicate makes one for its own store (`copyProfile`: the same card, store
@@ -1431,7 +1432,7 @@ checkouts stay with the originals, which don't change), then shows that group wi
 also removes a group the paste made). Two profiles on one store can't share a name (the license worker pairs a buyer's
 Target and Pokémon Center profiles by name), so each copy's name gets the text added (`pasteNames`: after a space unless it
 starts with a sign, as "-S"; "copy" to start), numbered " 2", " 3"… where its store has that name; a person's Target and
-Pokémon Center profiles get one new name between them. Nothing gains a field.
+Pokémon Center profiles get one new name between them, unless one of their stores has it. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
