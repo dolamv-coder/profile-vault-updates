@@ -1,0 +1,1 @@
+New: Copy and Paste on Profiles. Select profiles (or right-click a group) and use Copy, then open another group and use Paste: each profile is copied there with its card, store, login and addresses, and the originals stay as they are. Each copy's name gets a word you pick at its end, since two profiles on one store can't share a name. Ctrl+C and Ctrl+V work too.

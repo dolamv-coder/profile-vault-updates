@@ -1417,6 +1417,22 @@ have written Amex since 1.9.87 and still do), and `matchNameOnCardAndAddress` tr
 name (the spec's meaning). No Hidden docs were found, so beyond Visa its card types are AYCD's. Store logins and groups are
 left out, and the note says so. Nothing gains a field.
 
+From 1.9.133 Profiles has **Copy and Paste** (the owner's request, 2026-10-20, with a screenshot of 121 selected
+profiles: "copy everything in Jigless and pasting into another group without losing data in Jigless group"). Copy is on
+the selection bar (before Mass edit), in the right-click menu of selected profiles and of one profile ("Copy", above Copy
+as JSON), in a profile group's menu (and Ungrouped's: "Copy its N profiles") and Ctrl+C (with profiles selected, no text
+selected and no box being typed in). It keeps their ids in this tab only (`PROF_CLIP`, tied to the vault object, so it's
+gone at lock; never saved or synced). Paste is a "Paste N profiles" button on Profiles while something is copied, in a
+group's menu ("Paste N profiles here…"), in those right-click menus and Ctrl+V (`openPasteProfiles`): it asks for the
+group (the one shown to start; New group… is made only on Paste) and what to add to each name, previews the names, and
+makes a copy of each profile in that group as Duplicate makes one for its own store (`copyProfile`: the same card, store
+and login, phone, size and Only one checkout, the email as it is, addresses of their own; slots, submitted marks and
+checkouts stay with the originals, which don't change), then shows that group with the copies selected, with Undo (which
+also removes a group the paste made). Two profiles on one store can't share a name (the license worker pairs a buyer's
+Target and Pokémon Center profiles by name), so each copy's name gets the text added (`pasteNames`: after a space unless it
+starts with a sign, as "-S"; "copy" to start), numbered " 2", " 3"… where its store has that name; a person's Target and
+Pokémon Center profiles get one new name between them. Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
