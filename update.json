@@ -1,10 +1,10 @@
 {
-  "version": "1.9.132",
-  "url": "index-1.9.132.html",
-  "sha256": "75b9d03762b23850a4d7794440c4516e041303070967e13e4f5095a0b78fd825",
-  "signature": "kWjmNsodsNb/2PYbWJu8hJ9TP4PiMWZ8ICAc30TFwyC8+yEJ3uRSwTfL6TfCi+7grvggm3RfngBpXfSPAGzkCw==",
+  "version": "1.9.133",
+  "url": "index-1.9.133.html",
+  "sha256": "9e9379847cec7d655e578a4f753027e5ceefd04341e1509163e7e6399a16ba8c",
+  "signature": "ffWOwVSx+OAnkHUpZ9Ex/3cNWzUnaZAk4WPm5Li7rqkxaxq3OhH1zxfZd/GZCOOFmZ4L5W3N+8YhmsRwx/FiAA==",
   "minAppVersion": "0",
-  "notes": "New: Export profiles can also save them for Stellar and Hidden. Pick Stellar JSON or Hidden JSON under Format. Card numbers, expiry dates, phone numbers, states and countries are written the way each bot writes them. Store logins and groups stay in FAFO.",
+  "notes": "New: Copy and Paste on Profiles. Select profiles (or right-click a group) and use Copy, then open another group and use Paste: each profile is copied there with its card, store, login and addresses, and the originals stay as they are. Each copy's name gets a word you pick at its end, since two profiles on one store can't share a name. Ctrl+C and Ctrl+V work too.",
   "installerUrl": "",
-  "publishedAt": "2026-10-20T04:59:19.458Z"
+  "publishedAt": "2026-10-20T13:43:46.472Z"
 }
