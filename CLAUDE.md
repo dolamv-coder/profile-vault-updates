@@ -1397,19 +1397,23 @@ another shape). Nothing gains a field.
 From 1.9.132 Export profiles also has **Stellar JSON** and **Hidden JSON** (the owner's request, 2026-10-20, with an
 export from each bot), after Valor JSON (`toStellar`, `toHidden`, `profiles-<date>-stellar.json` and `-hidden.json`). Both
 are a list of profiles in the order of the owner's files, with billing written out even when it's the shipping address,
-the card number's digits, the card's own name or else the billing name, and a US or Canadian phone's 10 digits
-(`plainPhone`, on `phone10`, which `valorPhone` now uses too; other countries' phones as typed). **Stellar**: `profileName,
-email, phone, shipping, billingAsShipping, oneCheckoutPerProfile, billing, payment {cardName, cardType, cardNumber, cardMonth,
-cardYear, cardCvv}`, each address `firstName, lastName, country, address, address2, state, city, zipcode` with the country
-and state as codes (`stateCode` turns a written-out US state or Canadian province into its code), the expiry 07 and 31, and
-the card type Visa (the owner's file), MasterCard, Amex or Discover (The Profile Builder's Stellar export), else AYCD's
-name (`AYCD_TYPE`: JCB, Diners Club, UnionPay; RedCard for Target's). **Hidden** is AYCD's own profile layout, as
-`slotAycd` sends the seller's channel (FAFO's AYCD JSON export has `size` and `profileGroup` instead of `notes`): `name,
-notes, billingAddress, shippingAddress, paymentDetails {nameOnCard, cardType, cardNumber, cardExpMonth, cardExpYear,
-cardCvv}, sameBillingAndShippingAddress, onlyCheckoutOnce, matchNameOnCardAndAddress`, each address `name, email, phone,
-line1, line2, line3, postCode, city, country, state` with the state and country written out, the expiry 07 and 2031, the
-card type as AYCD names it, and `matchNameOnCardAndAddress` true when the card's name is the billing name. Store logins and
-groups are left out, and the note says so. Nothing gains a field.
+the card number's digits, the card's own name or else the billing name, and the phone's digits only, as both ask (a US or
+Canadian one's 10: `plainPhone`, on `phone10`, which `valorPhone` now uses too). **Stellar**: `profileName, email, phone,
+shipping, billingAsShipping, oneCheckoutPerProfile, billing, payment {cardName, cardType, cardNumber, cardMonth, cardYear,
+cardCvv}`, each address `firstName, lastName, country, address, address2, state, city, zipcode` with the country and state
+as codes (`stateCode` turns a written-out US state or Canadian province into its code), the expiry 07 and 31, and the card
+type Visa (the owner's file), MasterCard, Amex or Discover, the only four Stellar's guide says it takes (`STELLAR_TYPE`;
+MasterCard as The Profile Builder writes it, though Stellar's guide spells it both ways). A Target RedCard is Visa, its PIN
+as the CVV, as Stellar's Target guide says. Any other card gets no type, and the note counts them (`stellarCardless`).
+**Hidden** (Hidden AIO) is AYCD's published profile layout, as `slotAycd` sends the seller's channel (FAFO's AYCD JSON export
+has `size` and `profileGroup` instead of `notes`): `name, notes, billingAddress, shippingAddress, paymentDetails
+{nameOnCard, cardType, cardNumber, cardExpMonth, cardExpYear, cardCvv}, sameBillingAndShippingAddress, onlyCheckoutOnce,
+matchNameOnCardAndAddress`, each address `name, email, phone, line1, line2, line3, postCode, city, country, state` with
+the state and country written out (AYCD's spec: long form), the expiry 07 and 2031, the card types AYCD's spec names
+(`HIDDEN_TYPE`: Visa, MasterCard, AmericanExpress, Discover, JCB; a RedCard as Visa; others none; FAFO's own AYCD files
+have written Amex since 1.9.87 and still do), and `matchNameOnCardAndAddress` true when the card's name is the billing
+name (the spec's meaning). No Hidden docs were found, so beyond Visa its card types are AYCD's. Store logins and groups are
+left out, and the note says so. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

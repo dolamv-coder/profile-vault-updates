@@ -6513,12 +6513,13 @@ function openExport(preset){
         const flat = list.map(flatProfile);
         const text = fmt === "csv" ? toCSV(flat) : fmt === "aycd" ? JSON.stringify(toAycd(flat), null, 2) : fmt === "valor" ? JSON.stringify(toValor(flat), null, 2)
           : fmt === "stellar" ? JSON.stringify(toStellar(flat), null, 2) : fmt === "hidden" ? JSON.stringify(toHidden(flat), null, 2) : JSON.stringify({format:"profile-vault", version:1, exportedAt:new Date().toISOString(), profiles:flat}, null, 2);
-        return {text, fmt, count:list.length, skipped:total - list.length};
+        return {text, fmt, count:list.length, skipped:total - list.length, odd:fmt === "stellar" ? stellarCardless(flat) : 0};
       };
       const note = () => {
         const r = build();
         $("#ex-note", panel).textContent = `${plural(r.count, "profile")} ready${r.skipped ? `, ${r.skipped} skipped` : ""}. The file includes full card numbers and CVVs in plain text, so delete it once you're done.${r.fmt === "csv" ? " In Excel, import card columns as text so numbers aren't rounded." : r.fmt === "aycd" ? " Store logins aren't part of AYCD's profile format, so they're left out." : r.fmt === "valor" ? " Store logins and groups aren't part of Valor's profile format, so they're left out. In Valor, import it into a profile group, with the Import beside the group's name."
-          : r.fmt === "stellar" || r.fmt === "hidden" ? ` Store logins and groups aren't part of ${r.fmt === "stellar" ? "Stellar" : "Hidden"}'s profile format, so they're left out.` : ""}`;
+          : r.fmt === "stellar" || r.fmt === "hidden" ? ` Store logins and groups aren't part of ${r.fmt === "stellar" ? "Stellar" : "Hidden"}'s profile format, so they're left out.` : ""}${r.odd
+          ? ` ${r.odd === 1 ? "One has a card" : r.odd + " have cards"} Stellar doesn't take: it takes Visa, Mastercard, Amex and Discover.` : ""}`;
         $("#ex-dl", panel).disabled = !r.count; $("#ex-copy", panel).disabled = !r.count;
       };
       panel.addEventListener("change", note); note();
@@ -6762,11 +6763,15 @@ function toValor(list){
   return out;
 }
 // Stellar's and Hidden's profiles (1.9.132), laid out as their own exports: a list, billing written out even when it's the
-// shipping address, the card number's digits, a US or Canadian phone's 10 digits (others as typed), the card's own name or
-// else the billing name. Stellar has the state and country as codes and the expiry 07 / 31; Hidden is AYCD's layout
-// (slotAycd's): the state and country written out, the expiry 07 / 2031, and the card type as AYCD names it.
-const STELLAR_TYPE = {visa:"Visa", mastercard:"MasterCard", amex:"Amex", discover:"Discover"};
-const plainPhone = (s, country) => phone10(s, country) || String(s || "").trim();
+// shipping address, the card number's digits, the phone's digits only (a US or Canadian one's 10, as both ask), the card's
+// own name or else the billing name. Stellar has the state and country as codes, the expiry 07 / 31 and the four card
+// types its guide says it takes (a Target RedCard as Visa, with its PIN as the CVV, as its Target guide says); Hidden is
+// AYCD's published profile layout (slotAycd's, with `notes`): the state and country written out, the expiry 07 / 2031
+// and the card types AYCD's spec names (AmericanExpress, not the Amex FAFO's own AYCD files have had since 1.9.87).
+const STELLAR_TYPE = {visa:"Visa", mastercard:"MasterCard", amex:"Amex", discover:"Discover", redcard:"Visa"};
+const HIDDEN_TYPE = {visa:"Visa", mastercard:"MasterCard", amex:"AmericanExpress", discover:"Discover", jcb:"JCB", redcard:"Visa"};
+const plainPhone = (s, country) => phone10(s, country) || digits(s);
+const stellarCardless = (list) => list.filter(f => f.card && digits(f.card.number) && !STELLAR_TYPE[f.card.brand]).length;
 const expMonth2 = (m) => { const mm = digits(m); return +mm ? mm.padStart(2, "0").slice(-2) : ""; };
 const stateCode = (s, code) => { const t = String(s || "").trim(), sl = code === "US" ? US_STATES : code === "CA" ? CA_PROVINCES : null;
   const hit = sl && sl.find(x => x[0] === t.toUpperCase() || norm(x[1]) === norm(t)); return hit ? hit[0] : t; };
@@ -6777,7 +6782,7 @@ function toStellar(list){
     const s = place(f.shipping), b = place(f.billingSameAsShipping ? f.shipping : f.billing), c = f.card || {}, num = digits(c.number), yy = digits(c.expYear);
     return {profileName:f.name || "", email:f.email || "", phone:plainPhone(f.phone, (f.shipping || f.billing || {}).country), shipping:s,
       billingAsShipping:!!f.billingSameAsShipping, oneCheckoutPerProfile:!!f.onlyCheckoutOnce, billing:b,
-      payment:{cardName:c.holder || [b.firstName, b.lastName].filter(Boolean).join(" "), cardType:!num ? "" : c.isRedCard ? "RedCard" : STELLAR_TYPE[c.brand] || AYCD_TYPE[c.brand] || "",
+      payment:{cardName:c.holder || [b.firstName, b.lastName].filter(Boolean).join(" "), cardType:num ? STELLAR_TYPE[c.brand] || "" : "",
         cardNumber:num, cardMonth:expMonth2(c.expMonth), cardYear:yy ? yy.slice(-2).padStart(2, "0") : "", cardCvv:c.cvv || ""}};
   });
 }
@@ -6787,7 +6792,7 @@ function toHidden(list){
   return list.map(f => {
     const bill = place(f.billingSameAsShipping ? f.shipping : f.billing, f), c = f.card || {}, num = digits(c.number), y = digits(c.expYear), holder = c.holder || bill.name;
     return {name:f.name || "", notes:"", billingAddress:bill, shippingAddress:place(f.shipping, f),
-      paymentDetails:{nameOnCard:holder, cardType:!num ? "" : c.isRedCard ? "RedCard" : AYCD_TYPE[c.brand] || "", cardNumber:num, cardExpMonth:expMonth2(c.expMonth),
+      paymentDetails:{nameOnCard:holder, cardType:num ? HIDDEN_TYPE[c.brand] || "" : "", cardNumber:num, cardExpMonth:expMonth2(c.expMonth),
         cardExpYear:y.length === 2 ? "20" + y : y, cardCvv:c.cvv || ""},
       sameBillingAndShippingAddress:!!f.billingSameAsShipping, onlyCheckoutOnce:!!f.onlyCheckoutOnce, matchNameOnCardAndAddress:norm(holder) === norm(bill.name)};
   });
