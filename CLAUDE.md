@@ -1386,10 +1386,11 @@ object keyed by each profile's id, a new v4 UUID per export (`valorId`; key and 
 shipping, billing, id, totalSpent` in that order, and each address `firstName, lastName, addressLine1, addressLine2, city,
 countryName, countryCode, state, zipCode`. The owner's file showed: billing written out even when it's the shipping
 address, the card number in fours (`valorNumber`; an Amex 4-6-5, a guess), the expiry MM/YY (`valorExp`; Valor's docs say
-so too), the phone 555-010-1234 (`valorPhone`: 10 digits, or 11 starting with 1; anything else as typed), the state and
-country written out (`aycdState`, `aycdCountry`), `quickTask` false and `totalSpent` 0. Card types come from converters
-that write Valor files (no Valor source for them): visa, mastercard, amex, discover, else `unknown` (as Profile Builder
-writes), none for a card with no number. A card with no name gets the billing name. Store logins and groups aren't in
+so too), the phone 555-010-1234 (`valorPhone`: 10 digits, or 11 starting with 1, for a profile shipping to the US or
+Canada, or with no country, and not a `+` number of another country; anything else as typed), the state and country
+written out (`aycdState`, `aycdCountry`), `quickTask` false and `totalSpent` 0. Card types: visa (the owner's file), and
+mastercard, amex and discover from converters that write Valor files (no Valor source for those), else `unknown` (as
+Profile Builder writes), none for a card with no number. A card with no name gets the billing name. Store logins and groups aren't in
 Valor's profile, and the note says to import the file into a profile group (Valor's separate Profile Groups import takes
 another shape). Nothing gains a field.
 

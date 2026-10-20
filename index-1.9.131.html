@@ -6723,8 +6723,9 @@ function toAycd(list){
 }
 
 // Valor's profiles (1.9.131), laid out as Valor exports one group's: an object keyed by each profile's id (a new v4 UUID,
-// as converters that write Valor do), the card number in fours (Amex 4-6-5), the expiry MM/YY, the phone 555-010-1234,
-// the state and country written out (as AYCD's) and billing filled in even when it's the shipping address.
+// as Valor's own export and Profile Builder have), the card number in fours (Amex 4-6-5), the expiry MM/YY, a US or
+// Canadian phone 555-010-1234 (others as typed), the state and country written out (as AYCD's) and billing filled in
+// even when it's the shipping address.
 const VALOR_TYPE = {visa:"visa", mastercard:"mastercard", amex:"amex", discover:"discover"};
 const valorId = () => {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -6732,7 +6733,12 @@ const valorId = () => {
   const h = Array.from(b, x => x.toString(16).padStart(2, "0")).join("");
   return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
 };
-const valorPhone = (s) => { const d = digits(s), t = d.length === 11 && d[0] === "1" ? d.slice(1) : d; return t.length === 10 ? `${t.slice(0,3)}-${t.slice(3,6)}-${t.slice(6)}` : String(s || "").trim(); };
+const valorPhone = (s, country) => {
+  const raw = String(s || "").trim(), d = digits(raw);
+  if ((country && country !== "US" && country !== "CA") || (raw[0] === "+" && d[0] !== "1")) return raw;   // not a US or Canadian number
+  const t = d.length === 11 && d[0] === "1" ? d.slice(1) : d;
+  return t.length === 10 ? `${t.slice(0,3)}-${t.slice(3,6)}-${t.slice(6)}` : raw;
+};
 const valorNumber = (n) => { const d = digits(n); return d.length === 15 && /^3[47]/.test(d) ? `${d.slice(0,4)} ${d.slice(4,10)} ${d.slice(10)}` : d.replace(/(\d{4})(?=\d)/g, "$1 "); };
 const valorExp = (m, y) => { const mm = digits(m), yy = digits(y); return +mm && yy ? `${mm.padStart(2, "0").slice(-2)}/${yy.slice(-2).padStart(2, "0")}` : ""; };
 function toValor(list){
@@ -6742,7 +6748,7 @@ function toValor(list){
   list.forEach(f => {
     const id = valorId(), s = place(f.shipping), b = place(f.billingSameAsShipping ? f.shipping : f.billing), c = f.card || {};
     const num = digits(c.number);
-    out[id] = {name:f.name || "", email:f.email || "", phoneNumber:valorPhone(f.phone), billingSameAsShipping:!!f.billingSameAsShipping, oneCheckout:!!f.onlyCheckoutOnce, quickTask:false,
+    out[id] = {name:f.name || "", email:f.email || "", phoneNumber:valorPhone(f.phone, (f.shipping || f.billing || {}).country),billingSameAsShipping:!!f.billingSameAsShipping, oneCheckout:!!f.onlyCheckoutOnce, quickTask:false,
       card:{holder:c.holder || [b.firstName, b.lastName].filter(Boolean).join(" "), number:valorNumber(num), expiration:valorExp(c.expMonth, c.expYear), cvv:c.cvv || "", type:num ? VALOR_TYPE[brandOf(num)] || "unknown" : ""},
       shipping:s, billing:b, id, totalSpent:0};
   });
