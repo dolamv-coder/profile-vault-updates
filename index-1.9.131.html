@@ -6494,6 +6494,7 @@ function openExport(preset){
       <div class="section"><div class="flabel" style="margin-bottom:8px">Format</div><div class="radios">
         <label class="radio"><input type="radio" name="fmt" value="json" checked>JSON<small>Backup, or re-import here</small></label>
         <label class="radio"><input type="radio" name="fmt" value="aycd">AYCD JSON<small>AYCD Profile Converter</small></label>
+        <label class="radio"><input type="radio" name="fmt" value="valor">Valor JSON<small>Valor's profile import</small></label>
         <label class="radio"><input type="radio" name="fmt" value="csv">CSV<small>Spreadsheets</small></label>
       </div></div>
       <label class="check"><input type="checkbox" id="ex-skip" checked>Skip profiles missing an address or card</label>
@@ -6508,18 +6509,18 @@ function openExport(preset){
         list.sort((a,b) => natural(a.name,b.name));
         const fmt = $('input[name="fmt"]:checked', panel).value;
         const flat = list.map(flatProfile);
-        const text = fmt === "csv" ? toCSV(flat) : fmt === "aycd" ? JSON.stringify(toAycd(flat), null, 2) : JSON.stringify({format:"profile-vault", version:1, exportedAt:new Date().toISOString(), profiles:flat}, null, 2);
+        const text = fmt === "csv" ? toCSV(flat) : fmt === "aycd" ? JSON.stringify(toAycd(flat), null, 2) : fmt === "valor" ? JSON.stringify(toValor(flat), null, 2) : JSON.stringify({format:"profile-vault", version:1, exportedAt:new Date().toISOString(), profiles:flat}, null, 2);
         return {text, fmt, count:list.length, skipped:total - list.length};
       };
       const note = () => {
         const r = build();
-        $("#ex-note", panel).textContent = `${plural(r.count, "profile")} ready${r.skipped ? `, ${r.skipped} skipped` : ""}. The file includes full card numbers and CVVs in plain text, so delete it once you're done.${r.fmt === "csv" ? " In Excel, import card columns as text so numbers aren't rounded." : r.fmt === "aycd" ? " Store logins aren't part of AYCD's profile format, so they're left out." : ""}`;
+        $("#ex-note", panel).textContent = `${plural(r.count, "profile")} ready${r.skipped ? `, ${r.skipped} skipped` : ""}. The file includes full card numbers and CVVs in plain text, so delete it once you're done.${r.fmt === "csv" ? " In Excel, import card columns as text so numbers aren't rounded." : r.fmt === "aycd" ? " Store logins aren't part of AYCD's profile format, so they're left out." : r.fmt === "valor" ? " Store logins and groups aren't part of Valor's profile format, so they're left out. In Valor, import it into a profile group, with the Import beside the group's name." : ""}`;
         $("#ex-dl", panel).disabled = !r.count; $("#ex-copy", panel).disabled = !r.count;
       };
       panel.addEventListener("change", note); note();
       const dl = $("#ex-dl", panel);
       if (!DL && !IS_LOCAL) dl.hidden = true;
-      dl.addEventListener("click", async () => { const r = build(); const d = new Date().toISOString().slice(0,10); if (await saveFile(`profiles-${d}${r.fmt === "aycd" ? "-aycd.json" : "." + r.fmt}`, r.text)) close(); });
+      dl.addEventListener("click", async () => { const r = build(); const d = new Date().toISOString().slice(0,10); if (await saveFile(`profiles-${d}${r.fmt === "aycd" || r.fmt === "valor" ? `-${r.fmt}.json` : "." + r.fmt}`, r.text)) close(); });
       $("#ex-copy", panel).addEventListener("click", async () => { const r = build(); if (await copyText(r.text, plural(r.count, "profile"))) close(); });
     }
   });
@@ -6719,6 +6720,33 @@ function toAycd(list){
       paymentDetails:{nameOnCard:c.holder || "", cardType:c.isRedCard ? "RedCard" : (AYCD_TYPE[c.brand] || ""), cardNumber:c.number || "", cardExpMonth:c.expMonth || "", cardExpYear:c.expYear || "", cardCvv:c.cvv || ""},
       sameBillingAndShippingAddress:!!f.billingSameAsShipping, onlyCheckoutOnce:!!f.onlyCheckoutOnce, matchNameOnCardAndAddress:false};
   });
+}
+
+// Valor's profiles (1.9.131), laid out as Valor exports one group's: an object keyed by each profile's id (a new v4 UUID,
+// as converters that write Valor do), the card number in fours (Amex 4-6-5), the expiry MM/YY, the phone 555-010-1234,
+// the state and country written out (as AYCD's) and billing filled in even when it's the shipping address.
+const VALOR_TYPE = {visa:"visa", mastercard:"mastercard", amex:"amex", discover:"discover"};
+const valorId = () => {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16)); b[6] = b[6] & 15 | 64; b[8] = b[8] & 63 | 128;
+  const h = Array.from(b, x => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+};
+const valorPhone = (s) => { const d = digits(s), t = d.length === 11 && d[0] === "1" ? d.slice(1) : d; return t.length === 10 ? `${t.slice(0,3)}-${t.slice(3,6)}-${t.slice(6)}` : String(s || "").trim(); };
+const valorNumber = (n) => { const d = digits(n); return d.length === 15 && /^3[47]/.test(d) ? `${d.slice(0,4)} ${d.slice(4,10)} ${d.slice(10)}` : d.replace(/(\d{4})(?=\d)/g, "$1 "); };
+const valorExp = (m, y) => { const mm = digits(m), yy = digits(y); return +mm && yy ? `${mm.padStart(2, "0").slice(-2)}/${yy.slice(-2).padStart(2, "0")}` : ""; };
+function toValor(list){
+  const place = (a) => { a = a || {}; return {firstName:a.firstName || "", lastName:a.lastName || "", addressLine1:a.address1 || "", addressLine2:a.address2 || "", city:a.city || "",
+    countryName:aycdCountry(a.country || ""), countryCode:a.country || "", state:aycdState(a.state || "", a.country), zipCode:a.zip || ""}; };
+  const out = {};
+  list.forEach(f => {
+    const id = valorId(), s = place(f.shipping), b = place(f.billingSameAsShipping ? f.shipping : f.billing), c = f.card || {};
+    const num = digits(c.number);
+    out[id] = {name:f.name || "", email:f.email || "", phoneNumber:valorPhone(f.phone), billingSameAsShipping:!!f.billingSameAsShipping, oneCheckout:!!f.onlyCheckoutOnce, quickTask:false,
+      card:{holder:c.holder || [b.firstName, b.lastName].filter(Boolean).join(" "), number:valorNumber(num), expiration:valorExp(c.expMonth, c.expYear), cvv:c.cvv || "", type:num ? VALOR_TYPE[brandOf(num)] || "unknown" : ""},
+      shipping:s, billing:b, id, totalSpent:0};
+  });
+  return out;
 }
 
 const nh = (h) => String(h || "").toLowerCase().replace(/[^a-z0-9]/g, "");
