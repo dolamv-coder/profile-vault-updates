@@ -1,10 +1,10 @@
 {
-  "version": "1.9.130",
-  "url": "index-1.9.130.html",
-  "sha256": "6ea87db75101c8ab3159aaeb517115034bb82b053d2511814e4b9c8d63fa8818",
-  "signature": "k+JY6rrk2xOTFAOy7XF0JX4gz/UCf61mFX+z63qKknpp+fvgvblu8C9DgWD+zzCe8R8cknIvEEEoYHEDUn/fDg==",
+  "version": "1.9.131",
+  "url": "index-1.9.131.html",
+  "sha256": "018ac9d3f9753ed6a041fdd946f6b36588e5fa0f6173760958ae70772511c2e2",
+  "signature": "beJ8xcMkyjbk3pnyFV1wi69iSWZHZxsDJ9sz69hntaGB/dEPKTTAV3r2liOD2oRI1SHO3tnNZdGFDl6sRbrzBA==",
   "minAppVersion": "0",
-  "notes": "New: an Invoice page. If your seller charges for checkouts, you'll pick a plan there, $10 per checkout or $25 a month for 10 slots, and pay through Stripe. Buyers your seller had already approved are Friends and Family and aren't charged. Also, deleting a profile whose slot is out with your seller now pulls that slot, so your seller knows.",
+  "notes": "New: Export profiles can save them for Valor. Pick Valor JSON under Format, then in Valor import the file into a profile group. Card numbers, expiry dates, phone numbers, states and countries are written the way Valor writes them. Store logins and groups stay in FAFO.",
   "installerUrl": "",
-  "publishedAt": "2026-10-18T14:50:11.173Z"
+  "publishedAt": "2026-10-20T04:04:02.098Z"
 }
