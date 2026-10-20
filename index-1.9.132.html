@@ -6513,13 +6513,14 @@ function openExport(preset){
         const flat = list.map(flatProfile);
         const text = fmt === "csv" ? toCSV(flat) : fmt === "aycd" ? JSON.stringify(toAycd(flat), null, 2) : fmt === "valor" ? JSON.stringify(toValor(flat), null, 2)
           : fmt === "stellar" ? JSON.stringify(toStellar(flat), null, 2) : fmt === "hidden" ? JSON.stringify(toHidden(flat), null, 2) : JSON.stringify({format:"profile-vault", version:1, exportedAt:new Date().toISOString(), profiles:flat}, null, 2);
-        return {text, fmt, count:list.length, skipped:total - list.length, odd:fmt === "stellar" ? stellarCardless(flat) : 0};
+        return {text, fmt, count:list.length, skipped:total - list.length, odd:fmt === "stellar" ? stellarCardless(flat) : 0, noPin:fmt === "stellar" ? stellarNoPin(flat) : 0};
       };
       const note = () => {
         const r = build();
         $("#ex-note", panel).textContent = `${plural(r.count, "profile")} ready${r.skipped ? `, ${r.skipped} skipped` : ""}. The file includes full card numbers and CVVs in plain text, so delete it once you're done.${r.fmt === "csv" ? " In Excel, import card columns as text so numbers aren't rounded." : r.fmt === "aycd" ? " Store logins aren't part of AYCD's profile format, so they're left out." : r.fmt === "valor" ? " Store logins and groups aren't part of Valor's profile format, so they're left out. In Valor, import it into a profile group, with the Import beside the group's name."
           : r.fmt === "stellar" || r.fmt === "hidden" ? ` Store logins and groups aren't part of ${r.fmt === "stellar" ? "Stellar" : "Hidden"}'s profile format, so they're left out.` : ""}${r.odd
-          ? ` ${r.odd === 1 ? "One has a card" : r.odd + " have cards"} Stellar doesn't take: it takes Visa, Mastercard, Amex and Discover.` : ""}`;
+          ? ` ${r.odd === 1 ? "One has a card" : r.odd + " have cards"} Stellar doesn't take: it takes Visa, Mastercard, Amex and Discover.` : ""}${r.noPin
+          ? ` ${r.noPin === 1 ? "One Target RedCard has" : r.noPin + " Target RedCards have"} no PIN: Stellar takes a RedCard's PIN as its CVV, so add it as the card's CVV in Cards.` : ""}`;
         $("#ex-dl", panel).disabled = !r.count; $("#ex-copy", panel).disabled = !r.count;
       };
       panel.addEventListener("change", note); note();
@@ -6738,8 +6739,8 @@ const valorId = () => {
   const h = Array.from(b, x => x.toString(16).padStart(2, "0")).join("");
   return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
 };
-// A US or Canadian phone's 10 digits (from 555-010-1234, (555) 010-1234, +1 555 010 1234…), else "": a profile shipping
-// elsewhere, or a + number of another country, keeps its phone as typed.
+// A US or Canadian phone's 10 digits (from 555-010-1234, (555) 010-1234, +1 555 010 1234…), else "" for a profile shipping
+// elsewhere or a + number of another country (Valor then keeps the phone as typed, Stellar and Hidden its digits).
 const phone10 = (s, country) => {
   const raw = String(s || "").trim(), d = digits(raw);
   if ((country && country !== "US" && country !== "CA") || (raw[0] === "+" && d[0] !== "1")) return "";
@@ -6771,7 +6772,9 @@ function toValor(list){
 const STELLAR_TYPE = {visa:"Visa", mastercard:"MasterCard", amex:"Amex", discover:"Discover", redcard:"Visa"};
 const HIDDEN_TYPE = {visa:"Visa", mastercard:"MasterCard", amex:"AmericanExpress", discover:"Discover", jcb:"JCB", redcard:"Visa"};
 const plainPhone = (s, country) => phone10(s, country) || digits(s);
+const HIDDEN_COUNTRY = {CZ:"Czech Republic", TR:"Turkey"};   // AYCD's spellings, where FAFO's list differs
 const stellarCardless = (list) => list.filter(f => f.card && digits(f.card.number) && !STELLAR_TYPE[f.card.brand]).length;
+const stellarNoPin = (list) => list.filter(f => f.card && f.card.isRedCard && digits(f.card.number) && !digits(f.card.cvv)).length;
 const expMonth2 = (m) => { const mm = digits(m); return +mm ? mm.padStart(2, "0").slice(-2) : ""; };
 const stateCode = (s, code) => { const t = String(s || "").trim(), sl = code === "US" ? US_STATES : code === "CA" ? CA_PROVINCES : null;
   const hit = sl && sl.find(x => x[0] === t.toUpperCase() || norm(x[1]) === norm(t)); return hit ? hit[0] : t; };
@@ -6788,7 +6791,8 @@ function toStellar(list){
 }
 function toHidden(list){
   const place = (a, f) => { a = a || {}; return {name:[a.firstName, a.lastName].filter(Boolean).join(" "), email:f.email || "", phone:plainPhone(f.phone, (f.shipping || f.billing || {}).country),
-    line1:a.address1 || "", line2:a.address2 || "", line3:"", postCode:a.zip || "", city:a.city || "", country:aycdCountry(a.country || ""), state:aycdState(a.state || "", a.country)}; };
+    line1:a.address1 || "", line2:a.address2 || "", line3:"", postCode:a.zip || "", city:a.city || "", country:HIDDEN_COUNTRY[a.country] || aycdCountry(a.country || ""),
+    state:aycdState(a.state || "", a.country)}; };
   return list.map(f => {
     const bill = place(f.billingSameAsShipping ? f.shipping : f.billing, f), c = f.card || {}, num = digits(c.number), y = digits(c.expYear), holder = c.holder || bill.name;
     return {name:f.name || "", notes:"", billingAddress:bill, shippingAddress:place(f.shipping, f),
