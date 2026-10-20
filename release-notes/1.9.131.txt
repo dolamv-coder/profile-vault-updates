@@ -1,0 +1,1 @@
+New: Export profiles can save them for Valor. Pick Valor JSON under Format, then in Valor import the file into a profile group. Card numbers, expiry dates, phone numbers, states and countries are written the way Valor writes them. Store logins and groups stay in FAFO.
