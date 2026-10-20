@@ -1,0 +1,1 @@
+New: Export profiles can also save them for Stellar and Hidden. Pick Stellar JSON or Hidden JSON under Format. Card numbers, expiry dates, phone numbers, states and countries are written the way each bot writes them. Store logins and groups stay in FAFO.
