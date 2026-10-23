@@ -1021,7 +1021,8 @@ async function submission(request, env, url, ctx) {
     // Slots given the account their profile's slot at the other store has (reuseAccount, listAccount) say so, as do slots
     // given back the account they had, and why the rest got none (2026-10-07: the owner couldn't tell).
     const parts = [got ? `${got} assigned account${got === 1 ? "" : "s"}${p.reused ? `, ${p.reused} reused from ${p.from && p.from.length ? p.from.join(" and ") : "the other store"}` : ""}${p.back ? `, ${p.back} they had before` : ""}` : "",
-      need ? `${need} need${need === 1 ? "s" : ""} an account${p.why === "limit" ? `: this license is at its limit of ${limit}` : p.why === "empty" ? ": your list has none" : ""}` : ""].filter(Boolean);
+      need ? `${need} need${need === 1 ? "s" : ""} an account${p.why === "limit" ? `: this license is at its limit of ${limit}` : p.why === "empty" ? ": your list has none"
+        : p.why === "mine" ? ": your list has none for buyers, only in your Only mine inboxes" : ""}` : ""].filter(Boolean);
     return parts.length ? ` (${parts.join(", ")})` : "";
   };
   const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
@@ -1251,6 +1252,69 @@ const MASTER_STORES = new Set(["target", "pokemoncenter"]);
 const listStoreOf = (store) => MASTER_STORES.has(store) ? MASTER : store;
 // Where accounts of a list are, in what the owner reads: "your list" for the one list, "your Kohl's list" for a store's own.
 const listName = (store) => store === MASTER ? "your list" : `your ${accountStoreName(store)} list`;
+// Inboxes on the one list (2026-10-23, the owner's request: "Make 3 Inboxes for Pokemon and Target for accounts list… When
+// buyer submit their slots, it will only be pull from <the first> inbox only… Only I will have access to that accounts in
+// that inbox"). An inbox is the mailbox an account's email goes to, a label the owner gives it (D1 account_inboxes; which
+// account is in which, by email_norm: account_inbox_of). For buyers (mine 0): buyers' slots get its accounts. Only mine
+// (mine 1): only slots sent from the owner's own FAFO (the one allowed to send order alerts, currentAlertSender) get them,
+// before any For buyers one ("My inboxes first, then <the first>"). An account in no inbox (or one that's gone) is For
+// buyers, so nothing changes until the owner makes inboxes. Other stores' own lists have none.
+// `col` names an email_norm column: whether that account is in an Only mine inbox (aliases ibx_i and ibx_b stay out of the
+// way of the queries it goes in).
+const IN_MINE = (col) => `EXISTS (SELECT 1 FROM account_inbox_of ibx_i JOIN account_inboxes ibx_b ON ibx_b.id = ibx_i.inbox_id WHERE ibx_i.email_norm = ${col} AND ibx_b.mine = 1)`;
+// The owner's license (its key_hash), or null while no FAFO is allowed to send order alerts: then every slot is a buyer's.
+const ownerHash = async (env) => { const s = await currentAlertSender(env); return s ? s.key_hash : null; };
+const INBOX_NAME_MAX = 120, INBOX_MAX = 50;
+const inboxNameOf = (x) => String(x || "").replace(/\s+/g, " ").trim();
+const inboxNorm = (x) => inboxNameOf(x).toLowerCase();
+const inboxKind = (mine) => mine ? "Only mine" : "For buyers";
+const INBOX_KINDS_HINT = "For buyers: buyers' slots get these. Only mine: only slots sent from your own FAFO, the one that sends order alerts, get these; they're used before the For buyers ones.";
+// A select's options: the inboxes (each with what it's for), after a placeholder when nothing is picked yet, and No inbox
+// at the end when `none`.
+const inboxOptions = (inboxes, sel, placeholder, none = false) => (placeholder ? `<option value=""${sel ? "" : " selected"} disabled>${esc(placeholder)}</option>` : "")
+  + inboxes.map((b) => `<option value="${esc(b.id)}"${b.id === sel ? " selected" : ""}>${esc(b.name)} · ${inboxKind(b.mine)}</option>`).join("")
+  + (none ? `<option value="none"${sel === "none" ? " selected" : ""}>No inbox · For buyers</option>` : "");
+// Every inbox, in the order they were made, with how many of the list's accounts are in each (and how many are free).
+async function listInboxes(env) {
+  const { results } = await env.DB.prepare(`SELECT b.id, b.name, b.mine, b.created_at, COUNT(a.email_norm) AS n, COALESCE(SUM(CASE WHEN a.email_norm IS NOT NULL AND a.key_hash IS NULL THEN 1 ELSE 0 END), 0) AS free
+    FROM account_inboxes b LEFT JOIN account_inbox_of i ON i.inbox_id = b.id LEFT JOIN accounts a ON a.store = '${MASTER}' AND a.email_norm = i.email_norm
+    GROUP BY b.id ORDER BY b.created_at, b.name_norm`).all();
+  return results;
+}
+// Puts the list's accounts (email_norms) in inbox `id`, as Add, an offer's review link and a reassign's typed account do:
+// one in another inbox already stays there (kept counts those), so adding an account again never moves it out of an Only
+// mine inbox. A row for an inbox that's gone counts as none. Only accounts on the list, and only while the inbox is there.
+async function intoInbox(env, id, norms, now) {
+  if (!id || !norms.length) return { kept: 0 };
+  const list = JSON.stringify([...new Set(norms)]);
+  const [k] = await env.DB.batch([
+    env.DB.prepare(`SELECT COUNT(*) AS n FROM account_inbox_of i JOIN account_inboxes b ON b.id = i.inbox_id WHERE i.inbox_id <> ?2
+      AND i.email_norm IN (SELECT value FROM json_each(?1)) AND EXISTS (SELECT 1 FROM accounts a WHERE a.store = '${MASTER}' AND a.email_norm = i.email_norm)`).bind(list, id),
+    env.DB.prepare(`INSERT INTO account_inbox_of (email_norm, inbox_id, set_at) SELECT j.value, ?2, ?3 FROM json_each(?1) j
+      WHERE EXISTS (SELECT 1 FROM accounts a WHERE a.store = '${MASTER}' AND a.email_norm = j.value) AND EXISTS (SELECT 1 FROM account_inboxes WHERE id = ?2)
+      ON CONFLICT (email_norm) DO UPDATE SET inbox_id = excluded.inbox_id, set_at = excluded.set_at
+      WHERE NOT EXISTS (SELECT 1 FROM account_inboxes b WHERE b.id = account_inbox_of.inbox_id)`).bind(list, id, now),
+  ]);
+  return { kept: (k.results[0] || {}).n || 0 };
+}
+// Moves the list's accounts (email_norms) to inbox `id`, or out of every inbox (null): Move to inbox, and an account's Edit
+// page. Who has an account doesn't change. How many moved.
+async function moveToInbox(env, id, norms, now) {
+  let moved = 0;
+  for (let i = 0; i < norms.length; i += 500) {
+    const list = JSON.stringify(norms.slice(i, i + 500));
+    const r = await (id ? env.DB.prepare(`INSERT INTO account_inbox_of (email_norm, inbox_id, set_at) SELECT j.value, ?2, ?3 FROM json_each(?1) j
+        WHERE EXISTS (SELECT 1 FROM accounts a WHERE a.store = '${MASTER}' AND a.email_norm = j.value) AND EXISTS (SELECT 1 FROM account_inboxes WHERE id = ?2)
+        ON CONFLICT (email_norm) DO UPDATE SET inbox_id = excluded.inbox_id, set_at = excluded.set_at WHERE account_inbox_of.inbox_id <> excluded.inbox_id`).bind(list, id, now)
+      : env.DB.prepare("DELETE FROM account_inbox_of WHERE email_norm IN (SELECT value FROM json_each(?))").bind(list)).run();
+    moved += r.meta && r.meta.changes || 0;
+  }
+  return moved;
+}
+// Drops the rows of accounts no longer on the list, and of inboxes that are gone, so an email put on the list again starts in
+// no inbox. Run where accounts come off the list.
+const sweepInboxes = (env) => env.DB.prepare(`DELETE FROM account_inbox_of WHERE NOT EXISTS (SELECT 1 FROM accounts a WHERE a.store = '${MASTER}' AND a.email_norm = account_inbox_of.email_norm)
+  OR NOT EXISTS (SELECT 1 FROM account_inboxes b WHERE b.id = account_inbox_of.inbox_id)`).run();
 // A reuse goes with the account it reuses: one whose Target account is freed (by /admin/accounts/free, say) is deleted
 // too, so the Pokémon Center slot doesn't keep an email the list may give another buyer. (`where` names the freed
 // accounts' own columns, which inside the subquery are s's.) Then a parked account whose last slot this freed goes back.
@@ -1514,14 +1578,16 @@ async function listAccount(env, lic, batch, f, profile, at, moves, taken) {
 // A free account from the list for a slot at Target or Pokémon Center: it goes to the buyer's profile, and the slot gets a row
 // of its own at its store, in one go. Never one that's a buyer's anywhere (an account on a store's own list with the same
 // email, from before, say), or that has a row at this store already. `at` tells this slot's pick from the others' in the
-// batch.
-async function claimListAccount(env, lic, batch, f, profile, at) {
+// batch. A buyer's slot never gets one in an Only mine inbox; the owner's (`owner`: sent from their own FAFO) gets those
+// first, then one buyers could get (2026-10-23).
+async function claimListAccount(env, lic, batch, f, profile, at, owner = false) {
   const [c] = await env.DB.batch([
     env.DB.prepare(`UPDATE accounts SET key_hash = ?, key_last4 = ?, batch = ?, store_name = ?, profile = ?, assigned_at = ?, sent_at = NULL
       WHERE rowid = (SELECT rowid FROM accounts m WHERE m.store = '${MASTER}' AND m.key_hash IS NULL
         AND NOT EXISTS (SELECT 1 FROM accounts g WHERE g.email_norm = m.email_norm AND g.key_hash IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM accounts x WHERE x.store = ? AND x.email_norm = m.email_norm)
-        ORDER BY random() LIMIT 1) RETURNING email, email_norm, password`).bind(lic.hash, lic.last4, batch, f.store, profile, at, f.storeKey),
+        ${owner ? `ORDER BY ${IN_MINE("m.email_norm")} DESC, random()` : `AND NOT ${IN_MINE("m.email_norm")} ORDER BY random()`} LIMIT 1) RETURNING email, email_norm, password`)
+      .bind(lic.hash, lic.last4, batch, f.store, profile, at, f.storeKey),
     env.DB.prepare(`INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id, key_hash, key_last4, batch, store_name, profile, assigned_at)
       SELECT ?, email, email_norm, password, ?, '${USE}', key_hash, key_last4, batch, store_name, profile, assigned_at FROM accounts
       WHERE store = '${MASTER}' AND key_hash = ? AND batch = ? AND profile = ? AND assigned_at = ? AND sent_at IS NULL`).bind(f.storeKey, at, lic.hash, batch, profile, at)]);
@@ -1536,6 +1602,8 @@ async function assignAccounts(env, lic, batch, files, now, moves, active) {
   if (!want.length) return picks;
   await freeAccounts(env, "sent_at IS NULL AND key_hash IS NOT NULL AND assigned_at < ?", now - assignStaleMs(env));
   const limit = await accountLimit(env, lic.hash);
+  // Sent from the owner's own FAFO: its slots get the accounts in Only mine inboxes first (claimListAccount).
+  const owner = want.some((f) => MASTER_STORES.has(f.storeKey)) && (await ownerHash(env)) === lic.hash;
   for (const f of want) {
     const logins = files.find((x) => x.kind === "logins" && x.store === f.store);
     const eol = /\r\n/.test(f.text) ? "\r\n" : "\n";
@@ -1583,7 +1651,7 @@ async function assignAccounts(env, lic, batch, files, now, moves, active) {
       const held = await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts WHERE key_hash = ? AND ${OWN_ACCOUNT}`).bind(lic.hash).first();
       const atLimit = (held ? held.n : 0) >= limit;
       let a = null;
-      if (!atLimit && MASTER_STORES.has(f.storeKey)) a = await claimListAccount(env, lic, batch, f, profile, now + i);
+      if (!atLimit && MASTER_STORES.has(f.storeKey)) a = await claimListAccount(env, lic, batch, f, profile, now + i, owner);
       // The store's own list (other stores, and Target's or Pokémon Center's from before the one list): never an email
       // that's a buyer's anywhere.
       if (!atLimit && !a) a = await env.DB.prepare(
@@ -1591,7 +1659,13 @@ async function assignAccounts(env, lic, batch, files, now, moves, active) {
          WHERE rowid = (SELECT rowid FROM accounts c WHERE c.store = ? AND c.key_hash IS NULL
            AND NOT EXISTS (SELECT 1 FROM accounts g WHERE g.email_norm = c.email_norm AND g.key_hash IS NOT NULL) ORDER BY random() LIMIT 1) RETURNING email, password`
       ).bind(lic.hash, lic.last4, batch, f.store, profile, now + i, f.storeKey).first();
-      if (a) { res[i] = a; if (a.emailNorm) taken.add(f.storeKey + "|" + a.emailNorm); } else { more = false; why = atLimit ? "limit" : "empty"; }   // only reuse from here on
+      if (a) { res[i] = a; if (a.emailNorm) taken.add(f.storeKey + "|" + a.emailNorm); }
+      else {
+        more = false; why = atLimit ? "limit" : "empty";   // only reuse from here on
+        // A buyer's slot when the only free accounts on the list are in Only mine inboxes: the store line says so.
+        if (!atLimit && !owner && MASTER_STORES.has(f.storeKey) && await env.DB.prepare(`SELECT 1 AS x FROM accounts m WHERE m.store = '${MASTER}' AND m.key_hash IS NULL
+          AND ${IN_MINE("m.email_norm")} LIMIT 1`).first()) why = "mine";
+      }
     }
     // Rows left without an account go last, so line N of the logins file still goes with row N.
     const order = [...Array(asked).keys()].sort((x, y) => (res[x] ? 0 : 1) - (res[y] ? 0 : 1) || x - y);
@@ -1619,8 +1693,10 @@ async function assignAccounts(env, lic, batch, files, now, moves, active) {
 // The owner's channel is told once when a store's list is down to ACCOUNTS_LOW_AT free accounts (15),
 // and once more when it runs out. post=false only clears those again, after accounts are added or freed.
 const lowAt = (env) => { const n = Math.floor(Number(env.ACCOUNTS_LOW_AT)); return String(env.ACCOUNTS_LOW_AT ?? "").trim() !== "" && n >= 0 ? n : 15; };
+// On the one list, only the accounts buyers can get count: those in Only mine inboxes are the owner's own (2026-10-23).
 async function stockCheck(env, store, name, post) {
-  const c = await env.DB.prepare(`SELECT COUNT(*) AS n, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free FROM accounts WHERE store = ? AND ${OWN_ACCOUNT}`).bind(store).first();
+  const c = await env.DB.prepare(`SELECT COUNT(*) AS n, SUM(CASE WHEN key_hash IS NULL THEN 1 ELSE 0 END) AS free FROM accounts WHERE store = ? AND ${OWN_ACCOUNT}
+    ${store === MASTER ? `AND NOT ${IN_MINE("accounts.email_norm")}` : ""}`).bind(store).first();
   const total = c ? c.n : 0, free = c && c.free || 0, low = lowAt(env);
   if (free > low) await env.DB.prepare("UPDATE account_stock SET low_at = NULL, empty_at = NULL WHERE store = ?").bind(store).run();
   else if (free > 0) await env.DB.prepare("UPDATE account_stock SET empty_at = NULL WHERE store = ?").bind(store).run();
@@ -1659,6 +1735,10 @@ const offerStoreName = (x) => String(x || "").replace(/\s+/g, " ").trim().slice(
 // list has it now. How many were added.
 async function addToList(env, store, rows, offerId, now) {
   let added = 0;
+  // An inbox row left by an account of the list that's gone (its email may come back now) is dropped first, so it comes back
+  // in no inbox, or the one it's added to (intoInbox).
+  if (store === MASTER && rows.length) await env.DB.prepare(`DELETE FROM account_inbox_of WHERE email_norm IN (SELECT value FROM json_each(?))
+    AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.store = '${MASTER}' AND a.email_norm = account_inbox_of.email_norm)`).bind(JSON.stringify(rows.map((a) => a.email.toLowerCase()))).run();
   for (let i = 0; i < rows.length; i += 100) {
     const res = await env.DB.batch(rows.slice(i, i + 100).flatMap((a) => [env.DB.prepare(
       `INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES (?, ?, ?, ?, ?, ?)
@@ -1723,25 +1803,32 @@ function offerMessage(origin, o) {
 
 async function accountReview(request, env, ctx, url, id) {
   const o = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM account_offers WHERE id = ?").bind(id).first() : null;
-  let t = url.searchParams.get("t") || "", action = "";
+  let t = url.searchParams.get("t") || "", action = "", inboxId = "";
   if (request.method === "POST") {
     const form = await request.formData().catch(() => null);
     t = form && String(form.get("t") || "") || t;
     action = form && String(form.get("action") || "");
+    inboxId = form && String(form.get("inbox") || "");
   } else if (request.method !== "GET") {
     return page(405, "Not allowed", "");
   }
   if (!o || !(await sameText(t, o.review_token))) return page(404, "Accounts not found", "This review link isn't valid.");
-  let done = "";
+  let done = "", err = "";
   const now = Date.now();
   if (o.status === "pending" && o.created_at < now - offerTtlMs(env)) { await expireOffers(env, now); o.status = "expired"; }
-  if (o.status === "pending" && action === "add") {
+  // For the one list, once the owner has inboxes (2026-10-23), adding asks which one they go in.
+  const inboxes = listStoreOf(o.store) === MASTER ? await listInboxes(env) : [];
+  const inbox = inboxes.find((b) => b.id === inboxId) || null;
+  if (o.status === "pending" && action === "add" && inboxes.length && !inbox) err = inboxId ? "That inbox isn't there any more: choose another." : "Choose the inbox they go in.";
+  else if (o.status === "pending" && action === "add") {
     const list = JSON.parse(o.accounts || "[]");
     // Sent for Target or Pokémon Center (FAFO asks which): on the one list, for both.
     const added = await addToList(env, listStoreOf(o.store), list, o.id, now);
+    const { kept } = inbox ? await intoInbox(env, inbox.id, list.map((a) => a.email.toLowerCase()), now) : { kept: 0 };
     await env.DB.prepare("UPDATE account_offers SET status = 'added', added = ?, accounts = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(added, now, o.id).run();
     await stockCheck(env, listStoreOf(o.store), o.store_name, false);
-    done = `Added ${added} to your list.${added < list.length ? ` ${list.length - added} ${list.length - added === 1 ? "was" : "were"} already on it.` : ""}`;
+    done = `Added ${added} to your list${inbox ? `, in ${inbox.name}` : ""}.${added < list.length ? ` ${list.length - added} ${list.length - added === 1 ? "was" : "were"} already on it.` : ""}`
+      + (kept ? ` ${kept} already in another inbox stayed there (Move to inbox on See my list moves ${kept === 1 ? "it" : "them"}).` : "");
   } else if (o.status === "pending" && action === "refuse") {
     await env.DB.prepare("UPDATE account_offers SET status = 'refused', accounts = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(now, o.id).run();
     done = "Refused. Nothing was added.";
@@ -1762,7 +1849,11 @@ async function accountReview(request, env, ctx, url, id) {
      ${cur.status === "pending" ? `<p class="small"><strong>Only add these if you sent them</strong> from your own FAFO (Settings → Accounts to assign).</p>` : ""}
      ${emails.length ? `<p class="small">${emails.slice(0, 12).map(esc).join("<br>")}${emails.length > 12 ? `<br>and ${emails.length - 12} more` : ""}</p>` : ""}
      <p class="small">${one ? "Your list" : `Your ${esc(cur.store_name)} list`}: ${stats.n || 0} account${stats.n === 1 ? "" : "s"}, ${stats.free || 0} free.<br>Sent by ${esc(who)}, ${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC</p>
-     ${cur.status === "pending" ? `<div class="row">${btn("add", "Add to my list", "ok")}${btn("refuse", "Refuse", "no")}</div>` : ""}`);
+     ${cur.status === "pending" && inboxes.length ? `<form method="post" class="edit" id="offer-add">${hidden}
+       <label>Inbox<select name="inbox" required>${inboxOptions(inboxes, inbox ? inbox.id : "", "Choose an inbox…")}</select></label>
+       <p class="hint">The inbox their emails go to. ${INBOX_KINDS_HINT} One already on your list stays in its inbox.</p></form>` : ""}
+     ${err ? `<p class="err">${esc(err)}</p>` : ""}
+     ${cur.status === "pending" ? `<div class="row">${inboxes.length ? `<button class="ok" type="submit" form="offer-add" name="action" value="add">Add to my list</button>` : btn("add", "Add to my list", "ok")}${btn("refuse", "Refuse", "no")}</div>` : ""}`);
 }
 
 // Accounts come off the list the same way (app 1.9.90+, the owner's request): FAFO sends the emails, the channel
@@ -1844,6 +1935,7 @@ async function accountRemovalReview(request, env, ctx, url, id) {
       res.forEach((r, k) => { if (r.meta && r.meta.changes) { removed++; (where.get(list[i + k]) || []).forEach((a) => stores.add(a.store)); } });
     }
     await env.DB.prepare("UPDATE account_removals SET status = 'removed', removed = ?, emails = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(removed, now, o.id).run();
+    if (removed) await sweepInboxes(env);
     for (const st of stores) await stockCheck(env, st, accountStoreName(st), false);
     const left = list.length - removed;
     done = `Took ${removed} off your list.${left ? ` ${left} ${left === 1 ? "wasn't" : "weren't"} on it.` : ""}`;
@@ -1999,8 +2091,9 @@ const LIST_SCRIPT = `<script>
     const k = ticked().length, out = ticked().filter((b) => !shown(b)).length;
     bar.querySelector(".n").textContent = k + (k === 1 ? " account ticked" : " accounts ticked") + (out ? " (" + out + " not shown)" : "");
     bar.hidden = !k;
+    // A section's box (a store's, or an inbox's on the one list) goes with the rows in its section.
     document.querySelectorAll("input.all").forEach((a) => {
-      const s = visible().filter((b) => b.dataset.store === a.dataset.store), on = s.filter((b) => b.checked).length;
+      const s = visible().filter((b) => a.closest("section").contains(b)), on = s.filter((b) => b.checked).length;
       a.checked = !!s.length && on === s.length; a.indeterminate = on > 0 && on < s.length;
     });
     const v = visible(), all = document.querySelector("[data-pickall]"), every = !!v.length && v.every((b) => b.checked);
@@ -2069,12 +2162,13 @@ const LIST_SCRIPT = `<script>
       }
       last = t; say(""); paint();
     } else if (t.classList.contains("all")) {
-      visible().filter((b) => b.dataset.store === t.dataset.store).forEach((b) => { b.checked = t.checked; }); say(""); paint();
+      visible().filter((b) => t.closest("section").contains(b)).forEach((b) => { b.checked = t.checked; }); say(""); paint();
     } else if (t.hasAttribute("data-pickall")) {
       const v = visible(), on = !v.every((b) => b.checked); v.forEach((b) => { b.checked = on; }); say(""); paint();
     } else if (t.hasAttribute("data-clear")) {
       boxes().forEach((b) => { b.checked = false; }); say(""); paint();
     } else if (t.dataset.copy) copy(t.dataset.copy);
+    else if (t.value === "move-inbox" && t.form === bar && !bar.elements.to_inbox.value) { e.preventDefault(); say("Pick the inbox to move them to first."); }
   });
   // Enter on a tick box would send the bar's form, whose only submit button is Remove.
   document.addEventListener("keydown", (e) => {
@@ -2106,7 +2200,9 @@ const LIST_SCRIPT = `<script>
 // store's list, or a slot's row at Target or Pokémon Center), so its slots' rows can take its email. Its email and email_norm,
 // or null when nothing changed (the old one changed meanwhile, or no account could take its place). `skip` (a JSON list of
 // email_norms) is never picked: the old accounts of the same reassign, so one put back free isn't given to the next buyer.
-async function swapAccount(env, a, want, oldWay, stamp, since, skip = "[]") {
+// Inboxes (2026-10-23): a buyer's slots never get one in an Only mine inbox; the owner's (`owner`) get those first. An old
+// one taken off the list leaves its inbox; one put back free stays in it.
+async function swapAccount(env, a, want, oldWay, stamp, since, skip = "[]", owner = false) {
   const binds = [a.email_norm, a.key_hash, a.profile ?? null, stamp];
   // The new one, once taken: given to the same buyer and profile at `stamp`.
   const taken = `EXISTS (SELECT 1 FROM accounts n WHERE n.store = '${MASTER}' AND n.key_hash = ?2 AND n.profile IS ?3 AND n.assigned_at = ?4 AND n.email_norm <> ?1)`;
@@ -2115,7 +2211,8 @@ async function swapAccount(env, a, want, oldWay, stamp, since, skip = "[]") {
         FROM accounts o WHERE o.store = '${MASTER}' AND o.email_norm = ?1), assigned_at = ?4
       WHERE rowid = (SELECT m.rowid FROM accounts m WHERE m.store = '${MASTER}' AND m.key_hash IS NULL AND m.email_norm <> ?1 AND (?6 IS NULL OR m.email_norm = ?6)
           AND m.email_norm NOT IN (SELECT value FROM json_each(?7))
-          AND NOT EXISTS (SELECT 1 FROM accounts x WHERE x.email_norm = m.email_norm AND x.store <> '${MASTER}') ORDER BY random() LIMIT 1)
+          AND NOT EXISTS (SELECT 1 FROM accounts x WHERE x.email_norm = m.email_norm AND x.store <> '${MASTER}')
+          ${owner ? `ORDER BY ${IN_MINE("m.email_norm")} DESC, random()` : `AND NOT ${IN_MINE("m.email_norm")} ORDER BY random()`} LIMIT 1)
         AND EXISTS (SELECT 1 FROM accounts o WHERE o.store = '${MASTER}' AND o.email_norm = ?1 AND o.key_hash = ?2 AND o.profile IS ?3 AND o.sent_at IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM accounts u WHERE u.offer_id = '${USE}' AND u.email_norm = ?1 AND u.key_hash = ?2 AND u.sent_at IS NULL)
         AND NOT EXISTS (SELECT 1 FROM submissions s WHERE s.key_hash = ?2 AND s.webhook_message_id IS NULL AND s.created_at > ?5)
@@ -2125,6 +2222,7 @@ async function swapAccount(env, a, want, oldWay, stamp, since, skip = "[]") {
       WHERE offer_id = '${USE}' AND email_norm = ?1 AND key_hash = ?2 AND ${taken}`).bind(...binds),
     env.DB.prepare(oldWay === "free" ? `UPDATE accounts SET ${FREE_ACCOUNT} WHERE store = '${MASTER}' AND email_norm = ?1 AND key_hash = ?2 AND ${taken}`
       : `DELETE FROM accounts WHERE store = '${MASTER}' AND email_norm = ?1 AND key_hash = ?2 AND ${taken}`).bind(...binds),
+    env.DB.prepare(`DELETE FROM account_inbox_of WHERE email_norm = ?1 AND NOT EXISTS (SELECT 1 FROM accounts WHERE store = '${MASTER}' AND email_norm = ?1)`).bind(a.email_norm),
   ]);
   return (c.results || [])[0] || null;
 }
@@ -2176,6 +2274,16 @@ async function accountListPage(request, env, url, id) {
   const vis = (rows) => { const v = rows.filter((a) => a.offer_id !== USE); return v.length ? v : rows; };
   const COLS = "store, email, email_norm, key_hash, key_last4, profile, batch, offer_id, sent_at";
   const one = (st, em) => env.DB.prepare(`SELECT ${COLS} FROM accounts WHERE store = ? AND email_norm = ?`).bind(st, em).first();
+  // The one list's inboxes (2026-10-23), as they are when the request comes in, and the one an account is in (null: none).
+  const inboxes = await listInboxes(env), inboxById = new Map(inboxes.map((b) => [b.id, b]));
+  const inboxOf = async (e) => {
+    if (!inboxes.length) return null;
+    const r = await env.DB.prepare("SELECT inbox_id FROM account_inbox_of WHERE email_norm = ?").bind(e).first();
+    return r && inboxById.get(r.inbox_id) || null;
+  };
+  // Whether a license is the owner's own FAFO (the one allowed to send order alerts), read once.
+  let ownerKey;
+  const isOwnerKey = async (h) => { if (ownerKey === undefined) ownerKey = await ownerHash(env); return !!h && h === ownerKey; };
   // The accounts ticked on the list, each "store email" (split at the last space: an email has none, a typed store's key
   // can have spaces or a |), from a POST only; at most LIST_PICK_MAX at once, and `over` counts any past that.
   const tickedAll = [...new Set((form ? form.getAll("pick") : []).map(String))]
@@ -2220,6 +2328,8 @@ async function accountListPage(request, env, url, id) {
     // With the old ones put back free: those are free, but never go to another of the same reassign's buyers.
     noneOld: ["got no new account: the only free ones left are the old ones this put back", "got no new account: the only free ones left are the old ones this put back"],
     taken: ["got no new account: the one you typed was given to a slot meanwhile", "got no new accounts: the ones you typed were given to slots meanwhile"],
+    // A buyer's, when the only free ones left are in Only mine inboxes (2026-10-23).
+    noneMine: ["got no new account: the only free ones left are in your Only mine inboxes, which buyers never get", "got no new account: the only free ones left are in your Only mine inboxes, which buyers never get"],
     over: [`isn't included: ${LIST_REASSIGN_MAX} at most at once. Reassign it next`, `aren't included: ${LIST_REASSIGN_MAX} at most at once. Reassign them next`],
   };
   const whyText = (xs) => {
@@ -2227,9 +2337,10 @@ async function accountListPage(request, env, url, id) {
     for (const x of xs) by.set(x.why, [...(by.get(x.why) || []), x]);
     return [...by].map(([w, l]) => xs.length === 1 && l[0].email ? `${l[0].email} ${REASSIGN_WHY[w][0]}.` : `${l.length} ${REASSIGN_WHY[w][l.length === 1 ? 0 : 1]}.`).join(" ");
   };
-  // Free accounts a reassign can take: on the one list, and with no row anywhere else.
-  const freeForReassign = async () => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts m WHERE m.store = '${MASTER}' AND m.key_hash IS NULL
-    AND NOT EXISTS (SELECT 1 FROM accounts x WHERE x.email_norm = m.email_norm AND x.store <> '${MASTER}')`).first()).n;
+  // Free accounts a reassign can take: on the one list, and with no row anywhere else; for a buyer's (`buyers`), none in an
+  // Only mine inbox.
+  const freeForReassign = async (buyers) => (await env.DB.prepare(`SELECT COUNT(*) AS n FROM accounts m WHERE m.store = '${MASTER}' AND m.key_hash IS NULL
+    AND NOT EXISTS (SELECT 1 FROM accounts x WHERE x.email_norm = m.email_norm AND x.store <> '${MASTER}')${buyers ? ` AND NOT ${IN_MINE("m.email_norm")}` : ""}`).first()).n;
   // The accounts typed to give instead, a line each: the email of one on the list, or email:password (as Add reads it).
   const reassignLines = (text) => {
     const list = [], bad = [];
@@ -2249,7 +2360,11 @@ async function accountListPage(request, env, url, id) {
   // The question: which account each one's slots get instead (a free one from the list, picked at random, or the ones typed),
   // and what happens to the old ones. `vals` keeps what was sent when it's asked again with an error.
   const reassignView = async (items, notes, err, vals = {}) => {
-    const n = items.length, one = n === 1, free = await freeForReassign(), it = one ? "it" : "them";
+    const owners = await Promise.all(items.map((x) => isOwnerKey(x.a.key_hash))), buyers = owners.some((x) => !x);
+    const n = items.length, one = n === 1, free = await freeForReassign(buyers), it = one ? "it" : "them";
+    // With inboxes: where the free one comes from, and where a new one typed goes.
+    const ibNote = !inboxes.length ? "" : `<p class="hint">${inboxes.some((b) => b.mine) ? [buyers ? "A buyer's slots never get one from an Only mine inbox." : "",
+      owners.some(Boolean) ? "Your own FAFO's slots get one from an Only mine inbox first." : ""].filter(Boolean).join(" ") + " " : ""}A new one you type goes in the inbox of the one it replaces.</p>`;
     const how = vals.how === "list" || vals.how === "these" ? vals.how : free >= n ? "list" : "these";
     const target = items.some((x) => x.us.some((u) => u.store === "target"));
     const line = (x) => `${one ? "" : `${esc(x.a.email)} · `}${status(x.a, x.us)}`;
@@ -2264,7 +2379,7 @@ async function accountListPage(request, env, url, id) {
           <label class="opt"><input type="radio" name="how" value="list"${how === "list" ? " checked" : ""}${free ? "" : " disabled"}><span>${one ? "A free account" : "Free accounts"} from my list, picked at random <span class="hint">${free ? `(${free} free)` : "(none free)"}</span></span></label>
           <label class="opt"><input type="radio" name="how" value="these"${how === "these" ? " checked" : ""}><span>${one ? "This account" : "These accounts, one for each, in the order above"}</span></label>
           ${box}
-          <p class="hint">The email of a free account on your list, or email:password to put a new one on it${one ? "" : ", one per line"}.</p>
+          <p class="hint">The email of a free account on your list, or email:password to put a new one on it${one ? "" : ", one per line"}.</p>${ibNote}
         </fieldset>
         <fieldset><legend>The old account${one ? "" : "s"}</legend>
           <label class="opt"><input type="radio" name="old" value="remove"${vals.old === "free" ? "" : " checked"}><span>Take ${it} off my list: something's wrong with ${it}</span></label>
@@ -2279,7 +2394,10 @@ async function accountListPage(request, env, url, id) {
   // One account: its email (while it's free) and password, and giving it back to the list once it's given.
   const editPage = async (a, err) => {
     const name = accountStoreName(a.store), us = await usesOf(a);
-    const head = `${err ? `<p class="err">${esc(err)}</p>` : ""}<p class="who">${esc(a.email)}</p><p class="small">${esc(name)}: ${status(a, us)}</p>`;
+    // An account of the one list, once there are inboxes: the one it's in (null: none), which it can move to another.
+    const ib = a.store === MASTER && inboxes.length ? await inboxOf(a.email_norm) : undefined;
+    const head = `${err ? `<p class="err">${esc(err)}</p>` : ""}<p class="who">${esc(a.email)}</p><p class="small">${esc(name)}: ${status(a, us)}</p>`
+      + (ib !== undefined ? `<p class="small">Inbox: ${ib ? `${esc(ib.name)} · ${inboxKind(ib.mine)}` : "No inbox · For buyers"}</p>` : "");
     if (a.offer_id === USE) return page(200, "Edit an account", "", `${head}
       <p class="small">It's an account from your list, on this buyer's ${esc(name)} slot, so it follows that one: change it on your list.</p>${back}`);
     if (isReuse(a)) return page(200, "Edit an account", "", `${head}
@@ -2311,6 +2429,10 @@ async function accountListPage(request, env, url, id) {
         <p class="small">It goes back on your ${esc(name)} list as free, so the next slot on Use Assigned Account can get it. License …${esc(a.key_last4 || "")} keeps what was posted to your channel, and stops getting order alerts for it.${notes}</p>
         <form method="post">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="no" type="submit" name="action" value="giveback">Give it back to my list</button></form>`;
     }
+    const inboxForm = ib === undefined ? "" : `<h3>Inbox</h3>
+      <p class="small">${INBOX_KINDS_HINT}${given && !(await isOwnerKey(a.key_hash)) ? " Moving it doesn't take it from the buyer who has it." : ""}</p>
+      <form method="post" class="edit">${hidden}${keep("email", a.email_norm)}<label>Move it to<select name="to_inbox">${inboxOptions(inboxes, ib ? ib.id : "none", "", true)}</select></label>
+        <div class="row"><button class="ok" type="submit" name="action" value="move-inbox">Move it</button></div></form>`;
     return page(200, "Edit an account", "", `${head}
       <form method="post" class="edit">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}
         <label>Email<input type="text" inputmode="email" name="new_email" value="${esc(a.email)}" maxlength="120" autocomplete="off" spellcheck="false" required${given ? " readonly" : ""}></label>
@@ -2318,7 +2440,27 @@ async function accountListPage(request, env, url, id) {
         <label>New password<input type="text" name="password" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Leave empty to keep it"></label>
         <p class="hint">${a.store === MASTER ? "The store account's password: Target's logins file gets it, and Pokémon Center checks out as a guest with the email." : a.store === "pokemoncenter" ? "The email's inbox password: Pokémon Center checks out as a guest with the email." : "The store account's password."} It's never shown here.${given ? " What was posted already doesn't change; a slot sent again gets the new one." : ""}</p>
         <div class="row"><button class="ok" type="submit" name="action" value="save">Save</button></div>
-      </form>${reassign}${giveBack}${back}`);
+      </form>${inboxForm}${reassign}${giveBack}${back}`);
+  };
+  // One inbox (2026-10-23): rename it, switch who gets its accounts, or delete it once it has none. Making an Only mine inbox
+  // For buyers is asked here, never straight from the list: its free accounts go to the next buyers' slots.
+  const inboxPage = async (b, err, vals = {}) => {
+    const { n: given } = await env.DB.prepare(`SELECT COUNT(*) AS n FROM account_inbox_of i JOIN accounts a ON a.store = '${MASTER}' AND a.email_norm = i.email_norm
+      WHERE i.inbox_id = ? AND a.key_hash IS NOT NULL`).bind(b.id).first();
+    return page(200, "An inbox", "", `${err ? `<p class="err">${esc(err)}</p>` : ""}<p class="who">${esc(b.name)}</p>
+      <p class="small">${inboxKind(b.mine)} · ${plural(b.n, "account")}, ${b.free} free${given ? `, ${given} given to slots` : ""}</p>
+      <form method="post" class="edit">${hidden}${keep("inbox", b.id)}
+        <label>Name<input type="text" name="name" value="${esc(vals.name ?? b.name)}" maxlength="${INBOX_NAME_MAX}" autocomplete="off" spellcheck="false" required></label>
+        <p class="hint">The email address its accounts' mail goes to, say. Only you see it.</p>
+        <div class="row"><button class="ok" type="submit" name="action" value="inbox-rename">Rename</button></div></form>
+      <h3>Who gets its accounts</h3>
+      <p class="small">${b.mine ? "Only mine: only slots sent from your own FAFO, the one that sends order alerts, get them, before any For buyers one. Buyers' slots never do."
+        : "For buyers: buyers' slots get them, and so do your own FAFO's once your Only mine inboxes have no free one left."}</p>
+      ${b.mine ? `<p class="small">Making it For buyers lets buyers' slots get its ${plural(b.free, "free account")}, starting with the next batch.</p>` : ""}
+      <form method="post">${hidden}${keep("inbox", b.id)}${keep("mine", b.mine ? "0" : "1")}<div class="row"><button class="${b.mine ? "no" : "ok"}" type="submit" name="action" value="inbox-mine">${b.mine ? "Make it For buyers" : "Make it Only mine"}</button></div></form>
+      <h3>Delete it</h3>
+      ${b.n ? `<p class="small">Move its ${plural(b.n, "account")} to another inbox first: tick ${b.n === 1 ? "it" : "them"} on the list, then Move to inbox.</p>`
+        : `<p class="small">It has no accounts. Deleting it changes nothing else.</p><form method="post">${hidden}${keep("inbox", b.id)}<div class="row"><button class="no" type="submit" name="action" value="inbox-delete">Delete ${esc(b.name)}</button></div></form>`}${back}`);
   };
 
   let done = "", err = "", ticks = [];
@@ -2356,6 +2498,7 @@ async function accountListPage(request, env, url, id) {
     for (let i = 0; i < on.length; i += 100) await env.DB.batch(on.slice(i, i + 100).map((e) => env.DB.prepare("DELETE FROM accounts WHERE email_norm = ?").bind(e)));
     if (on.length) {
       await sweepParked(env);
+      await sweepInboxes(env);
       for (const st of new Set(on.flatMap((e) => rows.get(e).map((a) => a.store)))) await stockCheck(env, st, accountStoreName(st), false);
     }
     const gone = emails.length - on.length;
@@ -2414,6 +2557,10 @@ async function accountListPage(request, env, url, id) {
           if (g) return again(`${x.email} is given to license …${g.key_last4 || ""}${g.profile ? `, ${g.profile}` : ""}: type a free one.`);
           if (other) return again(`${x.email} is on your ${accountStoreName(other.store)} list too: type another.`);
           if (!rs.some((r) => r.store === MASTER) && !x.password) return again(`${x.email} isn't on your list: write it as email:password to put it on.`);
+          // One in an Only mine inbox is for the owner's own FAFO's slots only (2026-10-23).
+          const ib = rs.some((r) => r.store === MASTER) ? await inboxOf(norms[i]) : null;
+          if (ib && ib.mine && !(await isOwnerKey(items[i].a.key_hash)))
+            return again(`${x.email} is in ${ib.name}, an Only mine inbox: only your own FAFO's slots get those, and ${whom(items[i])} is a buyer's. Type another, or move it to a For buyers inbox first.`);
         }
         // New ones go on the list first; one there already keeps its password, as Add keeps it (said, so the bot gets the
         // right one). A free row with the email on Target's or Pokémon Center's own list from before goes, so its slots' rows
@@ -2424,23 +2571,38 @@ async function accountListPage(request, env, url, id) {
         const kept = had.filter((h) => typed.some((x) => x.email.toLowerCase() === h.email_norm && x.password !== h.password)).map((h) => h.email);
         if (kept.length) notes.push(`${few(kept)} ${kept.length === 1 ? "was" : "were"} on your list already, and kept ${kept.length === 1 ? "the password it had" : "the passwords they had"} (Edit changes ${kept.length === 1 ? "it" : "one"}).`);
         if (typed.length) await addToList(env, MASTER, typed, "list:" + o.id, now);
+        // A new one goes in the inbox of the one it replaces (2026-10-23), unless that's an Only mine inbox and a buyer gets it:
+        // then in none, so it's one buyers can get.
+        for (const [i, x] of list.entries()) {
+          if (!x.password || rows.get(norms[i]).some((r) => r.store === MASTER)) continue;
+          const ib = await inboxOf(items[i].e);
+          if (!ib) continue;
+          if (ib.mine && !(await isOwnerKey(items[i].a.key_hash))) { notes.push(`${x.email} went in no inbox: the one it replaces is in ${ib.name}, an Only mine inbox, and ${whom(items[i])} is a buyer's.`); continue; }
+          await intoInbox(env, ib.id, [norms[i]], now);
+          notes.push(`${x.email} went in ${ib.name}, the inbox of the one it replaces.`);
+        }
         await env.DB.batch(norms.map((e) => env.DB.prepare(`DELETE FROM accounts WHERE store IN ('target', 'pokemoncenter') AND email_norm = ? AND key_hash IS NULL AND ${OWN_ACCOUNT}`).bind(e)));
         wants = norms;
       }
       // One at a time, each in a transaction of its own (swapAccount); one that didn't go is read again to say why. None of
       // them gets an old one of this reassign.
       const swapped = [], failed = [], olds = JSON.stringify(items.map((x) => x.e));
-      let none = "";
+      // Once a random pick finds none, the rest of that kind get none either: a buyer's (never one in an Only mine inbox) or
+      // the owner's (those first, then a buyer's kind; so none for the owner is none for buyers too).
+      const none = { buyer: "", owner: "" };
+      const freeMine = async () => !!(await env.DB.prepare(`SELECT 1 AS x FROM accounts m WHERE m.store = '${MASTER}' AND m.key_hash IS NULL AND ${IN_MINE("m.email_norm")}
+        AND m.email_norm NOT IN (SELECT value FROM json_each(?)) AND NOT EXISTS (SELECT 1 FROM accounts x WHERE x.email_norm = m.email_norm AND x.store <> '${MASTER}') LIMIT 1`).bind(olds).first());
       const stayFree = [];
       for (const [i, x] of items.entries()) {
-        const want = wants ? wants[i] : null;
-        if (none && !want) { failed.push({ ...x, why: none }); continue; }
-        const n = await swapAccount(env, x.a, want, oldWay, now + i, since, olds);
+        const want = wants ? wants[i] : null, own = await isOwnerKey(x.a.key_hash), kind = own ? "owner" : "buyer";
+        if (none[kind] && !want) { failed.push({ ...x, why: none[kind] }); continue; }
+        const n = await swapAccount(env, x.a, want, oldWay, now + i, since, olds, own);
         if (n) { swapped.push({ ...x, n }); continue; }
         sendingKeys.delete(x.a.key_hash);
         const [s] = await reassignState([x.e]);
-        const why = s.why || (s.a.key_hash !== x.a.key_hash || s.a.profile !== x.a.profile ? "changed" : want ? "taken" : oldWay === "free" && swapped.length ? "noneOld" : "none");
-        if (why === "none" || why === "noneOld") none = why;
+        let why = s.why || (s.a.key_hash !== x.a.key_hash || s.a.profile !== x.a.profile ? "changed" : want ? "taken" : oldWay === "free" && swapped.length ? "noneOld" : "none");
+        if (why === "none" && !own && await freeMine()) why = "noneMine";
+        if (why === "none" || why === "noneOld" || why === "noneMine") { none[kind] = why; if (own && !none.buyer) none.buyer = why; }
         failed.push({ ...x, why });
         if (want && why !== "taken") stayFree.push(want);
       }
@@ -2468,6 +2630,97 @@ async function accountListPage(request, env, url, id) {
         let len = head.length + foot.length + 40;
         for (const x of swapped) { const l = `${md(whom(x))}: ${md(x.a.email)} → ${md(x.n.email)}`; if (len + l.length + 1 > 1900) break; lines.push(l); len += l.length + 1; }
         await webhookPost(env, { content: [head, ...lines, ...(k > lines.length ? [`and ${k - lines.length} more`] : []), foot].join("\n") }).catch((e) => console.error("webhook", e));
+      }
+    }
+  } else if (action === "move-inbox" && post) {
+    // Move to inbox (the bar, for the ticked) or an account's Edit page (its email): accounts of the one list go in another
+    // inbox, or in none. Who has one doesn't change.
+    const to = get("to_inbox"), dest = to === "none" ? null : inboxById.get(to) || undefined;
+    const ps = email ? [{ store: MASTER, email }] : picks();
+    const norms = [...new Set(ps.filter((p) => p.store === MASTER).map((p) => p.email))], others = new Set(ps.filter((p) => p.store !== MASTER).map((p) => p.email)).size;
+    if (!inboxes.length) err = "Make an inbox first.";
+    else if (!to) err = "Pick the inbox to move them to.";
+    else if (dest === undefined) err = "That inbox isn't there any more: pick another.";
+    else if (!norms.length) err = others ? "Inboxes are for your list (Target and Pokémon Center): those are on a store's own list." : "Tick the accounts to move first.";
+    else {
+      const on = [];
+      for (let i = 0; i < norms.length; i += 500) on.push(...(await env.DB.prepare(`SELECT a.email, a.email_norm, a.key_hash, i.inbox_id FROM accounts a
+        LEFT JOIN account_inbox_of i ON i.email_norm = a.email_norm WHERE a.store = '${MASTER}' AND a.email_norm IN (SELECT value FROM json_each(?))`).bind(JSON.stringify(norms.slice(i, i + 500))).all()).results);
+      const at = (r) => inboxById.has(r.inbox_id) ? r.inbox_id : null, there = dest ? dest.id : null;
+      const stay = on.filter((r) => at(r) === there), go = on.filter((r) => at(r) !== there), gone = norms.length - on.length;
+      if (go.length) { await moveToInbox(env, there, go.map((r) => r.email_norm), now); await stockCheck(env, MASTER, accountStoreName(MASTER), false); }
+      const given = go.filter((r) => r.key_hash);
+      const withBuyers = dest && dest.mine ? (await Promise.all(given.map((r) => isOwnerKey(r.key_hash)))).filter((x) => !x).length : 0;
+      const where = dest ? `${dest.name} (${inboxKind(dest.mine)})` : "No inbox (For buyers)";
+      done = [go.length ? (go.length === 1 && on.length === 1 ? `Moved ${go[0].email} to ${where}.` : `Moved ${plural(go.length, "account")} to ${where}.`) : "",
+        stay.length ? (on.length === 1 ? `${stay[0].email} is in ${dest ? dest.name : "No inbox"} already.` : `${stay.length} ${stay.length === 1 ? "was" : "were"} in it already.`) : "",
+        given.length ? (go.length === 1 ? "It's given to a slot, which keeps it: moving it changes only which slots get it next."
+          : `${given.length === 1 ? "1 of them is given to a slot, which keeps it" : `${given.length} of them are given to slots, which keep them`}: moving changes only which slots get them next.`) : "",
+        withBuyers ? (go.length === 1 ? "It's with a buyer, who keeps it until it's given back; after that only your own FAFO's slots get it."
+          : `${withBuyers === 1 ? "One is with a buyer, who keeps it until it's given back" : `${withBuyers} are with buyers, who keep them until they're given back`}; after that only your own FAFO's slots get ${withBuyers === 1 ? "it" : "them"}.`) : "",
+      ].filter(Boolean).join(" ");
+      err = [gone ? `${gone} ${gone === 1 ? "isn't" : "aren't"} on your list any more.` : "",
+        others ? `${others} on a store's own list stayed as ${others === 1 ? "it was" : "they were"}: inboxes are for your list.` : "",
+        over ? `${over} more ticked ${over === 1 ? "wasn't" : "weren't"} moved: ${LIST_PICK_MAX} at most at once.` : ""].filter(Boolean).join(" ");
+    }
+  } else if (action === "inbox-new" && post) {
+    // A new inbox, and (ticked) every account of the one list that's in none goes in it.
+    const name = inboxNameOf(get("name")), mine = get("kind") === "mine" ? 1 : 0, adopt = get("adopt") === "1";
+    if (!name) err = "Name the inbox: the email address its accounts' mail goes to, say.";
+    else if (name.length > INBOX_NAME_MAX) err = `That name is too long: ${INBOX_NAME_MAX} characters at most.`;
+    else if (inboxes.length >= INBOX_MAX) err = `You have ${INBOX_MAX} inboxes: delete one you don't use first.`;
+    else {
+      const nid = randomId(9);
+      const r = await env.DB.prepare("INSERT OR IGNORE INTO account_inboxes (id, name, name_norm, mine, created_at) VALUES (?, ?, ?, ?, ?)").bind(nid, name, inboxNorm(name), mine, now).run();
+      if (!r.meta || !r.meta.changes) err = `You have an inbox named ${name} already.`;
+      else {
+        let n = 0;
+        if (adopt) {
+          const a = await env.DB.prepare(`INSERT INTO account_inbox_of (email_norm, inbox_id, set_at) SELECT a.email_norm, ?1, ?2 FROM accounts a WHERE a.store = '${MASTER}'
+            AND NOT EXISTS (SELECT 1 FROM account_inbox_of i JOIN account_inboxes b ON b.id = i.inbox_id WHERE i.email_norm = a.email_norm)
+            ON CONFLICT (email_norm) DO UPDATE SET inbox_id = excluded.inbox_id, set_at = excluded.set_at`).bind(nid, now).run();
+          n = a.meta && a.meta.changes || 0;
+        }
+        if (n && mine) await stockCheck(env, MASTER, accountStoreName(MASTER), false);
+        done = `Made ${name}, ${mine ? "an Only mine inbox: only your own FAFO's slots get its accounts" : "an inbox For buyers"}.${n ? ` Put the ${plural(n, "account")} that had no inbox in it.` : ""}`;
+      }
+    }
+  } else if (action === "inbox" || (["inbox-rename", "inbox-mine", "inbox-delete"].includes(action) && post)) {
+    const b = inboxById.get(get("inbox"));
+    if (!b) err = "That inbox isn't there any more.";
+    else if (action === "inbox") return inboxPage(b, "");
+    else if (action === "inbox-rename") {
+      const name = inboxNameOf(get("name"));
+      if (!name) return inboxPage(b, "Type its new name.", { name: "" });
+      if (name.length > INBOX_NAME_MAX) return inboxPage(b, `That name is too long: ${INBOX_NAME_MAX} characters at most.`, { name });
+      if (name === b.name) done = "Nothing changed.";
+      else {
+        const r = await env.DB.prepare("UPDATE account_inboxes SET name = ?1, name_norm = ?2 WHERE id = ?3 AND NOT EXISTS (SELECT 1 FROM account_inboxes x WHERE x.name_norm = ?2 AND x.id <> ?3)")
+          .bind(name, inboxNorm(name), b.id).run().catch(() => null);
+        if (!r || !r.meta || !r.meta.changes) return inboxPage(b, `You have an inbox named ${name} already.`, { name });
+        done = `Renamed ${b.name} to ${name}.`;
+      }
+    } else if (action === "inbox-mine") {
+      const mine = get("mine") === "1" ? 1 : 0;
+      if (mine === b.mine) done = `${b.name} is ${inboxKind(mine)} already.`;
+      else {
+        await env.DB.prepare("UPDATE account_inboxes SET mine = ? WHERE id = ?").bind(mine, b.id).run();
+        await stockCheck(env, MASTER, accountStoreName(MASTER), false);
+        // Its accounts that buyers have stay theirs until given back.
+        const { results: held } = mine ? await env.DB.prepare(`SELECT a.key_hash FROM account_inbox_of i JOIN accounts a ON a.store = '${MASTER}' AND a.email_norm = i.email_norm
+          WHERE i.inbox_id = ? AND a.key_hash IS NOT NULL`).bind(b.id).all() : { results: [] };
+        const k = (await Promise.all(held.map((r) => isOwnerKey(r.key_hash)))).filter((x) => !x).length;
+        done = mine ? `${b.name} is Only mine now: only your own FAFO's slots get its accounts.${k ? ` ${k === 1 ? "One is" : `${k} are`} with a buyer, who keeps ${k === 1 ? "it" : "them"} until ${k === 1 ? "it's" : "they're"} given back.` : ""}`
+          : `${b.name} is For buyers now: buyers' slots get its free accounts.`;
+      }
+    } else {
+      // Only while none of the list's accounts is in it (checked as it's deleted); rows left by accounts that are gone go too.
+      const r = await env.DB.prepare(`DELETE FROM account_inboxes WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM account_inbox_of i JOIN accounts a ON a.store = '${MASTER}'
+        AND a.email_norm = i.email_norm WHERE i.inbox_id = ?1)`).bind(b.id).run();
+      if (r.meta && r.meta.changes) { await sweepInboxes(env); done = `Deleted ${b.name}.`; }
+      else {
+        const { n } = await env.DB.prepare(`SELECT COUNT(*) AS n FROM account_inbox_of i JOIN accounts a ON a.store = '${MASTER}' AND a.email_norm = i.email_norm WHERE i.inbox_id = ?`).bind(b.id).first();
+        err = `${b.name} has ${plural(n, "account")}: move ${n === 1 ? "it" : "them"} to another inbox first (tick ${n === 1 ? "it" : "them"}, then Move to inbox).`;
       }
     }
   } else if (email && store && (action === "edit" || ((action === "save" || action === "giveback") && post))) {
@@ -2503,6 +2756,9 @@ async function accountListPage(request, env, url, id) {
         if (!r || !r.meta || !r.meta.changes) return editPage((await one(a.store, a.email_norm)) || a, "It changed meanwhile (given to a slot, or edited). Look again, then try again.");
         // On the one list, a free row with that email left on Target's or Pokémon Center's own list from before goes (addToList).
         if (a.store === MASTER) await env.DB.prepare(`DELETE FROM accounts WHERE store IN ('target', 'pokemoncenter') AND email_norm = ? AND key_hash IS NULL AND ${OWN_ACCOUNT}`).bind(norm).run();
+        // Its inbox goes with it (2026-10-23).
+        if (a.store === MASTER && norm !== a.email_norm) await env.DB.batch([env.DB.prepare("DELETE FROM account_inbox_of WHERE email_norm = ?").bind(norm),
+          env.DB.prepare("UPDATE account_inbox_of SET email_norm = ? WHERE email_norm = ?").bind(norm, a.email_norm)]);
         done = `Changed ${a.email} to ${newEmail}${pw ? ", with its new password," : ""} on ${on}.`;
       } else if (pw) {
         // A reuse of it at another store (same buyer), or a slot's row of it from the one list, checks out with it too, so it
@@ -2521,24 +2777,34 @@ async function accountListPage(request, env, url, id) {
   const { results: listed } = await env.DB.prepare("SELECT DISTINCT store FROM accounts").all();
   const ownLists = listed.map((r) => r.store).filter((x) => x !== MASTER && !MASTER_STORES.has(x));
   const addStores = [MASTER, ...ownLists], addTo = (x) => x === "" ? MASTER : addStores.includes(listStoreOf(x)) ? listStoreOf(x) : "";
+  // With inboxes (2026-10-23), accounts added to the one list go in the inbox picked, which has to be picked; the page comes
+  // back with what was typed when it isn't (keepAdd).
+  let keepAdd = null;
   if (action === "add" && post) {
     const st = addTo(store), name = accountStoreName(st);
     const text = get("accounts");
     const { rows, bad, bare } = text.length > 400_000 ? { rows: [], bad: [], bare: [] } : parseListLines(text, get("password").trim());
+    const ib = st === MASTER && inboxes.length ? inboxById.get(get("inbox")) : null;
     if (!st) err = "Pick a store to add them to.";
     else if (text.length > 400_000 || rows.length > ACCOUNT_OFFER_MAX) err = `That's too many at once: ${ACCOUNT_OFFER_MAX} at most.`;
-    else {
+    else if (st === MASTER && inboxes.length && !ib && rows.length) {
+      err = get("inbox") ? "That inbox isn't there any more: choose another." : "Choose the inbox they go in.";
+      keepAdd = { accounts: text, password: get("password") };
+    } else {
       const n = await addToList(env, st, rows, "list:" + o.id, now);
-      if (n) await stockCheck(env, st, name, false);
+      const { kept } = ib ? await intoInbox(env, ib.id, rows.map((a) => a.email.toLowerCase()), now) : { kept: 0 };
+      if (n || ib) await stockCheck(env, st, name, false);
       const already = rows.length - n;
-      done = rows.length ? `Added ${n} to ${listName(st)}.${already ? ` ${already} ${already === 1 ? "was" : "were"} already on it, and kept ${already === 1 ? "its" : "their"} password (Edit changes one).` : ""}` : "";
+      done = rows.length ? `Added ${n} to ${listName(st)}${ib ? `, in ${ib.name}` : ""}.${already ? ` ${already} ${already === 1 ? "was" : "were"} already on it, and kept ${already === 1 ? "its" : "their"} password (Edit changes one).` : ""}`
+        + (kept ? ` ${kept} already in another inbox stayed there (Move to inbox moves ${kept === 1 ? "it" : "them"}).` : "") : "";
       err = [bad.length ? `${lineList(bad)} couldn't be read: write each account as email:password.` : "",
         bare.length ? `${lineList(bare)} ${bare.length === 1 ? "has" : "have"} only an email: add ${bare.length === 1 ? "it" : "them"} again with the password box filled in.` : "",
         !rows.length && !bad.length && !bare.length ? "Paste the accounts to add, one per line." : ""].filter(Boolean).join(" ");
     }
   }
   // After a change, back to the list by its link (303), with what happened, so reloading the page doesn't send it again.
-  if (post && (["remove", "giveback", "save", "add", "do-reassign"].includes(action) || (["ask-many", "reassign"].includes(action) && err))) {
+  if (post && !keepAdd && (["remove", "giveback", "save", "add", "do-reassign", "move-inbox", "inbox-new", "inbox-rename", "inbox-mine", "inbox-delete"].includes(action)
+    || (["ask-many", "reassign", "inbox"].includes(action) && err))) {
     const q = new URLSearchParams({ t });
     if (done) q.set("done", done);
     if (err) q.set("err", err);
@@ -2557,15 +2823,48 @@ async function accountListPage(request, env, url, id) {
   for (const a of all) { if (!byStore.has(a.store)) byStore.set(a.store, []); byStore.get(a.store).push(a); }
   const tickNow = new Set(action ? [] : url.searchParams.getAll("tick"));
   const own = (a) => !isReuse(a);
-  const sections = [...byStore].map(([st, rows]) => {
-    const mine = rows.filter(own), free = mine.filter((a) => !a.key_hash).length;
-    // Each row carries what the search box looks in: its email, its store and its status, in lowercase without accents.
-    return `<section class="store" data-store="${esc(st)}"><h3><input type="checkbox" class="all js" hidden data-store="${esc(st)}" aria-label="Tick every ${esc(accountStoreName(st))} account"> ${esc(accountStoreName(st))} <span class="count">${free} free of ${mine.length}</span></h3>
-      <table><thead><tr><th class="pick"></th><th>Account</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((a) => `<tr${a.key_hash ? "" : ' class="free"'}${own(a) ? "" : " data-reuse"} data-q="${esc(searchText(`${a.email} ${accountStoreName(st)} ${statusText(a, usOf(a))}`))}">
+  // With inboxes (2026-10-23), the one list's accounts show in a section per inbox (in the order they were made), then No
+  // inbox; each section's box ticks its own rows. Which inbox each account is in, by email_norm.
+  const inboxAt = new Map(inboxes.length ? (await env.DB.prepare("SELECT i.email_norm, i.inbox_id FROM account_inbox_of i JOIN account_inboxes b ON b.id = i.inbox_id").all())
+    .results.map((r) => [r.email_norm, r.inbox_id]) : []);
+  // `ib`: undefined for a store's section, else the inbox (null: No inbox) of a section of the one list.
+  const section = (st, rows, ib) => {
+    const mine = rows.filter(own), free = mine.filter((a) => !a.key_hash).length, byInbox = ib !== undefined;
+    const label = byInbox ? (ib ? ib.name : "No inbox") : accountStoreName(st), kind = byInbox ? inboxKind(ib && ib.mine) : "";
+    // Each row carries what the search box looks in: its email, its store (and inbox) and its status, in lowercase without
+    // accents.
+    return `<section class="store" data-store="${esc(st)}"${byInbox ? ` data-inbox="${esc(ib ? ib.id : "none")}"` : ""}><h3><input type="checkbox" class="all js" hidden data-store="${esc(st)}" aria-label="Tick every ${byInbox ? `account in ${esc(label)}` : `${esc(label)} account`}"> ${esc(label)}${byInbox ? ` <span class="tag${ib && ib.mine ? " mine" : ""}">${kind}</span>` : ""} <span class="count">${free} free of ${mine.length}</span></h3>
+      <table><thead><tr><th class="pick"></th><th>Account</th><th>Status</th><th></th></tr></thead><tbody>${rows.map((a) => `<tr${a.key_hash ? "" : ' class="free"'}${own(a) ? "" : " data-reuse"} data-q="${esc(searchText(`${a.email} ${accountStoreName(st)}${byInbox ? ` ${label} ${kind}` : ""} ${statusText(a, usOf(a))}`))}">
         <td class="pick"><input type="checkbox" name="pick" form="bulk" value="${esc(a.store + " " + a.email_norm)}" data-store="${esc(a.store)}" data-email="${esc(a.email)}" aria-label="Tick ${esc(a.email)}"${tickNow.has(a.store + " " + a.email_norm) ? " checked" : ""}></td>
         <td class="em">${esc(a.email)}</td><td>${statusCell(a, usOf(a))}</td>
         <td class="act"><form method="get" action="${esc(url.pathname)}">${hidden}${keep("store", a.store)}${keep("email", a.email_norm)}<button class="ed" type="submit" name="action" value="edit">Edit</button></form>${a.store === MASTER && a.key_hash ? `<form method="get" action="${esc(url.pathname)}">${hidden}${keep("email", a.email_norm)}<button class="ed" type="submit" name="action" value="reassign">Reassign</button></form>` : ""}<form method="get" action="${esc(url.pathname)}">${hidden}${keep("email", a.email_norm)}<button class="rm" type="submit" name="action" value="ask">Remove</button></form></td></tr>`).join("")}</tbody></table></section>`;
-  }).join("");
+  };
+  const noInbox = (byStore.get(MASTER) || []).filter((a) => !inboxAt.has(a.email_norm));
+  const sections = [...byStore].flatMap(([st, rows]) => st !== MASTER || !inboxes.length ? [section(st, rows)]
+    : [...inboxes.map((b) => [b, rows.filter((a) => inboxAt.get(a.email_norm) === b.id)]).filter(([, rs]) => rs.length).map(([b, rs]) => section(st, rs, b)),
+      ...(noInbox.length ? [section(st, noInbox, null)] : [])]).join("");
+  // The Inboxes panel: each inbox, what it's for, its counts, and Rename, the switch and Delete; then New inbox. Making an
+  // Only mine inbox For buyers goes through its page (inboxPage), which asks.
+  const ownerSet = inboxes.some((b) => b.mine) ? !!(await ownerHash(env)) : true;
+  const btnForm = (act, fields, label, cls, method = "post") => `<form method="${method}" action="${esc(url.pathname)}">${hidden}${fields}<button class="${cls}" type="submit" name="action" value="${act}">${label}</button></form>`;
+  const freeOf = (rs) => rs.filter((a) => !a.key_hash).length;
+  const firstInbox = !inboxes.length;
+  const panel = `<section class="inboxes" id="inboxes"><h3>Inboxes</h3>
+     <p class="small">${firstInbox ? "Put each account of your list under the inbox its emails go to. " : ""}${INBOX_KINDS_HINT}${firstInbox ? " Until you make one, every account is for buyers." : ""}</p>
+     ${ownerSet ? "" : `<p class="small err">No FAFO sends order alerts yet, so no slot gets the accounts in your Only mine inboxes: let your own FAFO send them (Settings → Order alerts for buyers).</p>`}
+     ${inboxes.map((b) => `<div class="ibx"><div><strong>${esc(b.name)}</strong> <span class="tag${b.mine ? " mine" : ""}">${inboxKind(b.mine)}</span><br><span class="count">${plural(b.n, "account")}, ${b.free} free</span></div>
+       <div class="ibx-a">${btnForm("inbox", keep("inbox", b.id), "Rename…", "ed", "get")}${b.mine ? btnForm("inbox", keep("inbox", b.id), "For buyers…", "ed", "get") : btnForm("inbox-mine", keep("inbox", b.id) + keep("mine", "1"), "Make it Only mine", "ed")}${btnForm("inbox-delete", keep("inbox", b.id), "Delete", "rm")}</div></div>`).join("")}
+     ${inboxes.length && noInbox.length ? `<div class="ibx"><div><strong>No inbox</strong> <span class="tag">For buyers</span><br><span class="count">${plural(noInbox.length, "account")}, ${freeOf(noInbox)} free</span></div></div>` : ""}
+     <details${firstInbox ? " open" : ""}><summary>New inbox</summary>
+       <form method="post" class="edit" id="ibx-new">${hidden}
+         <label>Name<input type="text" name="name" maxlength="${INBOX_NAME_MAX}" autocomplete="off" spellcheck="false" placeholder="The email address its accounts' mail goes to"></label>
+         <label>Who gets its accounts<select name="kind"><option value="buyers">For buyers</option><option value="mine">Only mine</option></select></label>
+         ${noInbox.length ? `<label class="opt"><input type="checkbox"${firstInbox ? " checked" : ""} name="adopt" value="1"><span>Put the ${plural(noInbox.length, "account")} that ${noInbox.length === 1 ? "has" : "have"} no inbox in it</span></label>` : ""}
+         <div class="row"><button class="ok" type="submit" name="action" value="inbox-new">Make the inbox</button></div>
+       </form></details>
+     ${noInbox.length ? `<script>(() => { const f = document.getElementById("ibx-new"), k = f.elements.kind, a = f.elements.adopt; let touched = false;
+       a.addEventListener("change", () => { touched = true; }); k.addEventListener("change", () => { if (!touched) a.checked = ${firstInbox} && k.value === "buyers"; }); })();</script>` : ""}
+   </section>`;
   const total = all.filter(own).length;
   const pick = addTo(store) || MASTER;
   const who = [o.name, o.username ? "@" + o.username : "", "license …" + o.key_last4].filter(Boolean).join(" · ");
@@ -2573,6 +2872,7 @@ async function accountListPage(request, env, url, id) {
     `${err ? `<p class="err">${esc(err)}</p>` : ""}
      <p class="who">${total ? `${total} account${total === 1 ? "" : "s"}, ${all.filter((a) => own(a) && !a.key_hash).length} free` : "Your list is empty"}</p>
      <p class="small">One list for Target and Pokémon Center: a buyer's slots at both stores for one profile get the same account, and no other buyer gets it while they have it. Edit sets a new password, or a new email while the account is free. One given to a buyer can be given back to your list from there, or reassigned: Reassign gives their slots another account in its place, if something's wrong with it. Tick accounts (Shift+click ticks a run of them) to copy, reassign or remove them together. Search matches emails, stores and what each says (Free, a buyer's license, a profile name). <a href="#add">Add accounts</a> is at the end. Changes count at once.</p>
+     ${panel}
      ${all.length ? `<div class="find js" hidden><input type="search" id="find" placeholder="Search your list" aria-label="Search your list" autocomplete="off" spellcheck="false"><button type="button" class="ed" data-pickall>Tick all</button><span class="shown" id="shown" role="status"></span></div>
      <p class="small" id="none-match" hidden>No accounts match your search.</p>` : ""}
      ${sections}
@@ -2581,6 +2881,7 @@ async function accountListPage(request, env, url, id) {
        <button type="button" class="ed js" hidden data-copy="emails">Copy emails</button>
        <button type="button" class="ed js" hidden data-copy="logins">Copy email:password</button>
        <button type="submit" class="ed" name="action" value="reassign">Reassign</button>
+       ${inboxes.length ? `<select name="to_inbox" aria-label="The inbox to move the ticked accounts to">${inboxOptions(inboxes, "", "Move to inbox…", true)}</select><button type="submit" class="ed" name="action" value="move-inbox">Move</button>` : ""}
        <button type="submit" class="rm" name="action" value="ask-many">Remove</button>
        <button type="button" class="ed js" hidden data-clear>Clear</button>
      </form>${LIST_SCRIPT}` : ""}
@@ -2588,8 +2889,10 @@ async function accountListPage(request, env, url, id) {
      <form method="post" class="edit">${hidden}
        ${ownLists.length ? `<label>Add to<select name="store">${addStores.map((st) => `<option value="${esc(st)}"${st === pick ? " selected" : ""}>${esc(st === MASTER ? "Your list (Target and Pokémon Center)" : accountStoreName(st) + "'s own list")}</option>`).join("")}</select></label>`
          : `<p class="small">They go on your list, for Target and Pokémon Center both.</p>`}
-       <label>Accounts<textarea name="accounts" rows="5" spellcheck="false" autocomplete="off" placeholder="One per line: email:password"></textarea></label>
-       <label>Password for lines with only an email<input type="text" name="password" maxlength="200" autocomplete="off" spellcheck="false"></label>
+       ${inboxes.length ? `<label>Inbox<select name="inbox"${ownLists.length ? "" : " required"}>${inboxOptions(inboxes, "", "Choose an inbox…")}</select></label>
+         <p class="hint">The inbox their emails go to${ownLists.length ? " (for your list: a store's own list has no inboxes)" : ""}. One already on your list stays in its inbox, or goes in this one if it has none.</p>` : ""}
+       <label>Accounts<textarea name="accounts" rows="5" spellcheck="false" autocomplete="off" placeholder="One per line: email:password">${keepAdd ? esc(keepAdd.accounts) : ""}</textarea></label>
+       <label>Password for lines with only an email<input type="text" name="password" maxlength="200" autocomplete="off" spellcheck="false"${keepAdd && keepAdd.password ? ` value="${esc(keepAdd.password)}"` : ""}></label>
        <p class="hint">The store account's password: Target's logins file gets email:password, and Pokémon Center checks out as a guest with the email. One already on the list keeps its password: Edit changes it.</p>
        <div class="row"><button class="ok" type="submit" name="action" value="add">Add to my list</button></div>
      </form>
@@ -4703,7 +5006,9 @@ async function admin(request, env, path) {
       env.DB.prepare("SELECT id, store, store_name, count, key_last4, name, username, status, added, created_at, decided_at, review_token FROM account_offers ORDER BY created_at DESC LIMIT 50"),
       env.DB.prepare("SELECT id, count, key_last4, name, username, status, removed, created_at, decided_at, review_token FROM account_removals ORDER BY created_at DESC LIMIT 50"),
     ]);
-    return json({ limit: assignLimit(env), stores: stores.results, given: given.results,
+    // The one list's inboxes (2026-10-23): how many accounts each has, and how many are free.
+    const inboxes = (await listInboxes(env)).map((b) => ({ name: b.name, mine: !!b.mine, total: b.n, free: b.free }));
+    return json({ limit: assignLimit(env), stores: stores.results, inboxes, given: given.results,
       offers: offers.results.map(({ review_token, ...o }) => ({ ...o, review_url: `${origin}/accounts/review/${o.id}?t=${review_token}` })),
       removals: removals.results.map(({ review_token, ...o }) => ({ ...o, review_url: `${origin}/accounts/removal/${o.id}?t=${review_token}` })) });
   }
@@ -4716,6 +5021,7 @@ async function admin(request, env, path) {
     if (!where) return json({ error: free ? "send {email} or {key}" : "send {email}" }, 400);
     const r = free ? await freeAccounts(env, where[0], ...where.slice(1)) : await env.DB.prepare(`DELETE FROM accounts WHERE ${where[0]}`).bind(...where.slice(1)).run();
     await sweepParked(env);   // a Target account parked for a Pokémon Center slot freed here goes back too
+    if (!free) await sweepInboxes(env);
     const { results: stores } = await env.DB.prepare("SELECT DISTINCT store FROM accounts").all();
     for (const x of stores) await stockCheck(env, x.store, x.store, false);
     return json({ ok: true, changed: r.meta ? r.meta.changes : 0 });
@@ -5030,7 +5336,7 @@ function page(statusCode, title, msg, extra = "", wide = false) {
   .who{font-size:20px;font-weight:600;color:#e6ecff;margin:16px 0 0;overflow-wrap:anywhere}
   .key{font:600 18px ui-monospace,Consolas,monospace;color:#e6ecff;background:#07102b;border-radius:8px;padding:10px 12px;user-select:all;overflow-wrap:anywhere}
   .row{display:flex;gap:10px;margin-top:20px}
-  .stack .row{margin-top:12px}
+  .stack .row{margin-top:12px} .row>button{flex:1;width:auto}
   input[type=number]{width:100%;box-sizing:border-box;margin-top:6px;padding:10px 12px;border-radius:10px;border:1px solid #2a3f7a;background:#07102b;color:#e6ecff;font:600 18px system-ui,sans-serif}
   .row form{flex:1;margin:0}
   button{width:100%;padding:12px;border:0;border-radius:10px;font:600 16px system-ui,sans-serif;cursor:pointer;color:#fff}
@@ -5048,6 +5354,12 @@ function page(statusCode, title, msg, extra = "", wide = false) {
   .bulk[hidden]{display:none} section.store[hidden],table tr[hidden],.find[hidden]{display:none !important}
   .find{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:16px 0 4px} .find .shown{font-size:13px;color:#b9c6ea}
   .find input{flex:1;min-width:180px;box-sizing:border-box;padding:10px 12px;border-radius:10px;border:1px solid #2a3f7a;background:#07102b;color:#e6ecff;font:15px system-ui,sans-serif} .bulk .n{font-weight:600;color:#e6ecff} .bulk .msg{flex:1;min-width:120px;font-size:13px;color:#5fd39a}
+  .tag{display:inline-block;font-size:12px;font-weight:600;line-height:1.5;padding:0 8px;border-radius:999px;border:1px solid #2a3f7a;color:#9cc7ff;vertical-align:1px}
+  .tag.mine{border-color:#7a5bc4;color:#cdb6ff}
+  .ibx{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px;padding:8px 0;border-bottom:1px solid #1c2c5c;color:#e6ecff;overflow-wrap:anywhere}
+  .ibx .count{font-size:13px;color:#b9c6ea} .ibx-a form{display:inline-block;margin:2px 0 2px 6px}
+  details summary{cursor:pointer;color:#9cc7ff;margin-top:14px;font-size:15px}
+  .bulk select{padding:6px 8px;border-radius:8px;border:1px solid #2a3f7a;background:#07102b;color:#e6ecff;font:13px system-ui,sans-serif;max-width:220px}
   td form{margin:0} button.rm{width:auto;padding:6px 12px;font-size:13px;background:transparent;border:1px solid #c4372f;color:#ff8a80}
   td.act{text-align:right} td.act form{display:inline-block;margin:2px 0 2px 6px}
   button.ed{width:auto;padding:6px 12px;font-size:13px;background:transparent;border:1px solid #4a9dff;color:#9cc7ff}

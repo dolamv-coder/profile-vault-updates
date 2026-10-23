@@ -482,7 +482,28 @@ buyer gets it while they have it.
   - **Add accounts**: paste them one per line (`email:password`, or the CSV lines FAFO's Send accounts
     takes, quoted cells too). They go on your list, for Target and Pokémon Center both (with a store's own
     list on the page too, you pick which), at once, with no review link. One already on the list keeps its
-    password (Edit changes it), and the page says which lines it couldn't read.
+    password (Edit changes it), and the page says which lines it couldn't read. Once you have inboxes
+    (below), you pick the inbox they go in.
+  - **Inboxes** (from 2026-10-23, your request): put each account of your list under the inbox its emails
+    go to (the mailbox its alias forwards to; it's a label, nothing signs in to it). Make them in the
+    **Inboxes** panel at the top: a name (the inbox's address, say) and who gets its accounts:
+    - **For buyers**: buyers' slots get these, as every account did before inboxes.
+    - **Only mine**: only slots sent from your own FAFO (the one you allowed to send order alerts) get
+      these, and they get them first; once those run out, your FAFO's slots get For buyers ones. Buyers'
+      slots never get them, nor does a Reassign of a buyer's account (picked or typed).
+
+    The first inbox you make can take every account that has none ("Put the N accounts that have no inbox
+    in it", ticked to start for a For buyers one). An account in no inbox counts as For buyers. The list
+    then shows a section per inbox ("For buyers" or "Only mine", "N free of M", a box that ticks its
+    accounts), then **No inbox**; the search looks in the inbox's name too. Tick accounts and use **Move to
+    inbox…** in the bar (or an account's Edit page) to move them: who has an account doesn't change, so one
+    a buyer has stays theirs until it's given back. **Add accounts** and an offer's review link ask which
+    inbox they go in (an account already on the list stays in its inbox, or goes in this one if it has
+    none), and a new account typed in a Reassign goes in the inbox of the one it replaces. Each inbox has
+    **Rename…**, **Make it Only mine** (or **For buyers…**, which asks first), and **Delete**, which works
+    once no account is in it. The low and out-of-accounts alerts count only accounts buyers can get, and a
+    buyer's store line says "(1 needs an account: your list has none for buyers, only in your Only mine
+    inboxes)" when that's why. Other stores' own lists have no inboxes.
 
   The link works for 24 hours, and a license can ask 10 times a day. Anyone with a license can ask, but
   the link only goes to your channel, so only someone who can read your channel can change the list.
@@ -511,12 +532,12 @@ buyer gets it while they have it.
 - **Pulling** such a slot names the account it had: "Target · Kim Lee · acct7@example.com (assigned
   account)". The account stays with that buyer (it isn't put back on your list), so the slot gets it
   again if it's sent again; free it by hand to give it to someone else.
-- The list, the waiting offers, asks to remove, See my list links and those alerts are in the `accounts`,
-  `account_offers`, `account_removals`, `account_lists` and `account_stock` tables, which
-  `npm run db:init` (and the deploy Action) adds. With `ADMIN_TOKEN` set:
+- The list, the waiting offers, asks to remove, See my list links, those alerts and the inboxes are in the
+  `accounts`, `account_offers`, `account_removals`, `account_lists`, `account_stock`, `account_inboxes` and
+  `account_inbox_of` tables, which `npm run db:init` (and the deploy Action) adds. With `ADMIN_TOKEN` set:
 
 ```
-# The list: how many are free (your list is store "*"), who got which, and each offer with its review link
+# The list: how many are free (your list is store "*"), its inboxes, who got which, and each offer with its review link
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/accounts
 
 # Give an account back to the list, with every slot's use of it. With "store":"target" only that

@@ -218,6 +218,32 @@ alone (every store's rows of one account) from reading the whole table. Only
   and the channel gets "🔁 Reassigned N accounts" with old → new, never a password: what was posted keeps the old
   email, so the owner changes it in their bot. Pulls, declines, slots sent again (`listAccount`) and order alerts then go
   by the new one.
+  Since 2026-10-23 (the owner's request: three inboxes for the list, the current accounts under the first, which buyers'
+  slots alone take from, and two others whose accounts only the owner gets; their answers: those go "Only to my own FAFO's
+  slots", and the owner's own batches take "My inboxes first, then" the first) the one list has **inboxes**: a label for the
+  mailbox an account's email goes to (the accounts are aliases forwarding to one; nothing signs in to it), D1
+  `account_inboxes` (`name`, unique `name_norm`, `mine`) and `account_inbox_of` (`email_norm` → `inbox_id`), new tables
+  since `db:init` can't add columns. An inbox is For buyers (`mine` 0) or Only mine (1); an account in none (or in one that's
+  gone) counts as For buyers, so nothing changed until the owner made inboxes. The owner is `currentAlertSender`'s license
+  (`ownerHash`, read once per batch), as for premium and billing: `claimListAccount` gives a buyer's slot no account in an
+  Only mine inbox (`IN_MINE`) and the owner's those first, then a For buyers one (`listAccount`, an account the profile has,
+  is unchanged); a buyer's slot left without one while only Only mine ones are free says "your list has none for buyers,
+  only in your Only mine inboxes" (`why` "mine"). Reassign follows it (`swapAccount`'s `owner`, `freeForReassign(buyers)`,
+  `noneMine`; per kind of license, so the owner's can still get one once buyers' run out), a typed account in an Only mine
+  inbox is refused for a buyer's, and a new one typed goes in the inbox of the one it replaces (in none if that's Only mine
+  and a buyer's). `stockCheck` for the one list counts only accounts buyers can get. See my list has an **Inboxes** panel
+  (each one's kind and counts, `listInboxes`; Rename… and For buyers… open its page, `inboxPage`, which asks before an Only
+  mine inbox goes to buyers; Make it Only mine; Delete, refused while an account of the list is in it; New inbox, whose
+  "Put the N accounts that have no inbox in it" starts ticked for the first one and unticks when Only mine is picked), the
+  one list's accounts in a section per inbox (the tag, "N free of M", a box that ticks that section: `LIST_SCRIPT` goes by
+  the box's section now) then No inbox, the inbox's name and kind in `data-q`, **Move to inbox…** in the bar and on an
+  account's Edit page (`move-inbox`, `moveToInbox`; who has one doesn't change, and the page says how many moved are given,
+  and that a buyer keeps one moved into an Only mine inbox until it's given back), and an inbox select Add requires (the
+  page comes back with what was typed when none is picked, `keepAdd`); an offer's review link asks the same. Accounts added
+  go in it through `intoInbox`: one already in another inbox stays (never moved out of an Only mine one by adding it again),
+  one in none goes in. Rows of accounts that leave the list go (`sweepInboxes`, `addToList` for an email coming back,
+  `swapAccount`), and an email edit takes its row along. With no inboxes the page is as before but for the panel.
+  `/admin/accounts` lists `inboxes`. Other stores' own lists have none.
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
   once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.
   Never put the accounts or their password in this repo or a page: it's public.
