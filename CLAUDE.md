@@ -228,21 +228,28 @@ alone (every store's rows of one account) from reading the whole table. Only
   (`ownerHash`, read once per batch), as for premium and billing: `claimListAccount` gives a buyer's slot no account in an
   Only mine inbox (`IN_MINE`) and the owner's those first, then a For buyers one (`listAccount`, an account the profile has,
   is unchanged); a buyer's slot left without one while only Only mine ones are free says "your list has none for buyers,
-  only in your Only mine inboxes" (`why` "mine"). Reassign follows it (`swapAccount`'s `owner`, `freeForReassign(buyers)`,
+  only in your Only mine inboxes" (`why` "mine"), and a store's own row from before (Target's or Pokémon Center's) whose
+  email is in an Only mine inbox doesn't go to a buyer's slot either. Reassign follows it (`swapAccount`'s `owner`, `freeForReassign(buyers)`,
   `noneMine`; per kind of license, so the owner's can still get one once buyers' run out), a typed account in an Only mine
   inbox is refused for a buyer's, and a new one typed goes in the inbox of the one it replaces (in none if that's Only mine
   and a buyer's). `stockCheck` for the one list counts only accounts buyers can get. See my list has an **Inboxes** panel
-  (each one's kind and counts, `listInboxes`; Rename… and For buyers… open its page, `inboxPage`, which asks before an Only
-  mine inbox goes to buyers; Make it Only mine; Delete, refused while an account of the list is in it; New inbox, whose
-  "Put the N accounts that have no inbox in it" starts ticked for the first one and unticks when Only mine is picked), the
+  (each one's kind and counts, `listInboxes`; its one Edit… opens its page, `inboxPage`, to rename it, switch it, which the
+  page explains first either way (how many free accounts buyers gain, or lose and have left, and that buyers keep the ones
+  they have), or delete it, refused while an account of the list is in it; New inbox, whose "Put the N accounts that have no
+  inbox in it" starts ticked for the first one and unticks when Only mine is picked), the
   one list's accounts in a section per inbox (the tag, "N free of M", a box that ticks that section: `LIST_SCRIPT` goes by
   the box's section now) then No inbox, the inbox's name and kind in `data-q`, **Move to inbox…** in the bar and on an
   account's Edit page (`move-inbox`, `moveToInbox`; who has one doesn't change, and the page says how many moved are given,
   and that a buyer keeps one moved into an Only mine inbox until it's given back), and an inbox select Add requires (the
-  page comes back with what was typed when none is picked, `keepAdd`); an offer's review link asks the same. Accounts added
-  go in it through `intoInbox`: one already in another inbox stays (never moved out of an Only mine one by adding it again),
-  one in none goes in. Rows of accounts that leave the list go (`sweepInboxes`, `addToList` for an email coming back,
-  `swapAccount`), and an email edit takes its row along. With no inboxes the page is as before but for the panel.
+  page comes back with what was typed when none is picked, `keepAdd`); an offer's review link asks the same. Selects name an
+  inbox's kind first ("Only mine · …"), so a narrow one never cuts it off. Accounts added go in it in the same D1 batch (a
+  transaction) as they go on the list (`addToList`'s `inbox`, or `inbox` on a row for a reassign's typed ones), never after,
+  so a buyer's batch can't take one meant for an Only mine inbox in between (the review reproduced that), and none is added
+  if the inbox was deleted meanwhile: one already in another inbox stays (never moved out of an Only mine one by adding it
+  again), one in none goes in. Rows of accounts that leave the list go (`sweepInboxes`, `addToList` for an email coming
+  back, `swapAccount`), and an email edit takes its row along in the same batch. With Only mine inboxes, the list's and the
+  offer page's counts say how many free ones buyers can get ("(N for buyers)", as `stockCheck` counts). With no inboxes the
+  page is as before but for the panel.
   `/admin/accounts` lists `inboxes`. Other stores' own lists have none.
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
   once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.

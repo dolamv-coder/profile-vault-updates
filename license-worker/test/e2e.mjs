@@ -2949,13 +2949,14 @@ try {
     assert.ok(p.includes('<strong>mine-a@example.com</strong> <span class="tag mine">Only mine</span><br><span class="count">0 accounts, 0 free</span>'));
     assert.ok(p.includes("For buyers: buyers' slots get these. Only mine: only slots sent from your own FAFO, the one that sends order alerts, get these; they're used before the For buyers ones."), "what each is for");
     assert.ok(!p.includes("Until you make one") && p.includes("<details><summary>New inbox</summary>") && !p.includes('name="adopt"'), "New inbox, folded, with no accounts to take");
-    assert.ok(p.includes(`<input type="hidden" name="inbox" value="${B}"><button class="ed" type="submit" name="action" value="inbox">For buyers…</button>`), "an Only mine inbox is made For buyers through its page");
-    assert.ok(p.includes(`<input type="hidden" name="inbox" value="${A}"><input type="hidden" name="mine" value="1"><button class="ed" type="submit" name="action" value="inbox-mine">Make it Only mine</button>`));
+    for (const [id, name] of [[A, "buyers-inbox@example.com"], [B, "mine-a@example.com"]])
+      assert.ok(p.includes(`<input type="hidden" name="inbox" value="${id}"><button class="ed" type="submit" name="action" value="inbox" aria-label="Edit ${name}: rename it, change who gets its accounts, or delete it">Edit…</button>`), "each inbox's Edit…, to its page");
+    assert.ok(!p.includes('value="inbox-mine"') && !p.includes('value="inbox-delete"'), "who gets its accounts changes on its page, which says what that does first, never in one click here");
     assert.ok(p.includes(`<section class="store" data-store="*" data-inbox="${A}"><h3><input type="checkbox" class="all js" hidden data-store="*" aria-label="Tick every account in buyers-inbox@example.com"> buyers-inbox@example.com <span class="tag">For buyers</span> <span class="count">3 free of ${ibN}</span></h3>`), "its section");
     assert.ok(!p.includes(`data-inbox="${B}"`) && !p.includes('data-inbox="none"'), "no section for an empty inbox, nor No inbox");
     assert.ok(p.includes('data-q="ibx.a1@example.com target and pokemon center buyers-inbox@example.com for buyers free"'), "the search looks in its inbox");
     assert.ok(p.includes('<select name="to_inbox" aria-label="The inbox to move the ticked accounts to"><option value="" selected disabled>Move to inbox…</option>') && p.includes('value="move-inbox">Move</button>'), "the bar moves ticked ones");
-    assert.ok(p.includes(`<option value="none">No inbox · For buyers</option></select>`));
+    assert.ok(p.includes(`<option value="${B}">Only mine · mine-a@example.com</option>`) && p.includes(`<option value="none">For buyers · No inbox</option></select>`), "what each is for first, so a narrow select never cuts it off");
     assert.ok(p.includes('<label>Inbox<select name="inbox"') && p.includes('<option value="" selected disabled>Choose an inbox…</option>'), "Add asks for the inbox");
     assert.deepEqual((await ibAdmin()).inboxes, [{ name: "buyers-inbox@example.com", mine: false, total: ibN, free: 3 }, { name: "mine-a@example.com", mine: true, total: 0, free: 0 },
       { name: "mine-b@example.com", mine: true, total: 0, free: 0 }]);
@@ -2987,8 +2988,9 @@ try {
     await new Promise((ok) => setTimeout(ok, 400));
     const link = offerLink(webhookPosts.at(-1).content); assert.ok(link);
     const html = unescape(await (await fetchOnce(link)).text());
-    assert.ok(html.includes('<label>Inbox<select name="inbox" required><option value="" selected disabled>Choose an inbox…</option>') && html.includes(`<option value="${C}">mine-b@example.com · Only mine</option>`), html.slice(0, 3000));
-    assert.ok(html.includes('<button class="ok" type="submit" form="offer-add" name="action" value="add">Add to my list</button>'));
+    assert.ok(html.includes('<label>Inbox<select name="inbox" required><option value="" selected disabled>Choose an inbox…</option>') && html.includes(`<option value="${C}">Only mine · mine-b@example.com</option>`), html.slice(0, 3000));
+    assert.ok(html.includes('<button class="ok" style="flex:1" type="submit" form="offer-add" name="action" value="add">Add to my list</button>'));
+    assert.match(html, /Your list: \d+ accounts, \d+ free \(\d+ for buyers\)\./, "how many free ones buyers can get");
     const post = (body) => fetchOnce(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), ...body }) }).then(async (r) => unescape(await r.text()));
     assert.ok((await post({ action: "add" })).includes('<p class="err">Choose the inbox they go in.</p>'), "an inbox has to be picked");
     assert.ok((await post({ action: "add", inbox: "gone-id" })).includes(`<p class="err">That inbox isn't there any more: choose another.</p>`));
@@ -3004,13 +3006,13 @@ try {
     const r = await postPairs(ibLink, [["action", "move-inbox"], ["to_inbox", C], ["pick", "* ibx.a2@example.com"], ["pick", `* ${held.email_norm}`], ["pick", "walmart nobody@example.com"],
       ["pick", "* ibx.c1@example.com"]], "manual");
     assert.equal(r.status, 303); const loc = r.headers.get("location"); await r.text();
-    assert.equal(ibDone(loc), "Moved 2 accounts to mine-b@example.com (Only mine). 1 was in it already. 1 of them is given to a slot, which keeps it: moving changes only which slots get them next. "
-      + "One is with a buyer, who keeps it until it's given back; after that only your own FAFO's slots get it.");
+    assert.equal(ibDone(loc), "Moved 2 accounts to mine-b@example.com (Only mine). 1 was in it already. "
+      + "One is with a buyer, who keeps it until it's given back; after that only your own FAFO's slots get it.", "the given one said once");
     assert.equal(ibErr(loc), "1 on a store's own list stayed as it was: inboxes are for your list.");
     assert.deepEqual([inboxNameOf("ibx.a2@example.com"), inboxNameOf(held.email_norm)], ["mine-b@example.com", "mine-b@example.com"]);
     // One account, from its Edit page: its inbox, and a select to move it.
     const ed = await ibPage({ action: "edit", store: "*", email: "ibx.a2@example.com" });
-    assert.ok(ed.includes('<p class="small">Inbox: mine-b@example.com · Only mine</p>') && ed.includes(`<option value="${C}" selected>mine-b@example.com · Only mine</option>`) && ed.includes('value="move-inbox">Move it</button>'), ed.slice(0, 3000));
+    assert.ok(ed.includes('<p class="small">Inbox: mine-b@example.com · Only mine</p>') && ed.includes(`<option value="${C}" selected>Only mine · mine-b@example.com</option>`) && ed.includes('value="move-inbox">Move it</button>'), ed.slice(0, 3000));
     const back = await ibPost({ action: "move-inbox", email: "ibx.a2@example.com", to_inbox: A });
     assert.equal(ibDone(back.location), "Moved ibx.a2@example.com to buyers-inbox@example.com (For buyers).");
     const out = await ibPost({ action: "move-inbox", email: "ibx.a3@example.com", to_inbox: "none" });
@@ -3091,6 +3093,7 @@ try {
     const S = dbRows("SELECT id FROM account_inboxes WHERE name = 'spare@example.com'")[0].id;
     const sp = await ibPage({ action: "inbox", inbox: S });
     assert.ok(sp.includes("<h2>An inbox</h2>") && sp.includes(`value="inbox-delete">Delete spare@example.com</button>`), sp.slice(0, 2500));
+    assert.match(sp, /Making it Only mine stops buyers' slots getting its 0 free accounts, starting with the next batch: they'd have \d+ free accounts? left on your list\./, "what Only mine does, before it's done");
     await view(ibLink, { action: "inbox-delete", inbox: S });
     assert.equal(dbRows(`SELECT COUNT(*) AS n FROM account_inboxes WHERE id = '${S}'`)[0].n, 1, "a link (GET) deletes nothing");
     assert.equal(ibDone((await ibPost({ action: "inbox-delete", inbox: S })).location), "Deleted spare@example.com.");
@@ -3108,8 +3111,70 @@ try {
       "mine-c@example.com is Only mine now: only your own FAFO's slots get its accounts. One is with a buyer, who keeps it until it's given back.");
     assert.equal(ibErr((await ibPost({ action: "inbox-mine", inbox: "gone", mine: "1" })).location), "That inbox isn't there any more.");
   });
+  await test("an Only mine account's email edit keeps its inbox (in one go), and buyers still never get it", async () => {
+    const C = ibIds["mine-b@example.com"];
+    sqlRun("UPDATE accounts SET key_hash = 'held-2' WHERE store = '*' AND key_hash IS NULL");
+    assert.equal(ibDone((await ibAdd(C, ["ibx.e1@example.com:Pw-e1"])).location), "Added 1 to your list, in mine-c@example.com.");
+    const r = await ibPost({ action: "save", store: "*", email: "ibx.e1@example.com", new_email: "ibx.e2@example.com", password: "" });
+    assert.equal(ibDone(r.location), "Changed ibx.e1@example.com to ibx.e2@example.com on your list.");
+    assert.deepEqual([inboxNameOf("ibx.e2@example.com"), inboxNameOf("ibx.e1@example.com")], ["mine-c@example.com", null], "its inbox went with it");
+    const b = await ibBatch(owenKey, "Owen", ["Owen F"]);
+    assert.deepEqual(b.d.accounts, { Target: { asked: 1, got: 0 } }, "the only free one is Only mine");
+    assert.ok(b.m.content.includes("only in your Only mine inboxes"), b.m.content);
+    // Pokémon Center too.
+    const before = webhookPosts.length;
+    const pc = await fetchOnce(BASE + "/submissions", { method: "POST", headers: { authorization: "Bearer " + owenKey, "content-type": "application/json" },
+      body: JSON.stringify({ files: [pcFile(["Owen G"])], name: "Owen", slots: 1, batch: "ib" + rid(), stores: [{ name: "Pokémon Center", n: 1, seller: 1 }] }) });
+    assert.equal(pc.status, 200, await pc.clone().text());
+    assert.deepEqual((await pc.json()).accounts, { "Pokémon Center": { asked: 1, got: 0 } });
+    assert.ok(batchPost(before).content.includes("only in your Only mine inboxes"), batchPost(before).content);
+    assert.equal(dbRows("SELECT key_hash FROM accounts WHERE store = '*' AND email_norm = 'ibx.e2@example.com'")[0].key_hash, null, "still free");
+  });
+  await test("a buyer's slot never gets a store's own row from before whose email is Only mine on the list", async () => {
+    sqlRun(`INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES ('target', 'ibx.e2@example.com', 'ibx.e2@example.com', 'Pw-old', ${Date.now()}, 'legacy-test')`);
+    const b = await ibBatch(owenKey, "Owen", ["Owen H"]);
+    assert.deepEqual(b.d.accounts, { Target: { asked: 1, got: 0 } }, "not through Target's own list either");
+    assert.equal(dbRows("SELECT key_hash FROM accounts WHERE store = 'target' AND email_norm = 'ibx.e2@example.com'")[0].key_hash, null);
+    sqlRun("DELETE FROM accounts WHERE store = 'target' AND email_norm = 'ibx.e2@example.com'");
+  });
+  await test("with no FAFO sending order alerts, no slot gets an Only mine account, the owner's neither", async () => {
+    sqlRun("UPDATE alert_senders SET status = 'held-for-inbox-test' WHERE status = 'allowed'");
+    try {
+      const p = await ibPage();
+      assert.ok(p.includes("No FAFO sends order alerts yet, so no slot gets the accounts in your Only mine inboxes"), "the page says so");
+      const b = await ibBatch(bobKey, "Owner", ["Mo Seven"]);
+      assert.deepEqual(b.d.accounts, { Target: { asked: 1, got: 0 } });
+    } finally { sqlRun("UPDATE alert_senders SET status = 'allowed' WHERE status = 'held-for-inbox-test'"); }
+    const b = await ibBatch(bobKey, "Owner", ["Mo Eight"]);
+    assert.deepEqual(b.d.accounts, { Target: { asked: 1, got: 1 } }, "the owner's again once it sends them");
+    assert.equal(b.emails[0], "ibx.e2@example.com");
+  });
+  await test("an account removed from an Only mine inbox and added again goes in the inbox it's added to", async () => {
+    const [A, C] = [ibIds["buyers-inbox@example.com"], ibIds["mine-b@example.com"]];
+    await ibAdd(C, ["ibx.r1@example.com:Pw-r1"]);
+    assert.equal(inboxNameOf("ibx.r1@example.com"), "mine-c@example.com");
+    const rm = await sendRaw(ibLink, { action: "remove", email: "ibx.r1@example.com" });
+    assert.equal(rm.status, 303);
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM account_inbox_of WHERE email_norm = 'ibx.r1@example.com'")[0].n, 0, "its inbox row went with it");
+    assert.equal(ibDone((await ibAdd(A, ["ibx.r1@example.com:Pw-r1"])).location), "Added 1 to your list, in buyers-inbox@example.com.");
+    assert.equal(inboxNameOf("ibx.r1@example.com"), "buyers-inbox@example.com");
+  });
+  await test("a new Only mine inbox taking the accounts with no inbox says which ones buyers keep", async () => {
+    const A = ibIds["buyers-inbox@example.com"];
+    const given = dbRows("SELECT email_norm FROM accounts WHERE store = '*' AND key_hash = 'held-2' AND email_norm LIKE 'ibx.%' ORDER BY email_norm LIMIT 1")[0].email_norm;
+    await ibPost({ action: "move-inbox", email: given, to_inbox: "none" });
+    await ibPost({ action: "move-inbox", email: "ibx.r1@example.com", to_inbox: "none" });
+    const r = await ibPost({ action: "inbox-new", name: "mine-d@example.com", kind: "mine", adopt: "1" });
+    assert.equal(ibDone(r.location), "Made mine-d@example.com, an Only mine inbox: only your own FAFO's slots get its accounts. Put the 2 accounts that had no inbox in it. One is with a buyer, who keeps it until it's given back.");
+    const p = await ibAfter(r.location);
+    assert.match(p, /<p class="who">\d+ accounts, \d+ free \(\d+ for buyers\)<\/p>/, "the free ones buyers can get");
+    const D = dbRows("SELECT id FROM account_inboxes WHERE name = 'mine-d@example.com'")[0].id;
+    for (const e of [given, "ibx.r1@example.com"]) await ibPost({ action: "move-inbox", email: e, to_inbox: A });
+    assert.equal(ibDone((await ibPost({ action: "inbox-delete", inbox: D })).location), "Deleted mine-d@example.com.");
+    sqlRun("UPDATE accounts SET key_hash = NULL WHERE key_hash = 'held-2'");
+  });
   await test("cleanup: the inboxes and the accounts these tests added go; the list is as it was", async () => {
-    for (const q of ["DELETE FROM accounts WHERE email_norm LIKE 'ibx.%'", "UPDATE accounts SET key_hash = NULL WHERE key_hash = 'held-for-inbox-test'",
+    for (const q of ["DELETE FROM accounts WHERE email_norm LIKE 'ibx.%'", "UPDATE accounts SET key_hash = NULL WHERE key_hash IN ('held-for-inbox-test', 'held-2')",
       "DELETE FROM account_inbox_of", "DELETE FROM account_inboxes", "DELETE FROM account_stock WHERE store = '*'", `DELETE FROM slot_limits WHERE key_hash = '${bobHash}'`]) sqlRun(q);
     for (const x of ibStock0) sqlRun(`INSERT INTO account_stock (store, low_at, empty_at) VALUES ('*', ${x.low_at ?? "NULL"}, ${x.empty_at ?? "NULL"})`);
     for (const x of ibLimit0) sqlRun(`INSERT INTO slot_limits (key_hash, slot_limit, updated_at) VALUES ('${x.key_hash}', ${x.slot_limit}, ${x.updated_at})`);

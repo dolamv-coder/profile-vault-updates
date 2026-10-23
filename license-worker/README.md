@@ -499,11 +499,17 @@ buyer gets it while they have it.
     inbox…** in the bar (or an account's Edit page) to move them: who has an account doesn't change, so one
     a buyer has stays theirs until it's given back. **Add accounts** and an offer's review link ask which
     inbox they go in (an account already on the list stays in its inbox, or goes in this one if it has
-    none), and a new account typed in a Reassign goes in the inbox of the one it replaces. Each inbox has
-    **Rename…**, **Make it Only mine** (or **For buyers…**, which asks first), and **Delete**, which works
-    once no account is in it. The low and out-of-accounts alerts count only accounts buyers can get, and a
-    buyer's store line says "(1 needs an account: your list has none for buyers, only in your Only mine
-    inboxes)" when that's why. Other stores' own lists have no inboxes.
+    none); an account goes on the list and in its inbox in one step, so a buyer's batch can never take one
+    meant for an Only mine inbox in between. A new account typed in a Reassign goes in the inbox of the one
+    it replaces, or in none when that's an Only mine inbox and the slot is a buyer's (so buyers can get
+    it). Changing an account's email keeps it in its inbox. Each inbox's **Edit…** opens its page:
+    rename it, make it Only mine or For buyers (the page says first what that does: how many free accounts
+    buyers gain or lose, and that buyers keep the ones they have), and delete it once no account is in it.
+    With Only mine inboxes, the list says how many of its free accounts buyers can get ("15 free (10 for
+    buyers)"), as the low and out-of-accounts alerts count them, and a buyer's store line says "(1 needs an
+    account: your list has none for buyers, only in your Only mine inboxes)" when that's why. Other
+    stores' own lists have no inboxes (a free row on Target's or Pokémon Center's own list from before
+    whose email is in an Only mine inbox doesn't go to a buyer either).
 
   The link works for 24 hours, and a license can ask 10 times a day. Anyone with a license can ask, but
   the link only goes to your channel, so only someone who can read your channel can change the list.
