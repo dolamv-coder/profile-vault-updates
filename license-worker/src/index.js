@@ -1722,15 +1722,17 @@ const offerStoreName = (x) => String(x || "").replace(/\s+/g, " ").trim().slice(
 // account itself (2026-10-23): one meant for an Only mine inbox is never on the list without it, even for a moment, so a
 // buyer's batch can't take it meanwhile, and isn't added at all if that inbox was deleted meanwhile. One in another inbox
 // already stays there (`kept` counts those), so adding an account again never moves it out of an Only mine inbox; a row left
-// by an account of the list that's gone (its email may come back now) goes first. How many were added, and kept.
+// by an account of the list that's gone (its email may come back now) goes first. A store's own row goes only once the one
+// list has the email. How many were added and kept, and whether an inbox was gone (`gone`: nothing meant for it was added).
 async function addToList(env, store, rows, offerId, now, inbox = null) {
-  let added = 0, kept = 0;
+  let added = 0, kept = 0, gone = false;
   for (let i = 0; i < rows.length; i += 100) {
-    const chunk = rows.slice(i, i + 100), stmts = [], adds = [], counts = [];
+    const chunk = rows.slice(i, i + 100), stmts = [], adds = [], counts = [], there = [];
     const ibs = new Map();
     if (store === MASTER) {
       const norms = JSON.stringify(chunk.map((a) => a.email.toLowerCase()));
       for (const a of chunk) { const ib = a.inbox !== undefined ? a.inbox : inbox; if (ib) ibs.set(ib, [...(ibs.get(ib) || []), a.email.toLowerCase()]); }
+      for (const ib of ibs.keys()) { there.push(stmts.length); stmts.push(env.DB.prepare("SELECT EXISTS (SELECT 1 FROM account_inboxes WHERE id = ?) AS ok").bind(ib)); }
       for (const [ib, list] of ibs) {
         counts.push(stmts.length);
         stmts.push(env.DB.prepare(`SELECT COUNT(*) AS n FROM account_inbox_of i JOIN account_inboxes b ON b.id = i.inbox_id WHERE i.inbox_id <> ?2
@@ -1746,8 +1748,8 @@ async function addToList(env, store, rows, offerId, now, inbox = null) {
        WHERE ?7 IS NULL OR EXISTS (SELECT 1 FROM account_inboxes WHERE id = ?7)
        ON CONFLICT (store, email_norm) DO UPDATE SET password = excluded.password, added_at = excluded.added_at, offer_id = excluded.offer_id WHERE NOT (${OWN_ACCOUNT})`
       ).bind(store, a.email, a.email.toLowerCase(), a.password, now, offerId, ib || null));
-      if (store === MASTER) stmts.push(env.DB.prepare(`DELETE FROM accounts WHERE store IN ('target', 'pokemoncenter') AND email_norm = ? AND key_hash IS NULL AND ${OWN_ACCOUNT}`)
-        .bind(a.email.toLowerCase()));
+      if (store === MASTER) stmts.push(env.DB.prepare(`DELETE FROM accounts WHERE store IN ('target', 'pokemoncenter') AND email_norm = ?1 AND key_hash IS NULL AND ${OWN_ACCOUNT}
+        AND EXISTS (SELECT 1 FROM accounts m WHERE m.store = '${MASTER}' AND m.email_norm = ?1)`).bind(a.email.toLowerCase()));
     }
     for (const [ib, list] of ibs) stmts.push(env.DB.prepare(`INSERT INTO account_inbox_of (email_norm, inbox_id, set_at) SELECT j.value, ?2, ?3 FROM json_each(?1) j
       WHERE EXISTS (SELECT 1 FROM accounts a WHERE a.store = '${MASTER}' AND a.email_norm = j.value) AND EXISTS (SELECT 1 FROM account_inboxes WHERE id = ?2)
@@ -1756,8 +1758,9 @@ async function addToList(env, store, rows, offerId, now, inbox = null) {
     const res = await env.DB.batch(stmts);
     added += adds.reduce((n, k) => n + (res[k].meta && res[k].meta.changes || 0), 0);
     kept += counts.reduce((n, k) => n + ((res[k].results || [])[0] || {}).n || 0, 0);
+    if (there.some((k) => !((res[k].results || [])[0] || {}).ok)) gone = true;
   }
-  return { added, kept };
+  return { added, kept, gone };
 }
 
 async function accountOffer(request, env, ctx, url) {
@@ -1832,11 +1835,14 @@ async function accountReview(request, env, ctx, url, id) {
   else if (o.status === "pending" && action === "add") {
     const list = JSON.parse(o.accounts || "[]");
     // Sent for Target or Pokémon Center (FAFO asks which): on the one list, for both.
-    const { added, kept } = await addToList(env, listStoreOf(o.store), list, o.id, now, inbox ? inbox.id : null);
-    await env.DB.prepare("UPDATE account_offers SET status = 'added', added = ?, accounts = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(added, now, o.id).run();
-    await stockCheck(env, listStoreOf(o.store), o.store_name, false);
-    done = `Added ${added} to your list${inbox ? `, in ${inbox.name}` : ""}.${added < list.length ? ` ${list.length - added} ${list.length - added === 1 ? "was" : "were"} already on it.` : ""}`
-      + (kept ? ` ${kept} already in another inbox stayed there (Move to inbox on See my list moves ${kept === 1 ? "it" : "them"}).` : "");
+    const { added, kept, gone } = await addToList(env, listStoreOf(o.store), list, o.id, now, inbox ? inbox.id : null);
+    if (gone) err = "That inbox isn't there any more: choose another.";
+    else {
+      await env.DB.prepare("UPDATE account_offers SET status = 'added', added = ?, accounts = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(added, now, o.id).run();
+      await stockCheck(env, listStoreOf(o.store), o.store_name, false);
+      done = `Added ${added} to your list${inbox ? `, in ${inbox.name}` : ""}.${added < list.length ? ` ${list.length - added} ${list.length - added === 1 ? "was" : "were"} already on it.` : ""}`
+        + (kept ? ` ${kept} already in another inbox stayed there (Move to inbox on See my list moves ${kept === 1 ? "it" : "them"}).` : "");
+    }
   } else if (o.status === "pending" && action === "refuse") {
     await env.DB.prepare("UPDATE account_offers SET status = 'refused', accounts = '[]', decided_at = ? WHERE id = ? AND status = 'pending'").bind(now, o.id).run();
     done = "Refused. Nothing was added.";
@@ -2373,8 +2379,12 @@ async function accountListPage(request, env, url, id) {
     const owners = await Promise.all(items.map((x) => isOwnerKey(x.a.key_hash))), buyers = owners.some((x) => !x);
     const n = items.length, one = n === 1, free = await freeForReassign(buyers), it = one ? "it" : "them";
     // With inboxes: where the free one comes from, and where a new one typed goes.
+    // A buyer's typed one never goes in an Only mine inbox: in none, so buyers can get it.
+    const buyerInMine = buyers && inboxes.some((b) => b.mine)
+      && (await Promise.all(items.map(async (x, i) => !owners[i] && ((await inboxOf(x.e)) || {}).mine))).some(Boolean);
     const ibNote = !inboxes.length ? "" : `<p class="hint">${inboxes.some((b) => b.mine) ? [buyers ? "A buyer's slots never get one from an Only mine inbox." : "",
-      owners.some(Boolean) ? "Your own FAFO's slots get one from an Only mine inbox first." : ""].filter(Boolean).join(" ") + " " : ""}A new one you type goes in the inbox of the one it replaces.</p>`;
+      owners.some(Boolean) ? "Your own FAFO's slots get one from an Only mine inbox first." : ""].filter(Boolean).join(" ") + " " : ""}A new one you type goes in the inbox of the one it replaces${buyerInMine
+      ? ` (in none when that's an Only mine inbox and a buyer has ${one ? "it" : "the one it replaces"}, so buyers can get it)` : ""}.</p>`;
     const how = vals.how === "list" || vals.how === "these" ? vals.how : free >= n ? "list" : "these";
     const target = items.some((x) => x.us.some((u) => u.store === "target"));
     const line = (x) => `${one ? "" : `${esc(x.a.email)} · `}${status(x.a, x.us)}`;
@@ -2471,8 +2481,10 @@ async function accountListPage(request, env, url, id) {
       <h3>Who gets its accounts</h3>
       <p class="small">${b.mine ? "Only mine: only slots sent from your own FAFO, the one that sends order alerts, get them, before any For buyers one. Buyers' slots never do."
         : "For buyers: buyers' slots get them, and so do your own FAFO's once your Only mine inboxes have no free one left."}</p>
-      <p class="small">${b.mine ? `Making it For buyers lets buyers' slots get its ${plural(b.free, "free account")}, starting with the next batch.`
-        : `Making it Only mine stops buyers' slots getting its ${plural(b.free, "free account")}, starting with the next batch: they'd have ${plural(buyersElse, "free account")} left on your list.${withBuyers === 1 ? " The one given to a buyer stays with them until it's given back." : withBuyers ? ` The ${withBuyers} given to buyers stay with them until they're given back.` : ""}`}</p>
+      <p class="small">${b.mine ? (b.free ? `Making it For buyers lets buyers' slots get its ${plural(b.free, "free account")}, starting with the next batch.`
+          : "It has no free accounts now: making it For buyers lets buyers' slots get the ones that come free later.")
+        : `${b.free ? `Making it Only mine stops buyers' slots getting its ${plural(b.free, "free account")}, starting with the next batch: they'd have ${plural(buyersElse, "free account")} left on your list.`
+          : "It has no free accounts now: making it Only mine keeps the ones that come free later for your own FAFO's slots."}${withBuyers === 1 ? " The one given to a buyer stays with them until it's given back." : withBuyers ? ` The ${withBuyers} given to buyers stay with them until they're given back.` : ""}`}</p>
       <form method="post">${hidden}${keep("inbox", b.id)}${keep("mine", b.mine ? "0" : "1")}<div class="row"><button class="${b.mine ? "no" : "ok"}" type="submit" name="action" value="inbox-mine">${b.mine ? "Make it For buyers" : "Make it Only mine"}</button></div></form>
       <h3>Delete it</h3>
       ${b.n ? `<p class="small">Move its ${plural(b.n, "account")} to another inbox first: tick ${b.n === 1 ? "it" : "them"} on the list, then Move to inbox.</p>`
@@ -2597,8 +2609,9 @@ async function accountListPage(request, env, url, id) {
           x.inbox = ib.id;
           notes.push(`${x.email} went in ${ib.name}, the inbox of the one it replaces.`);
         }
-        if (typed.length) await addToList(env, MASTER, typed, "list:" + o.id, now);
-        await env.DB.batch(norms.map((e) => env.DB.prepare(`DELETE FROM accounts WHERE store IN ('target', 'pokemoncenter') AND email_norm = ? AND key_hash IS NULL AND ${OWN_ACCOUNT}`).bind(e)));
+        if (typed.length && (await addToList(env, MASTER, typed, "list:" + o.id, now)).gone) return again("An inbox changed meanwhile: look again, then try again.");
+        await env.DB.batch(norms.map((e) => env.DB.prepare(`DELETE FROM accounts WHERE store IN ('target', 'pokemoncenter') AND email_norm = ?1 AND key_hash IS NULL AND ${OWN_ACCOUNT}
+          AND EXISTS (SELECT 1 FROM accounts m WHERE m.store = '${MASTER}' AND m.email_norm = ?1)`).bind(e)));
         wants = norms;
       }
       // One at a time, each in a transaction of its own (swapAccount); one that didn't go is read again to say why. None of
@@ -2825,14 +2838,17 @@ async function accountListPage(request, env, url, id) {
       err = get("inbox") ? "That inbox isn't there any more: choose another." : "Choose the inbox they go in.";
       keepAdd = { accounts: text, password: get("password") };
     } else {
-      const { added: n, kept } = await addToList(env, st, rows, "list:" + o.id, now, ib ? ib.id : null);
-      if (n || ib) await stockCheck(env, st, name, false);
-      const already = rows.length - n;
-      done = rows.length ? `Added ${n} to ${listName(st)}${ib ? `, in ${ib.name}` : ""}.${already ? ` ${already} ${already === 1 ? "was" : "were"} already on it, and kept ${already === 1 ? "its" : "their"} password (Edit changes one).` : ""}`
-        + (kept ? ` ${kept} already in another inbox stayed there (Move to inbox moves ${kept === 1 ? "it" : "them"}).` : "") : "";
-      err = [bad.length ? `${lineList(bad)} couldn't be read: write each account as email:password.` : "",
-        bare.length ? `${lineList(bare)} ${bare.length === 1 ? "has" : "have"} only an email: add ${bare.length === 1 ? "it" : "them"} again with the password box filled in.` : "",
-        !rows.length && !bad.length && !bare.length ? "Paste the accounts to add, one per line." : ""].filter(Boolean).join(" ");
+      const { added: n, kept, gone } = await addToList(env, st, rows, "list:" + o.id, now, ib ? ib.id : null);
+      if (gone) { err = "That inbox isn't there any more: choose another."; keepAdd = { accounts: text, password: get("password") }; }
+      else {
+        if (n || ib) await stockCheck(env, st, name, false);
+        const already = rows.length - n;
+        done = rows.length ? `Added ${n} to ${listName(st)}${ib ? `, in ${ib.name}` : ""}.${already ? ` ${already} ${already === 1 ? "was" : "were"} already on it, and kept ${already === 1 ? "its" : "their"} password (Edit changes one).` : ""}`
+          + (kept ? ` ${kept} already in another inbox stayed there (Move to inbox moves ${kept === 1 ? "it" : "them"}).` : "") : "";
+        err = [bad.length ? `${lineList(bad)} couldn't be read: write each account as email:password.` : "",
+          bare.length ? `${lineList(bare)} ${bare.length === 1 ? "has" : "have"} only an email: add ${bare.length === 1 ? "it" : "them"} again with the password box filled in.` : "",
+          !rows.length && !bad.length && !bare.length ? "Paste the accounts to add, one per line." : ""].filter(Boolean).join(" ");
+      }
     }
   }
   // After a change, back to the list by its link (303), with what happened, so reloading the page doesn't send it again.
@@ -5382,7 +5398,7 @@ function page(statusCode, title, msg, extra = "", wide = false) {
   table{width:100%;border-collapse:collapse;font-size:14px}
   th{text-align:left;font-weight:600;color:#b9c6ea;padding:6px 8px;border-bottom:1px solid #2a3f7a}
   td{padding:6px 8px;border-bottom:1px solid #1c2c5c;vertical-align:middle;color:#b9c6ea}
-  td.em{color:#e6ecff;overflow-wrap:break-word} tr.free td:nth-child(3){color:#5fd39a}
+  td.em{color:#e6ecff;overflow-wrap:anywhere;min-width:24ch} tr.free td:nth-child(3){color:#5fd39a}
   th.pick,td.pick{width:22px;padding-right:0} input[type=checkbox]{width:16px;height:16px;margin:0;accent-color:#4a9dff;cursor:pointer}
   .bulk{position:sticky;bottom:12px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:16px;padding:10px 12px;background:#132556;border:1px solid #2a3f7a;border-radius:12px;box-shadow:0 8px 24px #0009}
   .bulk[hidden]{display:none} section.store[hidden],table tr[hidden],.find[hidden]{display:none !important}
@@ -5412,7 +5428,7 @@ function page(statusCode, title, msg, extra = "", wide = false) {
     table tr{display:grid;grid-template-columns:auto 1fr auto;column-gap:10px;padding:8px 0;border-bottom:1px solid #1c2c5c}
     table td{border:0;padding:2px 0}
     td.pick{grid-column:1;grid-row:1 / span 2;align-self:center}
-    td.em{grid-column:2;overflow-wrap:break-word;word-break:break-word} td.em + td, td.st{grid-column:2}
+    td.em{grid-column:2;overflow-wrap:break-word;word-break:break-word;min-width:0} td.em + td, td.st{grid-column:2}
     td.act{grid-column:3;grid-row:1 / span 2;align-self:center}
     td.act form{display:block;margin:4px 0}
   }

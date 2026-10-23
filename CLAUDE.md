@@ -244,8 +244,9 @@ alone (every store's rows of one account) from reading the whole table. Only
   page comes back with what was typed when none is picked, `keepAdd`); an offer's review link asks the same. Selects name an
   inbox's kind first ("Only mine · …"), so a narrow one never cuts it off. Accounts added go in it in the same D1 batch (a
   transaction) as they go on the list (`addToList`'s `inbox`, or `inbox` on a row for a reassign's typed ones), never after,
-  so a buyer's batch can't take one meant for an Only mine inbox in between (the review reproduced that), and none is added
-  if the inbox was deleted meanwhile: one already in another inbox stays (never moved out of an Only mine one by adding it
+  so a buyer's batch can't take one meant for an Only mine inbox in between (the review reproduced that; a test makes the
+  inbox write fail with a trigger in the local database), and none is added if the inbox was deleted meanwhile (`gone`: the
+  page says so and an offer stays waiting; a store's own row with the email goes only once the one list has it): one already in another inbox stays (never moved out of an Only mine one by adding it
   again), one in none goes in. Rows of accounts that leave the list go (`sweepInboxes`, `addToList` for an email coming
   back, `swapAccount`), and an email edit takes its row along in the same batch. With Only mine inboxes, the list's and the
   offer page's counts say how many free ones buyers can get ("(N for buyers)", as `stockCheck` counts). With no inboxes the
