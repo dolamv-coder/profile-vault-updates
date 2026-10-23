@@ -223,6 +223,42 @@ CREATE TABLE IF NOT EXISTS account_stock (
   empty_at INTEGER
 );
 
+-- Inboxes on the one list (2026-10-23, the owner's request): a label for the mailbox an account's email goes to (the
+-- owner's accounts are aliases that forward to one of their mailboxes; nothing signs in to it). An inbox is For buyers
+-- (mine = 0: buyers' slots get its accounts) or Only mine (mine = 1: only slots sent from the owner's own FAFO, the one
+-- allowed to send order alerts, get them, before any For buyers one). `name` is what the owner typed (the mailbox's
+-- address, say); name_norm keeps two from having the same name. Their own tables, since db:init can't add columns.
+CREATE TABLE IF NOT EXISTS account_inboxes (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL,
+  name_norm  TEXT NOT NULL UNIQUE,
+  mine       INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+-- Which inbox an account of the one list (store '*') is in, by its email (all of an account's rows share it). An account
+-- with no row here (or whose inbox is gone) is in No inbox, which buyers' slots get as they did before inboxes.
+CREATE TABLE IF NOT EXISTS account_inbox_of (
+  email_norm TEXT PRIMARY KEY,
+  inbox_id   TEXT NOT NULL,
+  set_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS account_inbox_of_inbox ON account_inbox_of (inbox_id);
+-- Accounts of the one list that don't work, set aside (2026-10-23, the owner's request: "For accounts that doesn't work,
+-- make 2 lists. One for Account disabled and another list for need to generate"): off the list, so no slot gets them,
+-- with their password, the inbox they were in (Back on my list puts them in it again) and whose they were when a Reassign
+-- set them aside. list is 'disabled' or 'generate'. An email is here or on the list, never both.
+CREATE TABLE IF NOT EXISTS accounts_aside (
+  email_norm   TEXT PRIMARY KEY,
+  email        TEXT NOT NULL,
+  password     TEXT NOT NULL,
+  list         TEXT NOT NULL,
+  inbox_id     TEXT,
+  from_last4   TEXT,
+  from_profile TEXT,
+  set_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS accounts_aside_list ON accounts_aside (list, set_at);
+
 -- Web version and sync (app 1.9.65+): one vault per license, exactly as the app sealed it (AES-GCM,
 -- with a key from the vault's password, which never leaves the devices), so nothing here can read it.
 -- auth_hash is the SHA-256 of the access token the app derives from that same password: reading or
