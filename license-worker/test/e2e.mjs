@@ -2609,7 +2609,7 @@ try {
     assert.equal(rowsWith("nobody.here@example.com"), 0);
     // What was typed stays in the box when it's asked again.
     const kept = await page2(await send(lsLink, { action: "do-reassign", email: a.email_norm, how: "these", old: "free", accounts: "nobody.here@example.com" }));
-    assert.ok(kept.includes('name="accounts" value="nobody.here@example.com"') && kept.includes('<input type="radio" name="how" value="these" checked>') && kept.includes('<input type="radio" name="old" value="free" checked>'), kept.slice(0, 2000));
+    assert.ok(kept.includes('name="accounts" value="nobody.here@example.com"') && kept.includes('<input type="radio" name="how" value="these" checked>') && kept.includes('<input type="radio" name="old" value="free" required checked>'), kept.slice(0, 2000));
     // A new one, as email:password: it goes on the list and to them; the old one goes back free, with its password.
     const r = await reassignTo(a, { how: "these", accounts: "Brand.New@example.com:Brand-Pw-1", old: "free" });
     const n = masterOf("brand.new@example.com");
