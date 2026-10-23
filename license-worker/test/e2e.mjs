@@ -3093,7 +3093,11 @@ try {
     const S = dbRows("SELECT id FROM account_inboxes WHERE name = 'spare@example.com'")[0].id;
     const sp = await ibPage({ action: "inbox", inbox: S });
     assert.ok(sp.includes("<h2>An inbox</h2>") && sp.includes(`value="inbox-delete">Delete spare@example.com</button>`), sp.slice(0, 2500));
-    assert.match(sp, /Making it Only mine stops buyers' slots getting its 0 free accounts, starting with the next batch: they'd have \d+ free accounts? left on your list\./, "what Only mine does, before it's done");
+    assert.ok(sp.includes("It has no free accounts now: making it Only mine keeps the ones that come free later for your own FAFO's slots."), "what Only mine does, before it's done");
+    const ap = await ibPage({ action: "inbox", inbox: ibIds["buyers-inbox@example.com"] });
+    const elseFree = dbRows(`SELECT COUNT(*) AS n FROM accounts m WHERE store = '*' AND key_hash IS NULL AND COALESCE(offer_id, '') NOT LIKE 'reuse:%' AND NOT EXISTS
+      (SELECT 1 FROM account_inbox_of i JOIN account_inboxes b ON b.id = i.inbox_id WHERE i.email_norm = m.email_norm AND (b.mine = 1 OR b.name = 'buyers-inbox@example.com'))`)[0].n;
+    assert.match(ap, new RegExp(`Making it Only mine stops buyers' slots getting its \\d+ free accounts?, starting with the next batch: they'd have ${elseFree} free accounts? left on your list\\.`), ap.slice(0, 2500));
     await view(ibLink, { action: "inbox-delete", inbox: S });
     assert.equal(dbRows(`SELECT COUNT(*) AS n FROM account_inboxes WHERE id = '${S}'`)[0].n, 1, "a link (GET) deletes nothing");
     assert.equal(ibDone((await ibPost({ action: "inbox-delete", inbox: S })).location), "Deleted spare@example.com.");
