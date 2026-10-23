@@ -252,6 +252,20 @@ alone (every store's rows of one account) from reading the whole table. Only
   offer page's counts say how many free ones buyers can get ("(N for buyers)", as `stockCheck` counts). With no inboxes the
   page is as before but for the panel.
   `/admin/accounts` lists `inboxes`. Other stores' own lists have none.
+  Also since 2026-10-23 (the owner's request, with a screenshot of Reassign's "Take it off my list: something's wrong with
+  it": "For accounts that doesn't work, make 2 lists. One for Account disabled and another list for need to generate")
+  accounts of the one list that don't work can be **set aside** on **Account disabled** or **Need to generate** (D1
+  `accounts_aside`: email, password, `list`, the inbox it was in, whose it was, `set_at`; a new table): off the list, so no
+  slot ever gets one, and an email is there or on the list, never both. Reassign asks what happens to the old account,
+  with no default (`old`: `disabled`, `generate`, `free` or `remove`; `swapAccount` sets it aside in the same batch), and on
+  See my list a free one goes there from its Edit page ("Doesn't work?") or the bar's **Not working…** (`action=aside`,
+  `setAside`, one transaction per account; a buyer's stays: Reassign is for those), which also moves ones set aside between
+  the two lists or puts them **Back on my list**, free, in the inbox each was in (No inbox if that's gone), through
+  `addToList`. Adding an email set aside again (Add, an offer, a reassign's typed `email:password`) brings it back the same
+  way, with the password typed (`back`): Need to generate's flow is Copy email:password, generate the accounts again, paste
+  them in Add. Each list is a section after the rest ("Not given out", ticks `aside:<list> email`), searchable, with Back on
+  my list and Remove; Copy, Remove (and FAFO's Remove accounts review) take them, Reassign and Move to inbox leave them.
+  `/admin/accounts` counts them (`aside`).
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
   once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.
   Never put the accounts or their password in this repo or a page: it's public.

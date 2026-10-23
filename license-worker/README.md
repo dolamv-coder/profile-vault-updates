@@ -510,6 +510,14 @@ buyer gets it while they have it.
     account: your list has none for buyers, only in your Only mine inboxes)" when that's why. Other
     stores' own lists have no inboxes (a free row on Target's or Pokémon Center's own list from before
     whose email is in an Only mine inbox doesn't go to a buyer either).
+  - **Accounts that don't work** (from 2026-10-23, your request): set them aside on **Account disabled**
+    or **Need to generate**, off your list, so no slot gets them. Reassign asks what happens to the old
+    account: one of those two lists, back on your list as free, or off your list for good. A free account
+    goes on one from its Edit page (Doesn't work?) or the bar's **Not working…** for the ticked, which
+    also moves them between the two lists, or puts them **Back on my list**, free, in the inbox each was
+    in. Each list is a section at the end of the page, with whose it was and when; Copy email:password
+    copies them (to generate them again, say), and adding an email set aside again (Add, an offer) puts it
+    back on your list with the password you typed. Remove takes one off for good.
 
   The link works for 24 hours, and a license can ask 10 times a day. Anyone with a license can ask, but
   the link only goes to your channel, so only someone who can read your channel can change the list.

@@ -243,6 +243,21 @@ CREATE TABLE IF NOT EXISTS account_inbox_of (
   set_at     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS account_inbox_of_inbox ON account_inbox_of (inbox_id);
+-- Accounts of the one list that don't work, set aside (2026-10-23, the owner's request: "For accounts that doesn't work,
+-- make 2 lists. One for Account disabled and another list for need to generate"): off the list, so no slot gets them,
+-- with their password, the inbox they were in (Back on my list puts them in it again) and whose they were when a Reassign
+-- set them aside. list is 'disabled' or 'generate'. An email is here or on the list, never both.
+CREATE TABLE IF NOT EXISTS accounts_aside (
+  email_norm   TEXT PRIMARY KEY,
+  email        TEXT NOT NULL,
+  password     TEXT NOT NULL,
+  list         TEXT NOT NULL,
+  inbox_id     TEXT,
+  from_last4   TEXT,
+  from_profile TEXT,
+  set_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS accounts_aside_list ON accounts_aside (list, set_at);
 
 -- Web version and sync (app 1.9.65+): one vault per license, exactly as the app sealed it (AES-GCM,
 -- with a key from the vault's password, which never leaves the devices), so nothing here can read it.
