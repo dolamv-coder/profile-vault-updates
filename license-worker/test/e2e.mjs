@@ -2545,7 +2545,8 @@ try {
     assert.ok(ask.includes("<h2>Reassign an account</h2>") && ask.includes(`<p class="who">${a.email}</p>`), ask.slice(0, 800));
     assert.ok(ask.includes(`Given to license …${a.key_last4}, Rosa A: Target, sent ${at(uses0[0].sent_at)}; Pokémon Center, sent ${at(uses0[1].sent_at)}`), "whose it is and its slots");
     assert.ok(ask.includes(`<input type="radio" name="how" value="list" checked><span>A free account from my list, picked at random <span class="hint">(${free0} free)</span>`), "a free one from the list, to start");
-    assert.ok(ask.includes('<input type="radio" name="old" value="remove" checked><span>Take it off my list: something\'s wrong with it</span>') && ask.includes('<input type="radio" name="old" value="free"><span>Put it back on my list as free</span>'));
+    assert.ok(ask.includes('<input type="radio" name="old" value="remove" required><span>Take it off my list for good</span>') && ask.includes('<input type="radio" name="old" value="free" required><span>Put it back on my list as free</span>')
+      && !/name="old" value="\w+" required checked/.test(ask), "what happens to the old one, with nothing picked to start");
     assert.ok(ask.includes("change the email in their profile in your bot (and the login, for Target). Order alerts follow the account: the buyer gets them for the new one, and no more for the old one."));
     for (const x of listRows().filter((y) => y.password)) assert.ok(!ask.includes(x.password), "never a password");
     await view(lsLink, { action: "do-reassign", email: a.email_norm, how: "list", old: "remove" });
