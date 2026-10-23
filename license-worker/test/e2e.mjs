@@ -3288,6 +3288,37 @@ try {
     assert.equal(ibErr((await ibPost({ action: "aside", aside_to: "back" })).location), "Tick the accounts first.");
     assert.equal(ibErr((await ibPost({ action: "aside", email: "ibx.d4@example.com" })).location), "Pick where they go.");
   });
+  await test("set aside stays set aside: no rename onto one, no list from an inherited key, no stale Back, no inbox delete under one, no older store row", async () => {
+    const A = ibIds["buyers-inbox@example.com"];
+    await ibAdd(A, ["ibx.d5@example.com:Pw-d5"]);
+    const ren = unescape(await (await send(ibLink, { action: "save", store: "*", email: "ibx.d5@example.com", new_email: "ibx.d3@example.com", password: "" })).text());
+    assert.ok(ren.includes("ibx.d3@example.com is on your Account disabled list: use Back on my list there, or Add it with its password."), ren.slice(0, 2500));
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts WHERE email_norm = 'ibx.d3@example.com'")[0].n, 0, "not on the list as well");
+    assert.equal(ibErr((await ibPost({ action: "aside", email: "ibx.d5@example.com", aside_to: "toString" })).location), "Pick where they go.");
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts_aside WHERE email_norm = 'ibx.d5@example.com'")[0].n, 0, "nothing set aside on a list no section shows");
+    const al = await postPairs(ibLink, [["action", "aside"], ["aside_to", "disabled"], ["pick", "aside:disabled ibx.d3@example.com"]], "manual");
+    assert.equal(ibDone(al.headers.get("location")), "ibx.d3@example.com was on your Account disabled list already."); await al.text();
+    assert.equal(ibErr((await ibPost({ action: "aside", email: "ibx.gone@example.com", aside_to: "back" })).location), "ibx.gone@example.com isn't set aside any more.", "a Back button for one removed meanwhile");
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM accounts WHERE email_norm = 'ibx.gone@example.com'")[0].n, 0);
+    // An inbox an account set aside was in can't be deleted: it would come back For buyers.
+    await ibPost({ action: "inbox-new", name: "spare2@example.com", kind: "mine" });
+    const S = dbRows("SELECT id FROM account_inboxes WHERE name = 'spare2@example.com'")[0].id;
+    await ibAdd(S, ["ibx.d6@example.com:Pw-d6"]);
+    await ibPost({ action: "aside", email: "ibx.d6@example.com", aside_to: "generate" });
+    assert.equal(ibErr((await ibPost({ action: "inbox-delete", inbox: S })).location),
+      "1 account set aside (Account disabled or Need to generate) was in spare2@example.com, and would come back in No inbox, for buyers: remove it, or put it back on your list and move it, first.");
+    assert.ok((await ibPage({ action: "inbox", inbox: S })).includes("1 account set aside (Account disabled or Need to generate) was in it"));
+    // A free row from before on Target's own list with the email of one set aside never goes to a slot.
+    sqlRun(`INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES ('target', 'ibx.d6@example.com', 'ibx.d6@example.com', 'Pw-old', ${Date.now()}, 'legacy-test')`);
+    sqlRun("UPDATE accounts SET key_hash = 'held-5' WHERE store = '*' AND key_hash IS NULL");
+    const b = await ibBatch(owenKey, "Owen", ["Owen M"]);
+    assert.deepEqual(b.d.accounts, { Target: { asked: 1, got: 0 } });
+    assert.ok(!b.m.content.includes("limit"), "not for the license's limit: " + b.m.content);
+    assert.equal(dbRows("SELECT key_hash FROM accounts WHERE store = 'target' AND email_norm = 'ibx.d6@example.com'")[0].key_hash, null);
+    sqlRun("DELETE FROM accounts WHERE store = 'target' AND email_norm = 'ibx.d6@example.com'");
+    await sendRaw(ibLink, { action: "remove", email: "ibx.d6@example.com" });
+    assert.equal(ibDone((await ibPost({ action: "inbox-delete", inbox: S })).location), "Deleted spare2@example.com.");
+  });
   await test("Remove takes one off its set-aside list, and FAFO's Remove accounts shows and removes them too", async () => {
     const ask = await ibPage({ action: "ask", email: "ibx.d4@example.com" });
     assert.ok(ask.includes("On your Account disabled list"), ask.slice(0, 2500));

@@ -265,7 +265,11 @@ alone (every store's rows of one account) from reading the whole table. Only
   way, with the password typed (`back`): Need to generate's flow is Copy email:password, generate the accounts again, paste
   them in Add. Each list is a section after the rest ("Not given out", ticks `aside:<list> email`), searchable, with Back on
   my list and Remove; Copy, Remove (and FAFO's Remove accounts review) take them, Reassign and Move to inbox leave them.
-  `/admin/accounts` counts them (`aside`).
+  `/admin/accounts` counts them (`aside`). Every way an account reaches a slot (`claimListAccount`, a store's own row from
+  before, Reassign's pick) skips an email that's set aside; an Edit can't rename another account to one; Back on my list
+  goes on only while the account is still set aside as it was read (`asideAt`: one removed meanwhile stays removed); an
+  inbox one set aside was in can't be deleted (it would come back For buyers); and only `disabled` and `generate` are
+  lists (`isAside`, own keys: a typed `toString` is no list).
   The channel is told once when a store's list is down to `ACCOUNTS_LOW_AT` (15) free accounts and
   once when it runs out (D1 `account_stock`); adding or freeing accounts arms it again.
   Never put the accounts or their password in this repo or a page: it's public.
