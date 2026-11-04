@@ -15328,8 +15328,10 @@ const CLEAN_STORE_FROM = /@(em|e|email|emails|mail|mailer|news|newsletter|market
 // only CLEAN_CODE_DROP's emails are taken (cleanAddCodes): from the site's address under the site's own name ("Riot Games",
 // "Best Buy", as they come), never a support or customer care address (CLEAN_CODE_PERSON: the app takes "RE:" and "FW:" off
 // subjects, so a reply to one reads like it), and with the whole subject, so "Your login code was used" or "Welcome to Riot
-// Games! Your receipt" stays. Everything else is kept or cleared as before. A forward ("FW: Login Code…") is kept, as the app
-// checks a forward's own subject first; a forwarded "Welcome to Riot Games" goes. Auto-clean leaves each an hour first.
+// Games! Your receipt" stays. Everything else is kept or cleared as before. A forward is kept while its own subject protects
+// it ("FW: Login Code…": the app checks a forward's own subject first); a forwarded "Welcome to Riot Games", and a code
+// forwarded under a subject that protects nothing ("FW: is this legit?"), go, as the codes' scan hands them back like the
+// site's own email. Auto-clean leaves each an hour first.
 const CLEAN_CODE_SITES = "riotgames|bestbuy";
 const CLEAN_CODE_FROM = new RegExp("@([a-z0-9-]+\\.)*(" + CLEAN_CODE_SITES + ")\\.com$|_at_([a-z0-9-]+_)*(" + CLEAN_CODE_SITES + ")_com_[a-z0-9]{12,16}_[a-z0-9]{6,10}@icloud\\.com$", "i");
 // A code's number at the end, or the Clean page's dots for it (cleanCodeSubject).
@@ -15397,8 +15399,8 @@ function applyCleanSafety(r, spam){
 // kept-safe count. Past midnight (UTC: the day the app's look-back starts on moves) or at the app's 3000 emails a scan, the
 // other one may not have read all it found, so a codes' scan after it says which it did. Downloads older than version 10
 // ignore the rules, so they get none; one that fails or finds the folder rebuilt adds nothing (r.codesMissed), and those
-// emails wait for the next scan.
-async function cleanScanFolder(ib, folder, days, codeDays){
+// emails wait for the next scan. noCount: the kept-safe count isn't shown (auto-clean), so no codes' scan for it.
+async function cleanScanFolder(ib, folder, days, codeDays, noCount){
   const cfg = {id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port, days, folder, loose:folder === "spam" && cleanSpamAll()};
   const codeCfg = Object.assign({}, cfg, {rules:CLEAN_CODE_RULES, days:codeDays || days}), counts = (codeDays || days) === days;
   const day0 = Math.floor(Date.now() / 86400000);
@@ -15408,10 +15410,12 @@ async function cleanScanFolder(ib, folder, days, codeDays){
   if (!r || !r.ok || CLEAN_OLD_APP) return r;
   const same = (x) => !!(x && x.ok && Array.isArray(x.groups) && String(x.uidValidity || "") === String(r.uidValidity || ""));
   let seen = null;
-  if (same(c) && counts && (Math.floor(Date.now() / 86400000) !== day0 || c.scanned >= 3000 || r.scanned >= 3000)){
+  if (same(c) && counts && !noCount && c.groups.some(g => g && Array.isArray(g.uids) && cleanCodeDrop(g.senderAddr, g.subject, g.sender))
+      && (Math.floor(Date.now() / 86400000) !== day0 || c.scanned >= 3000 || r.scanned >= 3000)){
     let c2 = null;
     try { c2 = await window.pvDesktop.scanPromos(codeCfg); } catch(e){}
-    seen = new Set(same(c2) ? c2.groups.flatMap(g => g && Array.isArray(g.uids) ? g.uids : []) : []);
+    // Can't tell which codes the other scan counted: add none, as when the codes' scan fails.
+    if (same(c2)) seen = new Set(c2.groups.flatMap(g => g && Array.isArray(g.uids) ? g.uids : [])); else c = null;
   }
   if (same(c)) cleanAddCodes(r, c, cfg.loose, counts, seen);
   else r.codesMissed = true;
@@ -15573,12 +15577,12 @@ function cleanCodeBook(){
 const cleanCodeWide = (ibId, folder) => { const e = cleanCodeBook()[ibId + "|" + folder]; return !!(e && e.wide && typeof e.wide === "object" && Object.keys(e.wide).length); };
 // Sorts r's UIDs (after applyCleanSafety) for auto-clean: go, to move now, is all but sign-in emails first seen less than
 // CLEAN_CODE_WAIT ago, the other scan's ones too (one that came between the two scans). narrow: the codes' scan looked back
-// 3 days; sweep: it's the first 30-day look-back. done(moved) notes what it saw once the move is known: a code moved is
+// 3 days. done(moved) notes what it saw once the move is known: a code moved is
 // forgotten, one whose move failed stays due, and one still noted that a 3-day look-back didn't return is kept, marked wide,
 // unless a 3-day look-back starting on the same day returned it (n: that day), so it was moved or deleted, not aged out.
 // Nothing is noted when the codes' scan didn't count (r.codesMissed: what's noted stays as it was), nor after Erase vault
 // (gen: cleanCodeGen when the run started).
-function cleanCodeSort(ibId, folder, r, narrow, gen, sweep){
+function cleanCodeSort(ibId, folder, r, narrow, gen){
   const now = Date.now(), book = cleanCodeBook(), k = ibId + "|" + folder, v = String(r.uidValidity || "");
   const was = book[k] && book[k].v === v && book[k].at && typeof book[k].at === "object" ? book[k] : {at:{}, wide:{}};
   const wasWide = was.wide && typeof was.wide === "object" ? was.wide : {}, wasN = was.n && typeof was.n === "object" ? was.n : {};
@@ -15590,7 +15594,7 @@ function cleanCodeSort(ibId, folder, r, narrow, gen, sweep){
     const seen = Number(was.at[u]), at = seen > 0 ? Math.min(seen, now) : now;
     e.at[u] = at;
     if (wasWide[u]) e.wide[u] = 1;
-    if (narrow || (!sweep && !(seen > 0))) e.n[u] = day; else if (wasN[u]) e.n[u] = wasN[u];
+    if (narrow) e.n[u] = day; else if (wasN[u]) e.n[u] = wasN[u];
     if (now - at >= CLEAN_CODE_WAIT){ go.push(u); due.push(u); }
   }
   if (narrow) for (const u of Object.keys(was.at)) if (!(u in e.at) && Number(was.at[u]) > 0 && wasN[u] !== day){ e.at[u] = Math.min(Number(was.at[u]), now); e.wide[u] = 1; }
@@ -15639,13 +15643,13 @@ async function runAutoClean(phone){
         // only recent mail (while auto-clean keeps it swept). The codes' scan looks back 31 days (a day's room, as midnight
         // can pass during a code's hour) on those and while one it noted may be older than 3 (1.9.134).
         const sweep = !(cfg.on && swept[ib.id]), wide = sweep || cleanCodeWide(ib.id, folder);
-        const r = await cleanScanFolder(ib, folder, sweep ? 30 : 3, wide ? 31 : 3);
+        const r = await cleanScanFolder(ib, folder, sweep ? 30 : 3, wide ? 31 : 3, true);
         // Locked meanwhile: its Always keep and Clear all of Spam can't be read any more.
         if (S !== vault){ ok = false; break; }
         if (!r.ok){ if (folder === "spam" && /spam folder/i.test(r.error || "")) continue; err = err || `${ib.email}: ${r.error}`; ok = false; break; }
         if (r.codesMissed) codesOk = false;
         applyCleanSafety(r, folder === "spam");
-        const codes = cleanCodeSort(ib.id, folder, r, !wide, codeGen, sweep), uids = codes.go;
+        const codes = cleanCodeSort(ib.id, folder, r, !wide, codeGen), uids = codes.go;
         if (!uids.length){ codes.done(true); continue; }
         let res = {ok:false};
         try { res = await window.pvDesktop.trashPromos({id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port, folder}, uids, r.uidValidity); }

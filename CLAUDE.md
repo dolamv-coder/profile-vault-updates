@@ -1501,10 +1501,12 @@ so "Your login code was used" or "Welcome to Riot Games! Your receipt" stays. Th
 counted as kept safe come off that count (`g.fresh`: those that count never had, so Always keep doesn't count them twice).
 The codes' scan runs first, so a code that arrives between the two is only in the other one, kept and counted (and held an
 hour by auto-clean); past midnight UTC (the day the app's look-back starts on moves) or at the app's 3000 emails a scan, a
-codes' scan after the other one says which codes that one read, for the count. Everything else is offered, kept and counted
-as in 1.9.133. The one gap: a forwarded "Welcome to
-Riot Games" goes, and one the app kept by its opening lines stays in the kept-safe count, as the page can't tell. A forward
-"FW: Login Code…" is kept (the app checks a forward's own subject first). Wrappers older than 10 (which ignore the rules) get
+codes' scan after the other one says which codes that one read, for the count (only when the first found a code, and not
+in auto-clean, which doesn't show it; if that one fails, the run adds no codes). Everything else is offered, kept and counted
+as in 1.9.133. The gaps, as the codes' scan hands these
+back like the site's own email and the page can't tell: a forwarded "Welcome to Riot Games" goes (one the app kept by its
+opening lines stays in the kept-safe count), and so does a code forwarded under a subject that protects nothing ("FW: is this
+legit?"). A forward that keeps its subject ("FW: Login Code…") is kept, as the app checks a forward's own subject first. Wrappers older than 10 (which ignore the rules) get
 no codes' scan, and one that fails or finds the folder rebuilt adds nothing (`r.codesMissed`). The Clean page shows a
 sender's codes as one row ("Login Code: ••••••", `cleanCodeSubject`). Auto-clean and Clean emails from the phone leave each
 an hour after first seeing it (`CLEAN_CODE_WAIT`, `cleanCodeSort`), in case someone is signing in with it, since the app

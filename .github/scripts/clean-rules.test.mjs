@@ -73,7 +73,8 @@ function pageApi(path) {
     const toasts = []; const toast = (m) => toasts.push(m); const renderMain = () => {}; const persist = () => {};
     const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
     const inboxById = (id) => (S.inboxes || []).find(i => i.id === id) || null;
-    const OTHER = new Proxy({}, { has: (t, k) => typeof k === "string" && !["window", "localStorage"].includes(k) && !(k in globalThis) && (() => { try { eval(k); return false; } catch (e) { return true; } })(), get: () => 0, set: () => true });
+    const STUB = new Proxy(function(){}, { get: (t, k) => k === Symbol.toPrimitive ? () => 0 : k === "then" ? undefined : STUB, set: () => true, apply: () => STUB, construct: () => STUB });
+    const OTHER = new Proxy({}, { has: (t, k) => typeof k === "string" && !["window", "localStorage"].includes(k) && !(k in globalThis) && (() => { try { eval(k); return false; } catch (e) { return true; } })(), get: (t, k) => (k === Symbol.unscopables ? undefined : STUB), set: () => true });
     let premiumMem = null, billMem = null; const STORE_KEY = "pv-vault", AUTO_PIC_STORE = "orbit-autopic", PREMIUM_STORE = "orbit-premium", BILL_STORE = "orbit-billing";`;
   return new Function("window", "localStorage", prelude + code
     + `return {setS: (s) => { S = s; }, getS: () => S, lock: () => { S = null; }, CLEAN, toasts, applyCleanSafety, cleanScan, runAutoClean, clearStore, CLEAN_RULES,
@@ -129,6 +130,9 @@ const corpus = (p = "") => [
     body: fwd("Riot Games <noreply@riotgames.com>", "Welcome to Riot Games", "Congratulations, your account is ready.") }),
   msg(p + "riot-welcome-fw-verify", { name: "Sam", address: "sam.account5@example.com", subject: "FW: Welcome to Riot Games",
     body: fwd("Riot Games <noreply@riotgames.com>", "Welcome to Riot Games", "Verify your email to sign in.") }),
+  // The second known gap: a code forwarded under a subject that protects nothing reads like the site's own email.
+  msg(p + "fw-code-newsubj", { name: "Sam", address: "sam.account1@example.com", subject: "FW: is this legit?",
+    body: fwd(`Riot Games <${RIOT}>`, "Login Code: 778800", "Someone is trying to get into your account") }),
   msg(p + "bby-reset", { name: "Best Buy", address: BBY, subject: "Your Password Reset verification code" }),
   msg(p + "bby-reset-hme", { name: "Best Buy", address: HME("BestBuyInfo", "emailinfo.bestbuy.com"), subject: "Your Password Reset verification code" }),
   // Kept, as before: orders, receipts, other codes and security notices from the same senders.
@@ -180,9 +184,9 @@ const corpus = (p = "") => [
   msg(p + "target-news", { name: "Target", address: "targetnews@em.target.com", subject: "New arrivals for fall", bulk: true }),
   msg(p + "survey", { name: "Target", address: "target@medallia.com", subject: "How was your Target order?" })
 ];
-const ASKED = ["riot-code-1", "riot-code-2", "riot-code-hme", "riot-welcome", "riot-welcome-mail", "riot-welcome-fw", "riot-welcome-fw-verify", "bby-reset", "bby-reset-hme"];
-// The one known gap: a forwarded welcome that the app kept by its opening lines goes now, and the page can't see that the app
-// counted it as kept safe (both scans hand back the same group), so the count still has it.
+const ASKED = ["riot-code-1", "riot-code-2", "riot-code-hme", "riot-welcome", "riot-welcome-mail", "riot-welcome-fw", "riot-welcome-fw-verify", "fw-code-newsubj", "bby-reset", "bby-reset-hme"];
+// The known gaps, as the codes' scan hands these back like the site's own email: a forwarded welcome, and a code forwarded
+// under a subject that protects nothing, go; one the app kept by its opening lines (the welcome) stays in the kept-safe count.
 const STILL_COUNTED = ["riot-welcome-fw-verify"];
 const bare = (id) => id.replace(/^s:/, "");
 const isCode = (id) => /code|reset/.test(bare(id)) && !/welcome/.test(id);
@@ -281,7 +285,7 @@ await test("one row per sender for its codes, numbers hidden, real sender for Hi
   server(corpus());
   const { r } = await offered(setup(file));
   const codes = r.groups.filter((g) => /^Login Code/.test(g.subject));
-  assert.deepEqual(codes.map((g) => [g.senderAddr, g.subject, g.uids.length]), [[RIOT, "Login Code: ••••••", 3]]);
+  assert.deepEqual(codes.map((g) => [g.senderAddr, g.subject, g.uids.length]), [[RIOT, "Login Code: ••••••", 4]], "three codes, and the one forwarded under a new subject");
   const reset = r.groups.filter((g) => /Password Reset/.test(g.subject));
   assert.deepEqual(reset.map((g) => [g.senderAddr, g.uids.length]), [[BBY.toLowerCase(), 2]]);
 });
@@ -292,7 +296,7 @@ await test("Always keep on the sender keeps them, and the list after Always keep
   server(corpus());
   const api = setup(file); api.getS().settings.cleanKeep = [RIOT];
   const { ids } = await offered(api);
-  assert.deepEqual(ids, all.filter((id) => !["riot-code-1", "riot-code-2", "riot-code-hme"].includes(id)));
+  assert.deepEqual(ids, all.filter((id) => !["riot-code-1", "riot-code-2", "riot-code-hme", "fw-code-newsubj"].includes(id)));
 });
 
 await test("a desktop download older than version 10 (which ignores the rules) gets no second scan", async () => {
@@ -311,6 +315,67 @@ await test("a second scan that fails, or finds the folder rebuilt, adds nothing 
   server(corpus());
   api = setup(file, memStore(), { beforeScan: (cfg) => { if (!isCodeScan(cfg)) SERVER.boxes.INBOX.v = "8"; } });
   assert.deepEqual((await offered(api)).ids, ref);
+});
+
+for (const folder of ["inbox", "spam", "all"]) {
+  await test(`${folder}: auto-clean moves everything else as 1.9.133 did, and the ones asked for an hour later`, async () => {
+    const KEEP = [RIOT, "noreply@riotgames.com", BBY.toLowerCase()];
+    for (const sweep of [false, true]) for (const keep of [null, KEEP]) for (const spamAll of [true, false]) {
+      const run = async (api) => {
+        NOW = Date.UTC(2026, 10, 4, 15, 0, 0); both();
+        const st = api.getS().settings; st.cleanSpamAll = spamAll; if (keep) st.cleanKeep = keep;
+        if (sweep) st.autoClean.folder = folder; else swept(api, folder);
+        await api.runAutoClean(); const first = SERVER.moved.slice().sort();
+        NOW += 61 * 60000; await api.runAutoClean();
+        return { first, hour: SERVER.moved.slice().sort() };
+      };
+      const now = await run(setup(file)), before = await run(reference());
+      const where = `${folder}, ${sweep ? "first 30-day look-back" : "swept"}, Always keep ${keep ? "on" : "off"}, Clear all of Spam ${spamAll ? "on" : "off"}`;
+      assert.deepEqual(now.first, before.first.filter((id) => !ASKED.includes(bare(id))), `${where}: moved at once`);
+      const added = now.hour.filter((id) => !before.hour.includes(id));
+      assert.deepEqual(before.hour.filter((id) => !now.hour.includes(id)), [], `${where}: moved before, kept now`);
+      assert.deepEqual(added.filter((id) => !ASKED.includes(bare(id))), [], `${where}: moved after the hour, not asked for`);
+      if (!keep) assert.ok(added.length > 0, `${where}: the ones asked for go after the hour`);
+    }
+  });
+}
+
+await test("at the app's 3000 emails a scan, a code the other scan didn't read takes nothing else off the kept-safe count", async () => {
+  NOW = Date.UTC(2026, 10, 4, 15, 0, 0);
+  const box = [msg("old-code4", { name: "Riot Games", address: RIOT, subject: "Login Code: 939393", at: NOW - 5 * DAY })];
+  for (let i = 0; i < 2998; i++) box.push(msg("note" + i, { name: "Sam", address: "sam@example.com", subject: "Note " + i, at: NOW - 4 * DAY }));
+  box.push(msg("t-code3", { name: "Target", address: "Target@oe.target.com", subject: "Your Target.com sign-in code: 123456" }));
+  server(box);
+  let calls = 0;
+  // One more email comes between the two scans, so the other scan's newest 3000 leave out the oldest, the code.
+  const api = setup(file, memStore(), { beforeScan: () => { if (++calls === 2) SERVER.boxes.INBOX.msgs.push(msg("late2", { name: "Sam", address: "sam@example.com", subject: "Late" })); } });
+  const { ids, r } = await offered(api);
+  assert.ok(ids.includes("old-code4"), "the code the codes' scan found still goes");
+  assert.equal(r.protectedCount, 1, "the Target code is still counted");
+});
+
+await test("when the codes' scan after midnight fails, nothing is offered for codes and the count is as before", async () => {
+  const mk = () => [msg("t-code4", { name: "Target", address: "Target@oe.target.com", subject: "Your Target.com sign-in code: 123456" }),
+    msg("r-code4", { name: "Riot Games", address: RIOT, subject: "Login Code: 949494" })];
+  NOW = Date.UTC(2026, 10, 4, 12, 0, 0); server(mk()); const ref = await offered(reference());
+  NOW = Date.UTC(2026, 10, 4, 23, 59, 59); server(mk());
+  let calls = 0;
+  const api = setup(file, memStore(), { beforeScan: (cfg) => { calls++; if (calls === 2) NOW += 2000; if (calls === 3) throw new Error("dropped"); } });
+  const { ids, r } = await offered(api);
+  assert.equal(calls, 3, "a codes' scan after the other one");
+  assert.deepEqual([ids, r.protectedCount], [ref.ids, ref.r.protectedCount]);
+});
+
+await test("an old code first seen by a later 31-day run (the folder rebuilt) still goes", async () => {
+  NOW = Date.UTC(2026, 10, 4, 15, 0, 0);
+  server([msg("old5", { name: "Riot Games", address: RIOT, subject: "Login Code: 959595", at: NOW - 12 * DAY }),
+    msg("old6", { name: "Riot Games", address: RIOT, subject: "Login Code: 969696", at: NOW - 8 * DAY })]);
+  const api = setup(file); api.getS().settings.autoClean.folder = "inbox";
+  await api.runAutoClean();                                   // the first 30-day look-back notes both
+  NOW += 10 * 60000; await api.runAutoClean();                 // 3 days: neither there, so both looked for
+  SERVER.boxes.INBOX.v = "8";                                  // rebuilt: what was noted is no use
+  for (let i = 0; i < 12; i++){ NOW += 10 * 60000; await api.runAutoClean(); }
+  assert.deepEqual(SERVER.moved.slice().sort(), ["old5", "old6"]);
 });
 
 await test("auto-clean moves newsletters at once and leaves the codes an hour after it first sees them", async () => {
