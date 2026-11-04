@@ -60,7 +60,10 @@ Module._load = load0;
 function pageApi(path) {
   const html = readFileSync(path, "utf8");
   const block = (a, b) => { const s = html.indexOf(a), e = html.indexOf(b, s); assert.ok(s >= 0 && e > s, `couldn't find ${a} in ${path}`); return html.slice(s, e); };
-  const code = block("function clearStore(){", "\n")
+  const cs = html.indexOf("function clearStore(){"); assert.ok(cs >= 0, `couldn't find clearStore in ${path}`);
+  let ce = html.indexOf("{", cs), depth = 0;
+  do { depth += html[ce] === "{" ? 1 : html[ce] === "}" ? -1 : 0; ce++; } while (depth);
+  const code = html.slice(cs, ce).replace("function clearStore(){", "function clearStore(){ with (OTHER) {") + "}\n"
     + block("// Important mail the cleaner must never offer", "function renderClean(){")
     + block("const FOLDER_NAME = ", "async function cleanTrash(){")
     + block("const autoCleanCfg = ", "function autoCleanHTML(){");
@@ -70,6 +73,7 @@ function pageApi(path) {
     const toasts = []; const toast = (m) => toasts.push(m); const renderMain = () => {}; const persist = () => {};
     const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
     const inboxById = (id) => (S.inboxes || []).find(i => i.id === id) || null;
+    const OTHER = new Proxy({}, { has: (t, k) => typeof k === "string" && !["window", "localStorage"].includes(k) && !(k in globalThis) && (() => { try { eval(k); return false; } catch (e) { return true; } })(), get: () => 0, set: () => true });
     let premiumMem = null, billMem = null; const STORE_KEY = "pv-vault", AUTO_PIC_STORE = "orbit-autopic", PREMIUM_STORE = "orbit-premium", BILL_STORE = "orbit-billing";`;
   return new Function("window", "localStorage", prelude + code
     + `return {setS: (s) => { S = s; }, getS: () => S, lock: () => { S = null; }, CLEAN, toasts, applyCleanSafety, cleanScan, runAutoClean, clearStore, CLEAN_RULES,
@@ -147,6 +151,7 @@ const corpus = (p = "") => [
   // Replies from support: the app takes "RE:" off a subject, so they read like the emails asked for.
   msg(p + "bby-reply", { name: "Best Buy", address: "customercare@bestbuy.com", subject: "RE: Your Password Reset verification code" }),
   msg(p + "riot-reply", { name: "Riot Games", address: "support@support.riotgames.com", subject: "Re: Login code" }),
+  msg(p + "riot-reply-2", { name: "Riot Games", address: "noreply@support-valorant.riotgames.com", subject: "Re: Login code" }),
   msg(p + "fw-riot-reply", { name: "Sam", address: "sam.account4@example.com", subject: "FW: RE: Welcome to Riot Games",
     body: fwd("Riot Games <help@riotgames.com>", "RE: Welcome to Riot Games", "We reset your password. Sign in again.") }),
   msg(p + "target-code", { name: "Target", address: "Target@oe.target.com", subject: "Your Target.com sign-in code: 123456" }),
@@ -238,19 +243,22 @@ for (const folder of ["inbox", "spam", "all"]) {
 }
 
 await test("each email alone, in the Inbox and in Spam: offered and counted as kept safe as before, but for the ones asked for", async () => {
-  const one = async (api, m, folder) => {
+  const one = async (api, m, folder, keep) => {
     server(folder === "spam" ? [] : [m], folder === "spam" ? [m] : []);
+    if (keep) api.getS().settings.cleanKeep = keep;
     const { ids, r } = await offered(api, folder);
-    return [ids.length > 0, r.protectedCount > 0];
+    return [ids.length > 0, r.protectedCount];
   };
-  for (const folder of ["inbox", "spam"]) for (const m0 of corpus()) {
+  const KEEP = [RIOT, "noreply@riotgames.com", "noreply@mail.riotgames.com", BBY.toLowerCase()];
+  for (const keep of [null, KEEP]) for (const folder of ["inbox", "spam"]) for (const m0 of corpus()) {
     const m = () => Object.assign({}, m0);
-    const [offNow, cntNow] = await one(setup(file), m(), folder);
-    const [offBefore, cntBefore] = await one(reference(), m(), folder);
+    const [offNow, cntNow] = await one(setup(file), m(), folder, keep);
+    const [offBefore, cntBefore] = await one(reference(), m(), folder, keep);
+    if (keep) { assert.deepEqual([offNow, cntNow], [offBefore, cntBefore], `${m0.id} in ${folder}, Always keep on: [offered, kept safe] as before`); continue; }
     const where = `${m0.id} in ${folder}`;
     if (ASKED.includes(m0.id)) {
       assert.ok(offNow, `${where} is offered`);
-      assert.equal(cntNow, STILL_COUNTED.includes(m0.id) && cntBefore, `${where}: counted as kept safe`);
+      assert.equal(cntNow, STILL_COUNTED.includes(m0.id) ? cntBefore : 0, `${where}: counted as kept safe`);
     } else {
       assert.deepEqual([offNow, cntNow], [offBefore, cntBefore], `${where}: [offered, kept safe] as before`);
     }
@@ -262,7 +270,7 @@ await test("forwards, other codes, security notices and lookalike senders are ke
   both(); const { ids } = await offered(setup(file), "all");
   for (const id of ["bby-order", "bby-shipped", "bby-signin", "bby-pickup", "bby-reset-used", "bby-reset-notme", "riot-verify", "riot-receipt",
     "riot-thanks", "riot-code-used", "riot-code-asked", "riot-welcome-receipt", "riot-spoof", "riot-named", "riot-other-name", "bby-reply",
-    "riot-reply", "fw-riot-reply", "target-code", "pkc-order",
+    "riot-reply", "riot-reply-2", "fw-riot-reply", "target-code", "pkc-order",
     "fw-code", "fw-pickup", "fw-getting", "fw-signin", "fw-riot-buy", "fw-riot-id"])
     assert.ok(!ids.includes(id), `${id} is kept`);
   for (const id of ["s:fw-pickup", "s:fw-getting", "s:fw-signin", "s:fw-riot-buy", "s:bby-order", "s:target-code"]) assert.ok(!ids.includes(id), `${id} is kept in Spam`);
@@ -336,7 +344,7 @@ await test("old codes the first 30-day look-back finds are looked for until they
   assert.deepEqual(SERVER.moved, []);
   NOW += 45 * 60000; await api.runAutoClean();
   assert.deepEqual(SERVER.moved, ["old-code"]);
-  assert.deepEqual(scanDays(), { code: [30, 3, 30], other: [30, 3, 3] }, "only the codes' scan looks back 30 days for it");
+  assert.deepEqual(scanDays(), { code: [31, 3, 31], other: [30, 3, 3] }, "only the codes' scan looks back 31 days for it");
   NOW += 10 * 60000; await api.runAutoClean();
   assert.deepEqual(scanDays(), { code: [3], other: [3] }, "then 3");
 });
@@ -352,7 +360,7 @@ await test("an old code whose move fails when its hour is up is still looked for
   assert.deepEqual(SERVER.moved, []);
   assert.ok(/said no/.test(api.getS().settings.autoClean.lastError));
   fail = false; scanDays(); NOW += 10 * 60000; await api.runAutoClean();
-  assert.deepEqual(scanDays().code, [30], "still looked for");
+  assert.deepEqual(scanDays().code, [31], "still looked for");
   assert.deepEqual(SERVER.moved, ["old-code"]);
 });
 
@@ -369,10 +377,10 @@ await test("new codes arriving all the time don't keep auto-clean looking back 3
     await api.runAutoClean();
     const d = scanDays();
     assert.deepEqual(d.other, [3], "the other scan keeps 1.9.133's 3 days");
-    if (d.code[0] === 30) wideRuns++;
+    if (d.code[0] > 3) wideRuns++;
   }
   assert.ok(SERVER.moved.includes("c0") && SERVER.moved.includes("c10"));
-  assert.ok(wideRuns <= 6, `${wideRuns} of 24 runs' codes' scans looked back 30 days`);
+  assert.ok(wideRuns <= 6, `${wideRuns} of 24 runs' codes' scans looked back further than 3 days`);
 });
 
 await test("a code whose day leaves the 3-day look-back during its hour is still moved", async () => {
@@ -471,6 +479,61 @@ await test("a code that arrives between the two scans takes nothing else off the
   const { ids, r } = await offered(api);
   assert.ok(r.protectedCount >= 1, `the Target code is still counted: ${r.protectedCount}`);
   assert.equal(r.protectedCount, 1 + (ids.includes("late") ? 0 : 1));
+});
+
+await test("a code deleted before its hour doesn't make the next runs look back further", async () => {
+  NOW = Date.UTC(2026, 10, 4, 15, 0, 0);
+  server([msg("del", { name: "Riot Games", address: RIOT, subject: "Login Code: 818181" })]);
+  const api = setup(file); swept(api);
+  await api.runAutoClean();
+  SERVER.boxes.INBOX.msgs = [];                                // read and deleted by hand
+  scanDays();
+  for (let i = 0; i < 3; i++){ NOW += 10 * 60000; await api.runAutoClean(); }
+  assert.deepEqual(scanDays().code, [3, 3, 3]);
+  assert.deepEqual(JSON.parse(api.store.getItem("orbit-clean-codes")), {});
+});
+
+await test("a code on the oldest day of the first 30-day look-back still goes when midnight passes during its hour", async () => {
+  NOW = Date.UTC(2026, 10, 4, 23, 30, 0);
+  server([msg("old30", { name: "Riot Games", address: RIOT, subject: "Login Code: 919191", at: Date.UTC(2026, 9, 5, 1, 0, 0) })]);
+  const api = setup(file); api.getS().settings.autoClean.folder = "inbox";
+  await api.runAutoClean();                                   // 23:30: 30 days reach back to Oct 5
+  for (let i = 0; i < 9; i++){ NOW += 10 * 60000; await api.runAutoClean(); }
+  assert.deepEqual(SERVER.moved, ["old30"]);
+});
+
+await test("scans either side of midnight take nothing else off the kept-safe count", async () => {
+  NOW = Date.UTC(2026, 10, 4, 23, 59, 59);
+  server([msg("t-code2", { name: "Target", address: "Target@oe.target.com", subject: "Your Target.com sign-in code: 123456" }),
+    msg("edge-code", { name: "Riot Games", address: RIOT, subject: "Login Code: 929292", at: Date.UTC(2026, 9, 5, 12, 0, 0) })]);
+  let calls = 0;
+  const api = setup(file, memStore(), { beforeScan: () => { if (++calls === 2) NOW += 2000; } });   // the other scan starts on Nov 5
+  const { ids, r } = await offered(api);
+  assert.ok(ids.includes("edge-code"), "the code the codes' scan found still goes");
+  assert.equal(r.protectedCount, 1, "the Target code is still counted");
+});
+
+await test("a 'Welcome to Riot Games' the codes' scan missed waits its hour too", async () => {
+  NOW = Date.UTC(2026, 10, 4, 15, 0, 0);
+  server([msg("w-mail", { name: "Riot Games", address: "noreply@mail.riotgames.com", subject: "Welcome to Riot Games" })]);
+  let fail = true;
+  const api = setup(file, memStore(), { beforeScan: (cfg) => { if (fail && isCodeScan(cfg)) throw new Error("dropped"); } }); swept(api);
+  await api.runAutoClean();
+  assert.deepEqual(SERVER.moved, [], "not at once");
+  fail = false;
+  NOW += 10 * 60000; await api.runAutoClean();
+  assert.deepEqual(SERVER.moved, []);
+  NOW += 61 * 60000; await api.runAutoClean();
+  assert.deepEqual(SERVER.moved, ["w-mail"]);
+});
+
+await test("Clean emails from the phone: locked and unlocked during the run, its request waits for the next check", async () => {
+  server([msg("p3", { name: "Best Buy", address: "BestBuy@email.bestbuy.com", subject: "Top deals of the week", bulk: true })]);
+  let api, calls = 0;
+  api = setup(file, memStore(), { beforeScan: () => { if (++calls === 1) api.setS(Object.assign({}, api.getS())); } });
+  api.getS().settings.autoClean = { on: false, inboxId: "all", v2: true, folder: "inbox" };
+  assert.deepEqual(await api.runAutoClean(true), { busy: true });
+  assert.deepEqual(SERVER.moved, []);
 });
 
 await test("Clean emails from the phone waits the same hour", async () => {
