@@ -15324,7 +15324,7 @@ const CLEAN_STORE_FROM = /@(em|e|email|emails|mail|mailer|news|newsletter|market
 // code", which making accounts in bulk fills an inbox with, and which are no use once they're old. The desktop app's own
 // subject check keeps any code, and only its survey senders get past it, which also skips its check of a forward's opening
 // lines. So the scan with CLEAN_RULES stays 1.9.133's, and these are found by a second scan (cleanScanFolder) whose only
-// survey senders are CLEAN_CODE_FROM, the two sites' addresses straight or relayed by Hide My Email: of what it hands back,
+// survey senders are CLEAN_CODE_FROM, the two sites' own names (straight or relayed by Hide My Email): of what it hands back,
 // only CLEAN_CODE_DROP's emails are taken (cleanAddCodes): from the site's address under the site's own name ("Riot Games",
 // "Best Buy", as they come), never a support or customer care address (CLEAN_CODE_PERSON: the app takes "RE:" and "FW:" off
 // subjects, so a reply to one reads like it), and with the whole subject, so "Your login code was used" or "Welcome to Riot
@@ -15332,14 +15332,16 @@ const CLEAN_STORE_FROM = /@(em|e|email|emails|mail|mailer|news|newsletter|market
 // it ("FW: Login Code…": the app checks a forward's own subject first); a forwarded "Welcome to Riot Games", and a code
 // forwarded under a subject that protects nothing ("FW: is this legit?"), go, as the codes' scan hands them back like the
 // site's own email. Auto-clean leaves each an hour first.
-const CLEAN_CODE_SITES = "riotgames|bestbuy";
-const CLEAN_CODE_FROM = new RegExp("@([a-z0-9-]+\\.)*(" + CLEAN_CODE_SITES + ")\\.com$|_at_([a-z0-9-]+_)*(" + CLEAN_CODE_SITES + ")_com_[a-z0-9]{12,16}_[a-z0-9]{6,10}@icloud\\.com$", "i");
 // A code's number at the end, or the Clean page's dots for it (cleanCodeSubject).
 const CLEAN_CODE_NO = "\\s*:?\\s*(\\d{4,10}|•+)?\\s*$";
 const CLEAN_CODE_DROP = [
   {from:/@([a-z0-9-]+\.)*riotgames\.com$/i, name:/^\s*riot\s+games\s*$/i, subject:new RegExp("^\\s*log[\\s-]?in\\s+code" + CLEAN_CODE_NO + "|^\\s*welcome\\s+to\\s+riot\\s+games\\s*[!.]?\\s*$", "i")},
   {from:/@([a-z0-9-]+\.)*bestbuy\.com$/i, name:/^\s*best\s*buy\s*$/i, subject:new RegExp("^\\s*(your\\s+)?password\\s+reset\\s+verification\\s+code" + CLEAN_CODE_NO, "i")}
 ];
+// The codes' scan's survey senders: the sites' own names, exactly. The app tests them against a sender's name and address
+// apart, and groups emails by address and subject under the first one's name, so only emails named "Riot Games" or "Best Buy"
+// are handed back past its subject check, and one named otherwise (a reply from "Riot Games Player Support") never rides in.
+const CLEAN_CODE_FROM = new RegExp(CLEAN_CODE_DROP.map(d => d.name.source).join("|"), "i");
 const CLEAN_CODE_PERSON = /^[^@]*(support|care|help|agent|service)[^@]*@|@([a-z0-9-]+\.)*[a-z0-9-]*(support|help|care)[a-z0-9-]*\./i;
 // True for one of those emails, by its real sender (relayed mail's, or the address itself), the sender's name and the subject.
 const cleanCodeDrop = (addr, subject, name) => {
@@ -15396,26 +15398,28 @@ function applyCleanSafety(r, spam){
 // One folder's scan for Clean emails: the app's scan with CLEAN_RULES over days, as before, and (1.9.134) one with
 // CLEAN_CODE_RULES over codeDays (days if not given) for Riot Games' and Best Buy's sign-in emails alone (cleanAddCodes). The
 // codes' scan goes first, so each email it finds was there for the other one too, and only those it counted come off the
-// kept-safe count. Past midnight (UTC: the day the app's look-back starts on moves) or at the app's 3000 emails a scan, the
-// other one may not have read all it found, so a codes' scan after it says which it did. Downloads older than version 10
+// kept-safe count, which a codes' scan after the other one checks: the look-back of each starts when it searches, and a scan
+// reads 3000 emails and 800 forwards at most, so the other one may not have read all the first found. Downloads older than version 10
 // ignore the rules, so they get none; one that fails or finds the folder rebuilt adds nothing (r.codesMissed), and those
-// emails wait for the next scan. noCount: the kept-safe count isn't shown (auto-clean), so no codes' scan for it.
+// emails wait for the next scan. noCount: the kept-safe count isn't shown (auto-clean), so no third scan for it.
 async function cleanScanFolder(ib, folder, days, codeDays, noCount){
   const cfg = {id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port, days, folder, loose:folder === "spam" && cleanSpamAll()};
   const codeCfg = Object.assign({}, cfg, {rules:CLEAN_CODE_RULES, days:codeDays || days}), counts = (codeDays || days) === days;
-  const day0 = Math.floor(Date.now() / 86400000);
   let c = null;
   if (!CLEAN_OLD_APP) try { c = await window.pvDesktop.scanPromos(codeCfg); } catch(e){}
+  // The app's look-back starts on a UTC date, or (a server with WITHIN) so many seconds back from each search.
+  const utcDay = () => Math.floor(Date.now() / 86400000), day1 = utcDay();
   const r = await window.pvDesktop.scanPromos(Object.assign({rules:CLEAN_RULES}, cfg));
   if (!r || !r.ok || CLEAN_OLD_APP) return r;
   const same = (x) => !!(x && x.ok && Array.isArray(x.groups) && String(x.uidValidity || "") === String(r.uidValidity || ""));
+  const guard = cfg.loose ? SPAM_KEEP : CLEAN_APP_PROTECT;
   let seen = null;
-  if (same(c) && counts && !noCount && c.groups.some(g => g && Array.isArray(g.uids) && cleanCodeDrop(g.senderAddr, g.subject, g.sender))
-      && (Math.floor(Date.now() / 86400000) !== day0 || c.scanned >= 3000 || r.scanned >= 3000)){
+  if (same(c) && counts && !noCount && c.groups.some(g => g && Array.isArray(g.uids) && cleanCodeDrop(g.senderAddr, g.subject, g.sender) && cleanGuarded(g.subject || "", guard))){
+    // Which of them the other scan read (and counted): those a codes' scan after it finds too, unless midnight passed meanwhile,
+    // when its look-back may have started a day apart from either; then none are added this time.
     let c2 = null;
-    try { c2 = await window.pvDesktop.scanPromos(codeCfg); } catch(e){}
-    // Can't tell which codes the other scan counted: add none, as when the codes' scan fails.
-    if (same(c2)) seen = new Set(c2.groups.flatMap(g => g && Array.isArray(g.uids) ? g.uids : [])); else c = null;
+    if (utcDay() === day1) try { c2 = await window.pvDesktop.scanPromos(codeCfg); } catch(e){}
+    if (same(c2) && utcDay() === day1) seen = new Set(c2.groups.flatMap(g => g && Array.isArray(g.uids) ? g.uids : [])); else c = null;
   }
   if (same(c)) cleanAddCodes(r, c, cfg.loose, counts, seen);
   else r.codesMissed = true;
@@ -15424,8 +15428,8 @@ async function cleanScanFolder(ib, folder, days, codeDays, noCount){
 // Puts CLEAN_CODE_DROP's emails from c (the codes' scan) in r as groups of their own (g.code), taking them out of r's other
 // groups. The app counts an email it keeps by its subject as kept safe (a code, in r's protectedCount), which it isn't now;
 // counts: both scans looked back as far (auto-clean's codes' scan can look further, and its count isn't shown); seen: the
-// codes the other scan read, when that's not all of them. g.fresh: how many of a group's emails that count doesn't have, so
-// Always keep doesn't count them twice.
+// codes the other scan read. g.fresh: how many of a group's emails that count doesn't have, so Always keep doesn't count
+// them twice.
 function cleanAddCodes(r, c, loose, counts, seen){
   const codes = c.groups.filter(g => g && Array.isArray(g.uids) && cleanCodeDrop(g.senderAddr, g.subject, g.sender));
   if (!codes.length) return r;
@@ -15481,7 +15485,7 @@ function cleanFolders(){
 }
 async function cleanScan(){
   const ib = cleanInbox(); if (!ib) return;
-  const folders = cleanFolders();
+  const folders = cleanFolders(), vault = S;
   CLEAN.inboxId = ib.id; CLEAN.busy = "scan"; CLEAN.progress = "Connecting…"; CLEAN.result = null; renderMain();
   const merged = new Map(); const uv = {}; const scanned = []; const skipped = [];
   const kept = new Set(cleanKeepList().map(a => String(a).toLowerCase()));
@@ -15491,6 +15495,8 @@ async function cleanScan(){
     let r;
     try { r = await cleanScanFolder(ib, folder, CLEAN.days); }
     catch(e){ r = {ok:false, error:"The scan stopped unexpectedly."}; }
+    // Locked meanwhile (1.9.134): its Always keep and Clear all of Spam can't be read, so nothing is offered.
+    if (S !== vault){ CLEAN.busy = ""; CLEAN.progress = ""; CLEAN.phase = ""; return; }
     if (!r.ok){
       // No Spam folder on this account: just skip it when scanning both.
       if (folder === "spam" && folders.length > 1 && /spam folder/i.test(r.error || "")){ skipped.push("Spam"); continue; }
@@ -15563,7 +15569,7 @@ let autoCleanTimer = null, autoCleanRunning = false;
 // This device keeps when it first saw each, by inbox, folder and the folder's UIDVALIDITY, in localStorage (orbit-clean-codes,
 // message numbers and times only; in memory where storage is blocked; cleared by Erase vault): {"<inbox id>|<folder>":
 // {v, at:{uid: first seen}, wide:{uid: 1}}}. "wide" marks one still noted that a 3-day look-back no longer returns (an old one
-// the first 30-day look-back found, or one whose day left the window): the codes' scan then looks back 30 days until it's
+// the first 30-day look-back found, one that aged out of the window, or one deleted or moved meanwhile, which costs one look): the codes' scan then looks back 30 days until it's
 // moved or gone (31: midnight can pass during its hour), as a 3-day one would never see it again. The other scan keeps
 // 1.9.133's look-back. Read once, then kept in
 // memory (cleanCodeMem), so a write that fails (storage full) can't bring back an older copy.
@@ -15578,29 +15584,26 @@ const cleanCodeWide = (ibId, folder) => { const e = cleanCodeBook()[ibId + "|" +
 // Sorts r's UIDs (after applyCleanSafety) for auto-clean: go, to move now, is all but sign-in emails first seen less than
 // CLEAN_CODE_WAIT ago, the other scan's ones too (one that came between the two scans). narrow: the codes' scan looked back
 // 3 days. done(moved) notes what it saw once the move is known: a code moved is
-// forgotten, one whose move failed stays due, and one still noted that a 3-day look-back didn't return is kept, marked wide,
-// unless a 3-day look-back starting on the same day returned it (n: that day), so it was moved or deleted, not aged out.
+// forgotten, one whose move failed stays due, and one still noted that a 3-day look-back didn't return is kept, marked wide
+// (it may have aged out: a server with WITHIN looks back exact seconds), so the next run looks for it, or forgets it.
 // Nothing is noted when the codes' scan didn't count (r.codesMissed: what's noted stays as it was), nor after Erase vault
 // (gen: cleanCodeGen when the run started).
 function cleanCodeSort(ibId, folder, r, narrow, gen){
   const now = Date.now(), book = cleanCodeBook(), k = ibId + "|" + folder, v = String(r.uidValidity || "");
   const was = book[k] && book[k].v === v && book[k].at && typeof book[k].at === "object" ? book[k] : {at:{}, wide:{}};
-  const wasWide = was.wide && typeof was.wide === "object" ? was.wide : {}, wasN = was.n && typeof was.n === "object" ? was.n : {};
-  // The day a 3-day look-back starts on now, by UTC and by this computer's clock.
-  const day = ((d) => d.toISOString().slice(0, 10) + "|" + d.toDateString())(new Date(now - 3 * 86400000));
-  const e = {v, at:{}, wide:{}, n:{}}, go = [], due = [];
+  const wasWide = was.wide && typeof was.wide === "object" ? was.wide : {};
+  const e = {v, at:{}, wide:{}}, go = [], due = [];
   for (const g of r.groups) for (const u of g.uids){
     if (!g.code && !cleanCodeDrop(g.senderAddr, g.subject, g.sender)){ go.push(u); continue; }
     const seen = Number(was.at[u]), at = seen > 0 ? Math.min(seen, now) : now;
     e.at[u] = at;
     if (wasWide[u]) e.wide[u] = 1;
-    if (narrow) e.n[u] = day; else if (wasN[u]) e.n[u] = wasN[u];
     if (now - at >= CLEAN_CODE_WAIT){ go.push(u); due.push(u); }
   }
-  if (narrow) for (const u of Object.keys(was.at)) if (!(u in e.at) && Number(was.at[u]) > 0 && wasN[u] !== day){ e.at[u] = Math.min(Number(was.at[u]), now); e.wide[u] = 1; }
+  if (narrow) for (const u of Object.keys(was.at)) if (!(u in e.at) && Number(was.at[u]) > 0){ e.at[u] = Math.min(Number(was.at[u]), now); e.wide[u] = 1; }
   const done = (moved) => {
     if (gen !== cleanCodeGen || r.codesMissed) return;
-    if (moved) for (const u of due){ delete e.at[u]; delete e.wide[u]; delete e.n[u]; }
+    if (moved) for (const u of due){ delete e.at[u]; delete e.wide[u]; }
     const next = Object.assign({}, cleanCodeBook());
     if (Object.keys(e.at).length) next[k] = e; else delete next[k];
     cleanCodeMem = next;

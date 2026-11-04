@@ -1492,7 +1492,9 @@ delete list"), which every other sign-in email is kept from. The desktop app's o
 its survey senders get past it, which also skips its check of a forward's opening lines (handing those senders' mail back in
 the one scan put forwarded Best Buy pickup and order notices in Trash: the review caught it). So the scan with `CLEAN_RULES`
 stays 1.9.133's, and `cleanScanFolder` first runs a scan of its own with `CLEAN_CODE_RULES`, whose only survey senders are
-`CLEAN_CODE_FROM` (riotgames.com and bestbuy.com addresses, straight or relayed by Hide My Email). Of what it hands back,
+`CLEAN_CODE_FROM`, the sites' own names exactly ("Riot Games", "Best Buy"; the app tests a sender's name and address apart, and
+names a group of one address and subject after its first email, so a reply under another name never rides in; one the app
+would hand back anyway, from a newsletter address or Spam, goes with them, an hour later). Of what it hands back,
 `cleanAddCodes` takes only `CLEAN_CODE_DROP`'s emails: from the site's address (`relayedFrom` for relayed mail) under the
 site's own name ("Riot Games", "Best Buy", as the owner's screenshot shows them), never a support or customer care address (support, care or help in the address,
 `CLEAN_CODE_PERSON`: the app takes "RE:" and "FW:" off subjects, so a reply to one reads like it), and with the whole subject,
@@ -1500,9 +1502,11 @@ so "Your login code was used" or "Welcome to Riot Games! Your receipt" stays. Th
 `applyCleanSafety` doesn't guard; Always keep still wins), come out of the other scan's groups, and the codes the app had
 counted as kept safe come off that count (`g.fresh`: those that count never had, so Always keep doesn't count them twice).
 The codes' scan runs first, so a code that arrives between the two is only in the other one, kept and counted (and held an
-hour by auto-clean); past midnight UTC (the day the app's look-back starts on moves) or at the app's 3000 emails a scan, a
-codes' scan after the other one says which codes that one read, for the count (only when the first found a code, and not
-in auto-clean, which doesn't show it; if that one fails, the run adds no codes). Everything else is offered, kept and counted
+hour by auto-clean). A look-back starts when each scan searches (on a UTC date, or on a server with WITHIN, such as Dovecot
+or Fastmail's Cyrus, so many seconds back), and a scan reads 3000 emails and 800 forwards at most, so on the Clean page a
+codes' scan after the other one says which codes that one read, for the count, whenever the first found a code it counted;
+if it fails, or midnight UTC passes meanwhile, the scan adds no codes this time (auto-clean, which doesn't show the count,
+runs none). Everything else is offered, kept and counted
 as in 1.9.133. The gaps, as the codes' scan hands these
 back like the site's own email and the page can't tell: a forwarded "Welcome to Riot Games" goes (one the app kept by its
 opening lines stays in the kept-safe count), and so does a code forwarded under a subject that protects nothing ("FW: is this
@@ -1515,10 +1519,10 @@ doesn't say when an email came: when each was first seen is kept per device by i
 vault), noted once the move is known (one whose move failed stays due), not at all when the codes' scan didn't count (and
 then a first 30-day look-back isn't counted as done), nor by a run Erase vault came during (`cleanCodeGen`). `wide` marks one
 still noted that a 3-day look-back no longer returns (an old one the first 30-day look-back found, or one whose day left the
-window; not one a 3-day look-back starting on the same day returned, `n`, which was moved or deleted): the codes' scan then
+window, or one deleted or moved meanwhile, which costs one look before it's forgotten): the codes' scan then
 looks back 31 days (a day's room, as midnight can pass during a code's hour) until it's moved or gone, while the other scan
 keeps 1.9.133's look-back. A run stops when the vault locks during it (its Always keep and Clear all of Spam can't be read),
-and the phone's request then waits for its next check. A Scan on the Clean page
+and the phone's request then waits for its next check; a Scan on the Clean page the vault locks during offers nothing. A Scan on the Clean page
 offers them at once. `CLEAN_RULES_KEY` takes in the new rules, so auto-clean looks back 30 days once.
 `.github/scripts/clean-rules.test.mjs` runs sample mail, forwards and support replies included, through the desktop app's own
 `scanPromos` (against a pretend mail server) and the newest page, compares what's offered and the kept-safe count, email by

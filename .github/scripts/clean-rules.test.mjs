@@ -30,7 +30,8 @@ class FakeImap {
   close() {}
   async list() { return Object.keys(SERVER.boxes).map((path) => ({ path, specialUse: /spam/i.test(path) ? "\\Junk" : /trash/i.test(path) ? "\\Trash" : "" })); }
   async getMailboxLock(path) { const b = SERVER.boxes[path]; if (!b) throw new Error("no such box"); this.open = b; this.mailbox = { uidValidity: b.v }; return { release() {} }; }
-  async search(q) { SERVER.searches.push(q.since); return this.open.msgs.filter((m) => dayOf(m.at) >= dayOf(q.since.getTime())).map((m) => m.uid); }
+  // SINCE by UTC date, as imapflow sends it; a server with WITHIN gets YOUNGER, so many seconds back.
+  async search(q) { SERVER.searches.push(q.since); return this.open.msgs.filter((m) => SERVER.within ? m.at >= q.since.getTime() : dayOf(m.at) >= dayOf(q.since.getTime())).map((m) => m.uid); }
   async *fetch(uids, query) {
     for (const m of this.open.msgs.filter((x) => uids.includes(x.uid))) {
       const envelope = { subject: m.subject, from: [{ name: m.name, address: m.address }] };
@@ -84,11 +85,15 @@ function pageApi(path) {
 const memStore = () => { const m = new Map(); const st = { full: false, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { if (st.full) throw new Error("QuotaExceededError"); m.set(k, String(v)); }, removeItem: (k) => m.delete(k), m }; return st; };
 const blockedStore = () => ({ getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() { throw new Error("blocked"); } });
 
-// hooks: version (the desktop app's), beforeScan(cfg) (may throw or wait), failMove.
+// hooks: version (the desktop app's), beforeScan(cfg) (may throw or wait), afterScan(cfg), failMove.
 function setup(path, store = memStore(), hooks = {}) {
   const window = { pvDesktop: {
     version: hooks.version || 13,
-    scanPromos: async (cfg) => { SERVER.scans.push(cfg); if (hooks.beforeScan) await hooks.beforeScan(cfg); return imap.scanPromos(Object.assign({ host: "imap.example.com", port: 993 }, cfg)); },
+    scanPromos: async (cfg) => {
+      SERVER.scans.push(cfg); if (hooks.beforeScan) await hooks.beforeScan(cfg);
+      const res = await imap.scanPromos(Object.assign({ host: "imap.example.com", port: 993 }, cfg));
+      if (hooks.afterScan) await hooks.afterScan(cfg); return res;
+    },
     trashPromos: async (cfg, uids, v) => {
       if (hooks.failMove && hooks.failMove()) return { ok: false, error: "The server said no." };
       const c = new FakeImap(); await c.getMailboxLock(cfg.folder === "spam" ? "Spam" : "INBOX");
@@ -152,6 +157,8 @@ const corpus = (p = "") => [
   msg(p + "riot-spoof", { name: "Riot Games", address: "noreply@riot-games-security.example.com", subject: "Login Code: 445566" }),
   msg(p + "riot-named", { name: "noreply@riotgames.com", address: "codes@example.com", subject: "Login Code: 445577" }),
   msg(p + "riot-other-name", { name: "Riot Games Support", address: RIOT, subject: "Login Code: 445588" }),
+  // Not the site's own name: offered as 1.9.133 offered it (from a newsletter address), at once, not an hour later.
+  msg(p + "val-welcome", { name: "VALORANT", address: "noreply@email.riotgames.com", subject: "Welcome to Riot Games" }),
   // Replies from support: the app takes "RE:" off a subject, so they read like the emails asked for.
   msg(p + "bby-reply", { name: "Best Buy", address: "customercare@bestbuy.com", subject: "RE: Your Password Reset verification code" }),
   msg(p + "riot-reply", { name: "Riot Games", address: "support@support.riotgames.com", subject: "Re: Login code" }),
@@ -354,16 +361,69 @@ await test("at the app's 3000 emails a scan, a code the other scan didn't read t
   assert.equal(r.protectedCount, 1, "the Target code is still counted");
 });
 
-await test("when the codes' scan after midnight fails, nothing is offered for codes and the count is as before", async () => {
-  const mk = () => [msg("t-code4", { name: "Target", address: "Target@oe.target.com", subject: "Your Target.com sign-in code: 123456" }),
-    msg("r-code4", { name: "Riot Games", address: RIOT, subject: "Login Code: 949494" })];
-  NOW = Date.UTC(2026, 10, 4, 12, 0, 0); server(mk()); const ref = await offered(reference());
-  NOW = Date.UTC(2026, 10, 4, 23, 59, 59); server(mk());
+for (const [name, hook] of [
+  ["midnight during the other scan", (calls) => { if (calls === 2) NOW += 2000; }],
+  ["the codes' scan after the other one failing", (calls) => { if (calls === 3) throw new Error("dropped"); }],
+  ["midnight during the codes' scan after the other one", (calls) => { if (calls === 3) NOW += 2000; }]]) {
+  await test(`${name}: no codes this time, and the kept-safe count as before`, async () => {
+    const mk = () => [msg("t-code4", { name: "Target", address: "Target@oe.target.com", subject: "Your Target.com sign-in code: 123456" }),
+      msg("r-code4", { name: "Riot Games", address: RIOT, subject: "Login Code: 949494" })];
+    NOW = Date.UTC(2026, 10, 4, 12, 0, 0); server(mk()); const ref = await offered(reference());
+    NOW = Date.UTC(2026, 10, 4, 23, 59, 59); server(mk());
+    let calls = 0;
+    const api = setup(file, memStore(), { beforeScan: () => hook(++calls) });
+    const { ids, r } = await offered(api);
+    assert.deepEqual([ids, r.protectedCount], [ref.ids, ref.r.protectedCount]);
+  });
+}
+
+await test("a server that looks back exact seconds (WITHIN): a code that ages out of the 3 days during its hour still goes", async () => {
+  NOW = Date.UTC(2026, 10, 4, 15, 0, 0);
+  server([msg("aging", { name: "Riot Games", address: RIOT, subject: "Login Code: 979797", at: NOW - 71.5 * 3600000 })]);
+  SERVER.within = true;
+  const api = setup(file); swept(api);
+  for (let i = 0; i < 9; i++){ await api.runAutoClean(); NOW += 10 * 60000; }
+  assert.deepEqual(SERVER.moved, ["aging"]);
+});
+
+await test("a server that looks back exact seconds: a code at the edge that only the first scan read takes nothing else off the count", async () => {
+  NOW = Date.UTC(2026, 10, 4, 15, 0, 0);
+  server([msg("t-code5", { name: "Target", address: "Target@oe.target.com", subject: "Your Target.com sign-in code: 123456" }),
+    msg("edge5", { name: "Riot Games", address: RIOT, subject: "Login Code: 989898", at: NOW - 30 * DAY + 2000 })]);
+  SERVER.within = true;
   let calls = 0;
-  const api = setup(file, memStore(), { beforeScan: (cfg) => { calls++; if (calls === 2) NOW += 2000; if (calls === 3) throw new Error("dropped"); } });
+  const api = setup(file, memStore(), { afterScan: () => { if (++calls === 1) NOW += 5000; } });   // the other scan's 30 days start 5 s later
   const { ids, r } = await offered(api);
-  assert.equal(calls, 3, "a codes' scan after the other one");
-  assert.deepEqual([ids, r.protectedCount], [ref.ids, ref.r.protectedCount]);
+  assert.ok(ids.includes("edge5"));
+  assert.equal(r.protectedCount, 1, "the Target code is still counted");
+});
+
+await test("a reply or forward under another name from the same address and subject isn't taken with the site's own", async () => {
+  const mk = () => [msg("own-welcome", { name: "Riot Games", address: "noreply@riotgames.com", subject: "Welcome to Riot Games", at: NOW - 2 * DAY }),
+    msg("ps-reply", { name: "Riot Games Player Support", address: "noreply@riotgames.com", subject: "RE: Welcome to Riot Games" }),
+    msg("ps-fw", { name: "Sam", address: "sam.account2@example.com", subject: "FW: RE: Welcome to Riot Games",
+      body: fwd("Riot Games Player Support <noreply@riotgames.com>", "RE: Welcome to Riot Games", "We reset your password. Sign in again.") }),
+    msg("val-code", { name: "VALORANT", address: RIOT, subject: "Login Code: 908172" }),
+    msg("own-code", { name: "Riot Games", address: RIOT, subject: "Login Code: 908172", at: NOW + 1000 })];
+  for (const folder of ["inbox", "spam"]) {
+    const put = (m) => folder === "spam" ? server([], m) : server(m);
+    put(mk()); const ref = await offered(reference(), folder);
+    put(mk()); const now = await offered(setup(file), folder);
+    const own = (id) => id === "own-welcome" || id === "own-code";
+    assert.deepEqual(now.ids.filter((id) => !own(id)), ref.ids.filter((id) => !own(id)), `${folder}: the others as before`);
+    assert.ok(now.ids.includes("own-welcome") && now.ids.includes("own-code"), `${folder}: Riot Games' own go`);
+  }
+});
+
+await test("a manual Scan the vault locks during offers nothing", async () => {
+  server([msg("kept-news2", { name: "Best Buy", address: "BestBuy@email.bestbuy.com", subject: "Top deals of the week", bulk: true })]);
+  let api, calls = 0;
+  api = setup(file, memStore(), { beforeScan: () => { if (++calls === 1) api.lock(); } });
+  api.getS().settings.cleanKeep = ["bestbuy@email.bestbuy.com"];
+  const vault = api.getS();
+  api.CLEAN.folder = "inbox"; await api.cleanScan();
+  api.setS(vault);
+  assert.equal(api.CLEAN.result, null);
 });
 
 await test("an old code first seen by a later 31-day run (the folder rebuilt) still goes", async () => {
@@ -546,7 +606,7 @@ await test("a code that arrives between the two scans takes nothing else off the
   assert.equal(r.protectedCount, 1 + (ids.includes("late") ? 0 : 1));
 });
 
-await test("a code deleted before its hour doesn't make the next runs look back further", async () => {
+await test("a code deleted before its hour costs one longer look, then is forgotten", async () => {
   NOW = Date.UTC(2026, 10, 4, 15, 0, 0);
   server([msg("del", { name: "Riot Games", address: RIOT, subject: "Login Code: 818181" })]);
   const api = setup(file); swept(api);
@@ -554,7 +614,7 @@ await test("a code deleted before its hour doesn't make the next runs look back 
   SERVER.boxes.INBOX.msgs = [];                                // read and deleted by hand
   scanDays();
   for (let i = 0; i < 3; i++){ NOW += 10 * 60000; await api.runAutoClean(); }
-  assert.deepEqual(scanDays().code, [3, 3, 3]);
+  assert.deepEqual(scanDays(), { code: [3, 31, 3], other: [3, 3, 3] });
   assert.deepEqual(JSON.parse(api.store.getItem("orbit-clean-codes")), {});
 });
 
@@ -572,7 +632,7 @@ await test("scans either side of midnight take nothing else off the kept-safe co
   server([msg("t-code2", { name: "Target", address: "Target@oe.target.com", subject: "Your Target.com sign-in code: 123456" }),
     msg("edge-code", { name: "Riot Games", address: RIOT, subject: "Login Code: 929292", at: Date.UTC(2026, 9, 5, 12, 0, 0) })]);
   let calls = 0;
-  const api = setup(file, memStore(), { beforeScan: () => { if (++calls === 2) NOW += 2000; } });   // the other scan starts on Nov 5
+  const api = setup(file, memStore(), { afterScan: () => { if (++calls === 1) NOW += 2000; } });   // the other scan starts on Nov 5
   const { ids, r } = await offered(api);
   assert.ok(ids.includes("edge-code"), "the code the codes' scan found still goes");
   assert.equal(r.protectedCount, 1, "the Target code is still counted");
