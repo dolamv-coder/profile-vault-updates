@@ -3864,7 +3864,7 @@ function writeStore(rec){
   catch(e){ STORAGE_OK = false; return false; }
 }
 // Erase vault: the vault, and what this device noted about its items (the picture finder's list, hashes of item names).
-function clearStore(){ premiumMem = null; billMem = null; try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(AUTO_PIC_STORE); localStorage.removeItem(PREMIUM_STORE); localStorage.removeItem(BILL_STORE); localStorage.removeItem(CLEAN_CODE_STORE); } catch(e){} cleanCodeMem = {}; }
+function clearStore(){ premiumMem = null; billMem = null; try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(AUTO_PIC_STORE); localStorage.removeItem(PREMIUM_STORE); localStorage.removeItem(BILL_STORE); localStorage.removeItem(CLEAN_CODE_STORE); } catch(e){} cleanCodeMem = {}; cleanCodeGen++; }
 
 // The vault key and the sync token (1.9.65+) come from one PBKDF2 run: the key is its 256 bits, the
 // same key deriveKey made before, and the token an HMAC of them, which the sync service can check
@@ -15321,29 +15321,27 @@ const CLEAN_SALE_FROM = /deal\s+days|circle\s+week/i;
 const CLEAN_STORE_FROM = /@(em|e|email|emails|mail|mailer|news|newsletter|marketing|promo|offers|click|go|info|m|t|reply|mkt|comms|communications)\.(target|walmart|pokemoncenter|pokemon|bestbuy|amazon|costco|samsclub|gamestop|apple|homedepot|lowes|nike|footlocker|kohls|macys|ebay)\.com$/i;
 // Sign-in emails that go too (1.9.134, the owner's request, with a screenshot of their inbox: "add this to the email delete
 // list"): Riot Games' "Login Code: 123456" and "Welcome to Riot Games", and Best Buy's "Your Password Reset verification
-// code", which making accounts in bulk fills an inbox with, and which are no use once they're old. Auto-clean leaves each one
-// an hour first (CLEAN_CODE_WAIT), in case someone is signing in with it. CLEAN_CODE_FROM (the two sites' addresses, straight
-// or relayed by Hide My Email) goes to the desktop app with the survey senders, as its own subject check would keep any code:
-// it then hands back all their mail, and applyCleanSafety clears only the subjects in CLEAN_CODE_DROP, by the real sender,
-// and gives the rest the app's checks (cleanWouldOffer), so everything else from them is kept or cleared as before.
-// A forward ("FW: Login Code…") is still kept: the app checks a forward's subject before it reads who sent it.
+// code", which making accounts in bulk fills an inbox with, and which are no use once they're old. The desktop app's own
+// subject check keeps any code, and only its survey senders get past it, which also skips its check of a forward's opening
+// lines. So the scan with CLEAN_RULES stays 1.9.133's, and these are found by a second scan (cleanScanFolder) whose only
+// survey senders are CLEAN_CODE_FROM, the two sites' addresses straight or relayed by Hide My Email: of what it hands back,
+// only CLEAN_CODE_DROP's emails are taken (cleanAddCodes), by the real sender and the whole subject, so "Your login code was
+// used" or "Welcome to Riot Games! Your receipt" stays, and everything else is kept or cleared as before. A forward ("FW:
+// Login Code…") is kept: the app checks a forward's own subject first. Auto-clean leaves each an hour first (CLEAN_CODE_WAIT).
 const CLEAN_CODE_SITES = "riotgames|bestbuy";
 const CLEAN_CODE_FROM = new RegExp("@([a-z0-9-]+\\.)*(" + CLEAN_CODE_SITES + ")\\.com$|_at_([a-z0-9-]+_)*(" + CLEAN_CODE_SITES + ")_com_[a-z0-9]{12,16}_[a-z0-9]{6,10}@icloud\\.com$", "i");
+// A code's number at the end, or the Clean page's dots for it (cleanCodeSubject).
+const CLEAN_CODE_NO = "\\s*:?\\s*(\\d{4,10}|•+)?\\s*$";
 const CLEAN_CODE_DROP = [
-  {from:/@([a-z0-9-]+\.)*riotgames\.com$/i, subject:/\blog[\s-]?in\s+code\b|^\s*welcome\s+to\s+riot\s+games\b/i},
-  {from:/@([a-z0-9-]+\.)*bestbuy\.com$/i, subject:/\bpassword\s+reset\s+(verification\s+)?code\b/i}
+  {from:/@([a-z0-9-]+\.)*riotgames\.com$/i, subject:new RegExp("^\\s*log[\\s-]?in\\s+code" + CLEAN_CODE_NO + "|^\\s*welcome\\s+to\\s+riot\\s+games\\s*[!.]?\\s*$", "i")},
+  {from:/@([a-z0-9-]+\.)*bestbuy\.com$/i, subject:new RegExp("^\\s*(your\\s+)?password\\s+reset\\s+verification\\s+code" + CLEAN_CODE_NO, "i")}
 ];
 // True for one of those emails, by its real sender (relayed mail's, or the address itself) and its subject.
 const cleanCodeDrop = (addr, subject) => { const real = relayedFrom(addr) || String(addr || "").toLowerCase(); return CLEAN_CODE_DROP.some(d => d.from.test(real) && d.subject.test(subject || "")); };
 // One row for a sender's codes on the Clean page: "Login Code: ••••••".
 const cleanCodeSubject = (s) => String(s || "").replace(/\b\d{4,10}\b/g, "••••••");
-// The desktop app's test for a newsletter address (looksPromoSender in its imap-sync.js). With a mailing list's headers,
-// which this page never sees, it decides whether the app offers an email at all; mail the app hands back only for
-// CLEAN_CODE_FROM is offered only when it would have been anyway: from such an address, from Spam, or a plain sale.
-const CLEAN_APP_PROMO_LOCAL = /^(news|newsletter|newsletters|marketing|promo|promos|promotions|offers|deals|sales|specials|email|emails|info|hello|hi|updates|inspiration|shop|store|style|rewards|members|circle|beauty|home)$|news|newsletter|promo|marketing|offers|deals/i;
-const CLEAN_APP_PROMO_SUB = /^(em|e|email|emails|mail|mailer|news|newsletter|marketing|promo|offers|click|go|info|m|t|reply|mkt|comms|communications)\./i;
-const appPromoSender = (addr) => { const [local, domain] = String(addr || "").split("@"); return !!domain && (CLEAN_APP_PROMO_LOCAL.test(local) || CLEAN_APP_PROMO_SUB.test(domain)); };
-const CLEAN_RULES = {promoSubject:CLEAN_SALE.source, surveyFrom:CLEAN_SURVEY_FROM.source + "|" + CLEAN_RELAYED.source + "|" + CLEAN_SALE_FROM.source + "|" + CLEAN_STORE_FROM.source + "|" + CLEAN_CODE_FROM.source};
+const CLEAN_RULES = {promoSubject:CLEAN_SALE.source, surveyFrom:CLEAN_SURVEY_FROM.source + "|" + CLEAN_RELAYED.source + "|" + CLEAN_SALE_FROM.source + "|" + CLEAN_STORE_FROM.source};
+const CLEAN_CODE_RULES = {promoSubject:CLEAN_SALE.source, surveyFrom:CLEAN_CODE_FROM.source};
 // From a store's newsletter address (1.9.106, the owner's screenshot: Best Buy's "Your next computer has arrived", a laptop
 // sale sent to each account), "arrived", "arriving", "on its way" and "alert" don't keep an email unless its subject also names
 // an order, package, shipment, delivery, purchase, item, card, refund or return (CLEAN_STORE_REAL: "Your gift card has
@@ -15352,7 +15350,8 @@ const CLEAN_RULES = {promoSubject:CLEAN_SALE.source, surveyFrom:CLEAN_SURVEY_FRO
 const CLEAN_STORE_WEAK = /arriv(es|ing|ed)\b|on\s+(its|the)\s+way|\balerts?\b/gi;
 const CLEAN_STORE_REAL = /\b(orders?|package|parcel|shipment|delivery|purchase|items?|(gift\s*)?cards?|refunds?|returns?)\b/i;
 // Auto-clean looks back 30 days again once these rules change, so mail they now cover goes too.
-const CLEAN_RULES_KEY = CLEAN_RULES.promoSubject + "\n" + CLEAN_RULES.surveyFrom + "\n" + CLEAN_STORE_WEAK.source;
+const CLEAN_RULES_KEY = CLEAN_RULES.promoSubject + "\n" + CLEAN_RULES.surveyFrom + "\n" + CLEAN_STORE_WEAK.source
+  + "\n" + CLEAN_CODE_RULES.surveyFrom + "\n" + CLEAN_CODE_DROP.map(d => d.subject.source).join("\n");
 // Words order mail shares with sales ("Your shopping moment has arrived: 48-Hour Flash Sale"), and "alert" ("KOHL'S DEAL
 // DAYS ALERT", 1.9.93): they don't protect a subject that's plainly a sale and names no order. A security or fraud alert
 // isn't a sale, and keeps its other words ("account", "sign-in").
@@ -15361,12 +15360,6 @@ const CLEAN_ORDERISH = /\b(orders?|package|parcel|shipment|delivery|purchase|ite
 const cleanGuarded = (s, guard) => guard.test(s) && (guard.test(s.replace(CLEAN_WEAK, " ")) || !(CLEAN_SALE.test(s) && !CLEAN_ORDERISH.test(s)));
 // Only ever clears more than cleanGuarded: whatever that clears stays cleared.
 const storeGuarded = (s, guard) => cleanGuarded(s, guard) && (guard.test(s.replace(CLEAN_STORE_WEAK, " ")) || CLEAN_STORE_REAL.test(s));
-// Whether the app would have offered an email from a CLEAN_CODE_FROM sender without that rule (see appPromoSender): a
-// survey sender, a sender named for a sale event, a newsletter address (a relayed one's real sender), Spam, or a plain sale,
-// as a mailing list's headers aren't sent here. Mail from those addresses with headers only and no sale in its subject, which
-// the app offered before, is kept now: keeping is the safe way round.
-const cleanWouldOffer = (g, real, spamOnly) => spamOnly || appPromoSender(real) || CLEAN_SALE_FROM.test(g.sender || "")
-  || (CLEAN_SALE.test(g.subject || "") && !CLEAN_ORDERISH.test(g.subject || ""));
 // spam: true when every email in r came from the Spam folder.
 function applyCleanSafety(r, spam){
   const keep = new Set(cleanKeepList().map(a => String(a).toLowerCase()));
@@ -15381,20 +15374,45 @@ function applyCleanSafety(r, spam){
     // mail from a sender named for a sale event or from a store's newsletter address (the app skipped its own check).
     const addr = String(g.senderAddr).toLowerCase(), via = relayedFrom(addr), named = CLEAN_SALE_FROM.test(g.sender || ""), store = CLEAN_STORE_FROM.test(addr);
     const check = store || (!!via && CLEAN_STORE_FROM.test(via)) ? storeGuarded : cleanGuarded, subj = g.subject || "";
-    // Riot Games' and Best Buy's sign-in emails go (CLEAN_CODE_DROP); the rest of their mail the app handed back only for
-    // CLEAN_CODE_FROM goes only where it would have before, with the app's subject check too.
-    // As in the app, an email its subject keeps counts as kept safe before it's asked whether it would be offered.
-    const codeFrom = CLEAN_CODE_FROM.test(addr);
-    g.code = codeFrom && cleanCodeDrop(addr, subj);
-    const guarded = !g.code && (check(subj, guard) || (!!(via || g.relayed || named || store || codeFrom) && !spamRule && check(subj, CLEAN_APP_PROTECT)));
-    if (!survey && guarded) hidden.push(g);
-    else if (codeFrom && !g.code && !survey && !cleanWouldOffer(g, via || addr, fromSpamOnly)) continue;
-    else if (keep.has(addr) || (via && keep.has(via))) hidden.push(g);
-    else safe.push(g);
+    const guarded = check(subj, guard) || (!!(via || g.relayed || named || store) && !spamRule && check(subj, CLEAN_APP_PROTECT));
+    // Riot Games' and Best Buy's sign-in emails the second scan found (cleanAddCodes, 1.9.134) go, but for Always keep.
+    const code = !!g.code && cleanCodeDrop(addr, subj);
+    if (keep.has(addr) || (via && keep.has(via)) || (!survey && !code && guarded)) hidden.push(g); else safe.push(g);
   }
   r.groups = safe;
   r.protectedCount = (r.protectedCount || 0) + hidden.reduce((n, g) => n + g.uids.length, 0);
   r.total = safe.reduce((n, g) => n + g.uids.length, 0);
+  return r;
+}
+
+// One folder's scan for Clean emails: the app's scan with CLEAN_RULES, as before, then (1.9.134) a second with
+// CLEAN_CODE_RULES for Riot Games' and Best Buy's sign-in emails alone (cleanAddCodes). Downloads older than version 10
+// ignore the rules, so they get no second scan, and one that fails or finds the folder rebuilt adds nothing: those emails
+// wait for the next scan.
+async function cleanScanFolder(ib, folder, days){
+  const cfg = {id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port, days, folder, loose:folder === "spam" && cleanSpamAll()};
+  const r = await window.pvDesktop.scanPromos(Object.assign({rules:CLEAN_RULES}, cfg));
+  if (!r || !r.ok || CLEAN_OLD_APP) return r;
+  let c = null;
+  try { c = await window.pvDesktop.scanPromos(Object.assign({rules:CLEAN_CODE_RULES}, cfg)); } catch(e){}
+  if (c && c.ok && Array.isArray(c.groups) && String(c.uidValidity || "") === String(r.uidValidity || "")) cleanAddCodes(r, c, cfg.loose);
+  return r;
+}
+// Puts CLEAN_CODE_DROP's emails from c (the second scan) in r as groups of their own (g.code), taking them out of r's other
+// groups. The app counts an email it keeps by its subject as kept safe (a code, in r's protectedCount), which it isn't now.
+function cleanAddCodes(r, c, loose){
+  const codes = c.groups.filter(g => g && Array.isArray(g.uids) && cleanCodeDrop(g.senderAddr, g.subject));
+  if (!codes.length) return r;
+  const take = new Set(codes.flatMap(g => g.uids)), inR = new Set();
+  r.groups = (r.groups || []).filter(g => { g.uids = g.uids.filter(u => !(take.has(u) && inR.add(u))); return g.uids.length > 0; });
+  const guard = loose ? SPAM_KEEP : CLEAN_APP_PROTECT;
+  let counted = 0;
+  for (const g of codes){
+    if (cleanGuarded(g.subject || "", guard)) counted += g.uids.filter(u => !inR.has(u)).length;
+    g.code = true; r.groups.push(g);
+  }
+  r.protectedCount = Math.max(0, (r.protectedCount || 0) - counted);
+  r.total = r.groups.reduce((n, g) => n + g.uids.length, 0);
   return r;
 }
 
@@ -15444,7 +15462,7 @@ async function cleanScan(){
   for (const folder of folders){
     CLEAN.phase = folders.length > 1 ? FOLDER_NAME[folder] : "";
     let r;
-    try { r = await window.pvDesktop.scanPromos({id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port, days:CLEAN.days, folder, loose:folder === "spam" && cleanSpamAll(), rules:CLEAN_RULES}); }
+    try { r = await cleanScanFolder(ib, folder, CLEAN.days); }
     catch(e){ r = {ok:false, error:"The scan stopped unexpectedly."}; }
     if (!r.ok){
       // No Spam folder on this account: just skip it when scanning both.
@@ -15457,10 +15475,10 @@ async function cleanScan(){
       // that one address was set to Always keep before.
       const via = kept.has(String(g.senderAddr).toLowerCase()) ? "" : relayedFrom(g.senderAddr);
       // Riot Games' login codes each have their own number: one row for a sender's (1.9.134).
-      const subject = CLEAN_CODE_FROM.test(g.senderAddr) && cleanCodeDrop(g.senderAddr, g.subject) ? cleanCodeSubject(g.subject) : g.subject;
-      const key = via || subject !== g.subject ? (via || g.senderAddr) + "|" + String(subject || "").toLowerCase() : g.key;
+      const subject = g.code ? cleanCodeSubject(g.subject) : g.subject;
+      const key = g.code ? "code|" + (via || g.senderAddr) + "|" + String(subject || "").toLowerCase() : via ? via + "|" + String(g.subject || "").toLowerCase() : g.key;
       let m = merged.get(key);
-      if (!m){ m = {key, sender:g.sender, senderAddr:via || g.senderAddr, relayed:false, subject, uids:[], parts:{}}; merged.set(key, m); }
+      if (!m){ m = {key, sender:g.sender, senderAddr:via || g.senderAddr, relayed:false, subject, code:!!g.code, uids:[], parts:{}}; merged.set(key, m); }
       if (via) m.relayed = true;
       m.parts[folder] = (m.parts[folder] || []).concat(g.uids);
       m.uids = m.uids.concat(g.uids.map(u => folder + ":" + u));
@@ -15516,33 +15534,43 @@ let autoCleanTimer = null, autoCleanRunning = false;
 // an hour after it first sees each one, in case someone is signing in with it: the app doesn't say when an email came.
 // This device keeps when it first saw each, by inbox, folder and the folder's UIDVALIDITY, in localStorage (orbit-clean-codes,
 // message numbers and times only; in memory where storage is blocked; cleared by Erase vault): {"<inbox id>|<folder>":
-// {v, at:{uid: first seen}, wide:{uid: 1}}}. "wide" marks one still waiting that a 30-day look-back found, so the runs
-// after it look back 30 days too until it's gone (otherwise they look back 3, and it would never be seen again).
+// {v, at:{uid: first seen}, wide:{uid: 1}}}. "wide" marks one that the first 30-day look-back on the inbox found, or one still
+// noted that a 3-day look-back no longer returns: the runs after it look back 30 days too until it's moved or gone, as a
+// 3-day one would never see it again.
 const CLEAN_CODE_WAIT = 60 * 60 * 1000, CLEAN_CODE_STORE = "orbit-clean-codes";
-let cleanCodeMem = {};
+let cleanCodeMem = {}, cleanCodeGen = 0;
 function cleanCodeBook(){
   try { const v = JSON.parse(localStorage.getItem(CLEAN_CODE_STORE)); if (v && typeof v === "object" && !Array.isArray(v)) return v; } catch(e){}
   return cleanCodeMem;
 }
-const cleanCodeWide = (ibId, folder) => { const e = cleanCodeBook()[ibId + "|" + folder]; return !!(e && e.wide && Object.keys(e.wide).length); };
-// The UIDs of r (after applyCleanSafety) to move now: all but sign-in emails first seen less than CLEAN_CODE_WAIT ago.
-// wide: r looked back 30 days. Notes what it saw, and forgets what's no longer there.
-function cleanCodeReady(ibId, folder, r, wide){
+const cleanCodeWide = (ibId, folder) => { const e = cleanCodeBook()[ibId + "|" + folder]; return !!(e && e.wide && typeof e.wide === "object" && Object.keys(e.wide).length); };
+// Sorts r's UIDs (after applyCleanSafety) for auto-clean: go, to move now, is all but sign-in emails first seen less than
+// CLEAN_CODE_WAIT ago. sweep: r is the first 30-day look-back on the inbox (not one kept wide for codes still waiting);
+// narrow: r looked back 3 days. done(moved) notes what it saw once the move is known: a code moved is forgotten, one whose
+// move failed stays due, and one still noted that a 3-day look-back didn't return is kept, marked wide. gen: cleanCodeGen when
+// the run started, so a run that Erase vault came during notes nothing.
+function cleanCodeSort(ibId, folder, r, sweep, narrow, gen){
   const now = Date.now(), book = cleanCodeBook(), k = ibId + "|" + folder, v = String(r.uidValidity || "");
   const was = book[k] && book[k].v === v && book[k].at && typeof book[k].at === "object" ? book[k] : {at:{}, wide:{}};
-  const e = {v, at:{}, wide:{}}, go = [];
+  const wasWide = was.wide && typeof was.wide === "object" ? was.wide : {};
+  const e = {v, at:{}, wide:{}}, go = [], due = [];
   for (const g of r.groups) for (const u of g.uids){
     if (!g.code){ go.push(u); continue; }
     const seen = Number(was.at[u]), at = seen > 0 ? Math.min(seen, now) : now;
     e.at[u] = at;
-    if (now - at >= CLEAN_CODE_WAIT) go.push(u);
-    else if ((was.wide && was.wide[u]) || (wide && !(seen > 0))) e.wide[u] = 1;
+    if (wasWide[u] || (sweep && !(seen > 0))) e.wide[u] = 1;
+    if (now - at >= CLEAN_CODE_WAIT){ go.push(u); due.push(u); }
   }
-  const next = Object.assign({}, book);
-  if (Object.keys(e.at).length) next[k] = e; else delete next[k];
-  cleanCodeMem = next;
-  try { localStorage.setItem(CLEAN_CODE_STORE, JSON.stringify(next)); } catch(err){}
-  return go;
+  if (narrow) for (const u of Object.keys(was.at)) if (!(u in e.at) && Number(was.at[u]) > 0){ e.at[u] = Math.min(Number(was.at[u]), now); e.wide[u] = 1; }
+  const done = (moved) => {
+    if (gen !== cleanCodeGen) return;
+    if (moved) for (const u of due){ delete e.at[u]; delete e.wide[u]; }
+    const next = Object.assign({}, cleanCodeBook());
+    if (Object.keys(e.at).length) next[k] = e; else delete next[k];
+    cleanCodeMem = next;
+    try { localStorage.setItem(CLEAN_CODE_STORE, JSON.stringify(next)); } catch(err){}
+  };
+  return {go, done};
 }
 function scheduleAutoClean(){
   clearInterval(autoCleanTimer); autoCleanTimer = null;
@@ -15566,6 +15594,7 @@ async function runAutoClean(phone){
   const targets = autoCleanTargets(cfg);
   if (!targets.length) return {moved:0, error:"There's no inbox to clean. Add one in FAFO's settings."};
   autoCleanRunning = true;
+  const codeGen = cleanCodeGen;
   const folders = autoCleanFolder(cfg) === "all" ? (CAN_CLEAN_SPAM ? ["inbox", "spam"] : ["inbox"]) : [autoCleanFolder(cfg)];
   const swept = cfg.sweptRules === CLEAN_RULES_KEY ? Object.assign({}, cfg.swept || {}) : {};
   let moved = 0, err = "";
@@ -15575,13 +15604,15 @@ async function runAutoClean(phone){
       for (const folder of folders){
         // First run on an inbox, and the first after the rules change, looks back 30 days; after that
         // only recent mail (while auto-clean keeps it swept).
-        const wide = !(cfg.on && swept[ib.id]) || cleanCodeWide(ib.id, folder);
-        const r = await window.pvDesktop.scanPromos({id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port, days:wide ? 30 : 3, folder, loose:folder === "spam" && cleanSpamAll(), rules:CLEAN_RULES});
+        const sweep = !(cfg.on && swept[ib.id]), wide = sweep || cleanCodeWide(ib.id, folder);
+        const r = await cleanScanFolder(ib, folder, wide ? 30 : 3);
         if (!r.ok){ if (folder === "spam" && /spam folder/i.test(r.error || "")) continue; err = err || `${ib.email}: ${r.error}`; ok = false; break; }
         applyCleanSafety(r, folder === "spam");
-        const uids = cleanCodeReady(ib.id, folder, r, wide);
-        if (!uids.length) continue;
-        const res = await window.pvDesktop.trashPromos({id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port, folder}, uids, r.uidValidity);
+        const codes = cleanCodeSort(ib.id, folder, r, sweep, !wide, codeGen), uids = codes.go;
+        if (!uids.length){ codes.done(true); continue; }
+        let res = {ok:false};
+        try { res = await window.pvDesktop.trashPromos({id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port, folder}, uids, r.uidValidity); }
+        finally { codes.done(!!(res && res.ok)); }
         if (!res.ok){ err = err || `${ib.email}: ${res.error}`; ok = false; break; }
         moved += res.moved || 0;
       }
