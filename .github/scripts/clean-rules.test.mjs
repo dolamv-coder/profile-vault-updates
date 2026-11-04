@@ -606,7 +606,7 @@ await test("a code that arrives between the two scans takes nothing else off the
   assert.equal(r.protectedCount, 1 + (ids.includes("late") ? 0 : 1));
 });
 
-await test("a code deleted before its hour costs one longer look, then is forgotten", async () => {
+await test("a code deleted before its hour costs one look a little further back, then is forgotten", async () => {
   NOW = Date.UTC(2026, 10, 4, 15, 0, 0);
   server([msg("del", { name: "Riot Games", address: RIOT, subject: "Login Code: 818181" })]);
   const api = setup(file); swept(api);
@@ -614,8 +614,37 @@ await test("a code deleted before its hour costs one longer look, then is forgot
   SERVER.boxes.INBOX.msgs = [];                                // read and deleted by hand
   scanDays();
   for (let i = 0; i < 3; i++){ NOW += 10 * 60000; await api.runAutoClean(); }
-  assert.deepEqual(scanDays(), { code: [3, 31, 3], other: [3, 3, 3] });
+  assert.deepEqual(scanDays(), { code: [3, 5, 3], other: [3, 3, 3] }, "as far as it could be old by then, not 31 days");
   assert.deepEqual(JSON.parse(api.store.getItem("orbit-clean-codes")), {});
+});
+
+await test("two computers cleaning one mailbox: the codes the other one moves don't keep the codes' scan looking far back", async () => {
+  NOW = Date.UTC(2026, 10, 4, 15, 0, 0);
+  server([]);
+  const a = setup(file), b = setup(file); swept(a); swept(b);
+  const longest = { a: 0, b: 0 };
+  for (let i = 0; i < 36; i++) {
+    if (i % 2 === 0) SERVER.boxes.INBOX.msgs.push(msg("c2-" + i, { name: "Riot Games", address: RIOT, subject: "Login Code: " + (300000 + i), at: NOW }));
+    for (const [n, api] of [["a", a], ["b", b]]) { scanDays(); await api.runAutoClean(); longest[n] = Math.max(longest[n], ...scanDays().code); NOW += 5 * 60000; }
+  }
+  assert.ok(longest.a <= 5 && longest.b <= 5, `codes' scans looked back at most ${JSON.stringify(longest)} days`);
+  assert.ok(SERVER.moved.length >= 14, `${SERVER.moved.length} moved`);
+});
+
+await test("an email left in a group the codes were taken out of goes as it did in 1.9.133", async () => {
+  const alias = HME("noreply", "mail.riotgames.com");
+  const mk = () => [msg("own-w", { name: "Riot Games", address: alias, subject: "Welcome to Riot Games", at: NOW - 10 * DAY }),
+    msg("ps-r", { name: "Riot Games Player Support", address: alias, subject: "RE: Welcome to Riot Games", at: NOW - 9 * DAY })];
+  const run = async (api) => {
+    NOW = Date.UTC(2026, 10, 4, 15, 0, 0); server(mk()); api.getS().settings.autoClean.folder = "inbox";
+    await api.runAutoClean(); const first = SERVER.moved.slice();
+    for (let i = 0; i < 9; i++){ NOW += 10 * 60000; await api.runAutoClean(); }
+    return { first, all: SERVER.moved.slice().sort() };
+  };
+  const before = await run(reference()), now = await run(setup(file));
+  assert.ok(before.first.includes("ps-r"));
+  assert.ok(now.first.includes("ps-r"), "the reply goes on the first run, as before");
+  assert.deepEqual(now.all, ["own-w", "ps-r"]);
 });
 
 await test("a code on the oldest day of the first 30-day look-back still goes when midnight passes during its hour", async () => {

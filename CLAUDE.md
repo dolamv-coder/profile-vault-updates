@@ -1510,18 +1510,22 @@ runs none). Everything else is offered, kept and counted
 as in 1.9.133. The gaps, as the codes' scan hands these
 back like the site's own email and the page can't tell: a forwarded "Welcome to Riot Games" goes (one the app kept by its
 opening lines stays in the kept-safe count), and so does a code forwarded under a subject that protects nothing ("FW: is this
-legit?"). A forward that keeps its subject ("FW: Login Code…") is kept, as the app checks a forward's own subject first. Wrappers older than 10 (which ignore the rules) get
+legit?"), or by a mailbox whose own name is exactly the site's. A forward that keeps its subject ("FW: Login Code…") is
+kept, as the app checks a forward's own subject first. Wrappers older than 10 (which ignore the rules) get
 no codes' scan, and one that fails or finds the folder rebuilt adds nothing (`r.codesMissed`). The Clean page shows a
 sender's codes as one row ("Login Code: ••••••", `cleanCodeSubject`). Auto-clean and Clean emails from the phone leave each
 an hour after first seeing it (`CLEAN_CODE_WAIT`, `cleanCodeSort`), in case someone is signing in with it, since the app
 doesn't say when an email came: when each was first seen is kept per device by inbox, folder and UIDVALIDITY
 (`orbit-clean-codes` in localStorage, read once and then kept in memory, message numbers and times only, cleared by Erase
 vault), noted once the move is known (one whose move failed stays due), not at all when the codes' scan didn't count (and
-then a first 30-day look-back isn't counted as done), nor by a run Erase vault came during (`cleanCodeGen`). `wide` marks one
-still noted that a 3-day look-back no longer returns (an old one the first 30-day look-back found, or one whose day left the
-window, or one deleted or moved meanwhile, which costs one look before it's forgotten): the codes' scan then
-looks back 31 days (a day's room, as midnight can pass during a code's hour) until it's moved or gone, while the other scan
-keeps 1.9.133's look-back. A run stops when the vault locks during it (its Always keep and Clear all of Spam can't be read),
+then a first 30-day look-back isn't counted as done), nor by a run Erase vault came during (`cleanCodeGen`). An email a scan
+looking back L days returns came after that date less a day (`b`), so one still noted that the codes' scan didn't return was
+moved or deleted meanwhile (by another computer cleaning the same mailbox, say) if that scan looked back as far as it could
+be old by then, and is forgotten; otherwise (an old one the first 30-day look-back found, or one that aged out of a 3-day
+look-back) the next codes' scan looks back that far (`need`, at most 31, a day's room as midnight can pass during a code's
+hour), and as far again until it goes once found, while the other scan keeps 1.9.133's look-back. With two computers on one
+mailbox that's 5 days, not 31. When the codes' scan didn't count, the other scan's emails that look like codes are held
+too, but not those left in a group the codes were taken out of (`g.trimmed`: another email under the first one's name). A run stops when the vault locks during it (its Always keep and Clear all of Spam can't be read),
 and the phone's request then waits for its next check; a Scan on the Clean page the vault locks during offers nothing. A Scan on the Clean page
 offers them at once. `CLEAN_RULES_KEY` takes in the new rules, so auto-clean looks back 30 days once.
 `.github/scripts/clean-rules.test.mjs` runs sample mail, forwards and support replies included, through the desktop app's own
