@@ -1486,6 +1486,26 @@ Target and Pokémon Center profiles by name), so each copy's name gets the text 
 starts with a sign, as "-S"; "copy" to start), numbered " 2", " 3"… where its store has that name; a person's Target and
 Pokémon Center profiles get one new name between them, unless one of their stores has it. Nothing gains a field.
 
+From 1.9.134 Clean emails also clears Riot Games' "Login Code: 123456" and "Welcome to Riot Games" and Best Buy's "Your
+Password Reset verification code" (the owner's request, 2026-11-04, with a screenshot of their inbox: "add this to the email
+delete list"), which every other sign-in email is kept from. The desktop app's own subject check would keep any code, and only
+its survey senders get past it, so `CLEAN_CODE_FROM` (riotgames.com and bestbuy.com addresses, straight or relayed by Hide My
+Email) goes in `CLEAN_RULES.surveyFrom`: the app hands back all their mail, and `applyCleanSafety` clears only the subjects in
+`CLEAN_CODE_DROP` (by the real sender, `relayedFrom`; `g.code`; Always keep still wins), gives the rest the app's subject
+check (`CLEAN_APP_PROTECT`), and offers it only where the app would have anyway (`cleanWouldOffer`: a newsletter address by
+the app's own test, copied as `appPromoSender`, Spam, a sender named for a sale event, or a plain sale). The page never sees
+a mailing list's headers, so mail from those senders with headers only and no sale in its subject, which the app offered
+before, is kept now. A forward ("FW: Login Code…") is still kept, since the app checks a forward's subject before reading
+who sent it. The Clean page shows a sender's codes as one row ("Login Code: ••••••", `cleanCodeSubject`). Auto-clean and
+Clean emails from the phone leave each of them an hour after first seeing it (`CLEAN_CODE_WAIT`, `cleanCodeReady`), in case
+someone is signing in with it, since the app doesn't say when an email came: when each was first seen is kept per device by
+inbox, folder and UIDVALIDITY (`orbit-clean-codes` in localStorage, message numbers and times only, in memory where storage
+is blocked, cleared by Erase vault), and while one that a 30-day look-back found is waiting (`wide`) the next runs look back
+30 days too, so it's seen again. A Scan on the Clean page offers them at once. `CLEAN_RULES_KEY` changes with the rules, so
+auto-clean looks back 30 days once. `.github/scripts/clean-rules.test.mjs` runs sample mail through the desktop app's own
+`scanPromos` (against a pretend mail server) and the newest page, compares what's offered with 1.9.133, and tests the wait,
+on pull requests. Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
