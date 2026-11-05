@@ -15475,14 +15475,28 @@ function cleanAddCodes(r, c, loose, counts, seen){
 const CLEAN_ALL = "all";
 const cleanInboxes = () => ((S && S.inboxes) || []).filter(i => i.password);
 function cleanPick(){
-  const list = cleanInboxes();
-  if (CLEAN.inboxId === CLEAN_ALL && list.length > 1) return CLEAN_ALL;
+  const list = cleanInboxes(), many = cleanMailboxes().length > 1;
+  if (CLEAN.inboxId === CLEAN_ALL && many) return CLEAN_ALL;
   const one = list.find(i => i.id === CLEAN.inboxId);
-  return one ? one.id : list.length > 1 ? CLEAN_ALL : list[0] ? list[0].id : "";
+  return one ? one.id : many ? CLEAN_ALL : list[0] ? list[0].id : "";
 }
-function cleanTargets(){ const p = cleanPick(); return cleanInboxes().filter(i => p === CLEAN_ALL || i.id === p); }
+// All inboxes reads each mailbox once: a vault can hold one twice (a Gmail dot version from before 1.9.112, Import accounts, two
+// devices adding it before they sync), which would count and move its emails twice. The one whose last check worked goes.
+function cleanMailboxes(){
+  const by = new Map();
+  for (const i of cleanInboxes()){
+    const k = mailboxKey(i.email), had = by.get(k);
+    if (!had || (had.syncError && !i.syncError)) by.set(k, i);
+  }
+  const pick = new Set(by.values());
+  return cleanInboxes().filter(i => pick.has(i));
+}
+function cleanTargets(){ const p = cleanPick(); return p === CLEAN_ALL ? cleanMailboxes() : cleanInboxes().filter(i => i.id === p); }
 const cleanPartFolder = (k) => String(k).split("|").pop();
-const cleanPartInbox = (r, k) => inboxById(r.all ? String(k).split("|")[0] : r.inbox);
+const cleanPartId = (r, k) => r.all ? String(k).split("|")[0] : r.inbox;
+const cleanPartInbox = (r, k) => inboxById(cleanPartId(r, k));
+// The inbox's address as scanned, also once it's deleted or disconnected since.
+const cleanPartEmail = (r, k) => (cleanPartInbox(r, k) || {}).email || (r.emails || {})[cleanPartId(r, k)] || "";
 function renderClean(){
   const head = `<div class="view-head"><div><h1 class="view-title">Clean emails</h1><p class="view-sub">Clear out newsletters and sale emails. Orders, bills, payment reminders, account and sign-in emails are never touched, except Riot Games' login codes and welcome emails and Best Buy's password reset codes, which go too (auto-clean leaves each one an hour first).</p></div></div>`;
   if (!DESK) return head + `<div class="empty"><h2>This works in the desktop app</h2><p>A web page can't sign in to email. Open FAFO.exe, then Clean emails.</p></div>`;
@@ -15493,7 +15507,7 @@ function renderClean(){
   const r = CLEAN.result;
   const selCount = r ? r.groups.filter(g => CLEAN.sel.has(g.key)).reduce((n, g) => n + g.uids.length, 0) : 0;
   const controls = `<div class="panelbox clean-bar">
-      <div class="field"><label for="cl-inbox">Inbox</label><select id="cl-inbox" ${CLEAN.busy ? "disabled" : ""}>${inboxes.length > 1 ? `<option value="${CLEAN_ALL}" ${pick === CLEAN_ALL ? "selected" : ""}>All inboxes (${inboxes.length})</option>` : ""}${inboxes.map(i => `<option value="${esc(i.id)}" ${pick === i.id ? "selected" : ""}>${esc(i.email)}</option>`).join("")}</select></div>
+      <div class="field"><label for="cl-inbox">Inbox</label><select id="cl-inbox" ${CLEAN.busy ? "disabled" : ""}>${cleanMailboxes().length > 1 ? `<option value="${CLEAN_ALL}" ${pick === CLEAN_ALL ? "selected" : ""}>All inboxes (${cleanMailboxes().length})</option>` : ""}${inboxes.map(i => `<option value="${esc(i.id)}" ${pick === i.id ? "selected" : ""}>${esc(i.email)}</option>`).join("")}</select></div>
       <div class="field"><label for="cl-folder">Folder</label><select id="cl-folder" ${CLEAN.busy ? "disabled" : ""}>${[["all", CAN_CLEAN_SPAM ? "Inbox & Spam" : "Inbox"],["inbox","Inbox only"],["spam","Spam only"]].filter(([v]) => CAN_CLEAN_SPAM || v !== "inbox").map(([v,l]) => `<option value="${v}" ${CLEAN.folder === v ? "selected" : ""} ${v === "spam" && !CAN_CLEAN_SPAM ? "disabled" : ""}>${l}${v === "spam" && !CAN_CLEAN_SPAM ? " (needs new download)" : ""}</option>`).join("")}</select></div>
       <div class="field"><label for="cl-days">Look back</label><select id="cl-days" ${CLEAN.busy ? "disabled" : ""}>${[[7,"7 days"],[30,"30 days"],[90,"90 days"],[365,"1 year"]].map(([v,l]) => `<option value="${v}" ${CLEAN.days === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <button class="btn btn-primary" data-act="clean-scan" ${CLEAN.busy ? "disabled" : ""}>${ic("search")}${r ? "Scan again" : "Scan"}</button>
@@ -15506,7 +15520,7 @@ function renderClean(){
   const rowWhere = (g) => {
     const keys = Object.keys(g.parts || {}), bits = [];
     if (r.all){
-      const ems = Array.from(new Set(keys.map(k => (cleanPartInbox(r, k) || {}).email).filter(Boolean)));
+      const ems = Array.from(new Set(keys.map(k => cleanPartEmail(r, k)).filter(Boolean)));
       bits.push(ems.length === 1 ? esc(ems[0]) : `<span title="${esc(ems.join(", "))}">${plural(ems.length, "inbox", "inboxes")}</span>`);
     }
     if ((r.folders || []).length > 1) bits.push(Array.from(new Set(keys.map(cleanPartFolder))).map(f => FOLDER_NAME[f]).join(" + "));
@@ -15534,7 +15548,7 @@ async function cleanScan(){
   const all = cleanPick() === CLEAN_ALL, folders = cleanFolders(), vault = S;
   CLEAN.inboxId = all ? CLEAN_ALL : targets[0].id; CLEAN.busy = "scan"; CLEAN.progress = "Connecting…"; CLEAN.result = null; renderMain();
   const merged = new Map(), uv = {}, scannedF = new Set(), scannedIb = [], failedIb = [], noSpam = [];
-  const kept = new Set(cleanKeepList().map(a => String(a).toLowerCase()));
+  const kept = new Set(cleanKeepList().map(a => String(a).toLowerCase())), spamAll = cleanSpamAll();
   let protectedCount = 0, failed = null;
   for (const ib of targets){
     let any = false;
@@ -15574,6 +15588,7 @@ async function cleanScan(){
   }
   CLEAN.busy = ""; CLEAN.progress = ""; CLEAN.phase = "";
   if (failed){ toast(failed, "err"); renderMain(); return; }
+  if (cleanSpamAll() !== spamAll && folders.includes("spam")){ toast("Clear all of Spam changed during the scan. Scan again to see what it finds."); renderMain(); return; }
   if (all && !scannedIb.length && failedIb.length){
     const errs = Array.from(new Set(failedIb.map(f => f.error)));
     toast(errs.length === 1 ? `Couldn't check ${failedIb.map(f => f.email).join(", ")}: ${errs[0]}` : failedIb.map(f => `${f.email}: ${f.error}`).join(" "), "err");
@@ -15581,7 +15596,7 @@ async function cleanScan(){
   }
   const groups = Array.from(merged.values()).sort((a, b) => b.uids.length - a.uids.length);
   const r = {groups, uidValidity:uv, folders:folders.filter(f => scannedF.has(f)), protectedCount, total:groups.reduce((n, g) => n + g.uids.length, 0),
-    all, inbox:all ? "" : targets[0].id, inboxes:scannedIb, failed:failedIb};
+    all, inbox:all ? "" : targets[0].id, inboxes:scannedIb, failed:failedIb, emails:Object.fromEntries(targets.map(i => [i.id, i.email]))};
   CLEAN.result = applyCleanSafety(r); CLEAN.sel = new Set(CLEAN.result.groups.map(g => g.key));
   if (noSpam.length) toast(!all ? "This account has no Spam folder, so only the Inbox was checked."
     : noSpam.length === 1 ? `${noSpam[0]} has no Spam folder, so only its Inbox was checked.` : `${noSpam.length} inboxes have no Spam folder, so only their Inbox was checked.`);
@@ -15596,18 +15611,18 @@ async function cleanTrash(){
   const count = Object.values(byPart).reduce((n, l) => n + l.length, 0);
   if (!count) return;
   const keys = Object.keys(byPart), where = Array.from(new Set(keys.map(cleanPartFolder))).map(f => FOLDER_NAME[f]).join(" and ");
-  const ems = Array.from(new Set(keys.map(k => (cleanPartInbox(r, k) || {}).email || "an inbox")));
+  const ems = Array.from(new Set(keys.map(k => cleanPartEmail(r, k) || "an inbox")));
   const whose = ems.length === 1 ? `${ems[0]}'s ${where}` : `${plural(ems.length, "inbox", "inboxes")}' ${where}`;
   const vault = S;
   if (!(await confirmDialog({title:`Move ${plural(count, "email")} to Trash?`, body:`From ${plural(groups.length, "sender group")} in ${whose}. You can restore them from Trash for 30 days.`, confirm:"Move to Trash"}))) return;
   if (S !== vault) return;
   if (CLEAN.result !== r || CLEAN.busy){ toast("Those results changed meanwhile. Scan again to see what's left."); return; }
-  // Each part's inbox, read now: the vault may lock while emails move (1.9.135).
-  const todo = Object.entries(byPart).map(([k, uids]) => { const ib = cleanPartInbox(r, k); return {k, uids, folder:cleanPartFolder(k), ib:ib && ib.password ? Object.assign({}, ib) : null}; });
+  // Each part's inbox, read now: the vault may lock while emails move, and the move that was confirmed goes on (1.9.135).
+  const todo = Object.entries(byPart).map(([k, uids]) => { const ib = cleanPartInbox(r, k); return {k, uids, folder:cleanPartFolder(k), email:cleanPartEmail(r, k), ib:ib && ib.password ? Object.assign({}, ib) : null}; });
   CLEAN.busy = "trash"; CLEAN.progress = "Moving to Trash…"; renderMain();
   let moved = 0; const errs = [];
   try {
-    for (const {k, uids, folder, ib} of todo){
+    for (const {k, uids, folder, email, ib} of todo){
       if (r.all && ib){ CLEAN.progress = `Moving to Trash: ${ib.email}…`; const el = document.getElementById("clean-progress"); if (el) el.textContent = CLEAN.progress; }
       let res;
       if (!ib) res = {ok:false, error:"This inbox isn't connected any more."};
@@ -15615,9 +15630,7 @@ async function cleanTrash(){
         try { res = await window.pvDesktop.trashPromos({id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port, folder}, uids, r.uidValidity[k]); }
         catch(e){ res = {ok:false, error:"Moving stopped unexpectedly."}; }
       }
-      // Locked meanwhile: stop there, and scan again after unlocking (what was moved is in Trash).
-      if (S !== vault){ CLEAN.result = null; return; }
-      if (!res.ok){ errs.push(`${r.all ? (ib ? ib.email : "An inbox") + ", " : ""}${FOLDER_NAME[folder]}: ${res.error}`); if (r.all) continue; break; }
+      if (!res.ok){ errs.push(`${r.all ? (email || "An inbox") + ", " : ""}${FOLDER_NAME[folder]}: ${res.error}`); if (r.all) continue; break; }
       moved += res.moved || 0;
       // Drop what was moved from there, keep anything still waiting elsewhere.
       groups.forEach(g => { if (g.parts) delete g.parts[k]; });
@@ -15626,7 +15639,8 @@ async function cleanTrash(){
   r.groups = r.groups.filter(g => !(CLEAN.sel.has(g.key) && !Object.keys(g.parts || {}).length));
   r.groups.forEach(g => { g.uids = Object.entries(g.parts || {}).flatMap(([k, l]) => l.map(u => k + ":" + u)); });
   r.total = r.groups.reduce((n, g) => n + g.uids.length, 0);
-  CLEAN.sel = new Set(r.groups.map(g => g.key));
+  // What's left that was ticked stays ticked (what failed to move); rows left unticked stay so.
+  CLEAN.sel = new Set(r.groups.filter(g => CLEAN.sel.has(g.key)).map(g => g.key));
   if (errs.length) toast((moved ? `Moved ${plural(moved, "email")}, ${r.all ? "but not all. " : "then stopped. "}` : "") + errs.join(" "), "err");
   else toast(`Moved ${plural(moved, "email")} to Trash`);
   renderMain();
@@ -15701,8 +15715,6 @@ function cleanCodeSort(ibId, folder, r, days, gen){
 function scheduleAutoClean(){
   clearInterval(autoCleanTimer); autoCleanTimer = null;
   if (!DESK || !CAN_CLEAN || !S || !autoCleanCfg().on) return;
-  // Show the auto-clean inbox in the picker.
-  if (!CLEAN.inboxId) CLEAN.inboxId = autoCleanCfg().inboxId || "";
   setTimeout(() => { if (S) runAutoClean(); }, 20000);
   autoCleanTimer = setInterval(() => { if (S) runAutoClean(); }, 10 * 60 * 1000);
 }

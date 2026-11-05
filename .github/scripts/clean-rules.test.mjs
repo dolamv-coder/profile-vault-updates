@@ -72,7 +72,8 @@ function pageApi(path) {
   const code = html.slice(cs, ce).replace("function clearStore(){", "function clearStore(){ with (OTHER) {") + "}\n"
     + block("// Important mail the cleaner must never offer", "function renderClean(){")
     + block("const FOLDER_NAME = ", "// Auto-clean: while the vault is unlocked")
-    + block("const autoCleanCfg = ", "function autoCleanHTML(){");
+    + block("const autoCleanCfg = ", "function autoCleanHTML(){")
+    + block("const norm = ", "\n") + "\n" + block("function mailboxKey(email){", "\n}\n") + "\n}\n";
   const prelude = `let S = null; const DESK = true, CAN_CLEAN = true, CAN_CLEAN_SPAM = true, UI = {view:"orders"};
     const CLEAN_OLD_APP = !(window.pvDesktop.version >= 10);
     const CLEAN = { inboxId:"", days:30, folder:"all", busy:"", progress:"", phase:"", result:null, sel:new Set() };
@@ -826,20 +827,65 @@ if (HAS_ALL) {
     assert.equal(api.CLEAN.busy, "");
   });
 
-  await test("Locking while emails move to Trash stops there, with nothing left busy (all inboxes, or one on Inbox and Spam)", async () => {
+  await test("Locking while emails move to Trash lets the move that was confirmed finish, with nothing left busy (all inboxes, or one on Inbox and Spam)", async () => {
     for (const all of [true, false]) {
       multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct(corpus("abc"[i] + ":"), corpus("s" + "abc"[i] + ":"))])));
       let moves = 0;
       const api = withInboxes(setup(file, memStore(), { beforeMove: () => { if (++moves === 1) api.lock(); } }));
       if (!all) api.CLEAN.inboxId = "ib-one";
-      const { r } = await offeredMulti(api, "all");
-      assert.ok(Object.keys(r.uidValidity).length >= 2);
+      const { r, ids } = await offeredMulti(api, "all");
+      const parts = Object.keys(r.uidValidity).length;
+      assert.ok(parts >= 2);
       await api.cleanTrash();
-      assert.equal(moves, 1, "nothing more moved once locked");
+      assert.equal(moves, parts, "every part moved");
+      assert.deepEqual(SERVER.moved.slice().sort(), ids);
       assert.equal(api.CLEAN.busy, "");
       assert.equal(api.CLEAN.progress, "");
-      assert.equal(api.CLEAN.result, null, "scan again after unlocking");
+      assert.ok(api.toasts.some((t) => t === `Moved ${ids.length} emails to Trash`), api.toasts.join(" | "));
     }
+  });
+
+  await test("All inboxes reads a mailbox saved twice (a Gmail dot version) once", async () => {
+    const box = acct(corpus("a:"));
+    multi({ "samone@gmail.com": box, "sam.one@gmail.com": box, [EMAILS[1]]: acct(corpus("b:")) });
+    const api = withInboxes(setup(file), ["samone@gmail.com", "sam.one@gmail.com", EMAILS[1]]);
+    api.getS().inboxes[0].syncError = "Sign-in failed";
+    const { ids, r } = await offeredMulti(api, "inbox");
+    assert.equal(new Set(ids).size, ids.length, "each email once");
+    assert.deepEqual(r.inboxes, ["ib-sam.one", "ib-two"], "the one whose last check worked");
+    multi({ "samone@gmail.com": box, "sam.one@gmail.com": box });
+    const two = withInboxes(setup(file), ["samone@gmail.com", "sam.one@gmail.com"]);
+    two.CLEAN.inboxId = "all";
+    const one = await offeredMulti(two, "inbox");
+    assert.equal(one.r.all, false, "one mailbox: no All inboxes");
+  });
+
+  await test("Move to Trash leaves the rows that were unticked unticked", async () => {
+    multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct(corpus("abc"[i] + ":"))])));
+    const api = withInboxes(setup(file)), { r } = await offeredMulti(api, "inbox");
+    const off = r.groups.find((g) => g.subject === "Top deals of the week").key;
+    api.CLEAN.sel.delete(off);
+    await api.cleanTrash();
+    assert.deepEqual(api.CLEAN.result.groups.map((g) => g.key), [off]);
+    assert.equal(api.CLEAN.sel.size, 0);
+  });
+
+  await test("Clear all of Spam changed during the scan: nothing offered, scan again", async () => {
+    multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct(corpus("abc"[i] + ":"), corpus("s" + "abc"[i] + ":"))])));
+    let n = 0;
+    const api = withInboxes(setup(file, memStore(), { afterScan: (cfg) => { if (++n === 4) api.getS().settings.cleanSpamAll = false; } }));
+    const { r } = await offeredMulti(api, "all");
+    assert.equal(r, null);
+    assert.ok(api.toasts.some((t) => /Clear all of Spam changed/.test(t)));
+  });
+
+  await test("An inbox deleted after the scan is still named when its move fails", async () => {
+    multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct(corpus("abc"[i] + ":"))])));
+    const api = withInboxes(setup(file));
+    await offeredMulti(api, "inbox");
+    api.getS().inboxes = api.getS().inboxes.filter((i) => i.id !== "ib-two");
+    await api.cleanTrash();
+    assert.ok(api.toasts.some((t) => t.includes(EMAILS[1] + ", Inbox: This inbox isn't connected any more.")), api.toasts.join(" | "));
   });
 
   await test("Picking one inbox scans only that one", async () => {

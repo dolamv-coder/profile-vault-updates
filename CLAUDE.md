@@ -1535,16 +1535,22 @@ and tests the wait, on pull requests (it fails if the newest page has no `CLEAN_
 
 From 1.9.135 a Scan on the Clean page can read **All inboxes** (the owner's request, 2026-11-05, with a screenshot of the
 Inbox menu above Scan: "Enable auto clean for all inboxes not just indiviually ones"; auto-clean's own Inboxes menu already
-had All inboxes, `autoCleanTargets`). `#cl-inbox` starts with All inboxes (N) where more than one inbox has a password, and
+had All inboxes, `autoCleanTargets`). `#cl-inbox` starts with All inboxes (N) where more than one mailbox has a password, and
 it's the pick to start with (`cleanPick`: `CLEAN.inboxId` `"all"`, `CLEAN_ALL`, the same value auto-clean's setting uses, or
-an inbox's id; `cleanTargets`). `cleanScan` scans each inbox's folders in turn (the progress names the inbox), and a result's
+an inbox's id; `cleanTargets`), whatever auto-clean's own Inboxes menu says (until 1.9.135 the Scan's picker started on
+auto-clean's inbox). All inboxes reads each mailbox once (`cleanMailboxes`, by `mailboxKey`, the one whose last check
+worked): a vault can hold one twice, a Gmail dot version from before 1.9.112 or Import accounts, which would count and move
+its emails twice. `cleanScan` scans each inbox's folders in turn (the progress names the inbox), and a result's
 parts, its emails by where they are, are `"<inbox id>|<folder>"` for All inboxes and the folder alone for one, as before
 (`cleanPartFolder`, `cleanPartInbox`; a uid in `g.uids` is `part + ":" + uid`), so a sender's emails are one row across the
 inboxes (the row says which inbox, or "N inboxes" with them on hover) and Move to Trash moves each inbox's own with its own
-UIDVALIDITY (`r.uidValidity[part]`), going on to the next inbox when one fails and saying which. Each part's inbox is read
-before anything moves, and a lock meanwhile stops the move with nothing left busy and the result dropped (the review caught
-1.9.135's first version throwing there and leaving `CLEAN.busy` on, which held back auto-clean, sync and update restarts
-until FAFO restarted). An inbox that can't be checked is named above the results and in a toast (`r.failed`, with the folder
+UIDVALIDITY (`r.uidValidity[part]`), going on to the next inbox when one fails and saying which, and the rows left unticked
+stay unticked after it (they came back ticked before). Each part's inbox is read before anything moves, so a lock meanwhile
+lets the move that was confirmed finish, as 1.9.134's did, and `CLEAN.busy` always clears (the review caught 1.9.135's
+first version throwing there and leaving it on, which held back auto-clean, sync and update restarts until FAFO restarted).
+The result keeps each scanned inbox's address (`r.emails`, `cleanPartEmail`), so one deleted or disconnected since is still
+named. Clear all of Spam changed during a scan of Spam drops the result ("Scan again"), as its Spam folders were read with
+the other setting. An inbox that can't be checked is named above the results and in a toast (`r.failed`, with the folder
 when its other folder was scanned: "one@…'s Spam"), and the others are scanned (one inbox picked still stops there); when
 none can be, the toast names each; one with no Spam folder is named too. Clear all of Spam's rule goes by each inbox's
 folders (`applyCleanSafety`): a row's emails in an inbox where they're all in Spam get it, as that inbox's own Scan has them,
@@ -1553,9 +1559,9 @@ those parts, and the others count as kept safe). Always keep and the codes (1.9.
 and the kept-safe count adds up each inbox's. `clean-rules.test.mjs` scans three sample mailboxes (`SERVER.accounts`, a
 `FakeImap` per account) and checks that All inboxes offers and keeps exactly what each inbox's own Scan does (Inbox, Spam and
 both, and a sender in one's Inbox and another's Spam, with Clear all of Spam on and off), one row per sender, Riot's codes one
-row, Move to Trash per mailbox with its own UIDVALIDITY and on past one that fails, a lock while moving, a mailbox that can't
-sign in, one whose Spam fails after its Inbox, none that can, and one inbox picked; it fails if the newest page has no
-`CLEAN_ALL`. Nothing gains a field.
+row, Move to Trash per mailbox with its own UIDVALIDITY and on past one that fails, unticked rows, a lock while moving, a
+mailbox saved twice, a mailbox that can't sign in, one whose Spam fails after its Inbox, none that can, one deleted after
+the scan, Clear all of Spam changed during it, and one inbox picked; it fails if the newest page has no `CLEAN_ALL`. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
