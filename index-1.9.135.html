@@ -15481,12 +15481,15 @@ function cleanPick(){
   return one ? one.id : many ? CLEAN_ALL : list[0] ? list[0].id : "";
 }
 // All inboxes reads each mailbox once: a vault can hold one twice (a Gmail dot version from before 1.9.112, Import accounts, two
-// devices adding it before they sync), which would count and move its emails twice. The one whose last check worked goes.
+// devices adding it before they sync), which would count its emails twice. The one whose last check worked goes first, and
+// cleanScan tries another copy when it can't sign in. iCloud's name@me.com and name@mac.com are name@icloud.com's account.
+const cleanBoxKey = (email) => mailboxKey(email).replace(/@(?:me|mac)\.com$/, "@icloud.com");
+const cleanCopies = (ib) => cleanInboxes().filter(i => i !== ib && cleanBoxKey(i.email) === cleanBoxKey(ib.email));
 function cleanMailboxes(){
   const by = new Map();
   for (const i of cleanInboxes()){
-    const k = mailboxKey(i.email), had = by.get(k);
-    if (!had || (had.syncError && !i.syncError)) by.set(k, i);
+    const k = cleanBoxKey(i.email), had = by.get(k);
+    if (!had || (had.syncError && !i.syncError) || (!had.syncError === !i.syncError && (i.lastSync || 0) > (had.lastSync || 0))) by.set(k, i);
   }
   const pick = new Set(by.values());
   return cleanInboxes().filter(i => pick.has(i));
@@ -15548,47 +15551,58 @@ async function cleanScan(){
   const all = cleanPick() === CLEAN_ALL, folders = cleanFolders(), vault = S;
   CLEAN.inboxId = all ? CLEAN_ALL : targets[0].id; CLEAN.busy = "scan"; CLEAN.progress = "Connecting…"; CLEAN.result = null; renderMain();
   const merged = new Map(), uv = {}, scannedF = new Set(), scannedIb = [], failedIb = [], noSpam = [];
-  const kept = new Set(cleanKeepList().map(a => String(a).toLowerCase())), spamAll = cleanSpamAll();
+  // spamUsed: the Clear all of Spam each Spam folder was read with (cleanScanFolder reads it as it starts).
+  const kept = new Set(cleanKeepList().map(a => String(a).toLowerCase())), spamUsed = new Set();
   let protectedCount = 0, failed = null;
-  for (const ib of targets){
-    let any = false;
-    for (const folder of folders){
-      CLEAN.phase = [all ? ib.email : "", folders.length > 1 ? FOLDER_NAME[folder] : ""].filter(Boolean).join(" · ");
-      let r;
-      try { r = await cleanScanFolder(ib, folder, CLEAN.days); }
-      catch(e){ r = {ok:false, error:"The scan stopped unexpectedly."}; }
-      // Locked meanwhile (1.9.134): its Always keep and Clear all of Spam can't be read, so nothing is offered.
-      if (S !== vault){ CLEAN.busy = ""; CLEAN.progress = ""; CLEAN.phase = ""; return; }
-      if (!r.ok){
-        // No Spam folder on this account: just skip it when scanning both.
-        if (folder === "spam" && folders.length > 1 && /spam folder/i.test(r.error || "")){ noSpam.push(ib.email); continue; }
-        // One inbox: stop there. All of them: say which couldn't be checked, and go on with the others.
-        if (!all){ failed = r.error; break; }
-        failedIb.push({email:ib.email, folder:any ? folder : "", error:r.error || "The scan stopped."}); break;
+  for (const t of targets){
+    // A mailbox saved twice: when this copy can't be checked at all, another may.
+    const copies = all ? [t].concat(cleanCopies(t)) : [t];
+    for (const [n, ib] of copies.entries()){
+      let any = false, failedHere = null;
+      for (const folder of folders){
+        CLEAN.phase = [all ? ib.email : "", folders.length > 1 ? FOLDER_NAME[folder] : ""].filter(Boolean).join(" · ");
+        let r;
+        if (folder === "spam") spamUsed.add(cleanSpamAll());
+        try { r = await cleanScanFolder(ib, folder, CLEAN.days); }
+        catch(e){ r = {ok:false, error:"The scan stopped unexpectedly."}; }
+        // Locked meanwhile (1.9.134): its Always keep and Clear all of Spam can't be read, so nothing is offered.
+        if (S !== vault){ CLEAN.busy = ""; CLEAN.progress = ""; CLEAN.phase = ""; return; }
+        if (!r.ok){
+          // No Spam folder on this account: just skip it when scanning both.
+          if (folder === "spam" && folders.length > 1 && /spam folder/i.test(r.error || "")){ noSpam.push(ib.email); continue; }
+          // One inbox: stop there. All of them: say which couldn't be checked, and go on with the others.
+          if (!all){ failed = r.error; break; }
+          failedHere = {email:ib.email, folder:any ? folder : "", error:r.error || "The scan stopped."}; break;
+        }
+        const part = all ? ib.id + "|" + folder : folder;
+        uv[part] = r.uidValidity; scannedF.add(folder); any = true; protectedCount += r.protectedCount || 0;
+        for (const g of r.groups){
+          // Hide My Email gives every account its own sender address: group those by the real sender, unless
+          // that one address was set to Always keep before.
+          const via = kept.has(String(g.senderAddr).toLowerCase()) ? "" : relayedFrom(g.senderAddr);
+          // Riot Games' login codes each have their own number: one row for a sender's (1.9.134).
+          const subject = g.code ? cleanCodeSubject(g.subject) : g.subject;
+          const key = g.code ? "code|" + (via || g.senderAddr) + "|" + String(subject || "").toLowerCase() : via ? via + "|" + String(g.subject || "").toLowerCase() : g.key;
+          let m = merged.get(key);
+          if (!m){ m = {key, sender:g.sender, senderAddr:via || g.senderAddr, relayed:false, subject, code:!!g.code, uids:[], parts:{}}; merged.set(key, m); }
+          if (via) m.relayed = true;
+          m.fresh = (m.fresh || 0) + (g.fresh || 0);
+          m.parts[part] = (m.parts[part] || []).concat(g.uids);
+          m.uids = m.uids.concat(g.uids.map(u => part + ":" + u));
+        }
       }
-      const part = all ? ib.id + "|" + folder : folder;
-      uv[part] = r.uidValidity; scannedF.add(folder); any = true; protectedCount += r.protectedCount || 0;
-      for (const g of r.groups){
-        // Hide My Email gives every account its own sender address: group those by the real sender, unless
-        // that one address was set to Always keep before.
-        const via = kept.has(String(g.senderAddr).toLowerCase()) ? "" : relayedFrom(g.senderAddr);
-        // Riot Games' login codes each have their own number: one row for a sender's (1.9.134).
-        const subject = g.code ? cleanCodeSubject(g.subject) : g.subject;
-        const key = g.code ? "code|" + (via || g.senderAddr) + "|" + String(subject || "").toLowerCase() : via ? via + "|" + String(g.subject || "").toLowerCase() : g.key;
-        let m = merged.get(key);
-        if (!m){ m = {key, sender:g.sender, senderAddr:via || g.senderAddr, relayed:false, subject, code:!!g.code, uids:[], parts:{}}; merged.set(key, m); }
-        if (via) m.relayed = true;
-        m.fresh = (m.fresh || 0) + (g.fresh || 0);
-        m.parts[part] = (m.parts[part] || []).concat(g.uids);
-        m.uids = m.uids.concat(g.uids.map(u => part + ":" + u));
-      }
+      if (failed) break;
+      if (failedHere && !any && n < copies.length - 1) continue;
+      if (failedHere) failedIb.push(failedHere);
+      if (any) scannedIb.push(ib.id);
+      break;
     }
     if (failed) break;
-    if (any) scannedIb.push(ib.id);
   }
   CLEAN.busy = ""; CLEAN.progress = ""; CLEAN.phase = "";
   if (failed){ toast(failed, "err"); renderMain(); return; }
-  if (cleanSpamAll() !== spamAll && folders.includes("spam")){ toast("Clear all of Spam changed during the scan. Scan again to see what it finds."); renderMain(); return; }
+  // Clear all of Spam changed while Spam folders were read (even on and back off): they were read with the other setting.
+  if (Array.from(spamUsed).some(v => v !== cleanSpamAll())){ toast("Clear all of Spam changed during the scan. Scan again to see what it finds."); renderMain(); return; }
   if (all && !scannedIb.length && failedIb.length){
     const errs = Array.from(new Set(failedIb.map(f => f.error)));
     toast(errs.length === 1 ? `Couldn't check ${failedIb.map(f => f.email).join(", ")}: ${errs[0]}` : failedIb.map(f => `${f.email}: ${f.error}`).join(" "), "err");
@@ -15596,7 +15610,7 @@ async function cleanScan(){
   }
   const groups = Array.from(merged.values()).sort((a, b) => b.uids.length - a.uids.length);
   const r = {groups, uidValidity:uv, folders:folders.filter(f => scannedF.has(f)), protectedCount, total:groups.reduce((n, g) => n + g.uids.length, 0),
-    all, inbox:all ? "" : targets[0].id, inboxes:scannedIb, failed:failedIb, emails:Object.fromEntries(targets.map(i => [i.id, i.email]))};
+    all, inbox:all ? "" : targets[0].id, inboxes:scannedIb, failed:failedIb, emails:Object.fromEntries(cleanInboxes().map(i => [i.id, i.email]))};
   CLEAN.result = applyCleanSafety(r); CLEAN.sel = new Set(CLEAN.result.groups.map(g => g.key));
   if (noSpam.length) toast(!all ? "This account has no Spam folder, so only the Inbox was checked."
     : noSpam.length === 1 ? `${noSpam[0]} has no Spam folder, so only its Inbox was checked.` : `${noSpam.length} inboxes have no Spam folder, so only their Inbox was checked.`);

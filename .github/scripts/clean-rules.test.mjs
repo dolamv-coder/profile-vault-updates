@@ -860,6 +860,42 @@ if (HAS_ALL) {
     assert.equal(one.r.all, false, "one mailbox: no All inboxes");
   });
 
+  await test("A mailbox saved twice: when the copy read first can't sign in, the other is read; iCloud's me.com is icloud.com's", async () => {
+    const box = acct(corpus("a:"));
+    // "sam.one@gmail.com" has an old password: the fake server only knows "samone@gmail.com".
+    multi({ "samone@gmail.com": box, [EMAILS[1]]: acct(corpus("b:")) });
+    let api = withInboxes(setup(file), ["sam.one@gmail.com", "samone@gmail.com", EMAILS[1]]);
+    let { ids, r } = await offeredMulti(api, "inbox");
+    assert.deepEqual(r.failed, [], "nothing failed: the copy that works was read");
+    assert.deepEqual(r.inboxes, ["ib-samone", "ib-two"]);
+    assert.ok(ids.includes("a:bby-news") && new Set(ids).size === ids.length);
+    // Neither copy works: it's named once, by the copy tried last.
+    multi({ [EMAILS[1]]: acct(corpus("b:")) });
+    api = withInboxes(setup(file), ["sam.one@gmail.com", "samone@gmail.com", EMAILS[1]]);
+    ({ r } = await offeredMulti(api, "inbox"));
+    assert.deepEqual(r.failed.map((f) => f.email), ["samone@gmail.com"]);
+    const icloud = acct(corpus("c:"));
+    multi({ "sam@icloud.com": icloud, "sam@me.com": icloud, [EMAILS[1]]: acct(corpus("b:")) });
+    api = withInboxes(setup(file), ["sam@icloud.com", "sam@me.com", EMAILS[1]]);
+    ({ ids, r } = await offeredMulti(api, "inbox"));
+    assert.equal(r.inboxes.length, 2);
+    assert.equal(new Set(ids).size, ids.length, "each email once");
+  });
+
+  await test("Clear all of Spam turned on and back off while Spam folders were read: nothing offered, scan again", async () => {
+    multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct(corpus("abc"[i] + ":"), corpus("s" + "abc"[i] + ":"))])));
+    const api = withInboxes(setup(file, memStore(), {
+      afterScan: (cfg) => { if (cfg.email === EMAILS[0] && cfg.folder === "inbox") api.getS().settings.cleanSpamAll = true; },
+      beforeScan: (cfg) => { if (cfg.email === EMAILS[1]) api.getS().settings.cleanSpamAll = false; },
+    }));
+    api.getS().settings.cleanSpamAll = false;
+    const { r } = await offeredMulti(api, "all");
+    assert.ok(SERVER.scans.some((c) => c.email === EMAILS[0] && c.folder === "spam" && c.loose), "one@'s Spam was read with it on");
+    assert.equal(api.getS().settings.cleanSpamAll, false, "and it's off again at the end");
+    assert.equal(r, null);
+    assert.ok(api.toasts.some((t) => /Clear all of Spam changed/.test(t)));
+  });
+
   await test("Move to Trash leaves the rows that were unticked unticked", async () => {
     multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct(corpus("abc"[i] + ":"))])));
     const api = withInboxes(setup(file)), { r } = await offeredMulti(api, "inbox");
