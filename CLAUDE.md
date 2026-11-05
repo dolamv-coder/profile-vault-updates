@@ -1636,15 +1636,20 @@ sync (every 15 minutes, and only on inboxes on Auto). While the vault is unlocke
 from `startApp`; `spamMovesTick`) runs them on each mailbox once (`cleanMailboxes`, as Find in Spam's All inboxes, whether its Auto
 sync is on or not, and the next copy, `cleanCopies`, when one's Spam can't be read: `spamMovesRun`'s `out.failed`) whose last run
 was 10 minutes ago (9.5 to 10.5, by the minute's check) or with other searches (`SPAM_MOVES_AT`, by `cleanBoxKey`: `{at, key}`,
-`spamMovesKey`; a sync's run counts, so it isn't run twice, and a run that couldn't sign in counts too, so a mailbox that fails is
-asked every 10 minutes, not every minute; cleared at lock, and never noted by a run the vault locked during), so a search saved
-here or synced in from another computer goes within the minute with its 30-day look-back, then 3 days back (`SPAM_MOVES_DAYS`).
+`spamMovesKey`; a sync's run counts, so it isn't run twice, and a run that couldn't read Spam counts too, so a mailbox that fails
+is asked every 10 minutes, not every minute, except a sync's on one copy of a mailbox saved twice, which tries no other copy;
+cleared at lock, and never noted by a run the vault locked during), so a search saved here or synced in from another computer
+goes within the minute with its 30-day look-back. After that it looks back to the start of the mailbox's last run that went
+through, read and moved (`SPAM_MOVES_OK`, kept across a lock: times and the searches' words only), with a day's room, 3 days at
+least (`SPAM_MOVES_DAYS`) and 30 at most (`spamMovesDays`), so a lock or a sleep of days, or a sync whose own run was skipped
+while this one held its mailbox, misses nothing; a move that failed looks back 30 days again.
 It waits while email syncs (`SYNCING`: a sync runs them itself), Clean emails or Find in Spam is busy (`CLEAN.busy`) or
 auto-clean runs, and goes at the next minute's check; a sync starting meanwhile stops it after that mailbox. One run per mailbox
 at a time (`SPAM_MOVING`): a sync's on a mailbox the 10 minutes' run is on does nothing, and update restarts wait for it
 (`autoUpdBlock`). What moved is a toast per inbox ("…: moved N emails out of Spam"). Find in Spam says every 10 minutes where it
-said on every sync. Needs desktop 14 like the rest of Find in Spam; `clean-rules.test.mjs` tests it (and fails if the newest page
-has no `spamMovesTick`). Nothing gains a field.
+said on every sync. Needs desktop 14 like the rest of Find in Spam; `clean-rules.test.mjs` tests it, the review's three findings too (a 5-day
+lock, a sync skipped during a sleep, a copy saved twice whose sync fails), and fails if the newest page has no
+`spamMovesTick`. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

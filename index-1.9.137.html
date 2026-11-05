@@ -15895,10 +15895,14 @@ async function spamMove(){
 }
 // Saved searches on one inbox's Spam, during its sync and every 10 minutes (spamMovesTick): the emails they match move to the
 // Inbox. Each one looks back 30 days the first time this FAFO runs it on an inbox (SPAM_MOVES_SWEPT, kept in memory), then as far
-// as the caller asks. One run per mailbox at a time (SPAM_MOVING, by cleanBoxKey: a copy of a mailbox saved twice counts as it),
-// and when each ran, with which searches, goes in SPAM_MOVES_AT (also when it couldn't sign in, so a mailbox that fails isn't
-// asked again every minute). Answers how many moved; out.failed says Spam couldn't be read (another copy of the mailbox may).
-const SPAM_MOVES_SWEPT = new Map(), SPAM_MOVES_AT = new Map(), SPAM_MOVING = new Set();
+// as the caller asks. One run per mailbox at a time (SPAM_MOVING, by cleanBoxKey: a copy of a mailbox saved twice counts as it).
+// When each ran, with which searches, goes in SPAM_MOVES_AT, which the 10 minutes' run goes by: also when it couldn't read Spam,
+// so a mailbox that fails isn't asked again every minute, unless a sync's run failed on one copy of a mailbox saved twice (the
+// sync doesn't try the others: the 10 minutes' run does, within the minute). When one last went through, read and moved,
+// goes in SPAM_MOVES_OK, kept across a lock (times and the searches' words only), so the 10 minutes' run looks back over all the
+// time since (a lock or a sleep of days, a sync whose own run was skipped while this one held its mailbox). Answers how many
+// moved; out.failed says Spam couldn't be read (another copy of the mailbox may).
+const SPAM_MOVES_SWEPT = new Map(), SPAM_MOVES_AT = new Map(), SPAM_MOVES_OK = new Map(), SPAM_MOVING = new Set();
 const spamMovesKey = (qs) => qs.map(q => spamWords(q).join(" ")).sort().join("\n");
 async function spamMovesRun(inbox, days, out){
   const qs = spamMoves(); if (!CAN_SPAM_MOVE || !qs.length || !inbox || !inbox.password) return 0;
@@ -15907,33 +15911,46 @@ async function spamMovesRun(inbox, days, out){
   const vault = S, key = spamMovesKey(qs), swept = SPAM_MOVES_SWEPT.get(inbox.id) === key;
   const cfg = {id:inbox.id, email:inbox.email, password:inbox.password, host:inbox.host, port:inbox.port};
   SPAM_MOVING.add(box);
+  const started = Date.now();
+  let read = false;
+  // Gone through: this inbox's look-back is done for these searches, and the mailbox's from when this run began.
+  const done = () => { SPAM_MOVES_SWEPT.set(inbox.id, key); SPAM_MOVES_OK.set(box, {at:started, key}); };
   try {
     let r;
     try { r = await window.pvDesktop.listSpam(Object.assign({days:Math.min(90, swept ? days : Math.max(days, 30))}, cfg)); } catch(e){ r = null; }
     if (S !== vault) return 0;
     if (!r || !r.ok){ if (out) out.failed = true; return 0; }
-    if (r.noSpam){ SPAM_MOVES_SWEPT.set(inbox.id, key); return 0; }
+    read = true;
+    if (r.noSpam){ done(); return 0; }
     // The searches as they are now: one taken off meanwhile moves nothing.
     const now = spamMoves();
     const uids = (r.items || []).filter(e => e && Number.isInteger(e.uid) && now.some(q => spamMatch(q, e))).map(e => e.uid);
-    if (!uids.length){ SPAM_MOVES_SWEPT.set(inbox.id, key); return 0; }
+    if (!uids.length){ done(); return 0; }
     let m;
     try { m = await window.pvDesktop.spamToInbox(cfg, uids, r.uidValidity); } catch(e){ return 0; }
     if (!m || !m.ok) return 0;
-    SPAM_MOVES_SWEPT.set(inbox.id, key);
+    done();
     return m.moved || 0;
   } finally {
     SPAM_MOVING.delete(box);
-    if (S === vault) SPAM_MOVES_AT.set(box, {at:Date.now(), key});
+    if (S === vault && (read || out || !cleanCopies(inbox).length)) SPAM_MOVES_AT.set(box, {at:Date.now(), key});
   }
+}
+// How far back the 10 minutes' run looks on a mailbox: to the start of its last run that went through, with a day's room (3
+// days at least, 30 at most), or 30 days when none has with these searches.
+function spamMovesDays(box, key, now){
+  const ok = SPAM_MOVES_OK.get(box);
+  if (!ok || ok.key !== key) return 30;
+  return Math.min(30, Math.max(SPAM_MOVES_DAYS, Math.ceil((now - ok.at) / 86400000) + 1));
 }
 // Saved searches every 10 minutes on their own (1.9.137, the owner's request, 2026-11-05, with a screenshot of Find in Spam: "can
 // you automate this part every 10 minutes as well"), not only on each email sync (every 15 minutes, and only inboxes on Auto).
 // While the vault is unlocked, a check each minute runs them on each mailbox once (cleanMailboxes, as Find in Spam's All inboxes,
 // and another copy when one's Spam can't be read) whose last run, a sync's too, was 10 minutes ago or with other searches (one
-// saved here, or synced in from another computer, goes within the minute, with its 30-day look-back), looking back 3 days after
-// that. It waits while email syncs (a sync runs them itself), Clean emails or Find in Spam is busy or auto-clean runs, and tries
-// again at the next minute's check.
+// saved here, or synced in from another computer, goes within the minute, with its 30-day look-back), looking back over the time
+// since its last run that went through (spamMovesDays: 3 days after a run 10 minutes ago, more after a lock or a sleep). It waits
+// while email syncs (a sync runs them itself), Clean emails or Find in Spam is busy or auto-clean runs, and tries again at the
+// next minute's check.
 const SPAM_MOVES_EVERY = 10 * 60 * 1000, SPAM_MOVES_DAYS = 3;
 let spamMovesTimer = null, spamMovesTicking = false;
 function scheduleSpamMoves(){
@@ -15957,7 +15974,7 @@ async function spamMovesTick(){
       if (!spamMovesDue(ib, spamMovesKey(qs), Date.now())) continue;
       // A mailbox saved twice: when this copy's Spam can't be read, another may (as Find in Spam's All inboxes does).
       for (const one of [ib].concat(cleanCopies(ib))){
-        const out = {}, n = await spamMovesRun(one, SPAM_MOVES_DAYS, out);
+        const box = cleanBoxKey(one.email), out = {}, n = await spamMovesRun(one, spamMovesDays(box, spamMovesKey(spamMoves()), Date.now()), out);
         if (n && S === vault) toast(`${one.email}: moved ${plural(n, "email")} out of Spam`);
         if (!out.failed || S !== vault) break;
       }
