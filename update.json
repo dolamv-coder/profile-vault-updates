@@ -1,10 +1,10 @@
 {
-  "version": "1.9.134",
-  "url": "index-1.9.134.html",
-  "sha256": "87a2f2ed70f425bd04e1b382448f805841c320de21cb81b6dc78f8fa40e7e152",
-  "signature": "q+YP690ju7f3gQAyZ+JYmm6/kLgG4UDV+M9QBIxPem18GEB53oEUN8MQoLDKhb02Wl1a7LJfQ6aBemQaSfCcAA==",
+  "version": "1.9.135",
+  "url": "index-1.9.135.html",
+  "sha256": "b6c78eadc4f6b024f135e575204c2c9282a8e6be9ce83530b33c15d638ae477a",
+  "signature": "x6WrCMg8rRHvCeIeEzHhMsrwtwYhF9QiQloO5ND9b5lB9OW7qHDbiJeg1FUPPgTPGMYHJRXR5RYR7rqRAMHQBg==",
   "minAppVersion": "0",
-  "notes": "Clean emails now also clears Riot Games login codes and welcome emails, and Best Buy password reset codes. Auto-clean leaves each one for an hour first, in case you're signing in with it. Everything else from Riot Games and Best Buy is kept or cleared as before.",
+  "notes": "Clean emails can now scan all your inboxes at once: All inboxes is at the top of the Inbox menu above Scan, and it's picked to start with when you have more than one. Each sender shows once, whichever inboxes its emails are in, and Move to Trash clears them from each. If one inbox can't be checked, the others are still scanned and FAFO says which one. Auto-clean already covered all your inboxes.",
   "installerUrl": "",
-  "publishedAt": "2026-11-05T04:56:58.766Z"
+  "publishedAt": "2026-11-05T13:58:58.643Z"
 }
