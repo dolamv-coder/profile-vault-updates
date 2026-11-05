@@ -49,8 +49,8 @@ posing as imap.gmail.com: normal, re-signed by antivirus, self-signed, expired, 
 server's name, and with the antivirus root trusted by Windows. `test/order-mail.test.cjs` runs `trashOrderMail`'s search
 and checks against a pretend mail server (Gmail's X-GM-RAW and other servers' SEARCH, whole-word order numbers, emails
 that also name a kept order). `test/spam-move.test.cjs` runs Find in Spam's `listSpam` and `spamToInbox` against one too
-(Spam's emails with a store the receiving server verified, the newest 3000, a server without MOVE, a Spam folder rebuilt
-since the list). `test/powershell.test.cjs` checks the
+(Spam's emails with a store the receiving server verified, only by the mail provider's own header, the newest 3000, a server
+without MOVE, a refused move, ones gone from Spam since the list, a Spam folder rebuilt since then). `test/powershell.test.cjs` checks the
 PowerShell that reads Windows' certificates (skipped without `pwsh`). `test/shortcuts.test.cjs` runs
 `shortcuts.js` against a pretend Windows profile: Orbit and Profile Vault shortcuts moving to FAFO.exe.
 

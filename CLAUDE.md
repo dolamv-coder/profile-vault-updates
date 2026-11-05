@@ -1572,9 +1572,14 @@ emails from spam to inbox"; asked, they chose a new download and "Also keep movi
 (`rescueSpam`, Settings → Preferences) only moves an order email the receiving server verified came from the store's own
 domain (DMARC), which one forwarded or relayed by Hide My Email isn't, and there was no other way to move mail out of Spam,
 so desktop 14 (the v1.9.136 download) adds two: `listSpam(cfg)` (Spam's emails from `days` back, at most 1 to 90, the newest
-3000: UID, sender's name and address, subject, when it came, `verified` the store `verifiedFrom` confirmed, the folder's
+3000: UID, sender's name and address, subject, when it came, `verified` the store `verifiedBy` confirmed, the folder's
 UIDVALIDITY, `noSpam`, `partial`) and `spamToInbox(cfg, uids, uidValidity)` (those UIDs to the Inbox, only while the Spam
-folder's UIDVALIDITY is the one listed; `desktop/test/spam-move.test.cjs`). What a search matches is the page's, so it can
+folder's UIDVALIDITY is the one listed, and only those a UID SEARCH still finds there: `gone` counts the rest, so a move
+never counts one auto-clean or another computer took meanwhile; a refused move says the emails are still in Spam;
+`desktop/test/spam-move.test.cjs`). `verifiedBy` is `verifiedFrom` on a header the mail provider wrote: the top
+Authentication-Results' authserv-id must be the IMAP server's provider's (`AUTH_IDS`: Google, iCloud, Yahoo and AOL, Fastmail,
+Zoho) or share its domain, since on a server that writes none the top one is the sender's own; Microsoft's has no authserv-id,
+so outlook.com mail is never shown as verified. Tested with real imapflow against a test IMAP server (hoodiecrow) too. What a search matches is the page's, so it can
 change with a page update: words (`spamWords`: lowercase, accents off, split at anything not a letter or digit), each of
 which must start a word of the subject, the sender's name or address, or the real sender of one relayed by Hide My Email
 (`spamMatch`, `relayedFrom`), so "ship" finds "shipped" but not "membership", and an order number's start finds it glued to
@@ -1582,7 +1587,9 @@ which must start a word of the subject, the sender's name or address, or the rea
 inboxes too, each mailbox once, `cleanMailboxes`, `cleanCopies`), 7, 30 or 90 days, and Search (or Enter); the matches,
 newest first and ticked, with their inbox, day and "From target.com" when verified; Move N to Inbox (`spamMove`, each
 inbox's details read first, so a lock meanwhile lets the move finish), with "Keep moving emails like these out of Spam on
-every sync" to save the search too, or, with nothing found, Keep moving emails like these. Saved searches are the synced
+every sync (every one that matches, ones left unticked too)" to save the search too, or, with nothing found, Keep moving
+emails like these; when it can't be saved, the page says why (30 kept, or no word of 3 letters). The search box keeps the
+cursor through a redraw (a sync finishing, `renderMain`). Saved searches are the synced
 setting `spamMoves` (strings, the newest first, at most `SPAM_MOVES_MAX` 30, each `spamMoveQuery`: one line, at most 80
 characters, with a word of 3 or more, so "a" can't move all of Spam), shown as chips with × like Always keep. Each sync of
 an inbox (`syncOneInbox`, after `rescueSpam`) runs them (`spamMovesRun`): Spam from as far back as the sync looks, or 30 days
@@ -1590,13 +1597,21 @@ the first time this FAFO runs a set of searches on an inbox (`SPAM_MOVES_SWEPT`,
 matches as they are once Spam is read (one taken off meanwhile moves nothing), whoever sent it: the owner chose that over
 moving only what they look at, so a scam with the same words moves too. The sync's toast counts them with the verified ones
 ("moved N emails out of Spam"). Clean emails never offers what a saved search matches, in the Inbox or Spam, by auto-clean
-or the phone either (`applyCleanSafety`'s `kept`), and counts it kept safe. Searching and moving use `CLEAN.busy` ("spam",
+or the phone either (`applyCleanSafety`'s `kept`, on Clean's rows), and counts it kept safe. In Spam that's judged on what
+Find in Spam itself sees (`spamHold`, on every Spam scan of the Scan, auto-clean and the phone's: `listSpam`, then the saved
+searches on each email), since a forward's row in Clean has the original's sender and subject, not the forward's own, and a
+Hide My Email row the real sender, not the alias (the review caught a saved search on a forwarder's name that auto-clean would
+trash every 10 minutes); Spam that can't be listed then, or was rebuilt since the scan, has nothing cleared this time (the Scan
+says so). `spamHold` also keeps what a Find in Spam result on screen offers, and Move to Trash leaves those too, so its Move
+finds them; saving a search drops Clean's result on screen, and Clean emails' Inbox pick drops Find in Spam's. Searching and moving use `CLEAN.busy` ("spam",
 "spam-move"), so sync, auto-clean, update restarts and Clean's own Scan wait for them as for a scan. A download before 14
 (`CAN_SPAM_MOVE`) gets "Get the newest FAFO download for Find in Spam" and a search that does nothing; the web version shows
 Clean emails' "This works in the desktop app". `clean-rules.test.mjs` runs the real `listSpam` and `spamToInbox` against the
 pretend mail server (three mailboxes: matching, All inboxes, Move with a ticked one left, a Spam folder rebuilt since the
 search, one that can't sign in and one with no Spam folder, a download before 14, locking while searching and moving, saved
-searches' look-back and one taken off mid-run, and Clean never offering a saved search's match), and fails if the newest
+searches' look-back and one taken off mid-run, Clean never offering a saved search's match, by Clean's rows or, for a
+forward or an alias, by what Find in Spam sees, Spam left alone when it can't be checked, a result on screen kept from
+auto-clean and Move to Trash, and a move counting what was gone), and fails if the newest
 page has no `CAN_SPAM_MOVE`. Settings gain `spamMoves`, which 1.9.112 syncs as it is.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the

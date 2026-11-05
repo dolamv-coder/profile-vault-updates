@@ -458,10 +458,27 @@ module.exports._rescue = { verifiedFrom, retailerOf };
 
 // ================= Find in Spam (desktop 14, pages from 1.9.136) =================
 // listSpam: the Spam folder's emails from cfg.days back (the newest SPAM_LIST_MAX), each with its UID, sender, subject,
-// when it came, and which store the receiving server verified it came from (verifiedFrom, or ""). The page decides which
+// when it came, and which store the receiving server verified it came from (verifiedBy, or ""). The page decides which
 // to move, by a search the person typed or one they saved, so what counts can change with a page update.
-// spamToInbox: moves those UIDs from Spam to the Inbox, only while the Spam folder is the one listed (its UIDVALIDITY).
+// spamToInbox: moves those UIDs from Spam to the Inbox, only while the Spam folder is the one listed (its UIDVALIDITY),
+// and only the ones still there (gone: how many were moved or deleted since the list).
 const SPAM_LIST_MAX = 3000;
+// The page shows "From target.com" for a verified one, so here the header must be the mail provider's own: its authserv-id
+// (the name before the first ";") belongs to the provider of the IMAP server, or shares the IMAP server's domain. A server
+// that writes no Authentication-Results leaves the sender's own, forged one on top, which verifiedFrom alone would trust.
+// Microsoft's header has no authserv-id, so outlook.com and Office 365 mail isn't shown as verified.
+const AUTH_IDS = [[/(^|\.)(gmail|googlemail|google)\.com$/i, /(^|\.)google\.com$/i], [/(^|\.)(me|mac|icloud|apple)\.com$/i, /(^|\.)(icloud|apple|me)\.com$/i],
+  [/(^|\.)(yahoo|aol)\.com$/i, /(^|\.)(yahoo|aol|yahoodns)\.(com|net)$/i], [/(^|\.)(fastmail|messagingengine)\.com$/i, /(^|\.)(messagingengine|fastmail)\.com$/i],
+  [/(^|\.)zoho(mail)?\.(com|eu|in)$/i, /(^|\.)zoho(mail)?\.(com|eu|in)$/i]];
+const baseDomain = (h) => String(h || "").toLowerCase().replace(/\.$/, "").split(".").slice(-2).join(".");
+function verifiedBy(host, authHeaders, fromDomain) {
+  const top = (authHeaders || []).find(h => /authentication-results:/i.test(h)) || "";
+  const id = (top.replace(/^\s*authentication-results:\s*/i, "").split(";")[0] || "").trim().split(/\s+/)[0].toLowerCase();
+  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id) || /=/.test(id)) return "";
+  const h = String(host || "").toLowerCase(), known = AUTH_IDS.find(([imap]) => imap.test(h));
+  const ours = known ? known[1].test(id) : baseDomain(id) === baseDomain(h);
+  return ours && verifiedFrom([top], fromDomain) ? retailerOf(fromDomain) : "";
+}
 async function listSpamOn(c, cfg) {
   let folder;
   try { folder = await resolveFolder(c, "spam"); } catch (e) { if (e && e.noSpam) return { ok: true, noSpam: true, uidValidity: "", items: [] }; throw e; }
@@ -480,7 +497,7 @@ async function listSpamOn(c, cfg) {
         const when = m.internalDate || (m.envelope && m.envelope.date);
         const at = when ? new Date(when).getTime() : 0;
         items.push({ uid: m.uid, name: String(from.name || "").slice(0, 200), address, subject: String((m.envelope && m.envelope.subject) || "").slice(0, 300),
-          at: Number.isFinite(at) ? at : 0, verified: verifiedFrom(auth, address.split("@")[1] || "") ? retailerOf(address.split("@")[1]) : "" });
+          at: Number.isFinite(at) ? at : 0, verified: verifiedBy(cfg.host, auth, address.split("@")[1] || "") });
       }
     }
     return { ok: true, uidValidity, folder: folder.path, items, partial: all.length > uids.length };
@@ -494,7 +511,17 @@ async function spamToInboxOn(c, uids, uidValidity) {
     // If the folder was rebuilt since the list, message numbers may point elsewhere. Stop.
     if (!uidValidity || String(c.mailbox && c.mailbox.uidValidity || "") !== String(uidValidity))
       return { ok: false, error: "The Spam folder changed since the search. Search again, then retry." };
-    return { ok: true, moved: await moveMail(c, uids, "INBOX") };
+    // Only the ones still in Spam: moved or deleted since the list (by Clean emails, another computer, the email app), a UID
+    // is gone, and a move of it would count as moved on a server that doesn't say which moved.
+    const found = await c.search({ uid: uids.join(",") }, { uid: true });
+    if (found === false) throw new Error("SEARCH_FAILED");
+    const there = new Set((found || []).map(Number)), still = uids.filter(u => there.has(u));
+    if (!still.length) return { ok: true, moved: 0, gone: uids.length };
+    try { return { ok: true, moved: await moveMail(c, still, "INBOX"), gone: uids.length - still.length }; }
+    catch (e) {
+      if (String(e && e.message) === "MOVE_FAILED") return { ok: false, error: "The mail server didn't move the emails to your Inbox, so they're still in Spam." };
+      throw e;
+    }
   } finally { lock.release(); }
 }
 async function listSpam(cfg) {
@@ -513,7 +540,7 @@ async function spamToInbox(cfg, uids, uidValidity) {
 }
 module.exports.listSpam = listSpam;
 module.exports.spamToInbox = spamToInbox;
-module.exports._spam = { listSpamOn, spamToInboxOn, SPAM_LIST_MAX };
+module.exports._spam = { listSpamOn, spamToInboxOn, SPAM_LIST_MAX, verifiedBy };
 
 // ================= A canceled order's emails =================
 // Moves every email naming one of the given order numbers (its confirmation, the cancellation, shipping
