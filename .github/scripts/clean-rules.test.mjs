@@ -19,17 +19,22 @@ const file = process.argv[2] || join(root, `index-${newest}.html`);
 const BASE = join(root, "index-1.9.133.html");   // the last page before Riot Games' and Best Buy's codes went
 
 // ---- The pretend mail server, for the desktop app's scanner ----
-// boxes: {path: {v: uidValidity, msgs: [{id, uid, name, address, subject, at, bulk, body}]}}
+// boxes: {path: {v: uidValidity, msgs: [{id, uid, name, address, subject, at, bulk, body}]}}; with SERVER.accounts
+// ({email: {boxes}}) each inbox the app signs in to has its own, and an address without one can't sign in.
 let SERVER = null;
 const DAY = 86400000;
 const dayOf = (ms) => Math.floor(ms / DAY);
 class FakeImap {
-  constructor() { this.capabilities = new Map([["MOVE", true]]); this.mailbox = null; this.open = null; }
-  async connect() { SERVER.connects++; }
+  constructor(opts) {
+    this.capabilities = new Map([["MOVE", true]]); this.mailbox = null; this.open = null;
+    this.acct = SERVER.accounts ? SERVER.accounts[(opts && opts.auth && opts.auth.user) || ""] : SERVER;
+  }
+  get boxes() { return this.acct.boxes; }
+  async connect() { SERVER.connects++; if (!this.acct) throw Object.assign(new Error("Invalid credentials (Failure)"), { authenticationFailed: true, responseText: "Invalid credentials" }); }
   async logout() {}
   close() {}
-  async list() { return Object.keys(SERVER.boxes).map((path) => ({ path, specialUse: /spam/i.test(path) ? "\\Junk" : /trash/i.test(path) ? "\\Trash" : "" })); }
-  async getMailboxLock(path) { const b = SERVER.boxes[path]; if (!b) throw new Error("no such box"); this.open = b; this.mailbox = { uidValidity: b.v }; return { release() {} }; }
+  async list() { return Object.keys(this.boxes).map((path) => ({ path, specialUse: /spam/i.test(path) ? "\\Junk" : /trash/i.test(path) ? "\\Trash" : "" })); }
+  async getMailboxLock(path) { const b = this.boxes[path]; if (!b) throw new Error("no such box"); this.open = b; this.mailbox = { uidValidity: b.v }; return { release() {} }; }
   // SINCE by UTC date, as imapflow sends it; a server with WITHIN gets YOUNGER, so many seconds back.
   async search(q) { SERVER.searches.push(q.since); return this.open.msgs.filter((m) => SERVER.within ? m.at >= q.since.getTime() : dayOf(m.at) >= dayOf(q.since.getTime())).map((m) => m.uid); }
   async *fetch(uids, query) {
@@ -42,7 +47,7 @@ class FakeImap {
   async messageMove(uids, dest) {
     const moving = this.open.msgs.filter((m) => uids.includes(m.uid));
     this.open.msgs = this.open.msgs.filter((m) => !uids.includes(m.uid));
-    SERVER.boxes[dest].msgs.push(...moving);
+    this.boxes[dest].msgs.push(...moving);
     SERVER.moved.push(...moving.map((m) => m.id));
     return { uidMap: new Map(moving.map((m) => [m.uid, m.uid + 1000])) };
   }
@@ -66,7 +71,7 @@ function pageApi(path) {
   do { depth += html[ce] === "{" ? 1 : html[ce] === "}" ? -1 : 0; ce++; } while (depth);
   const code = html.slice(cs, ce).replace("function clearStore(){", "function clearStore(){ with (OTHER) {") + "}\n"
     + block("// Important mail the cleaner must never offer", "function renderClean(){")
-    + block("const FOLDER_NAME = ", "async function cleanTrash(){")
+    + block("const FOLDER_NAME = ", "// Auto-clean: while the vault is unlocked")
     + block("const autoCleanCfg = ", "function autoCleanHTML(){");
   const prelude = `let S = null; const DESK = true, CAN_CLEAN = true, CAN_CLEAN_SPAM = true, UI = {view:"orders"};
     const CLEAN_OLD_APP = !(window.pvDesktop.version >= 10);
@@ -76,9 +81,10 @@ function pageApi(path) {
     const inboxById = (id) => (S.inboxes || []).find(i => i.id === id) || null;
     const STUB = new Proxy(function(){}, { get: (t, k) => k === Symbol.toPrimitive ? () => 0 : k === "then" ? undefined : STUB, set: () => true, apply: () => STUB, construct: () => STUB });
     const OTHER = new Proxy({}, { has: (t, k) => typeof k === "string" && !["window", "localStorage"].includes(k) && !(k in globalThis) && (() => { try { eval(k); return false; } catch (e) { return true; } })(), get: (t, k) => (k === Symbol.unscopables ? undefined : STUB), set: () => true });
+    const confirmDialog = async () => true, document = { getElementById: () => null };
     let premiumMem = null, billMem = null; const STORE_KEY = "pv-vault", AUTO_PIC_STORE = "orbit-autopic", PREMIUM_STORE = "orbit-premium", BILL_STORE = "orbit-billing";`;
   return new Function("window", "localStorage", prelude + code
-    + `return {setS: (s) => { S = s; }, getS: () => S, lock: () => { S = null; }, CLEAN, toasts, applyCleanSafety, cleanScan, runAutoClean, clearStore, CLEAN_RULES,
+    + `return {setS: (s) => { S = s; }, getS: () => S, lock: () => { S = null; }, CLEAN, toasts, cleanTrash: typeof cleanTrash === "function" ? cleanTrash : null, applyCleanSafety, cleanScan, runAutoClean, clearStore, CLEAN_RULES,
       KEY: CLEAN_RULES_KEY, CODE_RULES: typeof CLEAN_CODE_RULES !== "undefined" ? CLEAN_CODE_RULES : null};`);
 }
 // localStorage that works (full: its writes fail, as when storage is full), or one that throws (a browser that blocks storage).
@@ -96,7 +102,7 @@ function setup(path, store = memStore(), hooks = {}) {
     },
     trashPromos: async (cfg, uids, v) => {
       if (hooks.failMove && hooks.failMove()) return { ok: false, error: "The server said no." };
-      const c = new FakeImap(); await c.getMailboxLock(cfg.folder === "spam" ? "Spam" : "INBOX");
+      const c = new FakeImap({ auth: { user: cfg.email } }); await c.getMailboxLock(cfg.folder === "spam" ? "Spam" : "INBOX");
       if (v && String(c.mailbox.uidValidity) !== String(v)) return { ok: false, error: "changed" };
       const r = await c.messageMove(uids, "Trash"); return { ok: true, moved: r.uidMap.size };
     }
@@ -641,7 +647,8 @@ await test("an email left in a group the codes were taken out of goes as it did 
     for (let i = 0; i < 9; i++){ NOW += 10 * 60000; await api.runAutoClean(); }
     return { first, all: SERVER.moved.slice().sort() };
   };
-  const before = await run(reference()), now = await run(setup(file));
+  // 1.9.133 itself: the page's own scan without the codes' one holds code-like emails on purpose (r.codesMissed).
+  const before = await run(existsSync(BASE) ? setup(BASE) : reference()), now = await run(setup(file));
   assert.ok(before.first.includes("ps-r"));
   assert.ok(now.first.includes("ps-r"), "the reply goes on the first run, as before");
   assert.deepEqual(now.all, ["own-w", "ps-r"]);
@@ -700,6 +707,71 @@ await test("Clean emails from the phone waits the same hour", async () => {
   NOW += 61 * 60000; await api.runAutoClean(true);
   assert.deepEqual(SERVER.moved, ["p2", "p1"]);
 });
+
+// ---- All inboxes on the Clean page (1.9.135) ----
+const EMAILS = ["one@example.com", "two@example.com", "three@example.com"];
+const acct = (inbox, spam = []) => ({ boxes: { INBOX: { v: "7", msgs: inbox }, Spam: { v: "9", msgs: spam }, Trash: { v: "3", msgs: [] } } });
+const multi = (accounts) => { SERVER = { connects: 0, searches: [], scans: [], moved: [], accounts }; return SERVER; };
+const withInboxes = (api, emails = EMAILS) => { api.getS().inboxes = emails.map((e) => ({ id: "ib-" + e.split("@")[0], email: e, password: "pw" })); api.CLEAN.inboxId = ""; return api; };
+const allMsgs = () => Object.values(SERVER.accounts).flatMap((a) => Object.values(a.boxes).flatMap((b) => b.msgs));
+const offeredMulti = async (api, folder) => {
+  api.CLEAN.folder = folder; api.CLEAN.days = 30;
+  await api.cleanScan();
+  const r = api.CLEAN.result, msgs = allMsgs();
+  return { r, ids: r ? r.groups.flatMap((g) => g.uids.map((u) => msgs.find((m) => String(m.uid) === u.slice(u.lastIndexOf(":") + 1)).id)).sort() : [] };
+};
+const HAS_ALL = /const CLEAN_ALL = "all"/.test(readFileSync(file, "utf8"));
+if (HAS_ALL) {
+  await test("All inboxes: the Scan's choice to start with; it offers and keeps what each inbox's own Scan does, one row per sender", async () => {
+    for (const folder of ["inbox", "spam", "all"]) {
+      const mk = () => Object.fromEntries(EMAILS.map((e, i) => { const p = "abc"[i] + ":"; return [e, folder === "inbox" ? acct(corpus(p)) : folder === "spam" ? acct([], corpus(p)) : acct(corpus(p), corpus("s" + p))]; }));
+      let union = [], kept = 0;
+      for (const e of EMAILS) { multi(mk()); const one = await offeredMulti(withInboxes(setup(file), [e]), folder); union = union.concat(one.ids); kept += one.r.protectedCount; assert.equal(one.r.all, false); }
+      multi(mk());
+      const api = withInboxes(setup(file)), { ids, r } = await offeredMulti(api, folder);
+      assert.equal(r.all, true, "All inboxes to start with");
+      assert.deepEqual(r.inboxes.length, 3);
+      if (folder !== "all") {
+        assert.deepEqual(ids, union.sort(), `${folder}: what each inbox's own Scan offers`);
+        assert.equal(r.protectedCount, kept, `${folder}: kept safe, all of them`);
+      } else assert.deepEqual(ids.filter((id) => !union.includes(id)), [], "nothing one inbox's own Scan keeps");
+      const news = r.groups.filter((g) => g.subject === "Top deals of the week");
+      assert.equal(news.length, 1, "one row for a sender across the inboxes");
+      assert.equal(Object.keys(news[0].parts).filter((k) => k.includes("|")).length, folder === "all" ? 6 : 3);
+      const codes = r.groups.filter((g) => g.code && /^Login Code/.test(g.subject));
+      assert.equal(codes.length, 1, "one row for Riot's codes across the inboxes");
+      assert.equal(new Set(Object.keys(codes[0].parts).map((k) => k.split("|")[0])).size, 3);
+    }
+  });
+
+  await test("All inboxes: Move to Trash moves each inbox's own, and what's kept stays in each", async () => {
+    multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct(corpus("abc"[i] + ":"))])));
+    const api = withInboxes(setup(file)), { ids } = await offeredMulti(api, "inbox");
+    await api.cleanTrash();
+    assert.deepEqual(SERVER.moved.slice().sort(), ids);
+    for (const [i, e] of EMAILS.entries()) {
+      const left = SERVER.accounts[e].boxes.INBOX.msgs.map((m) => m.id), gone = SERVER.accounts[e].boxes.Trash.msgs.map((m) => m.id);
+      assert.ok(gone.includes("abc"[i] + ":bby-news") && left.includes("abc"[i] + ":bby-order"), `${e}: its own newsletter went, its order stayed`);
+    }
+    assert.deepEqual(api.CLEAN.result.groups, [], "nothing left to clear");
+  });
+
+  await test("All inboxes: one that can't be checked is named, and the others are scanned", async () => {
+    multi({ [EMAILS[0]]: acct(corpus("a:")), [EMAILS[1]]: acct(corpus("b:")) });     // three@ can't sign in
+    const api = withInboxes(setup(file)), { ids, r } = await offeredMulti(api, "inbox");
+    assert.deepEqual(r.failed.map((f) => f.email), [EMAILS[2]]);
+    assert.ok(ids.includes("a:bby-news") && ids.includes("b:bby-news"));
+    assert.ok(api.toasts.some((t) => /three@example\.com/.test(t)));
+  });
+
+  await test("Picking one inbox scans only that one", async () => {
+    multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct(corpus("abc"[i] + ":"))])));
+    const api = withInboxes(setup(file)); api.CLEAN.inboxId = "ib-two";
+    const { ids, r } = await offeredMulti(api, "inbox");
+    assert.equal(r.all, false);
+    assert.ok(ids.length > 0 && ids.every((id) => id.startsWith("b:")));
+  });
+}
 
 Date.now = realNow;
 console.log(`${passed} passed`);
