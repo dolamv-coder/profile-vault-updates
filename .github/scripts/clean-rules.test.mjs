@@ -915,13 +915,17 @@ if (HAS_ALL) {
     assert.ok(api.toasts.some((t) => /Clear all of Spam changed/.test(t)));
   });
 
-  await test("An inbox deleted after the scan is still named when its move fails", async () => {
-    multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct(corpus("abc"[i] + ":"))])));
-    const api = withInboxes(setup(file));
-    await offeredMulti(api, "inbox");
-    api.getS().inboxes = api.getS().inboxes.filter((i) => i.id !== "ib-two");
-    await api.cleanTrash();
-    assert.ok(api.toasts.some((t) => t.includes(EMAILS[1] + ", Inbox: This inbox isn't connected any more.")), api.toasts.join(" | "));
+  await test("An inbox deleted after the scan, or during it, is still named when its move fails", async () => {
+    for (const during of [false, true]) {
+      multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct(corpus("abc"[i] + ":"))])));
+      const drop = () => { api.getS().inboxes = api.getS().inboxes.filter((i) => i.id !== "ib-two"); };
+      const api = withInboxes(setup(file, memStore(), { afterScan: (cfg) => { if (during && cfg.email === EMAILS[2]) drop(); } }));
+      const { r } = await offeredMulti(api, "inbox");
+      if (!during) drop();
+      assert.equal(r.emails["ib-two"], EMAILS[1]);
+      await api.cleanTrash();
+      assert.ok(api.toasts.some((t) => t.includes(EMAILS[1] + ", Inbox: This inbox isn't connected any more.")), api.toasts.join(" | "));
+    }
   });
 
   await test("Picking one inbox scans only that one", async () => {

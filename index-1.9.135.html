@@ -15524,7 +15524,7 @@ function renderClean(){
     const keys = Object.keys(g.parts || {}), bits = [];
     if (r.all){
       const ems = Array.from(new Set(keys.map(k => cleanPartEmail(r, k)).filter(Boolean)));
-      bits.push(ems.length === 1 ? esc(ems[0]) : `<span title="${esc(ems.join(", "))}">${plural(ems.length, "inbox", "inboxes")}</span>`);
+      if (ems.length) bits.push(ems.length === 1 ? esc(ems[0]) : `<span title="${esc(ems.join(", "))}">${plural(ems.length, "inbox", "inboxes")}</span>`);
     }
     if ((r.folders || []).length > 1) bits.push(Array.from(new Set(keys.map(cleanPartFolder))).map(f => FOLDER_NAME[f]).join(" + "));
     return bits.map(b => ` · ${b}`).join("");
@@ -15552,13 +15552,14 @@ async function cleanScan(){
   CLEAN.inboxId = all ? CLEAN_ALL : targets[0].id; CLEAN.busy = "scan"; CLEAN.progress = "Connecting…"; CLEAN.result = null; renderMain();
   const merged = new Map(), uv = {}, scannedF = new Set(), scannedIb = [], failedIb = [], noSpam = [];
   // spamUsed: the Clear all of Spam each Spam folder was read with (cleanScanFolder reads it as it starts).
-  const kept = new Set(cleanKeepList().map(a => String(a).toLowerCase())), spamUsed = new Set();
+  // emails: each inbox's address as it's read, for one deleted before the result goes (cleanPartEmail).
+  const kept = new Set(cleanKeepList().map(a => String(a).toLowerCase())), spamUsed = new Set(), emails = {};
   let protectedCount = 0, failed = null;
   for (const t of targets){
     // A mailbox saved twice: when this copy can't be checked at all, another may.
     const copies = all ? [t].concat(cleanCopies(t)) : [t];
     for (const [n, ib] of copies.entries()){
-      let any = false, failedHere = null;
+      let any = false, failedHere = null; emails[ib.id] = ib.email;
       for (const folder of folders){
         CLEAN.phase = [all ? ib.email : "", folders.length > 1 ? FOLDER_NAME[folder] : ""].filter(Boolean).join(" · ");
         let r;
@@ -15610,7 +15611,7 @@ async function cleanScan(){
   }
   const groups = Array.from(merged.values()).sort((a, b) => b.uids.length - a.uids.length);
   const r = {groups, uidValidity:uv, folders:folders.filter(f => scannedF.has(f)), protectedCount, total:groups.reduce((n, g) => n + g.uids.length, 0),
-    all, inbox:all ? "" : targets[0].id, inboxes:scannedIb, failed:failedIb, emails:Object.fromEntries(cleanInboxes().map(i => [i.id, i.email]))};
+    all, inbox:all ? "" : targets[0].id, inboxes:scannedIb, failed:failedIb, emails};
   CLEAN.result = applyCleanSafety(r); CLEAN.sel = new Set(CLEAN.result.groups.map(g => g.key));
   if (noSpam.length) toast(!all ? "This account has no Spam folder, so only the Inbox was checked."
     : noSpam.length === 1 ? `${noSpam[0]} has no Spam folder, so only its Inbox was checked.` : `${noSpam.length} inboxes have no Spam folder, so only their Inbox was checked.`);

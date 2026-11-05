@@ -1550,8 +1550,8 @@ UIDVALIDITY (`r.uidValidity[part]`), going on to the next inbox when one fails a
 stay unticked after it (they came back ticked before). Each part's inbox is read before anything moves, so a lock meanwhile
 lets the move that was confirmed finish, as 1.9.134's did, and `CLEAN.busy` always clears (the review caught 1.9.135's
 first version throwing there and leaving it on, which held back auto-clean, sync and update restarts until FAFO restarted).
-The result keeps each scanned inbox's address (`r.emails`, `cleanPartEmail`), so one deleted or disconnected since is still
-named. Clear all of Spam changed during a scan drops the result ("Scan again") when a Spam folder was read with
+The result keeps each inbox's address as it was read (`r.emails`, `cleanPartEmail`), so one deleted during the scan or
+since is still named. Clear all of Spam changed during a scan drops the result ("Scan again") when a Spam folder was read with
 another value than it ends with (`spamUsed`, read just as each Spam folder's scan starts, so on and back off counts too). An inbox that can't be checked is named above the results and in a toast (`r.failed`, with the folder
 when its other folder was scanned: "one@…'s Spam"), and the others are scanned (one inbox picked still stops there); when
 none can be, the toast names each; one with no Spam folder is named too. Clear all of Spam's rule goes by each inbox's
@@ -1562,7 +1562,7 @@ and the kept-safe count adds up each inbox's. `clean-rules.test.mjs` scans three
 `FakeImap` per account) and checks that All inboxes offers and keeps exactly what each inbox's own Scan does (Inbox, Spam and
 both, and a sender in one's Inbox and another's Spam, with Clear all of Spam on and off), one row per sender, Riot's codes one
 row, Move to Trash per mailbox with its own UIDVALIDITY and on past one that fails, unticked rows, a lock while moving, a
-mailbox saved twice (and one copy that can't sign in, and iCloud's me.com), a mailbox that can't sign in, one whose Spam fails after its Inbox, none that can, one deleted after
+mailbox saved twice (and one copy that can't sign in, and iCloud's me.com), a mailbox that can't sign in, one whose Spam fails after its Inbox, none that can, one deleted during or after
 the scan, Clear all of Spam changed during it (and on and back off), and one inbox picked; it fails if the newest page has no `CLEAN_ALL`. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
