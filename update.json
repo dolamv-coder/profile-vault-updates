@@ -1,10 +1,10 @@
 {
-  "version": "1.9.136",
-  "url": "index-1.9.136.html",
-  "sha256": "f52fce322bb8eab71d853f52c4be51ab1eaa16b76dc1cd1993fd36dc1585b4d1",
-  "signature": "JgzGrhazn+MyCFRWF38lGaDN92U4DI5QGSx6T5Hd/TarB+ADewP+i3ccGDsxeAEtL2kiIpPlZO9Lqo2PUi6pAA==",
+  "version": "1.9.137",
+  "url": "index-1.9.137.html",
+  "sha256": "9135dee96cf73690c82b035a5d2dd31f45cbf08069fd8d2329a444fb4ff0fe88",
+  "signature": "0nMUmEtD84D4pi3kGpungL0ysLSr7M5fiuefOYzi3szZ8XLnbEIYVtSRoh0xRhplTed9nV1QSfDV3xsYYtRCBQ==",
   "minAppVersion": "0",
-  "notes": "New on the Clean emails page: Find in Spam. Search your inboxes' Spam for words like “about to ship” or an order number, then move the emails you pick to your Inbox. Tick “Keep moving emails like these” and FAFO moves every email that matches out of Spam each time it syncs your email. Find in Spam needs the newest FAFO download, which you can get from that page.",
+  "notes": "Find in Spam's saved searches now run every 10 minutes while FAFO is open and unlocked, not only when it syncs your email. After a search, tick “Keep moving emails like these” and FAFO moves every email that matches out of Spam by itself; a search you save starts within a minute. Like Find in Spam, it needs the FAFO download from 1.9.136 or newer.",
   "installerUrl": "",
-  "publishedAt": "2026-11-05T16:58:36.828Z"
+  "publishedAt": "2026-11-05T20:23:57.881Z"
 }
