@@ -1,10 +1,10 @@
 {
-  "version": "1.9.135",
-  "url": "index-1.9.135.html",
-  "sha256": "b6c78eadc4f6b024f135e575204c2c9282a8e6be9ce83530b33c15d638ae477a",
-  "signature": "x6WrCMg8rRHvCeIeEzHhMsrwtwYhF9QiQloO5ND9b5lB9OW7qHDbiJeg1FUPPgTPGMYHJRXR5RYR7rqRAMHQBg==",
+  "version": "1.9.136",
+  "url": "index-1.9.136.html",
+  "sha256": "f52fce322bb8eab71d853f52c4be51ab1eaa16b76dc1cd1993fd36dc1585b4d1",
+  "signature": "JgzGrhazn+MyCFRWF38lGaDN92U4DI5QGSx6T5Hd/TarB+ADewP+i3ccGDsxeAEtL2kiIpPlZO9Lqo2PUi6pAA==",
   "minAppVersion": "0",
-  "notes": "Clean emails can now scan all your inboxes at once: All inboxes is at the top of the Inbox menu above Scan, and it's picked to start with when you have more than one. Each sender shows once, whichever inboxes its emails are in, and Move to Trash clears them from each. If one inbox can't be checked, the others are still scanned and FAFO says which one. Auto-clean already covered all your inboxes.",
+  "notes": "New on the Clean emails page: Find in Spam. Search your inboxes' Spam for words like “about to ship” or an order number, then move the emails you pick to your Inbox. Tick “Keep moving emails like these” and FAFO moves every email that matches out of Spam each time it syncs your email. Find in Spam needs the newest FAFO download, which you can get from that page.",
   "installerUrl": "",
-  "publishedAt": "2026-11-05T13:58:58.643Z"
+  "publishedAt": "2026-11-05T16:58:36.828Z"
 }
