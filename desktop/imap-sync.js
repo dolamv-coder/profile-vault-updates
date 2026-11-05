@@ -456,6 +456,65 @@ async function rescueSpam(cfg) {
 module.exports.rescueSpam = rescueSpam;
 module.exports._rescue = { verifiedFrom, retailerOf };
 
+// ================= Find in Spam (desktop 14, pages from 1.9.136) =================
+// listSpam: the Spam folder's emails from cfg.days back (the newest SPAM_LIST_MAX), each with its UID, sender, subject,
+// when it came, and which store the receiving server verified it came from (verifiedFrom, or ""). The page decides which
+// to move, by a search the person typed or one they saved, so what counts can change with a page update.
+// spamToInbox: moves those UIDs from Spam to the Inbox, only while the Spam folder is the one listed (its UIDVALIDITY).
+const SPAM_LIST_MAX = 3000;
+async function listSpamOn(c, cfg) {
+  let folder;
+  try { folder = await resolveFolder(c, "spam"); } catch (e) { if (e && e.noSpam) return { ok: true, noSpam: true, uidValidity: "", items: [] }; throw e; }
+  const lock = await c.getMailboxLock(folder.path);
+  try {
+    const uidValidity = String(c.mailbox && c.mailbox.uidValidity || "");
+    const since = new Date(Date.now() - (Number(cfg.days) || 30) * 86400000);
+    const found = await c.search({ since }, { uid: true });
+    if (found === false) throw new Error("SEARCH_FAILED");
+    const all = found || [], uids = all.slice(-SPAM_LIST_MAX), items = [];
+    if (uids.length) {
+      for await (const m of c.fetch(uids, { uid: true, envelope: true, internalDate: true, headers: ["authentication-results"] }, { uid: true })) {
+        const from = ((m.envelope && m.envelope.from) || [])[0] || {};
+        const address = String(from.address || "").slice(0, 320);
+        const auth = (m.headers ? m.headers.toString("utf8") : "").split(/\r?\n(?=authentication-results:)/i);
+        const when = m.internalDate || (m.envelope && m.envelope.date);
+        const at = when ? new Date(when).getTime() : 0;
+        items.push({ uid: m.uid, name: String(from.name || "").slice(0, 200), address, subject: String((m.envelope && m.envelope.subject) || "").slice(0, 300),
+          at: Number.isFinite(at) ? at : 0, verified: verifiedFrom(auth, address.split("@")[1] || "") ? retailerOf(address.split("@")[1]) : "" });
+      }
+    }
+    return { ok: true, uidValidity, folder: folder.path, items, partial: all.length > uids.length };
+  } finally { lock.release(); }
+}
+async function spamToInboxOn(c, uids, uidValidity) {
+  let folder;
+  try { folder = await resolveFolder(c, "spam"); } catch (e) { if (e && e.noSpam) return { ok: false, error: "Couldn't find a Spam folder in this inbox." }; throw e; }
+  const lock = await c.getMailboxLock(folder.path);
+  try {
+    // If the folder was rebuilt since the list, message numbers may point elsewhere. Stop.
+    if (!uidValidity || String(c.mailbox && c.mailbox.uidValidity || "") !== String(uidValidity))
+      return { ok: false, error: "The Spam folder changed since the search. Search again, then retry." };
+    return { ok: true, moved: await moveMail(c, uids, "INBOX") };
+  } finally { lock.release(); }
+}
+async function listSpam(cfg) {
+  const c = await open(cfg);
+  try { await c.connect(); return await listSpamOn(c, cfg); }
+  catch (e) { return { ok: false, error: await explain(e, cfg) }; }
+  finally { try { await c.logout(); } catch { try { c.close(); } catch {} } }
+}
+async function spamToInbox(cfg, uids, uidValidity) {
+  uids = (Array.isArray(uids) ? uids : []).map(Number).filter(n => Number.isInteger(n) && n > 0).slice(0, 5000);
+  if (!uids.length) return { ok: false, error: "Nothing selected." };
+  const c = await open(cfg);
+  try { await c.connect(); return await spamToInboxOn(c, uids, uidValidity); }
+  catch (e) { return { ok: false, error: await explain(e, cfg) }; }
+  finally { try { await c.logout(); } catch { try { c.close(); } catch {} } }
+}
+module.exports.listSpam = listSpam;
+module.exports.spamToInbox = spamToInbox;
+module.exports._spam = { listSpamOn, spamToInboxOn, SPAM_LIST_MAX };
+
 // ================= A canceled order's emails =================
 // Moves every email naming one of the given order numbers (its confirmation, the cancellation, shipping
 // notes, forwards) to Trash: from the main folder (All Mail on Gmail) and Spam. The server's search finds

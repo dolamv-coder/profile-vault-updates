@@ -80,6 +80,19 @@ ipcMain.handle("imap:rescue-spam", async (_e, cfg) => {
   return imap.rescueSpam(c);
 });
 
+// Find in Spam (pages from 1.9.136): Spam's emails for the page to search, and the ones it picked moved to the Inbox.
+ipcMain.handle("imap:list-spam", async (_e, cfg) => {
+  const c = clean(cfg);
+  if (!c.email || !c.password || !c.host) return { ok: false, error: "Email, app password and server are all needed." };
+  c.days = Math.min(90, Math.max(1, Number(cfg && cfg.days) || 30));
+  return imap.listSpam(c);
+});
+ipcMain.handle("imap:spam-to-inbox", async (_e, cfg, uids, uidValidity) => {
+  const c = clean(cfg);
+  if (!c.email || !c.password || !c.host) return { ok: false, error: "Email, app password and server are all needed." };
+  return imap.spamToInbox(c, uids, String(uidValidity || "").slice(0, 40));
+});
+
 // --- updates ---
 ipcMain.handle("update:info", () => ({ appVersion: app.getVersion(), version: updater.currentVersion(), source: updater.manifestUrl(), builtInSource: !!updater.cfg.manifestUrl, signed: !!updater.pubKey, status: updater.status }));
 ipcMain.handle("update:check", () => updater.check(true));
