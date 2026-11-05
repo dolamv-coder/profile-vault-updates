@@ -1,0 +1,1 @@
+Clean emails now also clears Riot Games login codes and welcome emails, and Best Buy password reset codes. Auto-clean leaves each one for an hour first, in case you're signing in with it. Everything else from Riot Games and Best Buy is kept or cleared as before.
