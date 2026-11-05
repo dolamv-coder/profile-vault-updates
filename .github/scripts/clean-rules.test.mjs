@@ -1178,6 +1178,25 @@ if (HAS_SPAM) {
     assert.ok((await offeredMulti(plain, "spam")).ids.includes("a:fw-news"));
   });
 
+  await test("A Clean result from before the saved searches changed (by a sync) is scanned again, not moved; the phone says when Spam was left alone", async () => {
+    for (const blind of [false, true]) {
+      multi({ [EMAILS[0]]: acct([], [FWD("a:"), msg("a:news", { name: "Best Buy", address: "BestBuy@email.bestbuy.com", subject: "Top deals of the week", bulk: true, at: NOW - 3600000 })]) });
+      const api = withInboxes(setup(file, memStore(), blind ? { noSpamMove: true } : {}), [EMAILS[0]]);
+      const { ids } = await offeredMulti(api, "spam");
+      assert.ok(ids.includes("a:fw-news"));
+      api.getS().settings.spamMoves = { "sam account1": { q: "sam account1", at: 1 } };   // a sync merged one in
+      await api.cleanTrash();
+      assert.deepEqual(SERVER.moved, [], blind ? "a download before 14 leaves Spam alone" : "nothing it now keeps goes");
+      assert.equal(api.CLEAN.result, null);
+      assert.ok(api.toasts.some((t) => /changed since this scan/.test(t)), api.toasts.join(" | "));
+      if (blind) {
+        Object.assign(api.getS().settings.autoClean, { folder: "all", inboxId: "all", on: false });
+        const res = await api.runAutoClean(true);
+        assert.match(res.error, /Spam was left alone/);
+      }
+    }
+  });
+
   await test("What a Find in Spam result on screen matches stays for its Move while it's showing; a result left behind holds nothing", async () => {
     const box = () => acct([], [msg("a:news", { name: "Best Buy", address: "BestBuy@email.bestbuy.com", subject: "Top deals of the week", bulk: true, at: NOW - 3600000 }),
       msg("a:news2", { name: "Kohl's", address: "kohls@em.kohls.com", subject: "Flash sale today only", bulk: true, at: NOW - 3600000 })]);

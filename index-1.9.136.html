@@ -15576,6 +15576,9 @@ const spamOnScreen = () => (UI.view === "clean" && CLEAN.mode === "spam" && SPAM
 // Clean emails with saved searches on a download before 14 can't see each email's own sender and subject (a forward's row has
 // the original's), so it leaves Spam alone there: that Spam is where the saved searches' emails wait for a newer download's sync.
 const spamBlind = () => !CAN_SPAM_MOVE && spamMoves().length > 0;
+// What a Clean result was judged with: one built before the saved searches changed (here, or by a sync from another computer)
+// may offer what they now keep, so it's scanned again (cleanScan stamps it, renderClean and cleanTrash check it).
+const spamMovesStamp = () => spamMoves().map(spamKey).sort().join("\n") + (spamBlind() ? "|blind" : "");
 function renderClean(){
   // Clean emails, or Find in Spam (1.9.136): a switch in the header, kept while FAFO is open.
   const spamMode = CLEAN.mode === "spam" && DESK && CAN_CLEAN;
@@ -15588,6 +15591,7 @@ function renderClean(){
   const inboxes = cleanInboxes();
   if (!inboxes.length) return head + `<div class="empty"><h2>Add an inbox first</h2><p>${spamMode ? "Find in Spam" : "Clean emails"} uses the inboxes you've connected for order sync.</p><button class="btn btn-primary" data-act="settings">Open settings</button></div>`;
   if (spamMode) return head + spamHTML();
+  if (CLEAN.result && !CLEAN.busy && CLEAN.result.spamStamp !== spamMovesStamp()){ CLEAN.result = null; CLEAN.sel = new Set(); }
   const pick = cleanPick();
   const r = CLEAN.result;
   const selCount = r ? r.groups.filter(g => CLEAN.sel.has(g.key)).reduce((n, g) => n + g.uids.length, 0) : 0;
@@ -15695,7 +15699,7 @@ async function cleanScan(){
   // Clear all of Spam changed while Spam folders were read (even on and back off): they were read with the other setting.
   if (Array.from(spamUsed).some(v => v !== cleanSpamAll())){ toast("Clear all of Spam changed during the scan. Scan again to see what it finds."); renderMain(); return; }
   if (!scannedIb.length && heldOff.length && !failedIb.length){
-    CLEAN.result = {groups:[], uidValidity:{}, folders:[], protectedCount:0, total:0, all, inbox:all ? "" : targets[0].id, inboxes:[], failed:[], emails, blind:true};
+    CLEAN.result = {groups:[], uidValidity:{}, folders:[], protectedCount:0, total:0, all, inbox:all ? "" : targets[0].id, inboxes:[], failed:[], emails, blind:true, spamStamp:spamMovesStamp()};
     CLEAN.sel = new Set(); renderMain(); return;
   }
   if (all && !scannedIb.length && failedIb.length){
@@ -15705,7 +15709,7 @@ async function cleanScan(){
   }
   const groups = Array.from(merged.values()).sort((a, b) => b.uids.length - a.uids.length);
   const r = {groups, uidValidity:uv, folders:folders.filter(f => scannedF.has(f)), protectedCount, total:groups.reduce((n, g) => n + g.uids.length, 0),
-    all, inbox:all ? "" : targets[0].id, inboxes:scannedIb, failed:failedIb, emails, blind:heldOff.length > 0};
+    all, inbox:all ? "" : targets[0].id, inboxes:scannedIb, failed:failedIb, emails, blind:heldOff.length > 0, spamStamp:spamMovesStamp()};
   CLEAN.result = applyCleanSafety(r); CLEAN.sel = new Set(CLEAN.result.groups.map(g => g.key));
   if (noSpam.length) toast(!all ? "This account has no Spam folder, so only the Inbox was checked."
     : noSpam.length === 1 ? `${noSpam[0]} has no Spam folder, so only its Inbox was checked.` : `${noSpam.length} inboxes have no Spam folder, so only their Inbox was checked.`);
@@ -15715,6 +15719,7 @@ async function cleanScan(){
 }
 async function cleanTrash(){
   const r = CLEAN.result; if (!r) return;
+  if (r.spamStamp !== spamMovesStamp()){ CLEAN.result = null; CLEAN.sel = new Set(); toast("Your saved Find in Spam searches changed since this scan. Scan again to see what's left to clear."); renderMain(); return; }
   const groups = r.groups.filter(g => CLEAN.sel.has(g.key));
   const byPart = {};
   groups.forEach(g => Object.entries(g.parts || {}).forEach(([k, list]) => { byPart[k] = (byPart[k] || []).concat(list); }));
@@ -15726,7 +15731,7 @@ async function cleanTrash(){
   const vault = S;
   if (!(await confirmDialog({title:`Move ${plural(count, "email")} to Trash?`, body:`From ${plural(groups.length, "sender group")} in ${whose}. You can restore them from Trash for 30 days.`, confirm:"Move to Trash"}))) return;
   if (S !== vault) return;
-  if (CLEAN.result !== r || CLEAN.busy){ toast("Those results changed meanwhile. Scan again to see what's left."); return; }
+  if (CLEAN.result !== r || CLEAN.busy || r.spamStamp !== spamMovesStamp()){ toast("Those results changed meanwhile. Scan again to see what's left."); return; }
   // Each part's inbox, read now: the vault may lock while emails move, and the move that was confirmed goes on (1.9.135).
   const todo = Object.entries(byPart).map(([k, uids]) => { const ib = cleanPartInbox(r, k); return {k, uids, folder:cleanPartFolder(k), email:cleanPartEmail(r, k), ib:ib && ib.password ? Object.assign({}, ib) : null}; });
   CLEAN.busy = "trash"; CLEAN.progress = "Moving to Trash…"; renderMain();
@@ -15760,12 +15765,12 @@ async function cleanTrash(){
 function spamHTML(){
   const inboxes = cleanInboxes(), pick = cleanPick(), busy = CLEAN.busy, r = SPAM.result, saved = spamMoves();
   const oldApp = CAN_SPAM_MOVE ? "" : `<div class="upd-banner"><div><strong>Get the newest FAFO download for Find in Spam</strong><br><span class="item-sub">This copy of FAFO can't move emails out of Spam for a search${spamBlind() ? ", and while you have saved searches Clean emails leaves Spam alone on it" : ""}. Replace your FAFO folder with the new download; your vault, license and inboxes are kept.${S.settings.rescueSpam !== false ? " Until then, order emails your mail server confirmed came from the store still move out of Spam on each sync." : ""}</span></div><button class="btn btn-primary btn-sm" type="button" data-act="upd-get">Get the newest FAFO</button></div>`;
-  const off = busy || autoCleanRunning || !CAN_SPAM_MOVE ? "disabled" : "";
+  const off = busy || !CAN_SPAM_MOVE ? "disabled" : "";
   const controls = `<div class="panelbox clean-bar spam-bar">
       <div class="field"><label for="sp-q">Search Spam for</label><input id="sp-q" type="search" value="${esc(SPAM.q)}" placeholder="Words in the subject or sender, like about to ship" autocomplete="off" maxlength="${SPAM_MOVE_LEN}" ${off}></div>
       <div class="field"><label for="sp-inbox">Inbox</label><select id="sp-inbox" ${off}>${cleanMailboxes().length > 1 ? `<option value="${CLEAN_ALL}" ${pick === CLEAN_ALL ? "selected" : ""}>All inboxes (${cleanMailboxes().length})</option>` : ""}${inboxes.map(i => `<option value="${esc(i.id)}" ${pick === i.id ? "selected" : ""}>${esc(i.email)}</option>`).join("")}</select></div>
       <div class="field"><label for="sp-days">Look back</label><select id="sp-days" ${off}>${[[7,"7 days"],[30,"30 days"],[90,"90 days"]].map(([v,l]) => `<option value="${v}" ${SPAM.days === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
-      <button class="btn btn-primary" data-act="spam-search" ${off}>${ic("search")}Search</button>
+      <button class="btn btn-primary" data-act="spam-search" ${off || (autoCleanRunning ? "disabled" : "")}>${ic("search")}Search</button>
     </div>`;
   const running = autoCleanRunning ? `<p class="note" style="margin:0 0 12px">Auto-clean is running. Search and Move come back on when it's done.</p>` : "";
   const savedLine = saved.length ? `<div class="clean-kept"><span class="item-sub">Moved out of Spam on every sync, and kept by Clean emails:</span>${saved.map(q => `<span class="kchip">${esc(q)}<button type="button" data-act="spam-unsave" data-id="${esc(q)}" aria-label="Stop moving emails like “${esc(q)}” out of Spam">${ic("x")}</button></span>`).join("")}</div>` : "";
@@ -16038,11 +16043,12 @@ async function runAutoClean(phone){
   persist();
   if (moved){ CLEAN.result = null; toast(`${phone ? "Clean emails from your phone" : "Auto-clean"} moved ${plural(moved, "email")} to Trash`); }
   if (UI.view === "clean" && !CLEAN.busy) renderMain();
-  return {moved, error:err};
+  // The phone shows only an error: a Spam left alone is said there too (1.9.136).
+  return {moved, error:err || (phone ? note : "")};
 }
 function autoCleanHTML(){
   const c = autoCleanCfg();
-  const last = !c.on ? "" : c.lastError ? `<span class="err">Last run failed: ${esc(c.lastError)}</span>`
+  const last = !c.on ? (spamBlind() ? "Spam is left alone on this computer while you have saved Find in Spam searches: it needs the newest FAFO download." : "") : c.lastError ? `<span class="err">Last run failed: ${esc(c.lastError)}</span>`
     : c.lastRun ? `Last run ${new Date(c.lastRun).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}: moved ${plural(c.lastMoved || 0, "email")}. ${plural(c.total || 0, "email")} cleared so far.${c.lastNote && spamBlind() ? ` ${esc(c.lastNote)}` : ""}`
     : "First run starts in a few seconds.";
   const scope = !c.v2 || !c.inboxId || c.inboxId === "all" ? "all" : c.inboxId, folder = autoCleanFolder(c);

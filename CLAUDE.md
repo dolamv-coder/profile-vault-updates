@@ -1613,7 +1613,9 @@ other computer's sync: the Scan's result says "Spam wasn't checked" with Get the
 a note (`lastNote`, apart from `lastError`, so a real inbox error still shows), and that Spam's 30-day look-back is owed
 (`autoClean.spamOwed`) for the first run that can check it, while the Inbox is swept as usual and judged on rows only. Saving a search drops Clean's result on screen, and Clean emails' Inbox pick drops Find in Spam's.
 Clean emails lists the saved searches beside Always kept ("Kept by Find in Spam searches", × takes one off), and Find in Spam
-says while auto-clean runs that Search and Move wait for it.
+says while auto-clean runs that Search and Move wait for it (its boxes stay usable). A Clean result is stamped with the saved
+searches it was judged with (`spamMovesStamp`): once they change, here or by a sync from another computer, it's dropped (Scan
+again) rather than moved. The phone's Clean emails says when Spam was left alone, and so does the Clean page with auto-clean off.
 Saved searches are `{words: {q, at}}`, keyed by `spamKey` (the search's words), so two devices that each save one before they
 agree keep both (`syncMerge` treats `spamMoves` as `itemPics`), and with the version they started from one taken off stays off
 (`sync-merge.test.mjs`). Searching and moving use `CLEAN.busy` ("spam",
