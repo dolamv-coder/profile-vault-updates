@@ -91,7 +91,7 @@ function pageApi(path) {
 const memStore = () => { const m = new Map(); const st = { full: false, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { if (st.full) throw new Error("QuotaExceededError"); m.set(k, String(v)); }, removeItem: (k) => m.delete(k), m }; return st; };
 const blockedStore = () => ({ getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() { throw new Error("blocked"); } });
 
-// hooks: version (the desktop app's), beforeScan(cfg) (may throw or wait), afterScan(cfg), failMove.
+// hooks: version (the desktop app's), beforeScan(cfg) (may throw or wait), afterScan(cfg), failMove(cfg), beforeMove(cfg).
 function setup(path, store = memStore(), hooks = {}) {
   const window = { pvDesktop: {
     version: hooks.version || 13,
@@ -101,7 +101,8 @@ function setup(path, store = memStore(), hooks = {}) {
       if (hooks.afterScan) await hooks.afterScan(cfg); return res;
     },
     trashPromos: async (cfg, uids, v) => {
-      if (hooks.failMove && hooks.failMove()) return { ok: false, error: "The server said no." };
+      if (hooks.beforeMove) await hooks.beforeMove(cfg);
+      if (hooks.failMove && hooks.failMove(cfg)) return { ok: false, error: "The server said no." };
       const c = new FakeImap({ auth: { user: cfg.email } }); await c.getMailboxLock(cfg.folder === "spam" ? "Spam" : "INBOX");
       if (v && String(c.mailbox.uidValidity) !== String(v)) return { ok: false, error: "changed" };
       const r = await c.messageMove(uids, "Trash"); return { ok: true, moved: r.uidMap.size };
@@ -721,6 +722,7 @@ const offeredMulti = async (api, folder) => {
   return { r, ids: r ? r.groups.flatMap((g) => g.uids.map((u) => msgs.find((m) => String(m.uid) === u.slice(u.lastIndexOf(":") + 1)).id)).sort() : [] };
 };
 const HAS_ALL = /const CLEAN_ALL = "all"/.test(readFileSync(file, "utf8"));
+if (!HAS_ALL && !process.argv[2]) assert.fail(`${file} has no CLEAN_ALL: the Clean page's All inboxes is gone (update this test if that's on purpose)`);
 if (HAS_ALL) {
   await test("All inboxes: the Scan's choice to start with; it offers and keeps what each inbox's own Scan does, one row per sender", async () => {
     for (const folder of ["inbox", "spam", "all"]) {
@@ -731,10 +733,8 @@ if (HAS_ALL) {
       const api = withInboxes(setup(file)), { ids, r } = await offeredMulti(api, folder);
       assert.equal(r.all, true, "All inboxes to start with");
       assert.deepEqual(r.inboxes.length, 3);
-      if (folder !== "all") {
-        assert.deepEqual(ids, union.sort(), `${folder}: what each inbox's own Scan offers`);
-        assert.equal(r.protectedCount, kept, `${folder}: kept safe, all of them`);
-      } else assert.deepEqual(ids.filter((id) => !union.includes(id)), [], "nothing one inbox's own Scan keeps");
+      assert.deepEqual(ids, union.sort(), `${folder}: what each inbox's own Scan offers`);
+      assert.equal(r.protectedCount, kept, `${folder}: kept safe, all of them`);
       const news = r.groups.filter((g) => g.subject === "Top deals of the week");
       assert.equal(news.length, 1, "one row for a sender across the inboxes");
       assert.equal(Object.keys(news[0].parts).filter((k) => k.includes("|")).length, folder === "all" ? 6 : 3);
@@ -762,6 +762,84 @@ if (HAS_ALL) {
     assert.deepEqual(r.failed.map((f) => f.email), [EMAILS[2]]);
     assert.ok(ids.includes("a:bby-news") && ids.includes("b:bby-news"));
     assert.ok(api.toasts.some((t) => /three@example\.com/.test(t)));
+  });
+
+  await test("All inboxes: a sender in one inbox's Inbox and another's Spam is kept in the first and offered from the second, as each one's own Scan has it", async () => {
+    const news = (p, subject, address) => msg(p + subject.slice(0, 6), { name: "Shop", address, subject, bulk: true });
+    const SUBJ = [["Your ticket to savings: 30% off everything", "news@shop.example.com"], ["Back to school deals are here", "targetnews@em.target.com"]];
+    for (const spamAll of [true, false]) {
+      const mk = () => ({
+        [EMAILS[0]]: acct(SUBJ.map(([t, a]) => news("a:", t, a))),
+        [EMAILS[1]]: acct([], SUBJ.map(([t, a]) => news("b:", t, a))),
+        [EMAILS[2]]: acct(SUBJ.map(([t, a]) => news("c:", t, a)), SUBJ.map(([t, a]) => news("d:", t, a))),
+      });
+      let union = [], kept = 0;
+      for (const e of EMAILS) {
+        multi(mk()); const api = withInboxes(setup(file), [e]); api.getS().settings.cleanSpamAll = spamAll;
+        const one = await offeredMulti(api, "all"); union = union.concat(one.ids); kept += one.r.protectedCount;
+      }
+      multi(mk());
+      const api = withInboxes(setup(file)); api.getS().settings.cleanSpamAll = spamAll;
+      const { ids, r } = await offeredMulti(api, "all");
+      if (spamAll) assert.ok(union.some((id) => id.startsWith("b:")), "two@'s own Scan offers its Spam copies");
+      assert.deepEqual(ids, union.sort(), `Clear all of Spam ${spamAll ? "on" : "off"}: what each inbox's own Scan offers`);
+      assert.equal(r.protectedCount, kept, "and keeps");
+      assert.equal(r.total, ids.length);
+      // Always keep afterwards hides the whole row, every inbox's.
+      api.getS().settings.cleanKeep = SUBJ.map(([, a]) => a);
+      api.applyCleanSafety(r);
+      assert.deepEqual(r.groups.filter((g) => SUBJ.some(([, a]) => a === g.senderAddr)), []);
+    }
+  });
+
+  await test("All inboxes: an inbox whose Spam couldn't be checked after its Inbox was says so, and its Inbox is offered", async () => {
+    multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct(corpus("abc"[i] + ":"), corpus("s" + "abc"[i] + ":"))])));
+    const api = withInboxes(setup(file, memStore(), { beforeScan: (cfg) => { if (cfg.email === EMAILS[0] && cfg.folder === "spam") throw new Error("dropped"); } }));
+    const { ids, r } = await offeredMulti(api, "all");
+    assert.deepEqual(r.failed.map((f) => [f.email, f.folder]), [[EMAILS[0], "spam"]]);
+    assert.ok(ids.includes("a:bby-news") && !ids.includes("sa:bby-news"), "its Inbox, not its Spam");
+    assert.ok(api.toasts.some((t) => t.includes(EMAILS[0] + "'s Spam") && t.includes("The rest was scanned")), api.toasts.join(" | "));
+  });
+
+  await test("All inboxes: when none can be checked, every one is named", async () => {
+    multi({});
+    const api = withInboxes(setup(file)), { r } = await offeredMulti(api, "inbox");
+    assert.equal(r, null);
+    assert.equal(api.CLEAN.busy, "");
+    const t = api.toasts.join(" | ");
+    assert.ok(EMAILS.every((e) => t.includes(e)), t);
+  });
+
+  await test("Move to Trash uses each inbox's own UIDVALIDITY, and goes on to the next inbox when one fails", async () => {
+    const mk = () => Object.fromEntries(EMAILS.map((e, i) => { const a = acct(corpus("abc"[i] + ":")); a.boxes.INBOX.v = "1" + i; return [e, a]; }));
+    multi(mk());
+    let api = withInboxes(setup(file)), { ids } = await offeredMulti(api, "inbox");
+    await api.cleanTrash();
+    assert.deepEqual(SERVER.moved.slice().sort(), ids, "each inbox's own");
+    multi(mk());
+    api = withInboxes(setup(file, memStore(), { failMove: (cfg) => cfg.email === EMAILS[1] }));
+    ({ ids } = await offeredMulti(api, "inbox"));
+    await api.cleanTrash();
+    assert.deepEqual(SERVER.moved.slice().sort(), ids.filter((id) => !id.startsWith("b:")), "the others' moved");
+    assert.ok(api.toasts.some((t) => /but not all/.test(t) && t.includes(EMAILS[1])), api.toasts.join(" | "));
+    assert.ok(api.CLEAN.result.groups.length > 0 && api.CLEAN.result.groups.every((g) => Object.keys(g.parts).every((k) => k.startsWith("ib-two|"))), "two@'s still offered");
+    assert.equal(api.CLEAN.busy, "");
+  });
+
+  await test("Locking while emails move to Trash stops there, with nothing left busy (all inboxes, or one on Inbox and Spam)", async () => {
+    for (const all of [true, false]) {
+      multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct(corpus("abc"[i] + ":"), corpus("s" + "abc"[i] + ":"))])));
+      let moves = 0;
+      const api = withInboxes(setup(file, memStore(), { beforeMove: () => { if (++moves === 1) api.lock(); } }));
+      if (!all) api.CLEAN.inboxId = "ib-one";
+      const { r } = await offeredMulti(api, "all");
+      assert.ok(Object.keys(r.uidValidity).length >= 2);
+      await api.cleanTrash();
+      assert.equal(moves, 1, "nothing more moved once locked");
+      assert.equal(api.CLEAN.busy, "");
+      assert.equal(api.CLEAN.progress, "");
+      assert.equal(api.CLEAN.result, null, "scan again after unlocking");
+    }
   });
 
   await test("Picking one inbox scans only that one", async () => {

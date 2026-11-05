@@ -15374,24 +15374,38 @@ const storeGuarded = (s, guard) => cleanGuarded(s, guard) && (guard.test(s.repla
 function applyCleanSafety(r, spam){
   const keep = new Set(cleanKeepList().map(a => String(a).toLowerCase()));
   const safe = [], hidden = [];
+  let split = 0;
   for (const g of r.groups){
-    const parts = Object.keys(g.parts || {});
-    const fromSpamOnly = spam || (parts.length > 0 && parts.every(k => cleanPartFolder(k) === "spam"));
-    const spamRule = fromSpamOnly && cleanSpamAll();
-    const guard = spamRule ? SPAM_KEEP : CLEAN_PROTECT;
     // Survey requests go even when they mention an order; "Always keep" still wins.
     const survey = CLEAN_SURVEY_FROM.test(g.senderAddr || "") || CLEAN_SURVEY_FROM.test(g.sender || "");
     // Relayed mail (Hide My Email) is kept or cleaned by its real sender, and gets the app's subject check too, as does
     // mail from a sender named for a sale event or from a store's newsletter address (the app skipped its own check).
     const addr = String(g.senderAddr).toLowerCase(), via = relayedFrom(addr), named = CLEAN_SALE_FROM.test(g.sender || ""), store = CLEAN_STORE_FROM.test(addr);
     const check = store || (!!via && CLEAN_STORE_FROM.test(via)) ? storeGuarded : cleanGuarded, subj = g.subject || "";
-    const guarded = check(subj, guard) || (!!(via || g.relayed || named || store) && !spamRule && check(subj, CLEAN_APP_PROTECT));
     // Riot Games' and Best Buy's sign-in emails the second scan found (cleanAddCodes, 1.9.134) go, but for Always keep.
-    const code = !!g.code && cleanCodeDrop(addr, subj, g.sender);
-    if (keep.has(addr) || (via && keep.has(via)) || (!survey && !code && guarded)) hidden.push(g); else safe.push(g);
+    const code = !!g.code && cleanCodeDrop(addr, subj, g.sender), kept = keep.has(addr) || (via && keep.has(via));
+    const hides = (spamOnly) => {
+      const spamRule = spamOnly && cleanSpamAll(), guard = spamRule ? SPAM_KEEP : CLEAN_PROTECT;
+      const guarded = check(subj, guard) || (!!(via || g.relayed || named || store) && !spamRule && check(subj, CLEAN_APP_PROTECT));
+      return kept || (!survey && !code && guarded);
+    };
+    // Clear all of Spam's rule is for a row whose emails are all in Spam. All inboxes (1.9.135): in each inbox's Spam, as that
+    // inbox's own Scan has it, so a sender in one inbox's Inbox and another's Spam keeps the first and offers the second.
+    const byIb = new Map();
+    for (const k of Object.keys(g.parts || {})){ const ib = r.all ? String(k).split("|")[0] : ""; byIb.set(ib, (byIb.get(ib) || []).concat(k)); }
+    const verdicts = byIb.size ? Array.from(byIb.values()).map(ks => [ks, hides(spam || ks.every(k => cleanPartFolder(k) === "spam"))]) : [[[], hides(!!spam)]];
+    if (verdicts.every(v => v[1])) hidden.push(g);
+    else if (verdicts.every(v => !v[1])) safe.push(g);
+    else {
+      // Kept in some inboxes only: those emails count as kept safe (a code row is never split: Always keep isn't per inbox,
+      // so g.fresh, which only code rows have, stays with the row), and the row offers the rest.
+      for (const [ks, hide] of verdicts) if (hide) for (const k of ks){ split += (g.parts[k] || []).length; delete g.parts[k]; }
+      g.uids = Object.entries(g.parts).flatMap(([k, l]) => l.map(u => k + ":" + u));
+      safe.push(g);
+    }
   }
   r.groups = safe;
-  r.protectedCount = (r.protectedCount || 0) + hidden.reduce((n, g) => n + Math.max(0, g.uids.length - (g.fresh || 0)), 0);
+  r.protectedCount = (r.protectedCount || 0) + split + hidden.reduce((n, g) => n + Math.max(0, g.uids.length - (g.fresh || 0)), 0);
   r.total = safe.reduce((n, g) => n + g.uids.length, 0);
   return r;
 }
@@ -15488,7 +15502,7 @@ function renderClean(){
   const keptLine = kept.length ? `<div class="clean-kept"><span class="item-sub">Always kept:</span>${kept.map(a => `<span class="kchip">${esc(a)}<button type="button" data-act="clean-unkeep" data-id="${esc(a)}" aria-label="Stop always keeping ${esc(a)}">${ic("x")}</button></span>`).join("")}</div>` : "";
   let body = autoCleanHTML() + keptLine;
   const inN = r && r.all ? ` in ${plural((r.inboxes || []).length, "inbox", "inboxes")}` : "";
-  const failedLine = r && (r.failed || []).length ? `<p class="note note-warn" style="margin:0 0 12px">Couldn't check ${r.failed.map(f => `<strong>${esc(f.email)}</strong>: ${esc(String(f.error).replace(/\.\s*$/, ""))}`).join("; ")}. Nothing in ${r.failed.length === 1 ? "it" : "them"} was touched, and the other inboxes were scanned.</p>` : "";
+  const failedLine = r && (r.failed || []).length ? `<p class="note note-warn" style="margin:0 0 12px">Couldn't check ${r.failed.map(f => `<strong>${esc(f.email)}</strong>${f.folder ? `'s ${FOLDER_NAME[f.folder]}` : ""}: ${esc(String(f.error).replace(/\.\s*$/, ""))}`).join("; ")}. Nothing there was touched, and the rest was scanned.</p>` : "";
   const rowWhere = (g) => {
     const keys = Object.keys(g.parts || {}), bits = [];
     if (r.all){
@@ -15536,7 +15550,7 @@ async function cleanScan(){
         if (folder === "spam" && folders.length > 1 && /spam folder/i.test(r.error || "")){ noSpam.push(ib.email); continue; }
         // One inbox: stop there. All of them: say which couldn't be checked, and go on with the others.
         if (!all){ failed = r.error; break; }
-        failedIb.push({email:ib.email, error:r.error || "The scan stopped."}); break;
+        failedIb.push({email:ib.email, folder:any ? folder : "", error:r.error || "The scan stopped."}); break;
       }
       const part = all ? ib.id + "|" + folder : folder;
       uv[part] = r.uidValidity; scannedF.add(folder); any = true; protectedCount += r.protectedCount || 0;
@@ -15560,14 +15574,18 @@ async function cleanScan(){
   }
   CLEAN.busy = ""; CLEAN.progress = ""; CLEAN.phase = "";
   if (failed){ toast(failed, "err"); renderMain(); return; }
-  if (all && !scannedIb.length && failedIb.length){ toast(`${failedIb[0].email}: ${failedIb[0].error}`, "err"); renderMain(); return; }
+  if (all && !scannedIb.length && failedIb.length){
+    const errs = Array.from(new Set(failedIb.map(f => f.error)));
+    toast(errs.length === 1 ? `Couldn't check ${failedIb.map(f => f.email).join(", ")}: ${errs[0]}` : failedIb.map(f => `${f.email}: ${f.error}`).join(" "), "err");
+    renderMain(); return;
+  }
   const groups = Array.from(merged.values()).sort((a, b) => b.uids.length - a.uids.length);
   const r = {groups, uidValidity:uv, folders:folders.filter(f => scannedF.has(f)), protectedCount, total:groups.reduce((n, g) => n + g.uids.length, 0),
     all, inbox:all ? "" : targets[0].id, inboxes:scannedIb, failed:failedIb};
   CLEAN.result = applyCleanSafety(r); CLEAN.sel = new Set(CLEAN.result.groups.map(g => g.key));
   if (noSpam.length) toast(!all ? "This account has no Spam folder, so only the Inbox was checked."
     : noSpam.length === 1 ? `${noSpam[0]} has no Spam folder, so only its Inbox was checked.` : `${noSpam.length} inboxes have no Spam folder, so only their Inbox was checked.`);
-  if (failedIb.length) toast(`Couldn't check ${failedIb.map(f => f.email).join(", ")}. The other inboxes were scanned.`, "err");
+  if (failedIb.length) toast(`Couldn't check ${failedIb.map(f => f.folder ? `${f.email}'s ${FOLDER_NAME[f.folder]}` : f.email).join(", ")}. The rest was scanned.`, "err");
   renderMain();
 }
 async function cleanTrash(){
@@ -15580,24 +15598,31 @@ async function cleanTrash(){
   const keys = Object.keys(byPart), where = Array.from(new Set(keys.map(cleanPartFolder))).map(f => FOLDER_NAME[f]).join(" and ");
   const ems = Array.from(new Set(keys.map(k => (cleanPartInbox(r, k) || {}).email || "an inbox")));
   const whose = ems.length === 1 ? `${ems[0]}'s ${where}` : `${plural(ems.length, "inbox", "inboxes")}' ${where}`;
+  const vault = S;
   if (!(await confirmDialog({title:`Move ${plural(count, "email")} to Trash?`, body:`From ${plural(groups.length, "sender group")} in ${whose}. You can restore them from Trash for 30 days.`, confirm:"Move to Trash"}))) return;
+  if (S !== vault) return;
+  if (CLEAN.result !== r || CLEAN.busy){ toast("Those results changed meanwhile. Scan again to see what's left."); return; }
+  // Each part's inbox, read now: the vault may lock while emails move (1.9.135).
+  const todo = Object.entries(byPart).map(([k, uids]) => { const ib = cleanPartInbox(r, k); return {k, uids, folder:cleanPartFolder(k), ib:ib && ib.password ? Object.assign({}, ib) : null}; });
   CLEAN.busy = "trash"; CLEAN.progress = "Moving to Trash…"; renderMain();
   let moved = 0; const errs = [];
-  for (const [k, uids] of Object.entries(byPart)){
-    const folder = cleanPartFolder(k), ib = cleanPartInbox(r, k);
-    if (r.all && ib){ CLEAN.progress = `Moving to Trash: ${ib.email}…`; const el = document.getElementById("clean-progress"); if (el) el.textContent = CLEAN.progress; }
-    let res;
-    if (!ib || !ib.password) res = {ok:false, error:"This inbox isn't connected any more."};
-    else {
-      try { res = await window.pvDesktop.trashPromos({id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port, folder}, uids, r.uidValidity[k]); }
-      catch(e){ res = {ok:false, error:"Moving stopped unexpectedly."}; }
+  try {
+    for (const {k, uids, folder, ib} of todo){
+      if (r.all && ib){ CLEAN.progress = `Moving to Trash: ${ib.email}…`; const el = document.getElementById("clean-progress"); if (el) el.textContent = CLEAN.progress; }
+      let res;
+      if (!ib) res = {ok:false, error:"This inbox isn't connected any more."};
+      else {
+        try { res = await window.pvDesktop.trashPromos({id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port, folder}, uids, r.uidValidity[k]); }
+        catch(e){ res = {ok:false, error:"Moving stopped unexpectedly."}; }
+      }
+      // Locked meanwhile: stop there, and scan again after unlocking (what was moved is in Trash).
+      if (S !== vault){ CLEAN.result = null; return; }
+      if (!res.ok){ errs.push(`${r.all ? (ib ? ib.email : "An inbox") + ", " : ""}${FOLDER_NAME[folder]}: ${res.error}`); if (r.all) continue; break; }
+      moved += res.moved || 0;
+      // Drop what was moved from there, keep anything still waiting elsewhere.
+      groups.forEach(g => { if (g.parts) delete g.parts[k]; });
     }
-    if (!res.ok){ errs.push(`${r.all ? (ib ? ib.email : "An inbox") + ", " : ""}${FOLDER_NAME[folder]}: ${res.error}`); if (r.all) continue; break; }
-    moved += res.moved || 0;
-    // Drop what was moved from there, keep anything still waiting elsewhere.
-    groups.forEach(g => { if (g.parts) delete g.parts[k]; });
-  }
-  CLEAN.busy = ""; CLEAN.progress = "";
+  } finally { CLEAN.busy = ""; CLEAN.progress = ""; }
   r.groups = r.groups.filter(g => !(CLEAN.sel.has(g.key) && !Object.keys(g.parts || {}).length));
   r.groups.forEach(g => { g.uids = Object.entries(g.parts || {}).flatMap(([k, l]) => l.map(u => k + ":" + u)); });
   r.total = r.groups.reduce((n, g) => n + g.uids.length, 0);

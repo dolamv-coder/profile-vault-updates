@@ -1541,13 +1541,21 @@ an inbox's id; `cleanTargets`). `cleanScan` scans each inbox's folders in turn (
 parts, its emails by where they are, are `"<inbox id>|<folder>"` for All inboxes and the folder alone for one, as before
 (`cleanPartFolder`, `cleanPartInbox`; a uid in `g.uids` is `part + ":" + uid`), so a sender's emails are one row across the
 inboxes (the row says which inbox, or "N inboxes" with them on hover) and Move to Trash moves each inbox's own with its own
-UIDVALIDITY (`r.uidValidity[part]`), going on to the next inbox when one fails and saying which. An inbox that can't be
-checked is named above the results and in a toast, and the others are scanned (one inbox picked still stops there); one with
-no Spam folder is named too. Clear all of Spam's rule still goes by the folder: a row only in Spam folders, whichever
-inboxes, is from Spam (`applyCleanSafety`). Always keep and the codes (1.9.134) work in each inbox as they do
-for one, and the kept-safe count adds up each inbox's. `clean-rules.test.mjs` scans three sample mailboxes (`SERVER.accounts`, a `FakeImap` per account) and
-checks that All inboxes offers and keeps exactly what each inbox's own Scan does, one row per sender, Riot's codes one row,
-Move to Trash per mailbox, a mailbox that can't sign in, and one inbox picked. Nothing gains a field.
+UIDVALIDITY (`r.uidValidity[part]`), going on to the next inbox when one fails and saying which. Each part's inbox is read
+before anything moves, and a lock meanwhile stops the move with nothing left busy and the result dropped (the review caught
+1.9.135's first version throwing there and leaving `CLEAN.busy` on, which held back auto-clean, sync and update restarts
+until FAFO restarted). An inbox that can't be checked is named above the results and in a toast (`r.failed`, with the folder
+when its other folder was scanned: "one@…'s Spam"), and the others are scanned (one inbox picked still stops there); when
+none can be, the toast names each; one with no Spam folder is named too. Clear all of Spam's rule goes by each inbox's
+folders (`applyCleanSafety`): a row's emails in an inbox where they're all in Spam get it, as that inbox's own Scan has them,
+so a sender in one inbox's Inbox and another's Spam can be kept in the first and offered from the second (the row keeps only
+those parts, and the others count as kept safe). Always keep and the codes (1.9.134) work in each inbox as they do for one,
+and the kept-safe count adds up each inbox's. `clean-rules.test.mjs` scans three sample mailboxes (`SERVER.accounts`, a
+`FakeImap` per account) and checks that All inboxes offers and keeps exactly what each inbox's own Scan does (Inbox, Spam and
+both, and a sender in one's Inbox and another's Spam, with Clear all of Spam on and off), one row per sender, Riot's codes one
+row, Move to Trash per mailbox with its own UIDVALIDITY and on past one that fails, a lock while moving, a mailbox that can't
+sign in, one whose Spam fails after its Inbox, none that can, and one inbox picked; it fails if the newest page has no
+`CLEAN_ALL`. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
