@@ -475,14 +475,17 @@ const AUTH_IDS = [[/(^|\.)(gmail|googlemail|google)\.com$/i, /(^|\.)google\.com$
   [/(^|\.)zoho(mail)?\.(com|eu|in)$/i, /(^|\.)zoho(mail)?\.(com|eu|in)$/i]];
 const baseDomain = (h) => String(h || "").toLowerCase().replace(/\.$/, "").split(".").slice(-2).join(".");
 // The provider's own headers are the leading run whose authserv-id is the provider's (iCloud writes BIMI's, dmarc's, DKIM's and
-// SPF's apart, BIMI's on top); providers drop incoming ones that claim their id (RFC 8601), so any of that run counts.
+// SPF's apart, BIMI's on top), and its DMARC result is the first of them with one: a sender's forged "dmarc=pass" under it, even
+// claiming the provider's id, doesn't count. A host FAFO doesn't know counts when the id shares its domain (not an IP address).
 function verifiedBy(host, authHeaders, fromDomain) {
   const h = String(host || "").toLowerCase(), known = AUTH_IDS.find(([imap]) => imap.test(h));
   const idOf = (x) => (String(x).replace(/^\s*authentication-results:\s*/i, "").split(";")[0] || "").trim().split(/\s+/)[0].toLowerCase();
-  const ours = (id) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id) && (known ? known[1].test(id) : baseDomain(id) === baseDomain(h));
+  const ip = /^[\d.]+$|:/.test(h);
+  const ours = (id) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id) && (known ? known[1].test(id) : !ip && baseDomain(id) === baseDomain(h));
   const run = [];
   for (const x of (authHeaders || []).filter(x => /authentication-results:/i.test(x))) { if (!ours(idOf(x))) break; run.push(x); }
-  return run.some(x => verifiedFrom([x], fromDomain)) ? retailerOf(fromDomain) : "";
+  const dmarc = run.find(x => /\bdmarc=/i.test(x));
+  return dmarc && verifiedFrom([dmarc], fromDomain) ? retailerOf(fromDomain) : "";
 }
 async function listSpamOn(c, cfg) {
   let folder;

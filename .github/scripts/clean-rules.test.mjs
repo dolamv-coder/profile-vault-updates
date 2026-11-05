@@ -1137,22 +1137,42 @@ if (HAS_SPAM) {
     assert.deepEqual(inbox.ids, []);
   });
 
-  await test("A download before 14 with saved searches (synced from another computer): Clean and auto-clean leave Spam alone, and say so", async () => {
+  await test("A download before 14 with saved searches (synced from another computer): Spam isn't scanned or cleared, the page says why, and its look-back waits", async () => {
     const box = () => acct([msg("a:in-news", { name: "Kohl's", address: "kohls@em.kohls.com", subject: "Flash sale today only", bulk: true, at: NOW - 3600000 })],
-      [FWD("a:"), msg("a:news", { name: "Best Buy", address: "BestBuy@email.bestbuy.com", subject: "Top deals of the week", bulk: true, at: NOW - 3600000 })]);
+      [FWD("a:"), msg("a:news", { name: "Best Buy", address: "BestBuy@email.bestbuy.com", subject: "Top deals of the week", bulk: true, at: NOW - 10 * DAY })]);
+    const saved = { "sam account1": { q: "sam account1", at: 1 } };
     multi({ [EMAILS[0]]: box() });
     const api = withInboxes(setup(file, memStore(), { noSpamMove: true }), [EMAILS[0]]);
-    api.getS().settings.spamMoves = { "sam account1": { q: "sam account1", at: 1 } };
-    const { ids } = await offeredMulti(api, "all");
+    api.getS().settings.spamMoves = saved;
+    const { ids, r } = await offeredMulti(api, "all");
     assert.deepEqual(ids, ["a:in-news"], "the Inbox as before; nothing in Spam");
-    assert.ok(api.toasts.some((t) => t.includes("need the newest FAFO download")), api.toasts.join(" | "));
+    assert.equal(r.blind, true);
+    assert.deepEqual(r.folders, ["inbox"], "Spam isn't said to have been checked");
+    assert.ok(SERVER.scans.every((c) => c.folder !== "spam"), "Spam isn't even scanned");
+    const spamOnly = await offeredMulti(api, "spam");
+    assert.deepEqual([spamOnly.r.blind, spamOnly.r.folders, spamOnly.ids], [true, [], []]);
+    // Auto-clean: the Inbox is cleaned and swept as usual; Spam waits, as a note, not an error.
     Object.assign(api.getS().settings.autoClean, { folder: "all", inboxId: "all", on: true, swept: {} });
+    SERVER.scans = [];
     await api.runAutoClean();
     assert.deepEqual(SERVER.moved, ["a:in-news"]);
-    const ac = api.getS().settings.autoClean;
-    assert.match(ac.lastError, /Spam was left alone/);
-    assert.ok(!ac.swept[api.getS().inboxes[0].id], "its first sweep isn't counted done");
-    // Without saved searches it cleans Spam as before.
+    let ac = api.getS().settings.autoClean;
+    assert.equal(ac.lastError, "");
+    assert.match(ac.lastNote, /Spam was left alone/);
+    assert.equal(ac.swept["ib-one"], true, "the Inbox's first sweep is done");
+    assert.equal(ac.spamOwed["ib-one"], true);
+    SERVER.scans = []; await api.runAutoClean();
+    assert.ok(SERVER.scans.every((c) => c.folder === "inbox" && c.days <= 3 || c.folder === "inbox" && c.rules.surveyFrom !== api.CLEAN_RULES.surveyFrom), "then 3 days, Inbox only: " + JSON.stringify(SERVER.scans.map((c) => [c.folder, c.days])));
+    // With the new download (same settings), Spam's first look-back is the 30 days it's owed, then it's paid.
+    const later = withInboxes(setup(file), [EMAILS[0]]);
+    later.setS(api.getS());
+    SERVER.scans = []; await later.runAutoClean();
+    assert.ok(SERVER.scans.some((c) => c.folder === "spam" && c.days >= 30), JSON.stringify(SERVER.scans.map((c) => [c.folder, c.days])));
+    assert.ok(SERVER.moved.includes("a:news"), "the 10-day-old newsletter in Spam goes");
+    assert.ok(!SERVER.moved.includes("a:fw-news"), "the forward its search matches stays");
+    ac = later.getS().settings.autoClean;
+    assert.equal(ac.spamOwed["ib-one"], undefined);
+    // Without saved searches an older download cleans Spam as before.
     multi({ [EMAILS[0]]: box() });
     const plain = withInboxes(setup(file, memStore(), { noSpamMove: true }), [EMAILS[0]]);
     assert.ok((await offeredMulti(plain, "spam")).ids.includes("a:fw-news"));

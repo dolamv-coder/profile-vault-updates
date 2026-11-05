@@ -118,6 +118,13 @@ const spam = (msgs) => ({ INBOX: { v: "7", msgs: [] }, "[Gmail]/Spam": { v: "9",
     const icloud = ["Authentication-Results: bimi.icloud.com; bimi=skipped reason=insufficient dmarc", "Authentication-Results: dmarc.icloud.com; dmarc=pass (p=REJECT) header.from=oe.target.com",
       "Authentication-Results: dkim-verifier.icloud.com; dkim=pass header.d=oe.target.com", "Authentication-Results: spf.icloud.com; spf=pass smtp.mailfrom=oe.target.com"];
     assert.strictEqual(verifiedBy("imap.mail.me.com", icloud, "oe.target.com"), "target.com");
+    // The provider's own DMARC result is the first one: a forged pass under its fail, even with its id, doesn't count.
+    assert.strictEqual(verifiedBy("imap.gmail.com", ["Authentication-Results: mx.google.com; dmarc=fail (p=QUARANTINE) header.from=amazon.com",
+      "Authentication-Results: mx.google.com; dmarc=pass header.from=amazon.com"], "amazon.com"), "");
+    assert.strictEqual(verifiedBy("imap.mail.me.com", ["Authentication-Results: bimi.icloud.com; bimi=skipped", "Authentication-Results: dmarc.icloud.com; dmarc=fail header.from=target.com",
+      "Authentication-Results: dmarc.icloud.com; dmarc=pass header.from=target.com"], "target.com"), "");
+    // An IP address isn't a domain to share.
+    assert.strictEqual(verifiedBy("10.0.0.1", ["Authentication-Results: x.0.1; dmarc=pass header.from=target.com"], "target.com"), "");
     // One below someone else's header isn't the provider's own.
     assert.strictEqual(verifiedBy("imap.mail.me.com", ["Authentication-Results: bimi.icloud.com; bimi=skipped", "Authentication-Results: mx.evil.example; dmarc=pass header.from=target.com", "Authentication-Results: dmarc.icloud.com; dmarc=pass header.from=target.com"], "target.com"), "");
     // Microsoft writes no authserv-id: not shown as verified.
