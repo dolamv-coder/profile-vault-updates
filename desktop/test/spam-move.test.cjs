@@ -114,6 +114,12 @@ const spam = (msgs) => ({ INBOX: { v: "7", msgs: [] }, "[Gmail]/Spam": { v: "9",
     // The IMAP server's own domain counts for one FAFO doesn't know.
     assert.strictEqual(verifiedBy("imap.mydomain.example", ["Authentication-Results: mx2.mydomain.example; dmarc=pass header.from=target.com"], "target.com"), "target.com");
     assert.strictEqual(verifiedBy("imap.mail.me.com", ["Authentication-Results: dmarc.icloud.com; dmarc=pass header.from=target.com"], "target.com"), "target.com");
+    // iCloud's own layout: BIMI's on top, then DMARC's, DKIM's and SPF's, each with its own authserv-id.
+    const icloud = ["Authentication-Results: bimi.icloud.com; bimi=skipped reason=insufficient dmarc", "Authentication-Results: dmarc.icloud.com; dmarc=pass (p=REJECT) header.from=oe.target.com",
+      "Authentication-Results: dkim-verifier.icloud.com; dkim=pass header.d=oe.target.com", "Authentication-Results: spf.icloud.com; spf=pass smtp.mailfrom=oe.target.com"];
+    assert.strictEqual(verifiedBy("imap.mail.me.com", icloud, "oe.target.com"), "target.com");
+    // One below someone else's header isn't the provider's own.
+    assert.strictEqual(verifiedBy("imap.mail.me.com", ["Authentication-Results: bimi.icloud.com; bimi=skipped", "Authentication-Results: mx.evil.example; dmarc=pass header.from=target.com", "Authentication-Results: dmarc.icloud.com; dmarc=pass header.from=target.com"], "target.com"), "");
     // Microsoft writes no authserv-id: not shown as verified.
     assert.strictEqual(verifiedBy("outlook.office365.com", ["Authentication-Results: spf=pass (sender IP is 1.2.3.4) smtp.mailfrom=target.com; dmarc=pass action=none header.from=target.com"], "target.com"), "");
     assert.strictEqual(verifiedBy("imap.gmail.com", [], "target.com"), "");

@@ -315,11 +315,14 @@ async function scanPromos(cfg, onProgress) {
       const groups = new Map();
       const forwarded = [];
       let scanned = 0, protectedCount = 0;
-      const add = (uid, senderName, senderAddr, subject) => {
+      // own: the email's own sender's name and address and its subject, as it came (a forward's, not the original's):
+      // desktop 14 hands them to the page in env, by UID, so Find in Spam's saved searches are judged as Find in Spam sees them.
+      const own = (env) => { const f = ((env && env.from) || [])[0] || {}; return [String(f.name || "").slice(0, 200), String(f.address || "").slice(0, 320), String((env && env.subject) || "").slice(0, 300)]; };
+      const add = (uid, senderName, senderAddr, subject, env) => {
         const key = senderAddr + "|" + normSubject(subject).toLowerCase();
         let g = groups.get(key);
-        if (!g) { g = { key, sender: senderName || senderAddr, senderAddr, subject: normSubject(subject), uids: [] }; groups.set(key, g); }
-        g.uids.push(uid);
+        if (!g) { g = { key, sender: senderName || senderAddr, senderAddr, subject: normSubject(subject), uids: [], env: {} }; groups.set(key, g); }
+        g.uids.push(uid); g.env[uid] = own(env);
       };
       if (uids.length) {
         for await (const m of c.fetch(uids, { uid: true, envelope: true, headers: ["list-unsubscribe", "precedence", "list-id"] }, { uid: true })) {
@@ -333,7 +336,7 @@ async function scanPromos(cfg, onProgress) {
           const hdr = m.headers ? m.headers.toString("utf8") : "";
           const bulk = /list-unsubscribe:|precedence:\s*(bulk|list)|list-id:/i.test(hdr);
           if (/^\s*(fw|fwd)\s*:/i.test(subject)) { forwarded.push(m.uid); continue; }
-          if (survey || folder.spam || bulk || looksPromoSender(fromAddr)) add(m.uid, fromObj.name || fromAddr, fromAddr, subject);
+          if (survey || folder.spam || bulk || looksPromoSender(fromAddr)) add(m.uid, fromObj.name || fromAddr, fromAddr, subject, m.envelope);
         }
       }
       // Forwarded mail: read the body to find who originally sent it.
@@ -357,7 +360,7 @@ async function scanPromos(cfg, onProgress) {
               if (!storeSale && guard.test(head.slice(0, 1500))) { protectedCount++; continue; }
               if (!(folder.spam || storeSale || looksPromoSender(orig.addr))) continue;
             }
-            add(m.uid, orig.name || orig.addr, orig.addr, origSubj || m.envelope?.subject);
+            add(m.uid, orig.name || orig.addr, orig.addr, origSubj || m.envelope?.subject, m.envelope);
           } catch {}
         }
       }
@@ -471,13 +474,15 @@ const AUTH_IDS = [[/(^|\.)(gmail|googlemail|google)\.com$/i, /(^|\.)google\.com$
   [/(^|\.)(yahoo|aol)\.com$/i, /(^|\.)(yahoo|aol|yahoodns)\.(com|net)$/i], [/(^|\.)(fastmail|messagingengine)\.com$/i, /(^|\.)(messagingengine|fastmail)\.com$/i],
   [/(^|\.)zoho(mail)?\.(com|eu|in)$/i, /(^|\.)zoho(mail)?\.(com|eu|in)$/i]];
 const baseDomain = (h) => String(h || "").toLowerCase().replace(/\.$/, "").split(".").slice(-2).join(".");
+// The provider's own headers are the leading run whose authserv-id is the provider's (iCloud writes BIMI's, dmarc's, DKIM's and
+// SPF's apart, BIMI's on top); providers drop incoming ones that claim their id (RFC 8601), so any of that run counts.
 function verifiedBy(host, authHeaders, fromDomain) {
-  const top = (authHeaders || []).find(h => /authentication-results:/i.test(h)) || "";
-  const id = (top.replace(/^\s*authentication-results:\s*/i, "").split(";")[0] || "").trim().split(/\s+/)[0].toLowerCase();
-  if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id) || /=/.test(id)) return "";
   const h = String(host || "").toLowerCase(), known = AUTH_IDS.find(([imap]) => imap.test(h));
-  const ours = known ? known[1].test(id) : baseDomain(id) === baseDomain(h);
-  return ours && verifiedFrom([top], fromDomain) ? retailerOf(fromDomain) : "";
+  const idOf = (x) => (String(x).replace(/^\s*authentication-results:\s*/i, "").split(";")[0] || "").trim().split(/\s+/)[0].toLowerCase();
+  const ours = (id) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id) && (known ? known[1].test(id) : baseDomain(id) === baseDomain(h));
+  const run = [];
+  for (const x of (authHeaders || []).filter(x => /authentication-results:/i.test(x))) { if (!ours(idOf(x))) break; run.push(x); }
+  return run.some(x => verifiedFrom([x], fromDomain)) ? retailerOf(fromDomain) : "";
 }
 async function listSpamOn(c, cfg) {
   let folder;

@@ -92,7 +92,7 @@ function pageApi(path) {
   return new Function("window", "localStorage", prelude + code
     + `return {setS: (s) => { S = s; }, getS: () => S, lock: () => { S = null; }, CLEAN, toasts, cleanTrash: typeof cleanTrash === "function" ? cleanTrash : null, applyCleanSafety, cleanScan, runAutoClean, clearStore, CLEAN_RULES,
       KEY: CLEAN_RULES_KEY, CODE_RULES: typeof CLEAN_CODE_RULES !== "undefined" ? CLEAN_CODE_RULES : null,
-      spam: typeof spamSearch === "function" ? { SPAM, CAN_SPAM_MOVE, spamSearch, spamMove, spamMovesRun, spamMatch, spamMoveQuery, spamSave, spamMoves, SPAM_MOVES_SWEPT } : null};`);
+      UI, spam: typeof spamSearch === "function" ? { SPAM, CAN_SPAM_MOVE, spamSearch, spamMove, spamMovesRun, spamMatch, spamMoveQuery, spamSave, spamMoves, SPAM_MOVES_SWEPT } : null};`);
 }
 // localStorage that works (full: its writes fail, as when storage is full), or one that throws (a browser that blocks storage).
 const memStore = () => { const m = new Map(); const st = { full: false, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { if (st.full) throw new Error("QuotaExceededError"); m.set(k, String(v)); }, removeItem: (k) => m.delete(k), m }; return st; };
@@ -1016,7 +1016,8 @@ if (HAS_SPAM) {
     }
     assert.deepEqual(spamIds(sp(api).SPAM.result), ["b:ship-hme"], "the unticked one stays, unticked");
     assert.equal(sp(api).SPAM.sel.size, 0);
-    assert.deepEqual(api.getS().settings.spamMoves, ["about to ship"]);
+    assert.deepEqual(sp(api).spamMoves(), ["about to ship"]);
+    assert.deepEqual(Object.keys(api.getS().settings.spamMoves), ["about to ship"], "kept by its words");
     assert.ok(api.toasts.some((t) => t.startsWith("Moved 5 emails to your Inbox.") && t.includes("is saved")), api.toasts.join(" | "));
     assert.equal(api.CLEAN.busy, "");
   });
@@ -1091,7 +1092,7 @@ if (HAS_SPAM) {
 
   await test("A saved search taken off while Spam is read moves nothing", async () => {
     multi({ [EMAILS[0]]: acct([], spamBox("a:")) });
-    const api = withInboxes(setup(file, memStore(), { afterList: () => { api.getS().settings.spamMoves = []; } }), [EMAILS[0]]);
+    const api = withInboxes(setup(file, memStore(), { afterList: () => { api.getS().settings.spamMoves = {}; } }), [EMAILS[0]]);
     sp(api).spamSave("about to ship");
     assert.equal(await sp(api).spamMovesRun(api.getS().inboxes[0], 7), 0);
     assert.deepEqual(SERVER.moved, []);
@@ -1121,43 +1122,81 @@ if (HAS_SPAM) {
     sp(api).spamSave("sam account1"); sp(api).spamSave("abcdefghijkl");
     const run = await api.runAutoClean(true);
     assert.deepEqual(SERVER.moved, ["a:news"], JSON.stringify(run));
-  });
-
-  await test("Spam that can't be checked for the saved searches is left alone by Clean emails and auto-clean", async () => {
-    multi({ [EMAILS[0]]: acct([], [FWD("a:"), msg("a:news", { name: "Best Buy", address: "BestBuy@email.bestbuy.com", subject: "Top deals of the week", bulk: true, at: NOW - 3600000 })]) });
-    let api = withInboxes(setup(file, memStore(), { beforeList: () => { throw new Error("dropped"); } }), [EMAILS[0]]);
-    sp(api).spamSave("sam account1");
-    const { ids } = await offeredMulti(api, "spam");
-    assert.deepEqual(ids, []);
-    assert.ok(api.toasts.some((t) => t.includes("Couldn't check your Find in Spam searches")), api.toasts.join(" | "));
-    Object.assign(api.getS().settings.autoClean, { folder: "spam", inboxId: "all" });
+    assert.equal(SERVER.lists, undefined, "judged on the scan's own envelopes: Spam isn't listed again");
+    // The sync moves them to the Inbox; auto-clean on the Inbox leaves them there too, and the Scan doesn't offer them.
+    multi({ [EMAILS[0]]: box("a:") });
+    api = withInboxes(setup(file), [EMAILS[0]]);
+    Object.assign(api.getS().settings.autoClean, { folder: "all", inboxId: "all" });
+    sp(api).spamSave("sam account1"); sp(api).spamSave("abcdefghijkl");
+    assert.equal(await sp(api).spamMovesRun(api.getS().inboxes[0], 7), 2);
+    assert.deepEqual(SERVER.accounts[EMAILS[0]].boxes.INBOX.msgs.map((m) => m.id).sort(), ["a:fw-news", "a:hme-news"]);
+    SERVER.moved = [];
     await api.runAutoClean(true);
-    assert.deepEqual(SERVER.moved, []);
+    assert.deepEqual(SERVER.moved, ["a:news"], "the newsletter in Spam goes; what the searches moved stays in the Inbox");
+    const inbox = await offeredMulti(api, "inbox");
+    assert.deepEqual(inbox.ids, []);
   });
 
-  await test("What a Find in Spam result offers stays for its Move: auto-clean and Clean's Move to Trash leave it", async () => {
+  await test("A download before 14 with saved searches (synced from another computer): Clean and auto-clean leave Spam alone, and say so", async () => {
+    const box = () => acct([msg("a:in-news", { name: "Kohl's", address: "kohls@em.kohls.com", subject: "Flash sale today only", bulk: true, at: NOW - 3600000 })],
+      [FWD("a:"), msg("a:news", { name: "Best Buy", address: "BestBuy@email.bestbuy.com", subject: "Top deals of the week", bulk: true, at: NOW - 3600000 })]);
+    multi({ [EMAILS[0]]: box() });
+    const api = withInboxes(setup(file, memStore(), { noSpamMove: true }), [EMAILS[0]]);
+    api.getS().settings.spamMoves = { "sam account1": { q: "sam account1", at: 1 } };
+    const { ids } = await offeredMulti(api, "all");
+    assert.deepEqual(ids, ["a:in-news"], "the Inbox as before; nothing in Spam");
+    assert.ok(api.toasts.some((t) => t.includes("need the newest FAFO download")), api.toasts.join(" | "));
+    Object.assign(api.getS().settings.autoClean, { folder: "all", inboxId: "all", on: true, swept: {} });
+    await api.runAutoClean();
+    assert.deepEqual(SERVER.moved, ["a:in-news"]);
+    const ac = api.getS().settings.autoClean;
+    assert.match(ac.lastError, /Spam was left alone/);
+    assert.ok(!ac.swept[api.getS().inboxes[0].id], "its first sweep isn't counted done");
+    // Without saved searches it cleans Spam as before.
+    multi({ [EMAILS[0]]: box() });
+    const plain = withInboxes(setup(file, memStore(), { noSpamMove: true }), [EMAILS[0]]);
+    assert.ok((await offeredMulti(plain, "spam")).ids.includes("a:fw-news"));
+  });
+
+  await test("What a Find in Spam result on screen matches stays for its Move while it's showing; a result left behind holds nothing", async () => {
     const box = () => acct([], [msg("a:news", { name: "Best Buy", address: "BestBuy@email.bestbuy.com", subject: "Top deals of the week", bulk: true, at: NOW - 3600000 }),
       msg("a:news2", { name: "Kohl's", address: "kohls@em.kohls.com", subject: "Flash sale today only", bulk: true, at: NOW - 3600000 })]);
     multi({ [EMAILS[0]]: box() });
     let api = withInboxes(setup(file), [EMAILS[0]]);
+    api.UI.view = "clean"; api.CLEAN.mode = "spam";
     await search(api, "top deals");
     Object.assign(api.getS().settings.autoClean, { folder: "spam", inboxId: "all" });
     await api.runAutoClean(true);
     assert.deepEqual(SERVER.moved, ["a:news2"], "auto-clean leaves the one on screen");
-    // Scanned in Clean emails first, then searched in Find in Spam: Move to Trash leaves the searched one.
-    multi({ [EMAILS[0]]: box() });
-    api = withInboxes(setup(file), [EMAILS[0]]);
-    await offeredMulti(api, "spam");
-    await search(api, "top deals");
-    await api.cleanTrash();
-    assert.deepEqual(SERVER.moved, ["a:news2"]);
     await sp(api).spamMove();
     assert.deepEqual(SERVER.accounts[EMAILS[0]].boxes.INBOX.msgs.map((m) => m.id), ["a:news"], "and it's there to move to the Inbox");
+    // Gone to Orders: the result holds nothing any more.
+    multi({ [EMAILS[0]]: box() });
+    api = withInboxes(setup(file), [EMAILS[0]]);
+    api.UI.view = "clean"; api.CLEAN.mode = "spam";
+    await search(api, "top deals");
+    api.UI.view = "orders";
+    Object.assign(api.getS().settings.autoClean, { folder: "spam", inboxId: "all" });
+    await api.runAutoClean(true);
+    assert.deepEqual(SERVER.moved.sort(), ["a:news", "a:news2"]);
+  });
+
+  await test("Find in Spam waits for auto-clean to finish", async () => {
+    multi({ [EMAILS[0]]: acct([], spamBox("a:")) });
+    let release, api, paused = false;
+    api = withInboxes(setup(file, memStore(), { beforeScan: () => paused ? null : (paused = true, new Promise((r) => { release = r; })) }), [EMAILS[0]]);
+    Object.assign(api.getS().settings.autoClean, { folder: "spam", inboxId: "all" });
+    const run = api.runAutoClean(true);
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(await search(api, "about to ship"), null);
+    assert.ok(api.toasts.some((t) => /Auto-clean is running/.test(t)));
+    release(); await run;
   });
 
   await test("Saving a search drops Clean's result on screen; a Move counts what was gone since the search; Keep moving unticks after it saves", async () => {
     multi({ [EMAILS[0]]: acct([], spamBox("a:")) });
     const api = withInboxes(setup(file), [EMAILS[0]]);
+    api.getS().settings.cleanSpamAll = false;
     await offeredMulti(api, "spam");
     assert.ok(api.CLEAN.result);
     await search(api, "about to ship");

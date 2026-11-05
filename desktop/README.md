@@ -33,7 +33,8 @@ license, inboxes and page updates over, and `shortcuts.js` moves the older copie
   explains certificate errors (`CERT_ERROR` plus what it saw); 12 is the v1.9.76 download, `FAFO.exe`
   (pages name the exe by it); 13 is the v1.9.105 download, with `trashOrderMail` (Orders → Delete canceled moves
   those orders' emails to Trash); 14 is the v1.9.136 download, with `listSpam` and `spamToInbox` (Clean emails → Find
-  in Spam: the page searches Spam's emails and moves the ones picked, or matching a saved search, to the Inbox).
+  in Spam: the page searches Spam's emails and moves the ones picked, or matching a saved search, to the Inbox), and
+  `scanPromos` returning each offered email's own sender and subject (`env`), so Clean emails leaves what a saved search matches.
 
 ## Test, build, release
 

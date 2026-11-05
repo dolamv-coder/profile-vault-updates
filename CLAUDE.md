@@ -1576,10 +1576,12 @@ so desktop 14 (the v1.9.136 download) adds two: `listSpam(cfg)` (Spam's emails f
 UIDVALIDITY, `noSpam`, `partial`) and `spamToInbox(cfg, uids, uidValidity)` (those UIDs to the Inbox, only while the Spam
 folder's UIDVALIDITY is the one listed, and only those a UID SEARCH still finds there: `gone` counts the rest, so a move
 never counts one auto-clean or another computer took meanwhile; a refused move says the emails are still in Spam;
-`desktop/test/spam-move.test.cjs`). `verifiedBy` is `verifiedFrom` on a header the mail provider wrote: the top
-Authentication-Results' authserv-id must be the IMAP server's provider's (`AUTH_IDS`: Google, iCloud, Yahoo and AOL, Fastmail,
-Zoho) or share its domain, since on a server that writes none the top one is the sender's own; Microsoft's has no authserv-id,
-so outlook.com mail is never shown as verified. Tested with real imapflow against a test IMAP server (hoodiecrow) too. What a search matches is the page's, so it can
+`desktop/test/spam-move.test.cjs`). `verifiedBy` is `verifiedFrom` on headers the mail provider wrote: the leading run of
+Authentication-Results whose authserv-id is the IMAP server's provider's (`AUTH_IDS`: Google, iCloud, whose BIMI header comes
+first, Yahoo and AOL, Fastmail, Zoho) or shares its domain, since on a server that writes none the top one is the sender's own;
+Microsoft's has no authserv-id, so outlook.com mail is never shown as verified. Desktop 14's `scanPromos` (Clean emails) also
+returns each offered email's own sender's name and address and its subject, as it came, by UID (`g.env`): a forward's own, not
+the original's its row shows. Tested with real imapflow against a test IMAP server (hoodiecrow) too. What a search matches is the page's, so it can
 change with a page update: words (`spamWords`: lowercase, accents off, split at anything not a letter or digit), each of
 which must start a word of the subject, the sender's name or address, or the real sender of one relayed by Hide My Email
 (`spamMatch`, `relayedFrom`), so "ship" finds "shipped" but not "membership", and an order number's start finds it glued to
@@ -1597,21 +1599,29 @@ the first time this FAFO runs a set of searches on an inbox (`SPAM_MOVES_SWEPT`,
 matches as they are once Spam is read (one taken off meanwhile moves nothing), whoever sent it: the owner chose that over
 moving only what they look at, so a scam with the same words moves too. The sync's toast counts them with the verified ones
 ("moved N emails out of Spam"). Clean emails never offers what a saved search matches, in the Inbox or Spam, by auto-clean
-or the phone either (`applyCleanSafety`'s `kept`, on Clean's rows), and counts it kept safe. In Spam that's judged on what
-Find in Spam itself sees (`spamHold`, on every Spam scan of the Scan, auto-clean and the phone's: `listSpam`, then the saved
-searches on each email), since a forward's row in Clean has the original's sender and subject, not the forward's own, and a
-Hide My Email row the real sender, not the alias (the review caught a saved search on a forwarder's name that auto-clean would
-trash every 10 minutes); Spam that can't be listed then, or was rebuilt since the scan, has nothing cleared this time (the Scan
-says so). `spamHold` also keeps what a Find in Spam result on screen offers, and Move to Trash leaves those too, so its Move
-finds them; saving a search drops Clean's result on screen, and Clean emails' Inbox pick drops Find in Spam's. Searching and moving use `CLEAN.busy` ("spam",
+or the phone either, and counts it kept safe: `applyCleanSafety` first takes out of each row the emails whose own sender and
+subject (`g.env`, which `cleanScan` carries onto its merged rows by "part:uid") a saved search matches, so it's judged as Find
+in Spam sees it (a forward's row has the original's sender and subject, a Hide My Email row the real sender; the reviews caught
+a saved search on a forwarder's name that auto-clean trashed from Spam every 10 minutes, and then from the Inbox once the sync
+had moved it there), then checks the row as before (`kept`). In Spam it also keeps what Find in Spam's search on screen matches
+(`spamOnScreen`: only while that result shows, on Clean emails in Find in Spam), so auto-clean leaves it for the Move; locking
+drops the result, and Find in Spam's Search and Move wait while auto-clean runs (it reads what's on screen as it starts).
+A download before 14 can't see the emails' own senders: with saved searches there (synced from a computer with the new
+download) Clean emails and auto-clean leave Spam alone (`spamBlind`; the Scan and auto-clean's last run say why, and its first
+30-day sweep isn't counted done), as that's where the searches' emails wait for the other computer's sync, and its Inbox is
+judged on rows only. Saving a search drops Clean's result on screen, and Clean emails' Inbox pick drops Find in Spam's.
+Saved searches are `{words: {q, at}}`, keyed by `spamKey` (the search's words), so two devices that each save one before they
+agree keep both (`syncMerge` treats `spamMoves` as `itemPics`), and with the version they started from one taken off stays off
+(`sync-merge.test.mjs`). Searching and moving use `CLEAN.busy` ("spam",
 "spam-move"), so sync, auto-clean, update restarts and Clean's own Scan wait for them as for a scan. A download before 14
 (`CAN_SPAM_MOVE`) gets "Get the newest FAFO download for Find in Spam" and a search that does nothing; the web version shows
 Clean emails' "This works in the desktop app". `clean-rules.test.mjs` runs the real `listSpam` and `spamToInbox` against the
 pretend mail server (three mailboxes: matching, All inboxes, Move with a ticked one left, a Spam folder rebuilt since the
 search, one that can't sign in and one with no Spam folder, a download before 14, locking while searching and moving, saved
 searches' look-back and one taken off mid-run, Clean never offering a saved search's match, by Clean's rows or, for a
-forward or an alias, by what Find in Spam sees, Spam left alone when it can't be checked, a result on screen kept from
-auto-clean and Move to Trash, and a move counting what was gone), and fails if the newest
+forward or an alias, by its own envelope, in Spam and in the Inbox after the sync moved it, a download before 14 leaving Spam
+alone, a result on screen kept from auto-clean only while it shows, Find in Spam waiting for auto-clean, and a move counting
+what was gone), and fails if the newest
 page has no `CAN_SPAM_MOVE`. Settings gain `spamMoves`, which 1.9.112 syncs as it is.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the

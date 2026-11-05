@@ -4158,6 +4158,7 @@ function renderLock(msg){
 function lock(msg){
   S = null; KEY = null; SYNC_AUTH = null; clearTimeout(SYNC.timer); UI.selected.clear(); UI.orderSel.clear(); UI.reveal.clear(); UI.q = "";
   PROF_CLIP = null;   // profiles copied to paste (1.9.133)
+  SPAM.result = null; SPAM.sel = new Set(); SPAM.keep = false;   // what Find in Spam found (1.9.136)
   BILL.d = null; BILL.shown = ""; BILL.watch = 0; BILL.wait = null; BILL.names.clear(); ACCT_HASH.clear();   // the invoice and emails stay unlocked only
   renderLock(msg || "Locked.");
   setTimeout(webReloadOnLock, 400);   // the web version, with a newer release out (1.9.108)
@@ -13796,7 +13797,8 @@ function syncMerge(L, R, base, lmt, rmt, keyOf, orig){
       // Pictures added (1.9.103) are named by their content, so with no version to go by each side keeps its own;
       // so are deleted canceled orders (1.9.105), named by their order key, and items whose found picture was undone
       // (autoPicsNo, 1.9.126), named by their hash.
-      if (!bv && l && r && (k === SYNC_CODE.settings + ":itemPics" || k === SYNC_CODE.settings + ":canceledGone" || k === SYNC_CODE.settings + ":autoPicsNo")) bv = {};
+      // So are Find in Spam's saved searches (spamMoves, 1.9.136), keyed by their words.
+      if (!bv && l && r && (k === SYNC_CODE.settings + ":itemPics" || k === SYNC_CODE.settings + ":canceledGone" || k === SYNC_CODE.settings + ":autoPicsNo" || k === SYNC_CODE.settings + ":spamMoves")) bv = {};
       if (bv && syncPlain(bv) && syncPlain(l.v) && syncPlain(r.v)){
         const v = syncFields(bv, l.v, r.v, preferL), c = syncCanon(v);
         u = {v, h:syncHash(c), c};
@@ -15384,6 +15386,34 @@ function applyCleanSafety(r, spam){
   const keep = new Set(cleanKeepList().map(a => String(a).toLowerCase()));
   const safe = [], hidden = [];
   let split = 0;
+  // Find in Spam (1.9.136): an email a saved search matches, or in Spam the search on screen, stays, judged on its own sender and
+  // subject as Find in Spam sees them (desktop 14's g.env, by the key g.uids has: a forward's own, a Hide My Email alias as it
+  // came), where the row has a forward's original sender and subject and a relayed one's real sender. They count as kept safe.
+  const shown = spamOnScreen();
+  const holds = (env, inSpam) => {
+    if (!Array.isArray(env)) return false;
+    const e = {name:env[0], address:env[1], subject:env[2]};
+    return !!spamMoveHit(e) || (inSpam && !!shown && spamMatch(shown, e));
+  };
+  r.groups = (r.groups || []).filter(g => {
+    if (!g || !g.env) return !!g;
+    let n = 0;
+    if (g.parts){
+      for (const k of Object.keys(g.parts)){
+        const inSpam = cleanPartFolder(k) === "spam", before = g.parts[k].length;
+        g.parts[k] = g.parts[k].filter(u => !holds(g.env[k + ":" + u], inSpam));
+        n += before - g.parts[k].length;
+        if (!g.parts[k].length) delete g.parts[k];
+      }
+      if (n) g.uids = Object.entries(g.parts).flatMap(([k, l]) => l.map(u => k + ":" + u));
+    } else {
+      const before = g.uids.length;
+      g.uids = g.uids.filter(u => !holds(g.env[u], !!spam));
+      n = before - g.uids.length;
+    }
+    if (n){ split += n; if (g.fresh) g.fresh = Math.min(g.fresh, g.uids.length); }
+    return g.uids.length > 0;
+  });
   for (const g of r.groups){
     // Survey requests go even when they mention an order; "Always keep" still wins.
     const survey = CLEAN_SURVEY_FROM.test(g.senderAddr || "") || CLEAN_SURVEY_FROM.test(g.sender || "");
@@ -15516,8 +15546,10 @@ const cleanPartEmail = (r, k) => (cleanPartInbox(r, k) || {}).email || (r.emails
 // a new download and to keep moving them too). Desktop 14's listSpam hands the page Spam's emails and spamToInbox moves the
 // ones picked to the Inbox, so what a search matches is decided here. A search is words: an email matches when each one starts
 // a word of its subject, its sender's name or address, or the real sender of one relayed by Hide My Email (relayedFrom), with
-// capitals and accents not counting. A saved search (S.settings.spamMoves, synced like Always keep) moves what it matches out of
-// Spam on every sync of an inbox (spamMovesRun), whoever sent it, and Clean emails never offers it (applyCleanSafety).
+// capitals and accents not counting. A saved search moves what it matches out of Spam on every sync of an inbox (spamMovesRun),
+// whoever sent it, and Clean emails never offers what one matches (applyCleanSafety, on each email's own sender and subject).
+// They're the synced setting spamMoves, {words: {q, at}} keyed by their words, so two devices that each save one before they
+// agree keep both (syncMerge merges it per search, as itemPics).
 const CAN_SPAM_MOVE = !!(window.pvDesktop && window.pvDesktop.listSpam && window.pvDesktop.spamToInbox);
 const SPAM_MOVES_MAX = 30, SPAM_MOVE_LEN = 80;
 const SPAM = { q:"", days:30, result:null, sel:new Set(), keep:false };
@@ -15533,34 +15565,17 @@ function spamMoveQuery(q){
   const t = String(q == null ? "" : q).replace(/\s+/g, " ").trim().slice(0, SPAM_MOVE_LEN);
   return spamWords(t).some(w => w.length >= 3) ? t : "";
 }
-const spamMoves = () => (S && S.settings && Array.isArray(S.settings.spamMoves) ? S.settings.spamMoves : []).filter(q => typeof q === "string" && spamMoveQuery(q));
-const spamSaved = (q) => { const k = spamWords(q).join(" "); return !!k && spamMoves().some(x => spamWords(x).join(" ") === k); };
+const spamKey = (q) => spamWords(q).join(" ");
+const spamMoveMap = () => { const m = S && S.settings && S.settings.spamMoves; return m && typeof m === "object" && !Array.isArray(m) ? m : {}; };
+const spamMoves = () => Object.values(spamMoveMap()).filter(e => e && typeof e.q === "string" && spamMoveQuery(e.q)).sort((a, b) => (Number(b.at) || 0) - (Number(a.at) || 0)).map(e => e.q);
+const spamSaved = (q) => { const k = spamKey(q); return !!k && spamMoves().some(x => spamKey(x) === k); };
 const spamMoveHit = (e) => spamMoves().find(q => spamMatch(q, e)) || "";
-// What Clean emails leaves in an inbox's Spam: what the saved searches match, judged on what Find in Spam searches (listSpam: a
-// forward's own sender and "FW:" subject, a Hide My Email alias as it came, where Clean's groups have the original sender and
-// subject, or the real sender), and the emails a Find in Spam result still offers, so they're there for its Move. r is a Spam
-// scan (cleanScanFolder's, by UIDVALIDITY); its groups lose those emails, which count as kept safe. Answers false when the saved
-// searches couldn't be checked (Spam couldn't be read, or was rebuilt since the scan): then nothing there goes this time.
-async function spamHold(ib, r, days){
-  const held = new Set(), sr = SPAM.result, v = String(r && r.uidValidity || "");
-  if (sr && v && String((sr.uv || {})[ib.id] || "") === v) sr.items.forEach(i => { if (i.ib === ib.id) held.add(Number(i.uid)); });
-  if (CAN_SPAM_MOVE && spamMoves().length){
-    let l = null;
-    try { l = await window.pvDesktop.listSpam({id:ib.id, email:ib.email, password:ib.password, host:ib.host, port:ib.port, days:Math.min(90, Math.max(1, (Number(days) || 30) + 1))}); } catch(e){}
-    if (!l || !l.ok || l.noSpam || String(l.uidValidity || "") !== v) return false;
-    for (const e of l.items || []) if (e && Number.isInteger(e.uid) && spamMoveHit(e)) held.add(e.uid);
-  }
-  if (!held.size) return true;
-  let n = 0;
-  r.groups = (r.groups || []).filter(g => {
-    const k = g.uids.length; g.uids = g.uids.filter(u => !held.has(Number(u)));
-    if (g.uids.length < k){ n += k - g.uids.length; if (g.fresh) g.fresh = Math.min(g.fresh, g.uids.length); }
-    return g.uids.length > 0;
-  });
-  r.protectedCount = (r.protectedCount || 0) + n;
-  r.total = r.groups.reduce((t, g) => t + g.uids.length, 0);
-  return true;
-}
+// What Find in Spam's search on screen matches stays in Spam for its Move (auto-clean and the phone's Clean leave it): only
+// while that result is showing, so a search left behind holds nothing.
+const spamOnScreen = () => (UI.view === "clean" && CLEAN.mode === "spam" && SPAM.result && SPAM.result.q) || "";
+// Clean emails with saved searches on a download before 14 can't see each email's own sender and subject (a forward's row has
+// the original's), so it leaves Spam alone there: that Spam is where the saved searches' emails wait for a newer download's sync.
+const spamBlind = () => !CAN_SPAM_MOVE && spamMoves().length > 0;
 function renderClean(){
   // Clean emails, or Find in Spam (1.9.136): a switch in the header, kept while FAFO is open.
   const spamMode = CLEAN.mode === "spam" && DESK && CAN_CLEAN;
@@ -15642,9 +15657,8 @@ async function cleanScan(){
           if (!all){ failed = r.error; break; }
           failedHere = {email:ib.email, folder:any ? folder : "", error:r.error || "The scan stopped."}; break;
         }
-        // Find in Spam (1.9.136): what its saved searches would move, or a result on screen offers, stays in Spam.
-        if (folder === "spam" && !(await spamHold(ib, r, CLEAN.days))){ r.groups = []; heldOff.push(ib.email); }
-        if (S !== vault){ CLEAN.busy = ""; CLEAN.progress = ""; CLEAN.phase = ""; return; }
+        // Saved Find in Spam searches on a download before 14: nothing in Spam is offered (1.9.136).
+        if (folder === "spam" && spamBlind()){ r.groups = []; heldOff.push(ib.email); }
         const part = all ? ib.id + "|" + folder : folder;
         uv[part] = r.uidValidity; scannedF.add(folder); any = true; protectedCount += r.protectedCount || 0;
         for (const g of r.groups){
@@ -15660,6 +15674,7 @@ async function cleanScan(){
           m.fresh = (m.fresh || 0) + (g.fresh || 0);
           m.parts[part] = (m.parts[part] || []).concat(g.uids);
           m.uids = m.uids.concat(g.uids.map(u => part + ":" + u));
+          if (g.env){ m.env = m.env || {}; for (const u of g.uids) if (g.env[u]) m.env[part + ":" + u] = g.env[u]; }
         }
       }
       if (failed) break;
@@ -15686,21 +15701,14 @@ async function cleanScan(){
   if (noSpam.length) toast(!all ? "This account has no Spam folder, so only the Inbox was checked."
     : noSpam.length === 1 ? `${noSpam[0]} has no Spam folder, so only its Inbox was checked.` : `${noSpam.length} inboxes have no Spam folder, so only their Inbox was checked.`);
   if (failedIb.length) toast(`Couldn't check ${failedIb.map(f => f.folder ? `${f.email}'s ${FOLDER_NAME[f.folder]}` : f.email).join(", ")}. The rest was scanned.`, "err");
-  if (heldOff.length) toast(`Couldn't check your Find in Spam searches in ${heldOff.join(", ")}'s Spam, so nothing there is offered. Scan again to retry.`, "err");
+  if (heldOff.length) toast("Your saved Find in Spam searches need the newest FAFO download to be checked, so nothing in Spam is offered on this computer.", "err");
   renderMain();
 }
 async function cleanTrash(){
   const r = CLEAN.result; if (!r) return;
   const groups = r.groups.filter(g => CLEAN.sel.has(g.key));
-  const byPart = {}, sr = SPAM.result;
+  const byPart = {};
   groups.forEach(g => Object.entries(g.parts || {}).forEach(([k, list]) => { byPart[k] = (byPart[k] || []).concat(list); }));
-  // Emails a Find in Spam result offers (searched since this scan) stay for its Move to Inbox.
-  if (sr) for (const k of Object.keys(byPart)){
-    const id = cleanPartId(r, k);
-    if (cleanPartFolder(k) !== "spam" || String((sr.uv || {})[id] || "") !== String(r.uidValidity[k] || "")) continue;
-    const off = new Set(sr.items.filter(i => i.ib === id).map(i => Number(i.uid)));
-    byPart[k] = byPart[k].filter(u => !off.has(Number(u))); if (!byPart[k].length) delete byPart[k];
-  }
   const count = Object.values(byPart).reduce((n, l) => n + l.length, 0);
   if (!count) return;
   const keys = Object.keys(byPart), where = Array.from(new Set(keys.map(cleanPartFolder))).map(f => FOLDER_NAME[f]).join(" and ");
@@ -15742,8 +15750,8 @@ async function cleanTrash(){
 // Find in Spam's page (1.9.136): the search, the saved searches, and what the last search found.
 function spamHTML(){
   const inboxes = cleanInboxes(), pick = cleanPick(), busy = CLEAN.busy, r = SPAM.result, saved = spamMoves();
-  const oldApp = CAN_SPAM_MOVE ? "" : `<div class="upd-banner"><div><strong>Get the newest FAFO download for Find in Spam</strong><br><span class="item-sub">This copy of FAFO can't move emails out of Spam for a search. Replace your FAFO folder with the new download; your vault, license and inboxes are kept.${S.settings.rescueSpam !== false ? " Until then, order emails your mail server confirmed came from the store still move out of Spam on each sync." : ""}</span></div><button class="btn btn-primary btn-sm" type="button" data-act="upd-get">Get the newest FAFO</button></div>`;
-  const off = busy || !CAN_SPAM_MOVE ? "disabled" : "";
+  const oldApp = CAN_SPAM_MOVE ? "" : `<div class="upd-banner"><div><strong>Get the newest FAFO download for Find in Spam</strong><br><span class="item-sub">This copy of FAFO can't move emails out of Spam for a search${spamBlind() ? ", and while you have saved searches Clean emails leaves Spam alone on it" : ""}. Replace your FAFO folder with the new download; your vault, license and inboxes are kept.${S.settings.rescueSpam !== false ? " Until then, order emails your mail server confirmed came from the store still move out of Spam on each sync." : ""}</span></div><button class="btn btn-primary btn-sm" type="button" data-act="upd-get">Get the newest FAFO</button></div>`;
+  const off = busy || autoCleanRunning || !CAN_SPAM_MOVE ? "disabled" : "";
   const controls = `<div class="panelbox clean-bar spam-bar">
       <div class="field"><label for="sp-q">Search Spam for</label><input id="sp-q" type="search" value="${esc(SPAM.q)}" placeholder="Words in the subject or sender, like about to ship" autocomplete="off" maxlength="${SPAM_MOVE_LEN}" ${off}></div>
       <div class="field"><label for="sp-inbox">Inbox</label><select id="sp-inbox" ${off}>${cleanMailboxes().length > 1 ? `<option value="${CLEAN_ALL}" ${pick === CLEAN_ALL ? "selected" : ""}>All inboxes (${cleanMailboxes().length})</option>` : ""}${inboxes.map(i => `<option value="${esc(i.id)}" ${pick === i.id ? "selected" : ""}>${esc(i.email)}</option>`).join("")}</select></div>
@@ -15772,7 +15780,7 @@ function spamHTML(){
     <div class="clean-list">${r.items.map(i => `<div class="clean-row"><input type="checkbox" data-act="spam-pick" data-id="${esc(i.key)}" ${SPAM.sel.has(i.key) ? "checked" : ""} aria-label="Select ${esc(i.subject || i.name || i.address)}">
         <span class="clean-main"><span class="clean-sender">${esc(i.name || i.relayed || i.address || "(no sender)")}</span><span class="clean-subj">${esc(i.subject || "(no subject)")}</span><span class="item-sub">${esc(i.relayed || i.address)}${i.relayed ? " · via Hide My Email" : ""}${r.all ? ` · ${esc((r.emails || {})[i.ib] || "")}` : ""}${i.at ? ` · ${day(i.at)}` : ""}</span></span>
         <span class="clean-side">${i.verified ? `<span class="ppill ppill-ok spam-ok" title="Your mail server confirmed it came from ${esc(i.verified)}">From ${esc(i.verified)}</span>` : ""}</span></div>`).join("")}</div>
-    <div class="clean-foot"><span class="item-sub">${canSave ? `<label class="check" style="margin:0"><input type="checkbox" id="sp-keep" ${SPAM.keep ? "checked" : ""}><span>Keep moving emails like these out of Spam on every sync (every one that matches, ones left unticked too)</span></label>` : spamSaved(r.q) ? savedSays : whyNot || "Moved emails go to your Inbox."}</span><button class="btn btn-primary" data-act="spam-move" ${selN && CAN_SPAM_MOVE ? "" : "disabled"}>${ic("imp")}Move ${plural(selN, "email")} to Inbox</button></div>`;
+    <div class="clean-foot"><span class="item-sub">${canSave ? `<label class="check" style="margin:0"><input type="checkbox" id="sp-keep" ${SPAM.keep ? "checked" : ""}><span>Keep moving emails like these out of Spam on every sync (every one that matches, ones left unticked too)</span></label>` : spamSaved(r.q) ? savedSays : whyNot || "Moved emails go to your Inbox."}</span><button class="btn btn-primary" data-act="spam-move" ${selN && CAN_SPAM_MOVE && !autoCleanRunning ? "" : "disabled"}>${ic("imp")}Move ${plural(selN, "email")} to Inbox</button></div>`;
   }
   return oldApp + controls + body;
 }
@@ -15780,9 +15788,10 @@ function spamHTML(){
 function spamSave(q){
   const t = spamMoveQuery(q); if (!t || !S) return "";
   if (spamSaved(t)) return t;
-  const list = spamMoves().slice();
-  if (list.length >= SPAM_MOVES_MAX){ toast(`You can keep ${SPAM_MOVES_MAX} searches at most. Take one off first.`, "err"); return ""; }
-  list.unshift(t); S.settings.spamMoves = list; persist();
+  if (spamMoves().length >= SPAM_MOVES_MAX){ toast(`You can keep ${SPAM_MOVES_MAX} searches at most. Take one off first.`, "err"); return ""; }
+  const m = {};
+  for (const [k, e] of Object.entries(spamMoveMap())) if (e && typeof e.q === "string" && spamMoveQuery(e.q)) m[k] = e;
+  m[spamKey(t)] = {q:t, at:Date.now()}; S.settings.spamMoves = m; persist();
   // Clean emails' result on screen may offer what this search now keeps: it's scanned again.
   CLEAN.result = null; CLEAN.sel = new Set();
   return t;
@@ -15791,6 +15800,7 @@ async function spamSearch(){
   const q = String(SPAM.q || "").replace(/\s+/g, " ").trim();
   if (!spamWords(q).length){ toast("Type a word or two to search Spam for."); return; }
   if (!CAN_SPAM_MOVE || CLEAN.busy) return;
+  if (autoCleanRunning){ toast("Auto-clean is running. Search again in a moment."); return; }
   const targets = cleanTargets(); if (!targets.length) return;
   const all = cleanPick() === CLEAN_ALL, vault = S, days = SPAM.days;
   CLEAN.inboxId = all ? CLEAN_ALL : targets[0].id; CLEAN.busy = "spam"; CLEAN.progress = "Connecting…"; SPAM.result = null; renderMain();
@@ -15832,6 +15842,7 @@ async function spamSearch(){
 }
 async function spamMove(){
   const r = SPAM.result; if (!r || !CAN_SPAM_MOVE || CLEAN.busy) return;
+  if (autoCleanRunning){ toast("Auto-clean is running. Move them in a moment."); return; }
   const pick = r.items.filter(i => SPAM.sel.has(i.key)); if (!pick.length) return;
   const vault = S, saved = SPAM.keep ? spamSave(r.q) : "";
   // Each inbox's details, read now: the vault may lock while emails move, and the move asked for goes on (as Move to Trash).
@@ -15990,9 +16001,8 @@ async function runAutoClean(phone){
         if (S !== vault){ ok = false; break; }
         if (!r.ok){ if (folder === "spam" && /spam folder/i.test(r.error || "")) continue; err = err || `${ib.email}: ${r.error}`; ok = false; break; }
         if (r.codesMissed) codesOk = false;
-        // Find in Spam (1.9.136): what its saved searches would move stays; not checked, nothing in that Spam goes this time.
-        if (folder === "spam" && !(await spamHold(ib, r, sweep ? 30 : 3))){ if (S !== vault){ ok = false; break; } continue; }
-        if (S !== vault){ ok = false; break; }
+        // Saved Find in Spam searches on a download before 14 (1.9.136): Spam is left alone, and its sweep isn't done.
+        if (folder === "spam" && spamBlind()){ err = err || "Spam was left alone: your saved Find in Spam searches need the newest FAFO download."; codesOk = false; continue; }
         applyCleanSafety(r, folder === "spam");
         const codes = cleanCodeSort(ib.id, folder, r, codeDays, codeGen), uids = codes.go;
         if (!uids.length){ codes.done(true); continue; }
@@ -18171,7 +18181,8 @@ document.addEventListener("click", async (e) => {
     case "spam-save": { const q = SPAM.result && spamSave(SPAM.result.q); if (q) toast(`Emails like “${q}” will move out of Spam on every sync`); renderMain(); break; }
     case "spam-unsave": {
       const k = spamWords(id).join(" ");
-      S.settings.spamMoves = spamMoves().filter(q => spamWords(q).join(" ") !== k); persist(); SPAM.keep = false;
+      const m = Object.assign({}, spamMoveMap()); for (const x of Object.keys(m)) if (!m[x] || spamKey(m[x].q) === k) delete m[x];
+      S.settings.spamMoves = m; persist(); SPAM.keep = false;
       toast(`Emails like “${id}” stay in Spam now`); renderMain(); break; }
     case "clean-keep": {
       const addr = String(id || "").toLowerCase(); if (!addr) break;
