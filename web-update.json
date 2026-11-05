@@ -1,10 +1,10 @@
 {
-  "version": "1.9.133",
-  "url": "index-1.9.133.html",
-  "sha256": "9e9379847cec7d655e578a4f753027e5ceefd04341e1509163e7e6399a16ba8c",
-  "signature": "ffWOwVSx+OAnkHUpZ9Ex/3cNWzUnaZAk4WPm5Li7rqkxaxq3OhH1zxfZd/GZCOOFmZ4L5W3N+8YhmsRwx/FiAA==",
+  "version": "1.9.134",
+  "url": "index-1.9.134.html",
+  "sha256": "87a2f2ed70f425bd04e1b382448f805841c320de21cb81b6dc78f8fa40e7e152",
+  "signature": "q+YP690ju7f3gQAyZ+JYmm6/kLgG4UDV+M9QBIxPem18GEB53oEUN8MQoLDKhb02Wl1a7LJfQ6aBemQaSfCcAA==",
   "minAppVersion": "0",
-  "notes": "New: Copy and Paste on Profiles. Select profiles (or right-click a group) and use Copy, then open another group and use Paste: each profile is copied there with its card, store, login and addresses, and the originals stay as they are. Each copy's name gets a word you pick at its end, since two profiles on one store can't share a name. Ctrl+C and Ctrl+V work too.",
+  "notes": "Clean emails now also clears Riot Games login codes and welcome emails, and Best Buy password reset codes. Auto-clean leaves each one for an hour first, in case you're signing in with it. Everything else from Riot Games and Best Buy is kept or cleared as before.",
   "installerUrl": "",
-  "publishedAt": "2026-10-20T13:43:46.472Z"
+  "publishedAt": "2026-11-05T04:56:58.766Z"
 }
