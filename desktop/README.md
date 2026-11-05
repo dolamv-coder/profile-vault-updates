@@ -16,7 +16,7 @@ license, inboxes and page updates over, and `shortcuts.js` moves the older copie
 | --- | --- |
 | `main.js` | Starts the app, the window and the IPC handlers the page calls. |
 | `preload.js` | `window.pvDesktop` for the page. Its `version` tells pages what this app can do. |
-| `imap-sync.js` | Email: order sync, Clean emails (scan and trash), moving orders out of Spam, a canceled order's emails to Trash. |
+| `imap-sync.js` | Email: order sync, Clean emails (scan and trash), moving orders out of Spam, Find in Spam (list it, move to the Inbox), a canceled order's emails to Trash. |
 | `trust.js` | Certificates for email connections: Node's list plus the ones Windows trusts. |
 | `shortcuts.js` | The Start menu shortcut (Windows takes notifications' app name from it), and moving shortcuts to an older copy over to this one. |
 | `updater.js` | Checks `update.json`, verifies the page's signature, installs it on restart. |
@@ -32,7 +32,9 @@ license, inboxes and page updates over, and `shortcuts.js` moves the older copie
   the page gets something new to use. 10 was the v1.9.49 download; 11 trusts Windows' certificates and
   explains certificate errors (`CERT_ERROR` plus what it saw); 12 is the v1.9.76 download, `FAFO.exe`
   (pages name the exe by it); 13 is the v1.9.105 download, with `trashOrderMail` (Orders → Delete canceled moves
-  those orders' emails to Trash).
+  those orders' emails to Trash); 14 is the v1.9.136 download, with `listSpam` and `spamToInbox` (Clean emails → Find
+  in Spam: the page searches Spam's emails and moves the ones picked, or matching a saved search, to the Inbox), and
+  `scanPromos` returning each offered email's own sender and subject (`env`), so Clean emails leaves what a saved search matches.
 
 ## Test, build, release
 
@@ -47,7 +49,9 @@ The tests make throwaway certificates with openssl and run the email code agains
 posing as imap.gmail.com: normal, re-signed by antivirus, self-signed, expired, not yet valid, another
 server's name, and with the antivirus root trusted by Windows. `test/order-mail.test.cjs` runs `trashOrderMail`'s search
 and checks against a pretend mail server (Gmail's X-GM-RAW and other servers' SEARCH, whole-word order numbers, emails
-that also name a kept order). `test/powershell.test.cjs` checks the
+that also name a kept order). `test/spam-move.test.cjs` runs Find in Spam's `listSpam` and `spamToInbox` against one too
+(Spam's emails with a store the receiving server verified, only by the mail provider's own header, the newest 3000, a server
+without MOVE, a refused move, ones gone from Spam since the list, a Spam folder rebuilt since then). `test/powershell.test.cjs` checks the
 PowerShell that reads Windows' certificates (skipped without `pwsh`). `test/shortcuts.test.cjs` runs
 `shortcuts.js` against a pretend Windows profile: Orbit and Profile Vault shortcuts moving to FAFO.exe.
 

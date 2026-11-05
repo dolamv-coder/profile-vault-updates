@@ -473,8 +473,9 @@ builds `FAFO-Windows.zip` on pull requests, and publishes release
 that version is out. `pvDesktop.version` is 10 in the v1.9.49 download, 11
 from the v1.9.61 download, 12 from the v1.9.76 download, the first that is
 `FAFO.exe` (in `FAFO-win32-x64`; `build.mjs` renames the base's `Orbit.exe` and
-writes FAFO into its version information), and 13 from the v1.9.105 download
-(`trashOrderMail`, for Orders → Delete canceled). It keeps Profile Vault's data folder
+writes FAFO into its version information), 13 from the v1.9.105 download
+(`trashOrderMail`, for Orders → Delete canceled), and 14 from the v1.9.136 download (`listSpam` and `spamToInbox`,
+for Clean emails → Find in Spam; the owner asked for it, a new download, on 2026-11-05). It keeps Profile Vault's data folder
 and Windows app ID, and on its first start `shortcuts.js` replaces the Orbit
 Start menu shortcut with FAFO and points desktop and pinned shortcuts to an
 older `Orbit.exe` or `Profile Vault.exe` at it.
@@ -1564,6 +1565,70 @@ both, and a sender in one's Inbox and another's Spam, with Clear all of Spam on 
 row, Move to Trash per mailbox with its own UIDVALIDITY and on past one that fails, unticked rows, a lock while moving, a
 mailbox saved twice (and one copy that can't sign in, and iCloud's me.com), a mailbox that can't sign in, one whose Spam fails after its Inbox, none that can, one deleted during or after
 the scan, Clear all of Spam changed during it (and on and back off), and one inbox picked; it fails if the newest page has no `CLEAN_ALL`. Nothing gains a field.
+
+From 1.9.136 the Clean emails page has **Find in Spam** (the owner's request, 2026-11-05, with a screenshot of Target's "Get
+ready for something special! Items from order #… are about to ship.": "Enable a search function that moves these type of
+emails from spam to inbox"; asked, they chose a new download and "Also keep moving them"). Move order emails out of Spam
+(`rescueSpam`, Settings → Preferences) only moves an order email the receiving server verified came from the store's own
+domain (DMARC), which one forwarded or relayed by Hide My Email isn't, and there was no other way to move mail out of Spam,
+so desktop 14 (the v1.9.136 download) adds two: `listSpam(cfg)` (Spam's emails from `days` back, at most 1 to 90, the newest
+3000: UID, sender's name and address, subject, when it came, `verified` the store `verifiedBy` confirmed, the folder's
+UIDVALIDITY, `noSpam`, `partial`) and `spamToInbox(cfg, uids, uidValidity)` (those UIDs to the Inbox, only while the Spam
+folder's UIDVALIDITY is the one listed, and only those a UID SEARCH still finds there: `gone` counts the rest, so a move
+never counts one auto-clean or another computer took meanwhile; a refused move says the emails are still in Spam;
+`desktop/test/spam-move.test.cjs`). `verifiedBy` is `verifiedFrom` on headers the mail provider wrote: the leading run of
+Authentication-Results whose authserv-id is the IMAP server's provider's (`AUTH_IDS`: Google, iCloud, whose BIMI header comes
+first, Yahoo and AOL, Fastmail, Zoho) or shares its domain (not an IP address's), and of those the first with a DMARC result,
+since on a server that writes none the top one is the sender's own, and a forged pass under the provider's own fail doesn't count;
+Microsoft's has no authserv-id, so outlook.com mail is never shown as verified. Desktop 14's `scanPromos` (Clean emails) also
+returns each offered email's own sender's name and address and its subject, as it came, by UID (`g.env`): a forward's own, not
+the original's its row shows. Tested with real imapflow against a test IMAP server (hoodiecrow) too. What a search matches is the page's, so it can
+change with a page update: words (`spamWords`: lowercase, accents off, split at anything not a letter or digit), each of
+which must start a word of the subject, the sender's name or address, or the real sender of one relayed by Hide My Email
+(`spamMatch`, `relayedFrom`), so "ship" finds "shipped" but not "membership", and an order number's start finds it glued to
+"are". A switch in the header (`CLEAN.mode`) shows Find in Spam: a search box, the same inbox pick as Clean emails (All
+inboxes too, each mailbox once, `cleanMailboxes`, `cleanCopies`), 7, 30 or 90 days, and Search (or Enter); the matches,
+newest first and ticked, with their inbox, day and "From target.com" when verified; Move N to Inbox (`spamMove`, each
+inbox's details read first, so a lock meanwhile lets the move finish), with "Keep moving emails like these out of Spam on
+every sync (every one that matches, ones left unticked too)" to save the search too, or, with nothing found, Keep moving
+emails like these; when it can't be saved, the page says why (30 kept, or no word of 3 letters). The search box keeps the
+cursor through a redraw (a sync finishing, `renderMain`). Saved searches are the synced
+setting `spamMoves` (strings, the newest first, at most `SPAM_MOVES_MAX` 30, each `spamMoveQuery`: one line, at most 80
+characters, with a word of 3 or more, so "a" can't move all of Spam), shown as chips with × like Always keep. Each sync of
+an inbox (`syncOneInbox`, after `rescueSpam`) runs them (`spamMovesRun`): Spam from as far back as the sync looks, or 30 days
+the first time this FAFO runs a set of searches on an inbox (`SPAM_MOVES_SWEPT`, in memory), and moves what any of them
+matches as they are once Spam is read (one taken off meanwhile moves nothing), whoever sent it: the owner chose that over
+moving only what they look at, so a scam with the same words moves too. The sync's toast counts them with the verified ones
+("moved N emails out of Spam"). Clean emails never offers what a saved search matches, in the Inbox or Spam, by auto-clean
+or the phone either, and counts it kept safe: `applyCleanSafety` first takes out of each row the emails whose own sender and
+subject (`g.env`, which `cleanScan` carries onto its merged rows by "part:uid") a saved search matches, so it's judged as Find
+in Spam sees it (a forward's row has the original's sender and subject, a Hide My Email row the real sender; the reviews caught
+a saved search on a forwarder's name that auto-clean trashed from Spam every 10 minutes, and then from the Inbox once the sync
+had moved it there), then checks the row as before (`kept`). In Spam it also keeps what Find in Spam's search on screen matches
+(`spamOnScreen`: only while that result shows, on Clean emails in Find in Spam), so auto-clean leaves it for the Move; locking
+drops the result, and Find in Spam's Search and Move wait while auto-clean runs (it reads what's on screen as it starts).
+A download before 14 can't see the emails' own senders: with saved searches there (synced from a computer with the new
+download) Clean emails and auto-clean don't scan Spam at all (`spamBlind`), as that's where the searches' emails wait for the
+other computer's sync: the Scan's result says "Spam wasn't checked" with Get the newest FAFO (`r.blind`), auto-clean's last run
+a note (`lastNote`, apart from `lastError`, so a real inbox error still shows), and that Spam's 30-day look-back is owed
+(`autoClean.spamOwed`) for the first run that can check it, while the Inbox is swept as usual and judged on rows only. Saving a search drops Clean's result on screen, and Clean emails' Inbox pick drops Find in Spam's.
+Clean emails lists the saved searches beside Always kept ("Kept by Find in Spam searches", × takes one off), and Find in Spam
+says while auto-clean runs that Search and Move wait for it (its boxes stay usable). A Clean result is stamped with the saved
+searches it was judged with (`spamMovesStamp`): once they change, here or by a sync from another computer, it's dropped (Scan
+again) rather than moved. The phone's Clean emails says when Spam was left alone, and so does the Clean page with auto-clean off.
+Saved searches are `{words: {q, at}}`, keyed by `spamKey` (the search's words), so two devices that each save one before they
+agree keep both (`syncMerge` treats `spamMoves` as `itemPics`), and with the version they started from one taken off stays off
+(`sync-merge.test.mjs`). Searching and moving use `CLEAN.busy` ("spam",
+"spam-move"), so sync, auto-clean, update restarts and Clean's own Scan wait for them as for a scan. A download before 14
+(`CAN_SPAM_MOVE`) gets "Get the newest FAFO download for Find in Spam" and a search that does nothing; the web version shows
+Clean emails' "This works in the desktop app". `clean-rules.test.mjs` runs the real `listSpam` and `spamToInbox` against the
+pretend mail server (three mailboxes: matching, All inboxes, Move with a ticked one left, a Spam folder rebuilt since the
+search, one that can't sign in and one with no Spam folder, a download before 14, locking while searching and moving, saved
+searches' look-back and one taken off mid-run, Clean never offering a saved search's match, by Clean's rows or, for a
+forward or an alias, by its own envelope, in Spam and in the Inbox after the sync moved it, a download before 14 not scanning
+Spam (the note, the Inbox swept, the look-back owed and paid with the new download), a result on screen kept from auto-clean only while it shows, Find in Spam waiting for auto-clean, and a move counting
+what was gone), and fails if the newest
+page has no `CAN_SPAM_MOVE`. Settings gain `spamMoves`, which 1.9.112 syncs as it is.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

@@ -389,4 +389,29 @@ if (html.includes(':autoPicsNo"')) test("items turned down on two devices before
   }
 });
 
+// 1.9.136+: Find in Spam's saved searches (settings.spamMoves, {words: {q, at}}), keyed by their words: two devices that each
+// save one before they agree keep both, and with the version they started from, one taken off on one side stays off while the
+// other adds another.
+if (html.includes(':spamMoves"')) test("saved Find in Spam searches added on two devices keep both; one taken off stays off", () => {
+  const e = (q, at) => ({ q, at });
+  for (const base of [blank(), null]) {
+    const a = blank(), b = blank();
+    a.settings.spamMoves = { "about to ship": e("about to ship", 1) }; b.settings.spamMoves = { "pokemon center": e("pokemon center", 2) };
+    const k = [...syncUnits(a).map.keys()].find((x) => x.endsWith(":spamMoves"));
+    for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+      const r = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, {});
+      assert.deepEqual(Object.keys(r.state.settings.spamMoves).sort(), ["about to ship", "pokemon center"]);
+    }
+  }
+  const base = blank(); base.settings.spamMoves = { "about to ship": e("about to ship", 1) };
+  const a = blank(), b = blank();
+  a.settings.spamMoves = {};   // taken off here
+  b.settings.spamMoves = { "about to ship": e("about to ship", 1), "order delayed": e("order delayed", 3) };   // one added there
+  const k = [...syncUnits(base).map.keys()].find((x) => x.endsWith(":spamMoves"));
+  for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+    const r = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, origOf(base, [k]));
+    assert.deepEqual(Object.keys(r.state.settings.spamMoves), ["order delayed"]);
+  }
+});
+
 console.log(`\n${passed} passed`);

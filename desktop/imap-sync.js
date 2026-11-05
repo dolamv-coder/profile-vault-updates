@@ -315,11 +315,14 @@ async function scanPromos(cfg, onProgress) {
       const groups = new Map();
       const forwarded = [];
       let scanned = 0, protectedCount = 0;
-      const add = (uid, senderName, senderAddr, subject) => {
+      // own: the email's own sender's name and address and its subject, as it came (a forward's, not the original's):
+      // desktop 14 hands them to the page in env, by UID, so Find in Spam's saved searches are judged as Find in Spam sees them.
+      const own = (env) => { const f = ((env && env.from) || [])[0] || {}; return [String(f.name || "").slice(0, 200), String(f.address || "").slice(0, 320), String((env && env.subject) || "").slice(0, 300)]; };
+      const add = (uid, senderName, senderAddr, subject, env) => {
         const key = senderAddr + "|" + normSubject(subject).toLowerCase();
         let g = groups.get(key);
-        if (!g) { g = { key, sender: senderName || senderAddr, senderAddr, subject: normSubject(subject), uids: [] }; groups.set(key, g); }
-        g.uids.push(uid);
+        if (!g) { g = { key, sender: senderName || senderAddr, senderAddr, subject: normSubject(subject), uids: [], env: {} }; groups.set(key, g); }
+        g.uids.push(uid); g.env[uid] = own(env);
       };
       if (uids.length) {
         for await (const m of c.fetch(uids, { uid: true, envelope: true, headers: ["list-unsubscribe", "precedence", "list-id"] }, { uid: true })) {
@@ -333,7 +336,7 @@ async function scanPromos(cfg, onProgress) {
           const hdr = m.headers ? m.headers.toString("utf8") : "";
           const bulk = /list-unsubscribe:|precedence:\s*(bulk|list)|list-id:/i.test(hdr);
           if (/^\s*(fw|fwd)\s*:/i.test(subject)) { forwarded.push(m.uid); continue; }
-          if (survey || folder.spam || bulk || looksPromoSender(fromAddr)) add(m.uid, fromObj.name || fromAddr, fromAddr, subject);
+          if (survey || folder.spam || bulk || looksPromoSender(fromAddr)) add(m.uid, fromObj.name || fromAddr, fromAddr, subject, m.envelope);
         }
       }
       // Forwarded mail: read the body to find who originally sent it.
@@ -357,7 +360,7 @@ async function scanPromos(cfg, onProgress) {
               if (!storeSale && guard.test(head.slice(0, 1500))) { protectedCount++; continue; }
               if (!(folder.spam || storeSale || looksPromoSender(orig.addr))) continue;
             }
-            add(m.uid, orig.name || orig.addr, orig.addr, origSubj || m.envelope?.subject);
+            add(m.uid, orig.name || orig.addr, orig.addr, origSubj || m.envelope?.subject, m.envelope);
           } catch {}
         }
       }
@@ -455,6 +458,97 @@ async function rescueSpam(cfg) {
 }
 module.exports.rescueSpam = rescueSpam;
 module.exports._rescue = { verifiedFrom, retailerOf };
+
+// ================= Find in Spam (desktop 14, pages from 1.9.136) =================
+// listSpam: the Spam folder's emails from cfg.days back (the newest SPAM_LIST_MAX), each with its UID, sender, subject,
+// when it came, and which store the receiving server verified it came from (verifiedBy, or ""). The page decides which
+// to move, by a search the person typed or one they saved, so what counts can change with a page update.
+// spamToInbox: moves those UIDs from Spam to the Inbox, only while the Spam folder is the one listed (its UIDVALIDITY),
+// and only the ones still there (gone: how many were moved or deleted since the list).
+const SPAM_LIST_MAX = 3000;
+// The page shows "From target.com" for a verified one, so here the header must be the mail provider's own: its authserv-id
+// (the name before the first ";") belongs to the provider of the IMAP server, or shares the IMAP server's domain. A server
+// that writes no Authentication-Results leaves the sender's own, forged one on top, which verifiedFrom alone would trust.
+// Microsoft's header has no authserv-id, so outlook.com and Office 365 mail isn't shown as verified.
+const AUTH_IDS = [[/(^|\.)(gmail|googlemail|google)\.com$/i, /(^|\.)google\.com$/i], [/(^|\.)(me|mac|icloud|apple)\.com$/i, /(^|\.)(icloud|apple|me)\.com$/i],
+  [/(^|\.)(yahoo|aol)\.com$/i, /(^|\.)(yahoo|aol|yahoodns)\.(com|net)$/i], [/(^|\.)(fastmail|messagingengine)\.com$/i, /(^|\.)(messagingengine|fastmail)\.com$/i],
+  [/(^|\.)zoho(mail)?\.(com|eu|in)$/i, /(^|\.)zoho(mail)?\.(com|eu|in)$/i]];
+const baseDomain = (h) => String(h || "").toLowerCase().replace(/\.$/, "").split(".").slice(-2).join(".");
+// The provider's own headers are the leading run whose authserv-id is the provider's (iCloud writes BIMI's, dmarc's, DKIM's and
+// SPF's apart, BIMI's on top), and its DMARC result is the first of them with one: a sender's forged "dmarc=pass" under it, even
+// claiming the provider's id, doesn't count. A host FAFO doesn't know counts when the id shares its domain (not an IP address).
+function verifiedBy(host, authHeaders, fromDomain) {
+  const h = String(host || "").toLowerCase(), known = AUTH_IDS.find(([imap]) => imap.test(h));
+  const idOf = (x) => (String(x).replace(/^\s*authentication-results:\s*/i, "").split(";")[0] || "").trim().split(/\s+/)[0].toLowerCase();
+  const ip = /^[\d.]+$|:/.test(h);
+  const ours = (id) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(id) && (known ? known[1].test(id) : !ip && baseDomain(id) === baseDomain(h));
+  const run = [];
+  for (const x of (authHeaders || []).filter(x => /authentication-results:/i.test(x))) { if (!ours(idOf(x))) break; run.push(x); }
+  const dmarc = run.find(x => /\bdmarc=/i.test(x));
+  return dmarc && verifiedFrom([dmarc], fromDomain) ? retailerOf(fromDomain) : "";
+}
+async function listSpamOn(c, cfg) {
+  let folder;
+  try { folder = await resolveFolder(c, "spam"); } catch (e) { if (e && e.noSpam) return { ok: true, noSpam: true, uidValidity: "", items: [] }; throw e; }
+  const lock = await c.getMailboxLock(folder.path);
+  try {
+    const uidValidity = String(c.mailbox && c.mailbox.uidValidity || "");
+    const since = new Date(Date.now() - (Number(cfg.days) || 30) * 86400000);
+    const found = await c.search({ since }, { uid: true });
+    if (found === false) throw new Error("SEARCH_FAILED");
+    const all = found || [], uids = all.slice(-SPAM_LIST_MAX), items = [];
+    if (uids.length) {
+      for await (const m of c.fetch(uids, { uid: true, envelope: true, internalDate: true, headers: ["authentication-results"] }, { uid: true })) {
+        const from = ((m.envelope && m.envelope.from) || [])[0] || {};
+        const address = String(from.address || "").slice(0, 320);
+        const auth = (m.headers ? m.headers.toString("utf8") : "").split(/\r?\n(?=authentication-results:)/i);
+        const when = m.internalDate || (m.envelope && m.envelope.date);
+        const at = when ? new Date(when).getTime() : 0;
+        items.push({ uid: m.uid, name: String(from.name || "").slice(0, 200), address, subject: String((m.envelope && m.envelope.subject) || "").slice(0, 300),
+          at: Number.isFinite(at) ? at : 0, verified: verifiedBy(cfg.host, auth, address.split("@")[1] || "") });
+      }
+    }
+    return { ok: true, uidValidity, folder: folder.path, items, partial: all.length > uids.length };
+  } finally { lock.release(); }
+}
+async function spamToInboxOn(c, uids, uidValidity) {
+  let folder;
+  try { folder = await resolveFolder(c, "spam"); } catch (e) { if (e && e.noSpam) return { ok: false, error: "Couldn't find a Spam folder in this inbox." }; throw e; }
+  const lock = await c.getMailboxLock(folder.path);
+  try {
+    // If the folder was rebuilt since the list, message numbers may point elsewhere. Stop.
+    if (!uidValidity || String(c.mailbox && c.mailbox.uidValidity || "") !== String(uidValidity))
+      return { ok: false, error: "The Spam folder changed since the search. Search again, then retry." };
+    // Only the ones still in Spam: moved or deleted since the list (by Clean emails, another computer, the email app), a UID
+    // is gone, and a move of it would count as moved on a server that doesn't say which moved.
+    const found = await c.search({ uid: uids.join(",") }, { uid: true });
+    if (found === false) throw new Error("SEARCH_FAILED");
+    const there = new Set((found || []).map(Number)), still = uids.filter(u => there.has(u));
+    if (!still.length) return { ok: true, moved: 0, gone: uids.length };
+    try { return { ok: true, moved: await moveMail(c, still, "INBOX"), gone: uids.length - still.length }; }
+    catch (e) {
+      if (String(e && e.message) === "MOVE_FAILED") return { ok: false, error: "The mail server didn't move the emails to your Inbox, so they're still in Spam." };
+      throw e;
+    }
+  } finally { lock.release(); }
+}
+async function listSpam(cfg) {
+  const c = await open(cfg);
+  try { await c.connect(); return await listSpamOn(c, cfg); }
+  catch (e) { return { ok: false, error: await explain(e, cfg) }; }
+  finally { try { await c.logout(); } catch { try { c.close(); } catch {} } }
+}
+async function spamToInbox(cfg, uids, uidValidity) {
+  uids = (Array.isArray(uids) ? uids : []).map(Number).filter(n => Number.isInteger(n) && n > 0).slice(0, 5000);
+  if (!uids.length) return { ok: false, error: "Nothing selected." };
+  const c = await open(cfg);
+  try { await c.connect(); return await spamToInboxOn(c, uids, uidValidity); }
+  catch (e) { return { ok: false, error: await explain(e, cfg) }; }
+  finally { try { await c.logout(); } catch { try { c.close(); } catch {} } }
+}
+module.exports.listSpam = listSpam;
+module.exports.spamToInbox = spamToInbox;
+module.exports._spam = { listSpamOn, spamToInboxOn, SPAM_LIST_MAX, verifiedBy };
 
 // ================= A canceled order's emails =================
 // Moves every email naming one of the given order numbers (its confirmation, the cancellation, shipping
