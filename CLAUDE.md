@@ -1630,6 +1630,22 @@ Spam (the note, the Inbox swept, the look-back owed and paid with the new downlo
 what was gone), and fails if the newest
 page has no `CAN_SPAM_MOVE`. Settings gain `spamMoves`, which 1.9.112 syncs as it is.
 
+From 1.9.137 Find in Spam's saved searches also run **every 10 minutes** on their own (the owner's request, 2026-11-05, with a
+screenshot of Find in Spam: "can you automate this part every 10 minutes as well"), where 1.9.136 ran them only in each email
+sync (every 15 minutes, and only on inboxes on Auto). While the vault is unlocked, a check each minute (`scheduleSpamMoves`,
+from `startApp`; `spamMovesTick`) runs them on each mailbox once (`cleanMailboxes`, as Find in Spam's All inboxes, whether its Auto
+sync is on or not, and the next copy, `cleanCopies`, when one's Spam can't be read: `spamMovesRun`'s `out.failed`) whose last run
+was 10 minutes ago (9.5 to 10.5, by the minute's check) or with other searches (`SPAM_MOVES_AT`, by `cleanBoxKey`: `{at, key}`,
+`spamMovesKey`; a sync's run counts, so it isn't run twice, and a run that couldn't sign in counts too, so a mailbox that fails is
+asked every 10 minutes, not every minute; cleared at lock, and never noted by a run the vault locked during), so a search saved
+here or synced in from another computer goes within the minute with its 30-day look-back, then 3 days back (`SPAM_MOVES_DAYS`).
+It waits while email syncs (`SYNCING`: a sync runs them itself), Clean emails or Find in Spam is busy (`CLEAN.busy`) or
+auto-clean runs, and goes at the next minute's check; a sync starting meanwhile stops it after that mailbox. One run per mailbox
+at a time (`SPAM_MOVING`): a sync's on a mailbox the 10 minutes' run is on does nothing, and update restarts wait for it
+(`autoUpdBlock`). What moved is a toast per inbox ("…: moved N emails out of Spam"). Find in Spam says every 10 minutes where it
+said on every sync. Needs desktop 14 like the rest of Find in Spam; `clean-rules.test.mjs` tests it (and fails if the newest page
+has no `spamMovesTick`). Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

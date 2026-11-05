@@ -1,0 +1,1 @@
+Find in Spam's saved searches now run every 10 minutes while FAFO is open and unlocked, not only when it syncs your email. After a search, tick “Keep moving emails like these” and FAFO moves every email that matches out of Spam by itself; a search you save starts within a minute. Like Find in Spam, it needs the FAFO download from 1.9.136 or newer.
