@@ -78,7 +78,7 @@ function pageApi(path) {
     + block("// Important mail the cleaner must never offer", "function renderClean(){")
     + block("const FOLDER_NAME = ", "// Auto-clean: while the vault is unlocked")
     + block("const autoCleanCfg = ", "function autoCleanHTML(){")
-    + block("const norm = ", "\n") + "\n" + block("function mailboxKey(email){", "\n}\n") + "\n}\n";
+    + block("const norm = ", "\n") + "\n" + block("function syncHash(str){", "\n}\n") + "\n}\n" + block("function mailboxKey(email){", "\n}\n") + "\n}\n";
   const prelude = `let S = null; const DESK = true, CAN_CLEAN = true, CAN_CLEAN_SPAM = true, UI = {view:"orders"};
     const CLEAN_OLD_APP = !(window.pvDesktop.version >= 10);
     const CLEAN = { inboxId:"", days:30, folder:"all", busy:"", progress:"", phase:"", result:null, sel:new Set() };
@@ -96,7 +96,7 @@ function pageApi(path) {
       UI, SYNCING, setAutoCleanRunning: (v) => { autoCleanRunning = v; },
       spam: typeof spamSearch === "function" ? { SPAM, CAN_SPAM_MOVE, spamSearch, spamMove, spamMovesRun, spamMatch, spamMoveQuery, spamSave, spamMoves, SPAM_MOVES_SWEPT,
         tick: typeof spamMovesTick === "function" ? spamMovesTick : null, AT: typeof SPAM_MOVES_AT !== "undefined" ? SPAM_MOVES_AT : null,
-        MOVING: typeof SPAM_MOVING !== "undefined" ? SPAM_MOVING : null } : null};`);
+        MOVING: typeof SPAM_MOVING !== "undefined" ? SPAM_MOVING : null, OK: typeof SPAM_MOVES_OK !== "undefined" ? SPAM_MOVES_OK : null } : null};`);
 }
 // localStorage that works (full: its writes fail, as when storage is full), or one that throws (a browser that blocks storage).
 const memStore = () => { const m = new Map(); const st = { full: false, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { if (st.full) throw new Error("QuotaExceededError"); m.set(k, String(v)); }, removeItem: (k) => m.delete(k), m }; return st; };
@@ -1480,13 +1480,13 @@ if (HAS_SPAM) {
       NOW = start;
     });
 
-    await test("A move that failed (stopped, or refused: the Spam folder changed) is tried again with the look-back it needed", async () => {
+    await test("A move that failed (stopped, or refused: the Spam folder changed) is tried again, back to the last run that went through (30 days when none has)", async () => {
       for (const how of ["throws", "refused"]) {
         multi({ [EMAILS[0]]: acct([], spamBox("a:", { oldDays: 20 })) });
         let first = true;
         const api = withInboxes(setup(file, memStore(), {
           beforeSpamMove: () => { if (how === "throws" && first) { first = false; throw new Error("connection lost"); } },
-          afterList: () => { if (how === "refused" && first) { first = false; SERVER.accounts[EMAILS[0]].boxes.Spam.v = "10"; } },
+          afterList: () => { if (how === "refused" && first) { first = false; const b = SERVER.accounts[EMAILS[0]].boxes.Spam; b.v = String(Number(b.v) + 1); } },
         }), [EMAILS[0]]);
         sp(api).spamSave("about to ship");
         await sp(api).tick();
@@ -1494,8 +1494,53 @@ if (HAS_SPAM) {
         NOW += 10 * MIN; await sp(api).tick();
         assert.deepEqual(lists(), [[EMAILS[0], 30], [EMAILS[0], 30]], how + ": 30 days again, not 3");
         assert.ok(SERVER.moved.includes("a:old"), how + ": the 20-day-old one moves");
+        // Once one has gone through, a failed move is tried again looking back to it: 3 days, not 30.
+        SERVER.accounts[EMAILS[0]].boxes.Spam.msgs.push(msg("a:new", { name: "Target", address: "orders@oe.target.com", subject: "Items from order #902000000000014 are about to ship.", at: NOW - MIN }));
+        first = true; NOW += 10 * MIN; await sp(api).tick();
+        assert.ok(!SERVER.moved.includes("a:new"), how);
+        NOW += 10 * MIN; await sp(api).tick();
+        assert.deepEqual(lists().slice(2), [[EMAILS[0], 3], [EMAILS[0], 3]], how);
+        assert.ok(SERVER.moved.includes("a:new"), how + ": moved on the next run");
         NOW = start;
       }
+    });
+
+    await test("A sync's run looks back to the last run that went through too: after a sleep, or an inbox's address changed to another mailbox", async () => {
+      multi({ [EMAILS[0]]: acct([], spamBox("a:")), [EMAILS[1]]: acct([], spamBox("b:", { oldDays: 20 })) });
+      const api = withInboxes(setup(file), [EMAILS[0]]); sp(api).spamSave("about to ship");
+      const ib = api.getS().inboxes[0];
+      await sp(api).spamMovesRun(ib, 7);
+      assert.deepEqual(lists(), [[EMAILS[0], 30]]);
+      NOW += 10 * DAY;
+      SERVER.accounts[EMAILS[0]].boxes.Spam.msgs.push(msg("a:slept8", { name: "Target", address: "orders@oe.target.com", subject: "Items from order #902000000000013 are about to ship.", at: NOW - 8 * DAY }));
+      await sp(api).spamMovesRun(ib, 7);   // the sync's, whose own look-back is 7 days
+      assert.deepEqual(lists().at(-1), [EMAILS[0], 11]);
+      assert.ok(SERVER.moved.includes("a:slept8"));
+      // The same inbox now pointing at another mailbox: its first look-back is 30 days, not the sync's 7.
+      ib.email = EMAILS[1];
+      await sp(api).spamMovesRun(ib, 7);
+      assert.deepEqual(lists().at(-1), [EMAILS[1], 30]);
+      assert.ok(SERVER.moved.includes("b:old"), "the 20-day-old one there moves");
+      assert.ok([...sp(api).OK.keys()].every((k) => !k.includes("@")), "kept by a hash of the mailbox, not its address");
+      NOW = start;
+    });
+
+    await test("A mailbox saved twice whose copies all fail is signed in to no more than before: each sync's failure counts", async () => {
+      multi({});   // neither copy can sign in
+      const api = withInboxes(setup(file), ["sam.one@gmail.com", "samone@gmail.com"]); sp(api).spamSave("about to ship");
+      const per = new Map();
+      for (let m = 0; m < 60; m++) {
+        if (m % 15 === 0) for (const ib of api.getS().inboxes) {   // each copy's 15 minutes' sync
+          api.SYNCING.set(ib.id, "Syncing…"); await sp(api).spamMovesRun(ib, 7); ib.syncError = "Invalid credentials"; api.SYNCING.delete(ib.id);
+        }
+        const before = (SERVER.lists || []).length;
+        await sp(api).tick();
+        per.set(m, (SERVER.lists || []).length - before);
+        NOW += MIN;
+      }
+      assert.equal(SERVER.lists.length, 16, "4 syncs of 2 copies, and the 10 minutes' run 4 times between them");
+      assert.ok([...per.values()].every((n) => n <= 2));
+      NOW = start;
     });
 
     await test("The page runs it from unlock, update restarts wait for it, locking forgets when each ran, and it says every 10 minutes", () => {
