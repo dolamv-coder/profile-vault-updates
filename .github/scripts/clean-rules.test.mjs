@@ -1469,6 +1469,38 @@ if (HAS_SPAM) {
       }
       assert.deepEqual(at, [0, 10, 20, 30, 40, 50, 60], "the copy that works, every 10 minutes from the start");
       NOW = start;
+      // The copy that works isn't on Auto and still has an old error from a sync that failed once: still every 10 minutes.
+      multi({ "samone@gmail.com": acct([], spamBox("a:")) });
+      api = withInboxes(setup(file), ["sam.one@gmail.com", "samone@gmail.com"]); sp(api).spamSave("about to ship");
+      const [old, works] = api.getS().inboxes;
+      old.syncError = "Invalid credentials"; works.syncError = "Couldn't connect"; works.auto = false;
+      at.length = 0;
+      for (let m = 0; m <= 60; m++) {
+        if (m % 15 === 0) { api.SYNCING.set(old.id, "Syncing…"); await sp(api).spamMovesRun(old, 7); api.SYNCING.delete(old.id); }
+        const before = (SERVER.lists || []).length;
+        await sp(api).tick();
+        if ((SERVER.lists || []).slice(before).some((c) => c.email === "samone@gmail.com")) at.push(m);
+        NOW += MIN;
+      }
+      assert.deepEqual(at, [0, 10, 20, 30, 40, 50, 60], "an old syncError doesn't count as Spam failing");
+      NOW = start;
+      // The copy that works fails to read Spam once, then reads it again: from then on it's every 10 minutes again.
+      multi({ "samone@gmail.com": acct([], spamBox("a:")) });
+      let blip = true;
+      api = withInboxes(setup(file, memStore(), { beforeList: (cfg) => { if (cfg.email === "samone@gmail.com" && blip) { blip = false; throw new Error("network"); } } }), ["sam.one@gmail.com", "samone@gmail.com"]);
+      sp(api).spamSave("about to ship");
+      api.getS().inboxes[0].syncError = "Invalid credentials";
+      const ok = [];
+      for (let m = 0; m <= 60; m++) {
+        const ib0 = api.getS().inboxes[0];
+        if (m % 15 === 0) { api.SYNCING.set(ib0.id, "Syncing…"); await sp(api).spamMovesRun(ib0, 7); api.SYNCING.delete(ib0.id); }
+        const before = (SERVER.lists || []).length;
+        await sp(api).tick();
+        if ((SERVER.lists || []).slice(before).some((c) => c.email === "samone@gmail.com") && !blip) ok.push(m);
+        NOW += MIN;
+      }
+      assert.deepEqual(ok.slice(1), [10, 20, 30, 40, 50, 60], "after the blip, every 10 minutes: " + ok);
+      NOW = start;
       // One inbox, no other copy: its sync's failure counts, so it isn't asked every minute.
       multi({});
       api = withInboxes(setup(file), [EMAILS[0]]); sp(api).spamSave("about to ship");

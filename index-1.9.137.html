@@ -15898,14 +15898,15 @@ async function spamMove(){
 // as the caller asks. One run per mailbox at a time (SPAM_MOVING, by cleanBoxKey: a copy of a mailbox saved twice counts as it).
 // When each ran, with which searches, goes in SPAM_MOVES_AT, which the 10 minutes' run goes by: also when it couldn't read Spam,
 // so a mailbox that fails isn't asked again every minute, unless a sync's run failed on one copy of a mailbox saved twice while
-// another copy may still work (no syncError: the sync doesn't try the others, the 10 minutes' run does, within the minute). When
+// another copy may still work (its own last read of Spam didn't fail, SPAM_LIST_FAILED: a syncError can be old, on a copy not on
+// Auto; the sync doesn't try the others, the 10 minutes' run does, within the minute). When
 // a run last went through, read and moved, goes in SPAM_MOVES_OK, kept across a lock (by a hash of the mailbox, with the
 // searches' words), and every run, a sync's too, looks back at least that far (spamMovesDays), so a lock or a sleep of days, a
 // sync whose own run was skipped while the 10 minutes' run held its mailbox, or an inbox's address changed to another mailbox
 // misses nothing; a move that failed leaves it as it was, for the next run. One limit, desktop 14's: a run reads the newest
 // 3000 emails in Spam from that far back (listSpam's partial), and counts as gone through. Answers how many moved; out.failed
 // says Spam couldn't be read (another copy of the mailbox may).
-const SPAM_MOVES_SWEPT = new Map(), SPAM_MOVES_AT = new Map(), SPAM_MOVES_OK = new Map(), SPAM_MOVING = new Set();
+const SPAM_MOVES_SWEPT = new Map(), SPAM_MOVES_AT = new Map(), SPAM_MOVES_OK = new Map(), SPAM_MOVING = new Set(), SPAM_LIST_FAILED = new Set();
 const spamOkKey = (box) => syncHash("spam|" + box);
 const spamMovesKey = (qs) => qs.map(q => spamWords(q).join(" ")).sort().join("\n");
 async function spamMovesRun(inbox, days, out){
@@ -15924,8 +15925,8 @@ async function spamMovesRun(inbox, days, out){
     let r;
     try { r = await window.pvDesktop.listSpam(Object.assign({days:Math.min(90, swept ? days : Math.max(days, 30))}, cfg)); } catch(e){ r = null; }
     if (S !== vault) return 0;
-    if (!r || !r.ok){ if (out) out.failed = true; return 0; }
-    read = true;
+    if (!r || !r.ok){ SPAM_LIST_FAILED.add(inbox.id); if (out) out.failed = true; return 0; }
+    read = true; SPAM_LIST_FAILED.delete(inbox.id);
     if (r.noSpam){ done(); return 0; }
     // The searches as they are now: one taken off meanwhile moves nothing.
     const now = spamMoves();
@@ -15938,7 +15939,7 @@ async function spamMovesRun(inbox, days, out){
     return m.moved || 0;
   } finally {
     SPAM_MOVING.delete(box);
-    if (S === vault && (read || out || !cleanCopies(inbox).some(c => !c.syncError))) SPAM_MOVES_AT.set(box, {at:Date.now(), key});
+    if (S === vault && (read || out || cleanCopies(inbox).every(c => SPAM_LIST_FAILED.has(c.id)))) SPAM_MOVES_AT.set(box, {at:Date.now(), key});
   }
 }
 // How far back a run looks on a mailbox at least: to the start of its last run that went through, with a day's room (3 days at

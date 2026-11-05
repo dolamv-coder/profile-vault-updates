@@ -1638,7 +1638,8 @@ sync is on or not, and the next copy, `cleanCopies`, when one's Spam can't be re
 was 10 minutes ago (9.5 to 10.5, by the minute's check) or with other searches (`SPAM_MOVES_AT`, by `cleanBoxKey`: `{at, key}`,
 `spamMovesKey`; a sync's run counts, so it isn't run twice, and a run that couldn't read Spam counts too, so a mailbox that fails
 is asked every 10 minutes, not every minute, except a sync's on one copy of a mailbox saved twice while another copy may still
-work (no `syncError`), which the sync doesn't try; cleared at lock, and never noted by a run the vault locked during), so a
+work (its own last read of Spam didn't fail, `SPAM_LIST_FAILED` by inbox id: a `syncError` can be old, on a copy not on Auto),
+which the sync doesn't try; cleared at lock, and never noted by a run the vault locked during), so a
 search saved here or synced in from another computer goes within the minute with its 30-day look-back. Every run, a sync's too,
 looks back at least to the start of the mailbox's last run that went through, read and moved (`SPAM_MOVES_OK`, kept across a
 lock, by a hash of the mailbox, `spamOkKey`, with the searches' words), with a day's room, 3 days at least (`SPAM_MOVES_DAYS`)
