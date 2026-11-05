@@ -78,13 +78,14 @@ function pageApi(path) {
     + block("// Important mail the cleaner must never offer", "function renderClean(){")
     + block("const FOLDER_NAME = ", "// Auto-clean: while the vault is unlocked")
     + block("const autoCleanCfg = ", "function autoCleanHTML(){")
-    + block("const norm = ", "\n") + "\n" + block("function mailboxKey(email){", "\n}\n") + "\n}\n";
+    + block("const norm = ", "\n") + "\n" + block("function syncHash(str){", "\n}\n") + "\n}\n" + block("function mailboxKey(email){", "\n}\n") + "\n}\n";
   const prelude = `let S = null; const DESK = true, CAN_CLEAN = true, CAN_CLEAN_SPAM = true, UI = {view:"orders"};
     const CLEAN_OLD_APP = !(window.pvDesktop.version >= 10);
     const CLEAN = { inboxId:"", days:30, folder:"all", busy:"", progress:"", phase:"", result:null, sel:new Set() };
     const toasts = []; const toast = (m) => toasts.push(m); const renderMain = () => {}; const persist = () => {};
     const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
     const inboxById = (id) => (S.inboxes || []).find(i => i.id === id) || null;
+    const SYNCING = new Map();
     const STUB = new Proxy(function(){}, { get: (t, k) => k === Symbol.toPrimitive ? () => 0 : k === "then" ? undefined : STUB, set: () => true, apply: () => STUB, construct: () => STUB });
     const OTHER = new Proxy({}, { has: (t, k) => typeof k === "string" && !["window", "localStorage"].includes(k) && !(k in globalThis) && (() => { try { eval(k); return false; } catch (e) { return true; } })(), get: (t, k) => (k === Symbol.unscopables ? undefined : STUB), set: () => true });
     const confirmDialog = async () => true, document = { getElementById: () => null };
@@ -92,7 +93,10 @@ function pageApi(path) {
   return new Function("window", "localStorage", prelude + code
     + `return {setS: (s) => { S = s; }, getS: () => S, lock: () => { S = null; }, CLEAN, toasts, cleanTrash: typeof cleanTrash === "function" ? cleanTrash : null, applyCleanSafety, cleanScan, runAutoClean, clearStore, CLEAN_RULES,
       KEY: CLEAN_RULES_KEY, CODE_RULES: typeof CLEAN_CODE_RULES !== "undefined" ? CLEAN_CODE_RULES : null,
-      UI, spam: typeof spamSearch === "function" ? { SPAM, CAN_SPAM_MOVE, spamSearch, spamMove, spamMovesRun, spamMatch, spamMoveQuery, spamSave, spamMoves, SPAM_MOVES_SWEPT } : null};`);
+      UI, SYNCING, setAutoCleanRunning: (v) => { autoCleanRunning = v; },
+      spam: typeof spamSearch === "function" ? { SPAM, CAN_SPAM_MOVE, spamSearch, spamMove, spamMovesRun, spamMatch, spamMoveQuery, spamSave, spamMoves, SPAM_MOVES_SWEPT,
+        tick: typeof spamMovesTick === "function" ? spamMovesTick : null, AT: typeof SPAM_MOVES_AT !== "undefined" ? SPAM_MOVES_AT : null,
+        MOVING: typeof SPAM_MOVING !== "undefined" ? SPAM_MOVING : null, OK: typeof SPAM_MOVES_OK !== "undefined" ? SPAM_MOVES_OK : null } : null};`);
 }
 // localStorage that works (full: its writes fail, as when storage is full), or one that throws (a browser that blocks storage).
 const memStore = () => { const m = new Map(); const st = { full: false, getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { if (st.full) throw new Error("QuotaExceededError"); m.set(k, String(v)); }, removeItem: (k) => m.delete(k), m }; return st; };
@@ -1259,6 +1263,329 @@ if (HAS_SPAM) {
       assert.equal(after.r.protectedCount, before.r.protectedCount + 1, folder + ": kept safe");
     }
   });
+
+  // ---- Saved searches every 10 minutes on their own (1.9.137) ----
+  const HTML = readFileSync(file, "utf8"), HAS_TICK = /async function spamMovesTick\(/.test(HTML);
+  if (!HAS_TICK && !process.argv[2]) assert.fail(`${file} has no spamMovesTick: saved searches don't run every 10 minutes any more (update this test if that's on purpose)`);
+  if (HAS_TICK) {
+    const MIN = 60000, start = NOW;
+    const lists = () => (SERVER.lists || []).map((c) => [c.email, c.days]);
+    const three = () => multi(Object.fromEntries(EMAILS.map((e, i) => [e, acct([], spamBox("abc"[i] + ":"))])));
+
+    await test("Saved searches run on their own every 10 minutes, each mailbox once, and say what moved", async () => {
+      three();
+      const api = withInboxes(setup(file)); sp(api).spamSave("about to ship");
+      await sp(api).tick();
+      assert.deepEqual(lists(), EMAILS.map((e) => [e, 30]), "each Spam, 30 days back the first time");
+      assert.deepEqual(SERVER.moved.slice().sort(), ["a:ship", "a:ship-hme", "b:ship", "b:ship-hme", "c:ship", "c:ship-hme"]);
+      assert.deepEqual(api.toasts, EMAILS.map((e) => `${e}: moved 2 emails out of Spam`));
+      await sp(api).tick();
+      NOW += 9 * MIN; await sp(api).tick();
+      assert.equal(SERVER.lists.length, 3, "not again for 10 minutes");
+      SERVER.accounts[EMAILS[1]].boxes.Spam.msgs.push(msg("b:ship2", { name: "Target", address: HME("orders", "oe.target.com"), subject: "Items from order #902000000000009 are about to ship.", at: NOW - MIN }));
+      NOW += MIN; await sp(api).tick();
+      assert.deepEqual(lists().slice(3), EMAILS.map((e) => [e, 3]), "then each 10 minutes, 3 days back");
+      assert.ok(SERVER.moved.includes("b:ship2"));
+      assert.equal(api.toasts.at(-1), `${EMAILS[1]}: moved 1 email out of Spam`, "only what moved is told");
+      assert.equal(api.toasts.length, 4);
+      assert.ok(!SERVER.moved.includes("a:member") && !SERVER.moved.includes("a:phish") && !SERVER.moved.includes("a:news"), "what no search matches stays");
+      assert.equal(sp(api).MOVING.size, 0);
+      NOW = start;
+    });
+
+    await test("A sync's run counts: that mailbox waits 10 minutes, the others go; a copy saved twice is read once, the other copy when it can't be", async () => {
+      three();
+      let api = withInboxes(setup(file)); sp(api).spamSave("about to ship");
+      await sp(api).spamMovesRun(api.getS().inboxes[0], 7);   // as one@'s sync does
+      await sp(api).tick();
+      assert.deepEqual(lists(), [[EMAILS[0], 30], [EMAILS[1], 30], [EMAILS[2], 30]]);
+      NOW += 10 * MIN; await sp(api).tick();
+      assert.equal(SERVER.lists.length, 6);
+      NOW = start;
+      // sam.one@gmail.com and samone@gmail.com are one mailbox: the copy that signs in is read, once.
+      multi({ "samone@gmail.com": acct([], spamBox("a:")), [EMAILS[1]]: acct([], spamBox("b:")) });
+      api = withInboxes(setup(file), ["sam.one@gmail.com", "samone@gmail.com", EMAILS[1]]); sp(api).spamSave("about to ship");
+      await sp(api).tick();
+      assert.deepEqual(lists(), [["sam.one@gmail.com", 30], ["samone@gmail.com", 30], [EMAILS[1], 30]], "the old copy can't sign in: the other is read");
+      assert.deepEqual(SERVER.moved.slice().sort(), ["a:ship", "a:ship-hme", "b:ship", "b:ship-hme"]);
+      NOW += 3 * MIN; await sp(api).tick();
+      assert.equal(SERVER.lists.length, 3, "and the mailbox waits its 10 minutes, the copy that failed too");
+      NOW = start;
+      // The copy whose last check failed goes after the one that works (cleanMailboxes), so it isn't tried at all.
+      multi({ "samone@gmail.com": acct([], spamBox("a:")) });
+      api = withInboxes(setup(file), ["sam.one@gmail.com", "samone@gmail.com"]); sp(api).spamSave("about to ship");
+      api.getS().inboxes[0].syncError = "Invalid credentials";
+      await sp(api).tick();
+      assert.deepEqual(lists(), [["samone@gmail.com", 30]]);
+    });
+
+    await test("A mailbox that can't sign in is asked again in 10 minutes, not every minute; the others go on", async () => {
+      multi({ [EMAILS[0]]: acct([], spamBox("a:")), [EMAILS[2]]: acct([], spamBox("c:")) });   // two@ can't sign in
+      const api = withInboxes(setup(file)); sp(api).spamSave("about to ship");
+      await sp(api).tick();
+      assert.deepEqual(lists().map((l) => l[0]), EMAILS);
+      assert.deepEqual(SERVER.moved.slice().sort(), ["a:ship", "a:ship-hme", "c:ship", "c:ship-hme"]);
+      for (let m = 1; m < 10; m++) { NOW += MIN; await sp(api).tick(); }
+      assert.equal(SERVER.lists.length, 3);
+      NOW += MIN; await sp(api).tick();
+      assert.equal(SERVER.lists.length, 6);
+      assert.equal(lists()[4][1], 30, "two@'s first look-back is still owed");
+      NOW = start;
+    });
+
+    await test("It waits while email syncs, Clean emails or Find in Spam is busy, or auto-clean runs, and goes at the next check", async () => {
+      three();
+      const api = withInboxes(setup(file)); sp(api).spamSave("about to ship");
+      api.SYNCING.set("ib-two", "Connecting…"); await sp(api).tick();
+      api.SYNCING.clear(); api.CLEAN.busy = "scan"; await sp(api).tick();
+      api.CLEAN.busy = "spam-move"; await sp(api).tick();
+      api.CLEAN.busy = ""; api.setAutoCleanRunning(true); await sp(api).tick();
+      assert.equal(SERVER.lists, undefined, "nothing while any of those");
+      api.setAutoCleanRunning(false);
+      // A sync starting while it runs: it stops after that mailbox, and the next check does the rest.
+      let first = true;
+      const hooked = withInboxes(setup(file, memStore(), { afterList: () => { if (first) { first = false; hooked.SYNCING.set("ib-one", "Syncing…"); } } }));
+      sp(hooked).spamSave("about to ship");
+      await sp(hooked).tick();
+      assert.deepEqual(lists(), [[EMAILS[0], 30]]);
+      hooked.SYNCING.clear(); NOW += MIN; await sp(hooked).tick();
+      assert.deepEqual(lists(), EMAILS.map((e) => [e, 30]), "the rest a minute later, one@ not again");
+      NOW = start;
+    });
+
+    await test("One run per mailbox at a time: a sync's and the 10 minutes' don't overlap, nor two checks", async () => {
+      three();
+      let release, paused = false;
+      const api = withInboxes(setup(file, memStore(), { beforeList: (cfg) => cfg.email === EMAILS[0] && !paused ? (paused = true, new Promise((r) => { release = r; })) : null }));
+      sp(api).spamSave("about to ship");
+      const sync = sp(api).spamMovesRun(api.getS().inboxes[0], 7);   // one@'s sync, waiting on its Spam
+      await new Promise((r) => setTimeout(r, 5));
+      assert.equal(await sp(api).spamMovesRun(api.getS().inboxes[0], 7), 0, "a second run on one@ does nothing");
+      const tick = sp(api).tick(), again = sp(api).tick();
+      await again; await new Promise((r) => setTimeout(r, 5));
+      release(); await sync; await tick;
+      assert.deepEqual(lists(), EMAILS.map((e) => [e, 30]), "one@ once (the sync's), the others once");
+      assert.equal(SERVER.moved.length, 6);
+      assert.equal(sp(api).MOVING.size, 0);
+    });
+
+    await test("A search saved, or synced in, goes within the minute with its 30-day look-back; none left, nothing runs", async () => {
+      multi({ [EMAILS[0]]: acct([], spamBox("a:", { oldDays: 20 })) });
+      const api = withInboxes(setup(file), [EMAILS[0]]); sp(api).spamSave("about to ship");
+      await sp(api).tick();
+      assert.ok(SERVER.moved.includes("a:old"), "20 days old: the first look-back reaches it");
+      NOW += MIN; await sp(api).tick();
+      assert.equal(SERVER.lists.length, 1);
+      sp(api).spamSave("top deals");
+      NOW += MIN; await sp(api).tick();
+      assert.deepEqual(lists()[1], [EMAILS[0], 30]);
+      assert.ok(SERVER.moved.includes("a:news"));
+      api.getS().settings.spamMoves = Object.assign({}, api.getS().settings.spamMoves, { "your membership": { q: "your membership", at: 1 } });   // from another computer
+      NOW += MIN; await sp(api).tick();
+      assert.deepEqual(lists()[2], [EMAILS[0], 30]);
+      assert.ok(SERVER.moved.includes("a:member"));
+      api.getS().settings.spamMoves = {};
+      NOW += 20 * MIN; await sp(api).tick();
+      assert.equal(SERVER.lists.length, 3, "no saved search: Spam isn't read");
+      NOW = start;
+    });
+
+    await test("Locking stops it (and a lock and unlock meanwhile), and a download before 14 runs nothing", async () => {
+      three();
+      const api = withInboxes(setup(file, memStore(), { afterList: () => api.lock() })); sp(api).spamSave("about to ship");
+      await sp(api).tick();
+      assert.deepEqual(lists(), [[EMAILS[0], 30]]);
+      assert.deepEqual(SERVER.moved, [], "nothing moves once locked");
+      assert.deepEqual(api.toasts, []);
+      assert.equal(sp(api).AT.size, 0, "nor is a run noted for the next unlock");
+      // Locked and unlocked again while Spam was read: another copy of the vault, with the same saved searches.
+      three();
+      const again = withInboxes(setup(file, memStore(), { afterList: () => again.setS(JSON.parse(JSON.stringify(again.getS()))) }));
+      sp(again).spamSave("about to ship");
+      await sp(again).tick();
+      assert.deepEqual(lists(), [[EMAILS[0], 30]], "the run stops there");
+      assert.deepEqual(SERVER.moved, []);
+      assert.deepEqual(again.toasts, []);
+      assert.equal(sp(again).AT.size, 0);
+      three();
+      const old = withInboxes(setup(file, memStore(), { noSpamMove: true }));
+      old.getS().settings.spamMoves = { "about to ship": { q: "about to ship", at: 1 } };
+      await sp(old).tick();
+      assert.equal(SERVER.lists, undefined);
+    });
+
+    await test("After a lock or a sleep of days it looks back to its last run that went through, so an inbox not on Auto misses nothing", async () => {
+      multi({ [EMAILS[0]]: acct([], spamBox("a:")) });
+      const api = withInboxes(setup(file), [EMAILS[0]]); sp(api).spamSave("about to ship");
+      api.getS().inboxes[0].auto = false;   // no email sync runs the searches on it
+      await sp(api).tick();
+      const add = (id, daysOld) => SERVER.accounts[EMAILS[0]].boxes.Spam.msgs.push(msg(id, { name: "Target", address: "orders@oe.target.com", subject: "Items from order #902000000000011 are about to ship.", at: NOW - daysOld * DAY }));
+      // Locked 5 days with FAFO open (the lock forgets when each mailbox ran), then unlocked.
+      NOW += 5 * DAY; sp(api).AT.clear(); add("a:locked", 4);
+      await sp(api).tick();
+      assert.deepEqual(lists().at(-1), [EMAILS[0], 6], "back to the last run, with a day's room");
+      assert.ok(SERVER.moved.includes("a:locked"), "the 4-day-old match moves");
+      NOW += 10 * MIN; await sp(api).tick();
+      assert.deepEqual(lists().at(-1), [EMAILS[0], 3], "then 3 days again");
+      // Asleep 8 days, unlocked.
+      NOW += 8 * DAY; add("a:asleep", 7);
+      await sp(api).tick();
+      assert.deepEqual(lists().at(-1), [EMAILS[0], 9]);
+      assert.ok(SERVER.moved.includes("a:asleep"));
+      NOW += 60 * DAY; await sp(api).tick();
+      assert.deepEqual(lists().at(-1), [EMAILS[0], 30], "30 days at most");
+      NOW = start;
+    });
+
+    await test("A sync whose own run is skipped while the 10 minutes' run holds the mailbox loses nothing", async () => {
+      multi({ [EMAILS[0]]: acct([], spamBox("a:")) });
+      let release = null, n = 0;
+      const api = withInboxes(setup(file, memStore(), { beforeList: () => ++n === 2 ? new Promise((r) => { release = r; }) : null }), [EMAILS[0]]);
+      sp(api).spamSave("about to ship");
+      await sp(api).tick();
+      NOW += 6 * DAY;   // the computer slept, unlocked; the minute's check fires before the sync
+      SERVER.accounts[EMAILS[0]].boxes.Spam.msgs.push(msg("a:slept", { name: "Target", address: "orders@oe.target.com", subject: "Items from order #902000000000012 are about to ship.", at: NOW - 5 * DAY }));
+      const tick = sp(api).tick();
+      await new Promise((r) => setTimeout(r, 5));
+      assert.equal(await sp(api).spamMovesRun(api.getS().inboxes[0], 9), 0, "the sync's own run is skipped");
+      release(); await tick;
+      assert.deepEqual(lists().at(-1), [EMAILS[0], 7], "the 10 minutes' run looked back over the whole sleep");
+      assert.ok(SERVER.moved.includes("a:slept"));
+      NOW = start;
+    });
+
+    await test("A sync failing on one copy of a mailbox saved twice doesn't hold back the copy that works; one inbox's failure still counts", async () => {
+      multi({ "samone@gmail.com": acct([], spamBox("a:")) });   // sam.one@gmail.com has an old password
+      let api = withInboxes(setup(file), ["sam.one@gmail.com", "samone@gmail.com"]); sp(api).spamSave("about to ship");
+      const [broken] = api.getS().inboxes;
+      broken.syncError = "Invalid credentials";   // as its sync left it
+      const at = [];
+      for (let m = 0; m <= 60; m++) {
+        if (m % 15 === 0) { api.SYNCING.set(broken.id, "Syncing…"); await sp(api).spamMovesRun(broken, 7); api.SYNCING.delete(broken.id); }   // its 15 minutes' sync
+        const before = (SERVER.lists || []).length;
+        await sp(api).tick();
+        if ((SERVER.lists || []).slice(before).some((c) => c.email === "samone@gmail.com")) at.push(m);
+        NOW += MIN;
+      }
+      assert.deepEqual(at, [0, 10, 20, 30, 40, 50, 60], "the copy that works, every 10 minutes from the start");
+      NOW = start;
+      // The copy that works isn't on Auto and still has an old error from a sync that failed once: still every 10 minutes.
+      multi({ "samone@gmail.com": acct([], spamBox("a:")) });
+      api = withInboxes(setup(file), ["sam.one@gmail.com", "samone@gmail.com"]); sp(api).spamSave("about to ship");
+      const [old, works] = api.getS().inboxes;
+      old.syncError = "Invalid credentials"; works.syncError = "Couldn't connect"; works.auto = false;
+      at.length = 0;
+      for (let m = 0; m <= 60; m++) {
+        if (m % 15 === 0) { api.SYNCING.set(old.id, "Syncing…"); await sp(api).spamMovesRun(old, 7); api.SYNCING.delete(old.id); }
+        const before = (SERVER.lists || []).length;
+        await sp(api).tick();
+        if ((SERVER.lists || []).slice(before).some((c) => c.email === "samone@gmail.com")) at.push(m);
+        NOW += MIN;
+      }
+      assert.deepEqual(at, [0, 10, 20, 30, 40, 50, 60], "an old syncError doesn't count as Spam failing");
+      NOW = start;
+      // The copy that works fails to read Spam once, then reads it again: from then on it's every 10 minutes again.
+      multi({ "samone@gmail.com": acct([], spamBox("a:")) });
+      let blip = true;
+      api = withInboxes(setup(file, memStore(), { beforeList: (cfg) => { if (cfg.email === "samone@gmail.com" && blip) { blip = false; throw new Error("network"); } } }), ["sam.one@gmail.com", "samone@gmail.com"]);
+      sp(api).spamSave("about to ship");
+      api.getS().inboxes[0].syncError = "Invalid credentials";
+      const ok = [];
+      for (let m = 0; m <= 60; m++) {
+        const ib0 = api.getS().inboxes[0];
+        if (m % 15 === 0) { api.SYNCING.set(ib0.id, "Syncing…"); await sp(api).spamMovesRun(ib0, 7); api.SYNCING.delete(ib0.id); }
+        const before = (SERVER.lists || []).length;
+        await sp(api).tick();
+        if ((SERVER.lists || []).slice(before).some((c) => c.email === "samone@gmail.com") && !blip) ok.push(m);
+        NOW += MIN;
+      }
+      assert.deepEqual(ok.slice(1), [10, 20, 30, 40, 50, 60], "after the blip, every 10 minutes: " + ok);
+      NOW = start;
+      // One inbox, no other copy: its sync's failure counts, so it isn't asked every minute.
+      multi({});
+      api = withInboxes(setup(file), [EMAILS[0]]); sp(api).spamSave("about to ship");
+      await sp(api).spamMovesRun(api.getS().inboxes[0], 7);
+      for (let m = 1; m < 10; m++) { NOW += MIN; await sp(api).tick(); }
+      assert.equal(SERVER.lists.length, 1, "only the sync's");
+      NOW += MIN; await sp(api).tick();
+      assert.equal(SERVER.lists.length, 2);
+      NOW = start;
+    });
+
+    await test("A move that failed (stopped, or refused: the Spam folder changed) is tried again, back to the last run that went through (30 days when none has)", async () => {
+      for (const how of ["throws", "refused"]) {
+        multi({ [EMAILS[0]]: acct([], spamBox("a:", { oldDays: 20 })) });
+        let first = true;
+        const api = withInboxes(setup(file, memStore(), {
+          beforeSpamMove: () => { if (how === "throws" && first) { first = false; throw new Error("connection lost"); } },
+          afterList: () => { if (how === "refused" && first) { first = false; const b = SERVER.accounts[EMAILS[0]].boxes.Spam; b.v = String(Number(b.v) + 1); } },
+        }), [EMAILS[0]]);
+        sp(api).spamSave("about to ship");
+        await sp(api).tick();
+        assert.deepEqual(SERVER.moved, [], how);
+        NOW += 10 * MIN; await sp(api).tick();
+        assert.deepEqual(lists(), [[EMAILS[0], 30], [EMAILS[0], 30]], how + ": 30 days again, not 3");
+        assert.ok(SERVER.moved.includes("a:old"), how + ": the 20-day-old one moves");
+        // Once one has gone through, a failed move is tried again looking back to it: 3 days, not 30.
+        SERVER.accounts[EMAILS[0]].boxes.Spam.msgs.push(msg("a:new", { name: "Target", address: "orders@oe.target.com", subject: "Items from order #902000000000014 are about to ship.", at: NOW - MIN }));
+        first = true; NOW += 10 * MIN; await sp(api).tick();
+        assert.ok(!SERVER.moved.includes("a:new"), how);
+        NOW += 10 * MIN; await sp(api).tick();
+        assert.deepEqual(lists().slice(2), [[EMAILS[0], 3], [EMAILS[0], 3]], how);
+        assert.ok(SERVER.moved.includes("a:new"), how + ": moved on the next run");
+        NOW = start;
+      }
+    });
+
+    await test("A sync's run looks back to the last run that went through too: after a sleep, or an inbox's address changed to another mailbox", async () => {
+      multi({ [EMAILS[0]]: acct([], spamBox("a:")), [EMAILS[1]]: acct([], spamBox("b:", { oldDays: 20 })) });
+      const api = withInboxes(setup(file), [EMAILS[0]]); sp(api).spamSave("about to ship");
+      const ib = api.getS().inboxes[0];
+      await sp(api).spamMovesRun(ib, 7);
+      assert.deepEqual(lists(), [[EMAILS[0], 30]]);
+      NOW += 10 * DAY;
+      SERVER.accounts[EMAILS[0]].boxes.Spam.msgs.push(msg("a:slept8", { name: "Target", address: "orders@oe.target.com", subject: "Items from order #902000000000013 are about to ship.", at: NOW - 8 * DAY }));
+      await sp(api).spamMovesRun(ib, 7);   // the sync's, whose own look-back is 7 days
+      assert.deepEqual(lists().at(-1), [EMAILS[0], 11]);
+      assert.ok(SERVER.moved.includes("a:slept8"));
+      // The same inbox now pointing at another mailbox: its first look-back is 30 days, not the sync's 7.
+      ib.email = EMAILS[1];
+      await sp(api).spamMovesRun(ib, 7);
+      assert.deepEqual(lists().at(-1), [EMAILS[1], 30]);
+      assert.ok(SERVER.moved.includes("b:old"), "the 20-day-old one there moves");
+      assert.ok([...sp(api).OK.keys()].every((k) => !k.includes("@")), "kept by a hash of the mailbox, not its address");
+      NOW = start;
+    });
+
+    await test("A mailbox saved twice whose copies all fail is signed in to no more than before: each sync's failure counts", async () => {
+      multi({});   // neither copy can sign in
+      const api = withInboxes(setup(file), ["sam.one@gmail.com", "samone@gmail.com"]); sp(api).spamSave("about to ship");
+      const per = new Map();
+      for (let m = 0; m < 60; m++) {
+        if (m % 15 === 0) for (const ib of api.getS().inboxes) {   // each copy's 15 minutes' sync
+          api.SYNCING.set(ib.id, "Syncing…"); await sp(api).spamMovesRun(ib, 7); ib.syncError = "Invalid credentials"; api.SYNCING.delete(ib.id);
+        }
+        const before = (SERVER.lists || []).length;
+        await sp(api).tick();
+        per.set(m, (SERVER.lists || []).length - before);
+        NOW += MIN;
+      }
+      assert.equal(SERVER.lists.length, 16, "4 syncs of 2 copies, and the 10 minutes' run 4 times between them");
+      assert.ok([...per.values()].every((n) => n <= 2));
+      NOW = start;
+    });
+
+    await test("The page runs it from unlock, update restarts wait for it, locking forgets when each ran, and it says every 10 minutes", () => {
+      const fn = (name) => { const i = HTML.indexOf(name); assert.ok(i >= 0, name); return HTML.slice(i, HTML.indexOf("\n}\n", i)); };
+      assert.match(fn("function startApp(){"), /scheduleSpamMoves\(\)/);
+      assert.match(fn("function autoUpdBlock("), /SPAM_MOVING\.size[^\n]*return "busy"/);
+      assert.match(HTML, /SPAM\.result = null;[^\n]*\n\s*SPAM_MOVES_AT\.clear\(\);/);
+      assert.match(fn("function scheduleSpamMoves(){"), /setInterval\(\(\) => \{ if \(S\) spamMovesTick\(\); \}, 60 \* 1000\)/);
+      const page = fn("function spamHTML(){");
+      assert.ok(!/on every sync/.test(page), "Find in Spam doesn't say on every sync any more");
+      assert.match(page, /Keep moving emails like these out of Spam every 10 minutes/);
+    });
+  }
 }
 
 Date.now = realNow;
