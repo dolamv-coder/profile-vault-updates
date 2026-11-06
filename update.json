@@ -1,10 +1,10 @@
 {
-  "version": "1.9.137",
-  "url": "index-1.9.137.html",
-  "sha256": "9135dee96cf73690c82b035a5d2dd31f45cbf08069fd8d2329a444fb4ff0fe88",
-  "signature": "0nMUmEtD84D4pi3kGpungL0ysLSr7M5fiuefOYzi3szZ8XLnbEIYVtSRoh0xRhplTed9nV1QSfDV3xsYYtRCBQ==",
+  "version": "1.9.138",
+  "url": "index-1.9.138.html",
+  "sha256": "f51d1e626fa0083e2aee5ed29d33b9a476b82365a5233d6e92ffadc7e6c41097",
+  "signature": "Yh6NAfleSeQZs94rSHYxX4ToQ4YCcw66E54te0FmlVWzMnfLHsnx2YCAIqXq6DJH4DeoLIkTJwE7DV5dTC0cDw==",
   "minAppVersion": "0",
-  "notes": "Find in Spam's saved searches now run every 10 minutes while FAFO is open and unlocked, not only when it syncs your email. After a search, tick “Keep moving emails like these” and FAFO moves every email that matches out of Spam by itself; a search you save starts within a minute. Like Find in Spam, it needs the FAFO download from 1.9.136 or newer.",
+  "notes": "Your seller can now send orders they place for you straight to your Orders page, with the ship-to name, address and tracking number, and each update as they ship and arrive. For sellers: tick orders on Orders and choose Send to buyer; FAFO can also send that buyer future orders to the same address by itself.",
   "installerUrl": "",
-  "publishedAt": "2026-11-05T20:23:57.881Z"
+  "publishedAt": "2026-11-06T11:32:41.288Z"
 }
