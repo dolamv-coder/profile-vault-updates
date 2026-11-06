@@ -31,7 +31,7 @@ const code = [
   block("const pkcNum = ", "// One key per building"), fn("function pkcForms(b){"),   // Jig for Pokémon Center's ways of writing an address
   block("/* SHARE-START", "/* SHARE-END */"),
   block("const SHARE = {busy", "// Send to buyer, on the Orders selection bar"),
-  line(/^const SELLER_DET_FROM = .*$/m), fn("async function pollSellerAlerts(){"), fn("function applySellerAlerts(list){"),
+  line(/^const SELLER_DET_FROM = .*$/m), fn("async function pollSellerAlerts(){"), fn("function applySellerAlerts(list, seenBefore){"),
 ].join("\n");
 const prelude = `let S = null; const MODE = "vault"; let OWNER = true; const UI = {view:"orders"}; const calls = [];
   const isPremiumOwner = () => OWNER, sellerLic = () => "PVLT-TEST-TEST-TEST-TEST", persist = () => {}, renderMain = () => {}, refreshPremium = () => calls.push("premium");
@@ -59,9 +59,11 @@ const oneLine = (v, state = "TX") => `${v.line1}${v.line2 ? ", " + v.line2 : ""}
 console.log("The address key");
 await test("every way Jig for Target writes an address has its key, and another street, number or ZIP doesn't", () => {
   for (const a of [{ line1: "1801 N Orchard Dr", line2: "Apt 4", city: "Saint Paul", zip: "55101" }, { line1: "200 18th Ave NW", line2: "", city: "Austin", zip: "78701" },
-    { line1: "500 W 21st St", line2: "Unit 12", city: "Fort Worth", zip: "76102" }, { line1: "77 Meadow Ln", line2: "", city: "Mount Vernon", zip: "10550" }]) {
+    { line1: "500 W 21st St", line2: "Unit 12", city: "Fort Worth", zip: "76102" }, { line1: "77 Meadow Ln", line2: "", city: "Mount Vernon", zip: "10550" },
+    { line1: "120 Oak Falls", line2: "Apt 3", city: "Austin", zip: "78701" }, { line1: "100 State St", line2: "", city: "Austin", zip: "78701" }, { line1: "100 County Road 12", line2: "", city: "Austin", zip: "78701" },
+    { line1: "5000 Nolensville Pike", line2: "Ste 4", city: "Nashville", zip: "37211" }, { line1: "100 Business Loop 70", line2: "", city: "Columbia", zip: "65203" }]) {
     const vs = api.jigChoices(a, ["line1", "line2", "city", "zip"]).order;
-    assert.ok(vs.length > 10, `Jig writes ${oneLine(a)} many ways: ${vs.length}`);
+    assert.ok(vs.length > 5, `Jig writes ${oneLine(a)} many ways: ${vs.length}`);
     const keys = new Set(vs.map((v) => api.shareAddrKey(oneLine(v)))), want = api.shareAddrKey(oneLine(a));
     assert.ok(want, oneLine(a));
     assert.deepEqual([...keys], [want], `${oneLine(a)}: ${[...keys].join(" / ")}`);
@@ -77,15 +79,32 @@ await test("every way Jig for Target writes an address has its key, and another 
   assert.equal(api.shareAddrKey("21 Twenty-First St, Austin, TX 78701"), api.shareAddrKey("21 21st Street, Austin, TX 78701"));
   assert.equal(api.shareAddrKey("P.O. Box 12, Austin, TX 78701"), api.shareAddrKey("PO Box 12, Austin, TX 78701"));
   assert.notEqual(api.shareAddrKey("PO Box 12, Austin, TX 78701"), api.shareAddrKey("PO Box 13, Austin, TX 78701"));
-  for (const none of ["", "Austin, TX", "1 Main St", "somewhere 78701", "One Main St, 2nd Floor, Austin, TX 78701", "4B, Austin, TX 78701"]) assert.equal(api.shareAddrKey(none), "", none);
+  for (const none of ["", "Austin, TX", "1 Main St", "somewhere 78701", "One Main St, 2nd Floor, Austin, TX 78701", "4B, Austin, TX 78701", "RR 2, Ozark, AR 72949",
+    "2 Floor, 100 Broadway, New York, NY 10006"]) assert.equal(api.shareAddrKey(none), "", none);
+  // A company, unit or c/o line before the street isn't taken for it.
+  assert.equal(api.shareAddrKey("7 Seas Logistics, 1 Reship Way, Wilmington, DE 19720"), api.shareAddrKey("1 Reship Way, Wilmington, DE 19720"));
+  assert.notEqual(api.shareAddrKey("7 Seas Logistics, 1 Reship Way, Wilmington, DE 19720"), api.shareAddrKey("7 Seas Logistics, 700 Commerce Dr, Wilmington, DE 19720"));
+  assert.equal(api.shareAddrKey("2 Floor, 100 Main St, Austin, TX 78701"), k.replace("1 MAIN", "100 MAIN"));
+  assert.equal(api.shareAddrKey("100 Broadway, Apt 4, New York, NY 10006"), api.shareAddrKey("100 Broadway, New York, NY 10006"), "a street with no type, when it's the only line with a number");
+  // A rural route's box on a line of its own is the address.
+  assert.notEqual(api.shareAddrKey("RR 2, Box 15, Ozark, AR 72949"), api.shareAddrKey("RR 2, Box 99, Ozark, AR 72949"));
+  assert.equal(api.shareAddrKey("RR 2, Box 15, Ozark, AR 72949"), api.shareAddrKey("RR 2 Box 15, Ozark, AR 72949"));
 });
 await test("a numbered road's own number is never taken for a unit, nor a word for one", () => {
   const key = (x) => api.shareAddrKey(x + ", Austin, TX 78701");
   for (const [a, b] of [["100 Route 66", "100 Route 9"], ["100 County Road 12", "100 County Road 13"], ["100 County Rd 12", "100 County Road 13"], ["100 State Road 84", "100 State Road 85"],
     ["100 N Loop 12", "100 N Loop 13"], ["100 State Route 9", "100 State Route 10"], ["100 Private Road 5", "100 Private Road 6"], ["100 Township Road 5", "100 Township Road 6"],
     ["100 Highway 50", "100 Highway 51"], ["100 Forest Service Road 5", "100 Forest Service Road 6"], ["100 Farm to Market Road 1960", "100 Farm to Market Road 1961"],
-    ["100 Old Lot Rd", "100 Old Office Park"], ["100 Broadway 473", "100 Broadway"], ["100 Park Road 4", "100 Park Road 5"]])
+    ["100 Old Lot Rd", "100 Old Office Park"], ["100 Broadway 473", "100 Broadway"], ["100 Park Road 4", "100 Park Road 5"],
+    ["100 Cty Rd 12", "100 Cty Rd 13"], ["100 Cnty Road 12", "100 Cnty Road 13"], ["100 Prvt Rd 5", "100 Prvt Rd 6"], ["100 Recreation Rd 12", "100 Recreation Rd 13"],
+    ["100 National Forest Rd 12", "100 National Forest Rd 13"], ["100 N Ranch Rd 620", "100 N Ranch Rd 2222"], ["100 N Forest Rd 12", "100 N Forest Rd 13"],
+    ["100 Ranch-to-Market Road 12", "100 Ranch-to-Market Road 13"], ["100 Farm-to-Market Road 12", "100 Farm-to-Market Road 13"], ["100 FS Rd 42", "100 FS Rd 11"],
+    ["21000 Pacific Coast Hwy 1", "21000 Pacific Coast Hwy 2"], ["100 Business Loop 70", "100 Business Loop 44"], ["100 Historic Route 66", "100 Historic Route 9"],
+    ["120 Oak Fls", "120 Oak Fld"], ["120 Oak Fls", "120 Oak Flt"], ["120 Oak Fls", "120 Oak"]])
     assert.notEqual(key(a), key(b), `${a} / ${b}`);
+  assert.equal(key("120 Oak Fls"), key("120 Oak Falls"), "Fls is a street type, not a floor");
+  assert.equal(key("100 Route 66 707"), key("100 Route 66"));
+  assert.equal(key("1 Main St B"), key("1 Main St Apt B"), "a letter unit written bare");
   assert.equal(key("100 County Road 12 595"), key("100 County Road 12"), "Jig for Pokémon Center's bare number after a road's own");
   assert.equal(key("100 County Rd 12"), key("100 County Road 12"));
   assert.equal(key("200 18th Ave NW 45"), key("200 18th Ave NW"));
@@ -94,7 +113,9 @@ await test("a numbered road's own number is never taken for a unit, nor a word f
 });
 await test("every way Jig for Pokémon Center writes a building has its key", () => {
   for (const b of [{ line1: "1801 N Orchard Dr", line2: "" }, { line1: "1801 N Orchard Dr", line2: "Apt 4" }, { line1: "500 W 21st St Apt 12", line2: "" }, { line1: "77 Meadow Ln", line2: "# 3" },
-    { line1: "100 County Road 12", line2: "" }, { line1: "200 18th Ave NW", line2: "" }]) {
+    { line1: "100 County Road 12", line2: "" }, { line1: "200 18th Ave NW", line2: "" }, { line1: "100 State St", line2: "" }, { line1: "100 Park Ave", line2: "" },
+    { line1: "100 N Park Ave", line2: "" }, { line1: "100 Maple Loop", line2: "" }, { line1: "5000 Nolensville Pike", line2: "" }, { line1: "100 Market St", line2: "Apt 4" },
+    { line1: "100 Forest Dr", line2: "" }, { line1: "1 Main St", line2: "Apt B" }, { line1: "120 Oak Fls", line2: "" }, { line1: "100 Route 66", line2: "" }]) {
     const want = api.shareAddrKey(oneLine({ ...b, city: "Austin", zip: "78701" }));
     assert.ok(want, b.line1);
     for (let round = 0; round < 20; round++) {
@@ -148,6 +169,9 @@ await test("it sends the order and where it is now, once each, with when each ha
   assert.equal(api.sharePlan([o], {}).size, 0);
   o.shipTo = "Sam B Buyer";
   assert.deepEqual(api.sharePlan([o], {}).get("b1")[0].steps, ["delivered"], "the ship-to name changed");
+  api.shareMark(o, api.sharePlan([o], {}).get("b1")[0], T0, ["updated"]);
+  o.shipAddr = "1 Main Street, Apt 2, Austin, TX 78701";
+  assert.deepEqual(api.sharePlan([o], {}).get("b1")[0].steps, ["delivered"], "the address changed");
   o.shareTo = { id: "b2", name: "@kim", by: "hand" };
   assert.deepEqual(api.sharePlan([o], {}).get("b2")[0].steps, ["placed", "delivered"]);
   assert.equal(api.sharePlan([o, order({ id: "zz", orderNo: "9", shareTo: { id: "b1", by: "hand" } })], {}, new Set(["zz"])).size, 1, "only the orders asked for");
@@ -162,6 +186,10 @@ await test("an order a remembered address sends gets that buyer once it's sent, 
   api.shareMark(q, api.sharePlan([q], addrs()).get("b1")[0], T0, ["other"]);
   assert.deepEqual([q.shareTo.off, q.shareTold], [true, undefined], "on an account given to another buyer: never by itself");
   assert.equal(api.sharePlan([q], addrs()).size, 0);
+  const h = order({ orderNo: "79" }), hit = api.sharePlan([h], addrs()).get("b1")[0];
+  h.shareTo = { id: "b2", name: "@kim", by: "hand" };   // picked by hand while that send was out
+  api.shareMark(h, hit, T0, ["other"]);
+  assert.deepEqual(h.shareTo, { id: "b2", name: "@kim", by: "hand" }, "a buyer picked by hand stays");
   const r = order({ orderNo: "78" });
   api.shareMark(r, api.sharePlan([r], addrs()).get("b1")[0], T0, ["bad"]);
   assert.deepEqual([r.shareTo, r.shareTold], [undefined, undefined]);
@@ -211,8 +239,10 @@ await test("a buyer the worker refuses is noted, left an hour, and the others st
   assert.equal(r.sent, 0); assert.equal(posts().length, 1, "a 5xx stops the run: the next buyer waits");
   assert.equal(orders[0].shareTold.steps.shipped, undefined, "not marked: it goes again");
   api.setServer(async () => { throw new Error("offline"); });
+  api.calls.length = 0;
   r = await api.reportSharedOrders();
   assert.equal(r.failed[0][1], "Couldn't reach the license server.");
+  assert.equal(posts().length, 1, "no connection: the next buyer isn't tried");
   api.setServer(async () => ok());
   r = await api.reportSharedOrders();
   assert.equal(r.sent, 2);
@@ -245,12 +275,41 @@ await test("it waits for a copy that has caught up with the online one, for a wi
     assert.equal(posts().length, 1, "by hand");
   }
 });
+await test("with nothing to send no sync round is started, and the wait's timer goes once the round caught up", async () => {
+  reset([order({ shareTo: { off: true } })], { on: true, caught: false });
+  await api.reportSharedOrders();
+  assert.deepEqual([api.W.soon, api.SHARE.want], [[], false], "nothing to send: no round");
+  const o = order({ shareTo: { id: "b1", name: "@sam", by: "hand" } });
+  reset([o], { on: true, caught: false }); api.setServer(async () => ok());
+  await api.reportSharedOrders();
+  assert.ok(api.SHARE.soon, "waiting a minute at most");
+  api.W.caught = true; api.sharedOrdersSynced();
+  assert.equal(api.SHARE.soon, null, "not another round a minute on");
+  await api.reportSharedOrders();
+  assert.ok(o.shareTold);
+});
+await test("sent by hand: orders already on that buyer's page with nothing new count as done", async () => {
+  const a = order({ id: "d1", orderNo: "D1", shareTo: { id: "b1", name: "@sam", by: "hand" } }), b = order({ id: "d2", orderNo: "D2", shareTo: { id: "b1", name: "@sam", by: "hand" } });
+  reset([a, b]); api.setServer(async () => ok());
+  await api.reportSharedOrders(new Set(["d1"]));
+  api.calls.length = 0;
+  const r = await api.reportSharedOrders(new Set(["d1", "d2"]));
+  assert.deepEqual([posts().length, r.byBuyer.b1.sent, r.byBuyer.b1.done], [1, 1, 1]);
+  assert.match(html, /const there = mine\.sent \+ mine\.done;/, "Send's toast counts them as there");
+  assert.match(html, /at:had && \+had\.at && !others\.length \? Math\.min\(\+had\.at, now\) : now/, "remembering again keeps its start only when no other buyer had the address");
+});
 await test("an order locked away meanwhile isn't marked; two runs at once go one after the other", async () => {
   const o = order({ shareTo: { id: "b1", name: "@sam", by: "hand" } });
   reset([o]);
   api.setServer(async () => { api.setS(null); return ok(); });
   await api.reportSharedOrders();
   assert.equal(o.shareTold, undefined);
+  const q = order({ shareTo: { id: "b1", name: "@sam", by: "hand" } });
+  reset([q]);
+  api.setServer(async () => ({ ok: true, status: 200, json: async () => { api.setS(null); return { ok: true }; } }));   // locked while the answer was read
+  await api.reportSharedOrders();
+  assert.equal(q.shareTold, undefined);
+  api.setS({ orders: [], settings: {} }); api.setServer(async () => { throw new Error("boom"); });
   const p = order({ shareTo: { id: "b1", name: "@sam", by: "hand" } });
   reset([p]);
   let open = 0, most = 0;
@@ -284,7 +343,7 @@ await test("an update brings what the seller changed, never over what the buyer 
   assert.equal(o.shipAddr, "1 Main Street, Apt 2, Austin, TX 78701"); assert.equal(o.tracking.length, 2); assert.equal(o.updatedAt, at, "details don't move the order");
   o.shipTo = "Sam B. (typed)";
   o.tracking.push({ number: "MANUAL1234", carrier: "other" });
-  o.tracking = o.tracking.filter((t) => t.number !== "1ZWY0000000000001");   // the buyer took one off
+  o.tracking = o.tracking.filter((t) => t.number !== "1ZWY0000000000001"); o.trkOff = ["1ZWY0000000000001"];   // the buyer took one off in the order editor
   news = api.applySellerAlerts([alert({ stage: "update", createdAt: T0 + 2000, shipTo: "Somebody Else", tracking: [{ number: "1ZWY0000000000001", carrier: "ups" }, { number: "TBA123456789012", carrier: "amazon" }, { number: "9400100000000000000009", carrier: "usps" }] })]);
   assert.equal(o.shipTo, "Sam B. (typed)", "the buyer's own name");
   assert.deepEqual(o.tracking.map((t) => t.number), ["TBA123456789012", "9400100000000000000009", "MANUAL1234"], "a new one added, the one the buyer took off stays off, the buyer's own last");
@@ -302,6 +361,37 @@ await test("an update brings what the seller changed, never over what the buyer 
   api.applySellerAlerts([alert()]);
   api.applySellerAlerts([alert({ stage: "update", createdAt: T0 + 1000, shipTo: "", shipAddr: "" })]);
   assert.deepEqual([t.orders[0].shipTo, t.orders[0].shipAddr], ["", ""], "cleared by the seller while it was still theirs");
+});
+await test("a number or ship-to a sync merge dropped comes back with the next row; one the buyer took off stays off until the seller drops it", () => {
+  const s = buyer(); api.setS(s);
+  const two = [{ number: "1ZWY0000000000001", carrier: "ups" }, { number: "TBA123456789012", carrier: "amazon" }];
+  api.applySellerAlerts([alert({ tracking: two })]);
+  const o = s.orders[0];
+  o.tracking = []; o.shipTo = "";   // what a merge with an edit saved on another device before the details came leaves
+  api.applySellerAlerts([alert({ stage: "shipped", createdAt: T0 + 1000, tracking: two })]);
+  assert.deepEqual([o.tracking.map((t) => t.number), o.shipTo], [["1ZWY0000000000001", "TBA123456789012"], "Sam Buyer"], "back, with no new number needed");
+  o.tracking = [two[1]]; o.trkOff = ["1ZWY0000000000001"];
+  api.applySellerAlerts([alert({ stage: "update", createdAt: T0 + 2000, tracking: two })]);
+  assert.deepEqual(o.tracking.map((t) => t.number), ["TBA123456789012"], "taken off by the buyer: stays off");
+  api.applySellerAlerts([alert({ stage: "update", createdAt: T0 + 3000, tracking: [two[1]] })]);
+  assert.equal(o.trkOff, undefined, "the seller dropped it too: nothing left to keep off");
+  api.applySellerAlerts([alert({ stage: "update", createdAt: T0 + 4000, tracking: two })]);
+  assert.deepEqual(o.tracking.map((t) => t.number), ["1ZWY0000000000001", "TBA123456789012"], "sent again later: it goes on");
+  assert.match(html, /if \(existing && existing\.fromSeller\)\{\s*const kept = new Set\(d\.tracking\.map\(x => x\.number\)\)/, "the order editor notes the numbers taken off");
+});
+await test("rows read before (asked again from sellerDetSince) bring details and dates only: nothing is added, moved or notified again", () => {
+  const s = buyer(); api.setS(s);
+  api.applySellerAlerts([alert()]);
+  const o = s.orders[0];
+  o.stage = "placed";   // the store reinstated it after a cancel, and the buyer set it back
+  const old = [alert({ stage: "canceled", createdAt: T0 + 500, shipTo: "Sam B Buyer" }), alert({ oid: "oid0000000000000009", orderNo: "999", createdAt: T0 + 600 })];
+  const news = api.applySellerAlerts(old, T0 + 1000);
+  assert.deepEqual([news.length, o.stage, s.orders.length, o.shipTo], [0, "placed", 1, "Sam B Buyer"]);
+  const d = buyer(); api.setS(d);
+  api.applySellerAlerts([alert(), alert({ stage: "delivered", createdAt: T0 + 9 * DAY })]);   // a page before 1.9.138 dated it when the alert came
+  assert.equal(d.orders[0].statusAt, new Date(T0 + 9 * DAY).toISOString().slice(0, 10));
+  const fix = api.applySellerAlerts([alert({ stage: "delivered", createdAt: T0 + 9 * DAY, dates: { delivered: "2026-11-02" } })], T0 + 10 * DAY);
+  assert.deepEqual([d.orders[0].dates.delivered, d.orders[0].statusAt, fix.length, fix.changed], ["2026-11-02", "2026-11-02", 0, true], "the worker's date, kept as first sent");
 });
 await test("a later alert with the slot's profile fills it in; an update for an order this FAFO doesn't have, or deleted, adds nothing; an alert without details is as before", () => {
   const p = buyer(); api.setS(p);
@@ -326,6 +416,7 @@ await test("a later alert with the slot's profile fills it in; an update for an 
 });
 await test("it reads the seller's updates from where it last read them, which a page before 1.9.138 moves sellerSince past", async () => {
   const B = api.SELLER_DET_FROM, s = buyer(); s.settings.sellerSince = B + 5 * DAY; api.setS(s); api.calls.length = 0;
+  api.applySellerAlerts([alert({ createdAt: B + DAY })]);   // what a page before 1.9.138 added (and synced) from these rows
   const upd = alert({ stage: "update", createdAt: B + 2 * DAY, shipTo: "New Name" });
   api.setServer(async (path) => ok({ alerts: path === "/alerts?since=" + (B - 120000) ? [alert({ createdAt: B + DAY }), upd] : [] }));
   await api.pollSellerAlerts();

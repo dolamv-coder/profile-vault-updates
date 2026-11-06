@@ -2972,6 +2972,10 @@ try {
     const got = await alertsOf(ginaKey);
     assert.ok(!got.some((a) => a.orderNo === "SH-R") && got.some((a) => a.orderNo === "SH-S" && a.profile === ""), "never Rosa's slot's profile on Gina's order");
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM alert_details WHERE order_no = 'SH-R'")[0].n, 0, "nothing kept for it");
+    const old = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+    const r2 = await (await share(ginaId, [shareEvent({ orderNo: "SH-O", account: bobAcct.email, auto: true }), shareEvent({ orderNo: "SH-U", account: rosaNew, auto: true, at: old })])).json();
+    assert.deepEqual(r2.res, ["sent", "sent"], "an account of the owner's own slots, or one given out after the order, doesn't stop it");
+    assert.ok((await alertsOf(ginaKey)).filter((a) => ["SH-O", "SH-U"].includes(a.orderNo)).every((a) => a.profile === ""), "nor gives its profile");
   });
   await test("an order on an account given to that buyer gets its slot's profile, also when the owner sent it before its alert came", async () => {
     const first = await (await share(ginaId, [shareEvent({ orderNo: "SH-P", account: ginaAcct.email, auto: true })])).json();
@@ -3742,6 +3746,16 @@ try {
     assert.deepEqual([st.owed, st.overdue, st.block], [1000, 0, null]);
     await alerts([billEv({ orderNo: "TB-1001", stage: "shipped" }), billEv({ orderNo: "TB-1001" })]);
     assert.equal((await billOf(tessKey)).lines.length, 1, "one line per order");
+  });
+  await test("orders the owner sends a buyer go on no invoice, on any account, and a cancel sent with them voids nothing", async () => {
+    const id = (await hashOfKey(tessKey.toUpperCase())).slice(0, 16), before = (await billOf(tessKey)).lines.length;
+    const ev = (o) => ({ store: "target", storeName: "Target", item: "Sample Booster Bundle", qty: "1", total: "$10.00", stage: "placed", at: today, shipTo: "Tess Sample",
+      shipAddr: "1 Main St, Austin, TX 78701", tracking: [], ...o });
+    const r = await api("/alerts/share", bobKey, { to: id, events: [ev({ orderNo: "TS-1" }), ev({ orderNo: "TS-2", account: tessAcct, auto: true }), ev({ orderNo: "TB-1001", account: tessAcct, stage: "canceled" })] });
+    assert.equal(r.status, 200);
+    assert.deepEqual((await r.json()).res, ["sent", "sent", "sent"]);
+    assert.equal((await billOf(tessKey)).lines.length, before, "no line for them");
+    assert.equal((await lineOf(tessKey, "TB-1001")).state, "due", "the cancel sent with them voids nothing");
   });
   await test("the store canceling an order before it's paid makes it free; the buyer's own report can't cancel an alert's line", async () => {
     const r = await (await api("/billing/checkouts", tessKey, { orders: [{ account: tessAcct, store: "target", orderNo: "TB-1001", at: today, stage: "canceled" }] })).json();

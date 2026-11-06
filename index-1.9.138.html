@@ -11008,6 +11008,12 @@ function openOrderEditor(existing){
         const tn = val(panel,"trk").toUpperCase().replace(/\s+/g, ""), tc = val(panel,"trkc");
         const rest = (o.tracking || []).slice(1);
         d.tracking = tn ? [{number:tn, carrier: tc === "auto" ? detectCarrier(tn, "") : tc, manual: tc !== "auto"}].concat(rest.filter(x => x.number !== tn)) : rest;
+        // An order from the seller notes the numbers taken off here, so the seller's next alert leaves them off (1.9.138).
+        if (existing && existing.fromSeller){
+          const kept = new Set(d.tracking.map(x => x.number)), off = new Set((existing.trkOff || []).filter(x => !kept.has(x)));
+          (existing.tracking || []).forEach(x => { if (!kept.has(x.number)) off.add(x.number); });
+          if (off.size || existing.trkOff) d.trkOff = [...off];
+        }
         let bad = false;
         if (!d.item){ setErr(panel,"item","What did you order?"); bad = true; } else setErr(panel,"item","");
         if (!d.at){ setErr(panel,"at","Pick a date."); bad = true; } else setErr(panel,"at","");
@@ -11659,29 +11665,46 @@ const SHARE_TYPE = (() => {
   rows.forEach((r, i) => { const root = rows[find(i)]; r.all.forEach(x => m.set(x, root.std || root.full)); });
   return m;
 })();
-// Words before a street type that make it a numbered road (County Road 12, State Road 84), and types that are roads with a
-// number (Route 66, Highway 50): their number is the road's, never a unit.
-const SHARE_ROAD_SYS = new Set(["COUNTY", "CO", "STATE", "ST", "PRIVATE", "PVT", "TOWNSHIP", "TWP", "RANCH", "FARM", "FM", "RM", "MARKET", "FOREST", "SERVICE", "FIRE",
-  "PARK", "US", "SR", "SH", "CR", "OLD", "INTERSTATE", "I", "PARISH", "NATIONAL", "INDIAN", "TRIBAL"]);
-const SHARE_ROUTES = new Set(["RTE", "HWY", "FWY", "EXPY", "LOOP", "SPUR", "PIKE", "TPKE"]);
-// A unit at the end of line 1: its word (or #) and a number, or a single letter (Apt B), never a word (Lot Rd, Office Park).
-const SHARE_UNIT_AT_END = /\s+(?:(?:apt|apartment|unit|ste|suite|spc|space|bldg|building|ofc|office|dept|fl|floor|rm|room|lot|trlr)\.?\s*#?\s*|#\s*(?:fl)?\s*)(?:[A-Za-z-]*\d[A-Za-z0-9-]*|[A-Za-z])$/i;
-// One key per street address, whatever its unit and however Jig for Target writes it: line 1 (the first part that starts with a
-// house number) with the street type, direction and a numbered street written one way, no unit written as one (Apt 4, # 4,
-// Ste 450, Bldg 3, #fl5, or a bare number Jig for Pokémon Center puts after a street type; never a numbered road's own number),
-// no dot inside a word, and the 5-digit ZIP; a PO box or rural route keeps its number. "" when it can't be read that way (no
-// house number, no state and ZIP): such an order waits to be picked. A missed match is better than another buyer's order.
+// Numbered roads keep their number: after a highway type (Route 66, Pacific Coast Hwy 1) always, and after a road type when the
+// word before it names a road system rather than a street (County Road 12, Cty Rd 12, Farm to Market Road 1960, Business Loop 70,
+// N Ranch Rd 620, National Forest Rd 12). Any other street's last bare number is Jig for Pokémon Center's (State St 644, Maple Loop 5).
+const SHARE_ROUTES = new Set(["RTE", "HWY", "FWY", "EXPY"]);
+const SHARE_ROAD_TYPES = new Set(["RD", "RDS", "LOOP", "SPUR", "PIKE", "TPKE"]);
+const SHARE_ROAD_SYS = new Set(["COUNTY", "CNTY", "CTY", "CO", "CR", "STATE", "ST", "SR", "SH", "US", "PRIVATE", "PRIV", "PVT", "PRVT", "TOWNSHIP", "TWP", "TWSP",
+  "RANCH", "RNCH", "FARM", "FM", "RM", "MARKET", "MKT", "FOREST", "FRST", "FS", "FR", "NF", "NFS", "USFS", "SERVICE", "FIRE", "PARK", "RECREATION", "REC",
+  "BUSINESS", "BUS", "BUSN", "HISTORIC", "HIST", "OLD", "INTERSTATE", "I", "PARISH", "NATIONAL", "INDIAN", "TRIBAL", "BIA", "NAVAJO", "AGENCY", "SCHOOL", "MINE"]);
+// A unit at the end of line 1: its word and then a space, # or its number, or # alone, with a number or one letter (Apt B), never
+// a word (Lot Rd) nor a street type that starts like one (Fls, Fld, Flt).
+const SHARE_UNIT_AT_END = /\s+(?:(?:apt|apartment|unit|ste|suite|spc|space|bldg|building|ofc|office|dept|fl|floor|rm|room|lot|trlr)\.?(?:\s*#\s*|\s+#?\s*|(?=\d))|#\s*(?:fl)?\s*)(?:[A-Za-z-]*\d[A-Za-z0-9-]*|[A-Za-z])$/i;
+// A unit's id or Jig for Pokémon Center's bare number as a word: 12, 12B, B, A2, 4-B.
+const SHARE_UNITISH = /^(?:\d+[A-Z]?|[A-Z]|[A-Z]\d+|\d+-[A-Z0-9]+)$/;
+// One key per street address, whatever its unit and however Jig writes it: line 1 with the street type, direction and a
+// numbered street written one way, no unit written as one (Apt 4, # 4, Ste 450, Bldg 3, #fl5, or a bare number Jig for Pokémon
+// Center puts after a street type; never a numbered road's own number), no dot inside a word, and the 5-digit ZIP; a PO box or
+// a rural route's box keeps its number. "" when it can't be read that way (no house number, no state and ZIP, two lines that
+// could be the street): such an order waits to be picked. A missed match is better than another buyer's order.
 function shareAddrKey(addr){
   const s = String(addr || "").replace(/\s+/g, " ").trim();
   const tail = s.match(/(?:,\s*|\s+)([A-Za-z]{2})\.?,?\s+(\d{5})(?:-?\d{4})?\s*$/);
   if (!tail) return "";
   const parts = s.slice(0, tail.index).split(",").map(x => x.trim()).filter(Boolean);
-  const box = parts.find(x => /^(?:p\.?\s*o\.?\s*box|post office box|rr|hc|rural route)\s*#?\s*\d/i.test(x));
-  if (box) return box.toUpperCase().replace(/[.#]/g, " ").replace(/^(?:P\s*O\s*BOX|POST OFFICE BOX)/, "PO BOX").replace(/\s+/g, " ").trim() + "|" + tail[2];
-  const first = parts.find(x => /^\d+[A-Za-z]?(?:[-/]\d+[A-Za-z]?)?\s+\S/.test(x)); if (!first) return "";   // not 2nd Floor, 4B
+  const boxOf = (x) => x.toUpperCase().replace(/[.#]/g, " ").replace(/^(?:P\s*O\s*BOX|POST OFFICE BOX)/, "PO BOX").replace(/^RURAL ROUTE/, "RR").replace(/\s+/g, " ").trim();
+  const bi = parts.findIndex(x => /^(?:p\.?\s*o\.?\s*box|post office box|rr|hc|rural route)\s*#?\s*\d/i.test(x));
+  if (bi >= 0){
+    let box = boxOf(parts[bi]);
+    // A rural route's box on a line of its own (RR 2, Box 15): the box is the address.
+    if (/^(?:RR|HC)\b/.test(box) && !/\bBOX\b/.test(box)){ const nx = parts[bi + 1] && boxOf(parts[bi + 1]); if (!nx || !/^BOX \d/.test(nx)) return ""; box += " " + nx; }
+    return box + "|" + tail[2];
+  }
+  // Line 1: the part that starts with a house number (not 2nd Floor or 4B) and has a street type; else the only part that starts
+  // with one (100 Broadway). A company or unit before the street (7 Seas Logistics, 2 Floor) isn't taken for it.
+  const numbered = parts.filter(x => /^\d+[A-Za-z]?(?:[-/]\d+[A-Za-z]?)?\s+\S/.test(x));
+  const words = (x) => x.replace(/\./g, "").replace(/([A-Za-z])-(?=[A-Za-z])/g, "$1 ").toUpperCase().split(/\s+/).filter(Boolean);
+  const typed = numbered.filter(x => words(x.replace(SHARE_UNIT_AT_END, "")).slice(1).some(y => SHARE_TYPE.has(y)));
+  const first = typed[0] || (numbered.length === 1 ? numbered[0] : ""); if (!first) return "";
   let line1 = first.replace(/\s*#\s*$/, "");
   for (let k = 0; k < 2 && SHARE_UNIT_AT_END.test(line1) && /\s\S+\s/.test(line1.replace(SHARE_UNIT_AT_END, " ")); k++) line1 = line1.replace(SHARE_UNIT_AT_END, "");
-  const w = line1.replace(/\./g, "").toUpperCase().split(/\s+/).filter(Boolean), out = [], kind = [];
+  const w = words(line1), out = [], kind = [];
   for (let i = 0; i < w.length; i++){
     if (!i){ out.push(w[0]); kind.push("num"); continue; }   // the house number
     const two = i + 1 < w.length ? jigOrdinal(w[i] + " " + w[i + 1], x => x.toUpperCase()) : null;
@@ -11691,19 +11714,19 @@ function shareAddrKey(addr){
     if (t){ out.push(t); kind.push("type"); continue; }
     const d = JIG_DIRS.find(r => r.some(x => x.toUpperCase() === w[i]));
     if (d){ out.push(d[1].toUpperCase()); kind.push("dir"); continue; }
-    const o = /^[A-Z-]+$/.test(w[i]) ? jigOrdinal(w[i], x => x.toUpperCase()) : null;
-    out.push(o && /^\d/.test(o) ? o : w[i]); kind.push(/^\d+$/.test(w[i]) ? "n" : "word");
+    const o = /^[A-Z]+$/.test(w[i]) ? jigOrdinal(w[i], x => x.toUpperCase()) : null;
+    out.push(o && /^\d/.test(o) ? o : w[i]); kind.push(SHARE_UNITISH.test(w[i]) ? "n" : "word");
   }
-  // Jig for Pokémon Center's bare number: after a numbered road's own number, or after a street type (or its direction) that
-  // follows a street name.
-  const L = out.length;
+  // Jig for Pokémon Center's bare number (or a unit written bare): after a numbered road's own number, or after a street type
+  // (or its direction) that follows the street's name, unless that makes it a numbered road.
+  const L = out.length, drop = () => { out.pop(); kind.pop(); };
   if (L >= 4 && kind[L - 1] === "n"){
     let ti = L - 2;
-    if (kind[ti] === "n"){ if (L >= 5){ out.pop(); kind.pop(); } }
+    if (kind[ti] === "n"){ if (kind[ti - 1] === "type" && (SHARE_ROUTES.has(out[ti - 1]) || SHARE_ROAD_TYPES.has(out[ti - 1]))) drop(); }   // Route 66 707
     else {
       if (kind[ti] === "dir" && kind[ti - 1] === "type") ti--;
-      // (a type before it counts as the street's name: N Park Ave 5)
-      if (kind[ti] === "type" && !SHARE_ROUTES.has(out[ti]) && ti >= 2 && (kind[ti - 1] === "word" || kind[ti - 1] === "type" && ti >= 3) && !SHARE_ROAD_SYS.has(out[ti - 1])){ out.pop(); kind.pop(); }
+      const T = out[ti], W = out[ti - 1];
+      if (kind[ti] === "type" && ti >= 2 && (kind[ti - 1] === "word" || kind[ti - 1] === "type") && !SHARE_ROUTES.has(T) && !(SHARE_ROAD_TYPES.has(T) && SHARE_ROAD_SYS.has(W))) drop();
     }
   }
   return out.length >= 2 ? out.join(" ") + "|" + tail[2] : "";
@@ -11753,7 +11776,11 @@ function sharePlan(orders, addrs, only){
 // Once the worker answered an order's events (res: "sent", "already", "updated", or "other": on an account given to another
 // buyer, which a remembered address never sends): what that buyer has now, and the buyer a remembered address gave it.
 function shareMark(o, it, now, res){
-  if ((res || []).includes("other")){ if (it.to.by === "addr") o.shareTo = {off:true, why:"other", at:now}; return; }
+  if ((res || []).includes("other")){
+    // Only while it's still that address's: a buyer picked by hand meanwhile stays.
+    if (it.to.by === "addr" && (!o.shareTo || (o.shareTo.by === "addr" && o.shareTo.id === it.to.id))) o.shareTo = {off:true, why:"other", at:now};
+    return;
+  }
   if ((res || []).includes("bad")) return;
   const told = o.shareTold && o.shareTold.id === it.to.id ? o.shareTold : {steps:{}};
   o.shareTold = {id:it.to.id, steps:Object.assign({}, told.steps, ...it.steps.map(x => ({[x]:1}))), det:it.det};
@@ -11771,7 +11798,9 @@ function sellerDetailsApply(o, a){
   for (const [f, n] of [["shipTo", 80], ["shipAddr", 160]]){
     const v = String(a[f] || "").slice(0, n), before = String(was[f] || "");
     put[f] = v;
-    if (v !== before && (!o[f] || o[f] === before) && (o[f] || "") !== v){ o[f] = v; changed = true; }
+    // What the seller changed, while the order still has the seller's; and an empty one filled in (a merge with an edit saved
+    // before the details came can leave it empty).
+    if ((o[f] || "") !== v && ((v !== before && (o[f] || "") === before) || (v && !o[f]))){ o[f] = v; changed = true; }
   }
   const list = [];
   for (const t of a.tracking){
@@ -11779,22 +11808,24 @@ function sellerDetailsApply(o, a){
     if (/^[A-Za-z0-9-]{4,40}$/.test(number) && !list.some(x => x.number === number)) list.push({number, carrier:CARRIERS[t.carrier] ? t.carrier : "other"});
     if (list.length === 5) break;
   }
-  put.trk = list.map(t => [t.number, t.carrier]);
-  put.mine = (was.mine || []).filter(x => list.some(t => t.number === x));
-  if (JSON.stringify(was.trk || []) !== JSON.stringify(put.trk)){
-    const prev = new Map((was.trk || []).map(([nm, c]) => [nm, c])), now = new Set(list.map(t => t.number)), mine = new Set(was.mine || []);
-    let tr = (o.tracking || []).filter(t => !(prev.has(t.number) && !now.has(t.number) && !mine.has(t.number)));
-    for (const t of list){
-      const at = tr.findIndex(x => x.number === t.number);
-      if (at < 0){ if (!prev.has(t.number)) tr.push({number:t.number, carrier:t.carrier}); }   // one the buyer took off stays off
-      else if (!prev.has(t.number)) mine.add(t.number);   // the buyer had it already
-      else if (tr[at].carrier === prev.get(t.number) && tr[at].carrier !== t.carrier) tr[at] = Object.assign({}, tr[at], {carrier:t.carrier});
-    }
-    const order = new Map(list.map((t, i) => [t.number, i]));
-    tr = tr.filter(t => order.has(t.number)).sort((x, y) => order.get(x.number) - order.get(y.number)).concat(tr.filter(t => !order.has(t.number)));
-    put.mine = [...mine].filter(x => now.has(x));
-    if (JSON.stringify(tr) !== JSON.stringify(o.tracking || [])){ o.tracking = tr; changed = true; }
+  // On every row, so a number a merge dropped comes back: the seller's numbers are put on the order, but for those the buyer took
+  // off in the order editor (o.trkOff); one the seller took off goes, but for those the order had before the seller sent them
+  // (sellerSent.mine); a carrier the seller corrected is taken, but for one the buyer changed. The seller's first, in their order.
+  const prev = new Map((was.trk || []).map(([nm, c]) => [nm, c])), now = new Set(list.map(t => t.number));
+  const off = (o.trkOff || []).filter(x => now.has(x)), mine = new Set(was.mine || []);
+  let tr = (o.tracking || []).filter(t => !(prev.has(t.number) && !now.has(t.number) && !mine.has(t.number)));
+  for (const t of list){
+    const at = tr.findIndex(x => x.number === t.number);
+    if (at < 0){ if (!off.includes(t.number)) tr.push({number:t.number, carrier:t.carrier}); }
+    else if (!prev.has(t.number)) mine.add(t.number);   // the order had it already
+    else if (tr[at].carrier === prev.get(t.number) && tr[at].carrier !== t.carrier) tr[at] = Object.assign({}, tr[at], {carrier:t.carrier});
   }
+  const order = new Map(list.map((t, i) => [t.number, i]));
+  tr = tr.filter(t => order.has(t.number)).sort((x, y) => order.get(x.number) - order.get(y.number)).concat(tr.filter(t => !order.has(t.number)));
+  put.trk = list.map(t => [t.number, t.carrier]);
+  put.mine = [...mine].filter(x => now.has(x));
+  if (JSON.stringify(tr) !== JSON.stringify(o.tracking || [])){ o.tracking = tr; changed = true; }
+  if (o.trkOff && JSON.stringify(off) !== JSON.stringify(o.trkOff)){ if (off.length) o.trkOff = off; else delete o.trkOff; changed = true; }
   if (JSON.stringify(was) !== JSON.stringify(put)){ o.sellerSent = put; changed = true; }
   return changed;
 }
@@ -11826,7 +11857,8 @@ function shareWait(){
 }
 function sharedOrdersSynced(){
   if (!SHARE.want || !S || SYNC.busy || !syncOn() || !sellerCaughtUp()) return;
-  SHARE.want = false; reportSharedOrders();
+  SHARE.want = false; clearTimeout(SHARE.soon); SHARE.soon = null;   // the wait's own timer: not another round a minute on
+  reportSharedOrders();
 }
 async function loadShareBuyers(force){
   if (!force && SHARE.buyers && Date.now() - SHARE.buyersAt < 10 * 60000) return SHARE.buyers;
@@ -11839,7 +11871,7 @@ async function loadShareBuyers(force){
 // this copy has caught up). Answers {sent, failed: [[buyer name, why]], byBuyer: {id: {sent, why}}}. A run under way: this one
 // follows it.
 function reportSharedOrders(only){
-  if (SHARE.running) return SHARE.running.then(() => reportSharedOrders(only));
+  if (SHARE.running) return SHARE.running.catch(() => {}).then(() => reportSharedOrders(only));
   const run = shareRun(only).finally(() => { SHARE.running = null; });
   SHARE.running = run;
   return run;
@@ -11847,9 +11879,15 @@ function reportSharedOrders(only){
 async function shareRun(only){
   const res = {sent:0, failed:[], byBuyer:{}};
   if (!canShare()) return res;
-  if (!only){ const wait = shareWait(); if (wait){ shareSoon(wait); return res; } }
   const by = sharePlan(S.orders, S.settings.buyerAddrs, only);
+  // Sent by hand: those with nothing new for their buyer count as done.
+  if (only) for (const o of S.orders || []) if (only.has(o.id)){
+    const to = shareTargetOf(o, S.settings.buyerAddrs);
+    if (to && !(by.get(to.id) || []).some(it => it.o === o)){ const m = res.byBuyer[to.id] = res.byBuyer[to.id] || {sent:0, done:0, why:""}; m.done++; }
+  }
   if (!by.size) return res;
+  // Only with something to send does a copy behind sync first.
+  if (!only){ const wait = shareWait(); if (wait){ shareSoon(wait); return res; } }
   SHARE.busy = true;
   const vault = S;
   let marked = false;
@@ -11857,17 +11895,18 @@ async function shareRun(only){
     for (const [id, items] of by){
       const e = SHARE.err[id];
       if (e && !only && Date.now() - e.at < SHARE_REFUSED_MS) continue;   // refused lately: not asked again every sync
-      const mine = res.byBuyer[id] = {sent:0, why:""};
+      const mine = res.byBuyer[id] = res.byBuyer[id] || {sent:0, done:0, why:""};
       for (let i = 0; i < items.length;){
         const chunk = [];
         for (let n = 0; i < items.length && (!chunk.length || n + items[i].events.length <= 100); i++){ n += items[i].events.length; chunk.push(items[i]); }
         let r;
         try { r = await alertApi("/alerts/share", {method:"POST", body:JSON.stringify({to:id, events:chunk.flatMap(x => x.events)})}); }
         catch(err){ mine.why = "Couldn't reach the license server."; res.failed.push([items[0].to.name, mine.why]); return res; }
-        if (S !== vault) return res;
+        if (S !== vault) return res;   // locked meanwhile
         if (r.status === 403){ refreshPremium(true); mine.why = "Only your own FAFO, the one that sends order alerts for buyers, can send orders to buyers."; res.failed.push(["", mine.why]); return res; }
         if (!r.ok){
           mine.why = ((await r.json().catch(() => ({}))).error) || "The license server couldn't take them just now.";
+          if (S !== vault) return res;
           if ([400, 404, 410].includes(r.status)) SHARE.err[id] = {why:mine.why, at:Date.now()};   // that buyer: the others go on
           res.failed.push([items[0].to.name, mine.why]);
           if (r.status >= 500 || r.status === 429) return res;
@@ -11875,12 +11914,14 @@ async function shareRun(only){
         }
         delete SHARE.err[id];
         const body = await r.json().catch(() => ({})), out = Array.isArray(body.res) ? body.res : null, now = Date.now();
+        if (S !== vault) return res;
         let k = 0;
         chunk.forEach(it => {
           const got = out ? out.slice(k, k + it.events.length) : it.events.map(() => "sent"); k += it.events.length;
           const o = orderById(it.o.id);
           if (o){ shareMark(o, it, now, got); marked = true; }
           if (!got.includes("other") && !got.includes("bad")){ mine.sent++; res.sent++; }
+          else mine.bad = (mine.bad || 0) + 1;
         });
         persist();
       }
@@ -11901,9 +11942,10 @@ function openSendToBuyer(ids){
   const addrs = [...new Map(ok.filter(o => shareAddrKey(o.shipAddr)).map(o => [shareAddrKey(o.shipAddr), o.shipAddr])).entries()];   // [key, as written]
   const noKey = ok.filter(o => o.shipAddr && !shareAddrKey(o.shipAddr)).length;
   const wasTo = [...new Set(ok.map(o => o.shareTo && o.shareTo.id).filter(Boolean))];
+  const otherAcct = ok.filter(o => o.shareTo && o.shareTo.why === "other").length;   // a remembered address's, on another buyer's account
   const rememberedFor = (k) => [...new Set(Object.values(S.settings.buyerAddrs || {}).filter(e => e && e.key === k && e.id).map(e => e.id))];
   let pick = wasTo.length === 1 ? wasTo[0] : "";
-  if (!pick){ const r = [...new Set(addrs.flatMap(([k]) => rememberedFor(k)))]; if (r.length === 1) pick = r[0]; }
+  if (!pick && !otherAcct){ const r = [...new Set(addrs.flatMap(([k]) => rememberedFor(k)))]; if (r.length === 1) pick = r[0]; }
   let buyers = SHARE.buyers;
   const n = ok.length;
   openLayer({
@@ -11914,6 +11956,7 @@ function openSendToBuyer(ids){
       ${addrs.length ? `<label class="check" style="margin-top:12px"><input type="checkbox" id="sb-keep" checked><span>Also send future orders shipping to ${addrs.length === 1 ? "this address" : "these addresses"} to this buyer<br><span class="item-sub">${addrs.map(([, a]) => esc(a)).join("<br>")}<br>Any unit at the same street address and ZIP counts. Leave this off for a package forwarder, or a building other buyers ship to too.</span></span></label>` : ""}
       ${noKey ? `<p class="item-sub" style="margin:8px 0 0">${plural(noKey, "address", "addresses")} can't be remembered (no house number, state and ZIP FAFO can read), so future orders there wait for you.</p>` : ""}
       <p class="item-sub" id="sb-note" style="margin:10px 0 0" hidden></p>
+      ${otherAcct ? `<p class="item-sub" style="margin:8px 0 0"><strong>${plural(otherAcct, "of these is", "of these are")} on an account you gave another buyer</strong>, so ${otherAcct === 1 ? "it wasn't" : "they weren't"} sent by its address: that buyer gets ${otherAcct === 1 ? "it" : "them"} with their own order alerts. Send ${otherAcct === 1 ? "it" : "them"} only to the buyer ${otherAcct === 1 ? "it's" : "they're"} for.</p>` : ""}
       ${skip ? `<p class="item-sub" style="margin:8px 0 0">${plural(skip, "order")} you picked can't be sent: from your seller, or with no order number.</p>` : ""}`,
     foot:`${ok.some(o => o.shareTo && o.shareTo.id) ? `<button class="btn btn-quiet btn-danger" id="sb-stop">Stop sending</button><span class="spacer"></span>` : ""}<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="sb-send" disabled>${ic("send")}Send ${plural(n, "order")}</button>`,
     mount:(panel, close) => {
@@ -11959,18 +12002,20 @@ function openSendToBuyer(ids){
         if (keep && keep.checked){
           const m = Object.assign({}, S.settings.buyerAddrs);
           for (const [k, a] of addrs){
-            const had = m[k + "|" + b.id];
-            for (const [ek, e] of Object.entries(m)) if (e && e.key === k && e.id !== b.id) delete m[ek];
-            // Remembered for this buyer before: from then on still (an order waiting there goes).
-            m[k + "|" + b.id] = {key:k, id:b.id, name, addr:a, at:had && +had.at ? Math.min(+had.at, now) : now};
+            const had = m[k + "|" + b.id], others = Object.entries(m).filter(([, e]) => e && e.key === k && e.id !== b.id);
+            others.forEach(([ek]) => delete m[ek]);
+            // Remembered for this buyer alone before: from then on still. Kept for another buyer too, orders there were
+            // waiting to be picked, so only those from now on go.
+            m[k + "|" + b.id] = {key:k, id:b.id, name, addr:a, at:had && +had.at && !others.length ? Math.min(+had.at, now) : now};
           }
           S.settings.buyerAddrs = m;
         }
         persist(); close(); renderMain();
-        const res = await reportSharedOrders(new Set(ok.map(o => o.id))), mine = res.byBuyer[b.id] || {sent:0, why:""};
-        if (mine.why && !mine.sent) toast(`Couldn't send ${n === 1 ? "it" : "them"} to ${name}: ${mine.why} FAFO tries again by itself.`, "err");
-        else if (mine.why || mine.sent < n) toast(`Sent ${plural(mine.sent, "order")} to ${name}, not all of them${mine.why ? ": " + mine.why : ""}. FAFO tries the rest again by itself.`, "err");
-        else toast(`Sent ${plural(n, "order")} to ${name}. ${n === 1 ? "Its" : "Their"} updates go there too.`);
+        const res = await reportSharedOrders(new Set(ok.map(o => o.id))).catch(() => ({byBuyer:{}})), mine = res.byBuyer[b.id] || {sent:0, done:0, why:""};
+        const there = mine.sent + mine.done;   // sent now, or already there with nothing new
+        if (there >= n) toast(mine.sent ? `Sent ${plural(n, "order")} to ${name}. ${n === 1 ? "Its" : "Their"} updates go there too.` : `${n === 1 ? "It's" : "They're"} on ${name}'s Orders page already. ${n === 1 ? "Its" : "Their"} updates go there too.`);
+        else if (!there) toast(`Couldn't send ${n === 1 ? "it" : "them"} to ${name}${mine.why ? ": " + mine.why : "."} FAFO tries again by itself.`, "err");
+        else toast(`${plural(there, "order")} of ${n} went to ${name}${mine.why ? ": " + mine.why : ""}. FAFO tries the rest again by itself.`, "err");
       });
     }
   });
@@ -12069,7 +12114,7 @@ async function pollSellerAlerts(){
     // the next ask gets the same alerts.
     const again = sellerAlertsWait(true);
     if (again) return sellerAlertsSoon(again);
-    const news = applySellerAlerts(all);
+    const news = applySellerAlerts(all, was - 120000);   // rows before the newest seen less the overlap: read before
     // A merge meanwhile may have brought a newer one from another device.
     let moved = false;
     if (since > was){ S.settings.sellerSince = Math.max(since, +S.settings.sellerSince || 0); moved = true; }
@@ -12089,16 +12134,20 @@ const SELLER_DET_FROM = Date.UTC(2026, 10, 6);   // the day the license worker b
 // step. Times come from the worker, so every device of the buyer's ends up with the same order.
 // From 1.9.138 an alert of an order the seller sent this buyer themselves has its ship-to name and address and tracking
 // (sellerDetailsApply), and an "update" (no step) brings them again when they changed; news.changed says one did.
-function applySellerAlerts(list){
+// seenBefore (1.9.138): rows at or before it were read by a device already (asked again from settings.sellerDetSince), so they
+// only bring details, the profile and each step's date, as an "update" row does: an order isn't added or moved, nor notified,
+// again by them.
+function applySellerAlerts(list, seenBefore){
   const news = [];
   list.filter(a => a && a.oid && a.orderNo && (ALERT_STEPS.includes(a.stage) || a.stage === "update") && +a.createdAt > 0).sort((a, b) => a.createdAt - b.createdAt).forEach(a => {
     const st = STORES.find(x => x[0] !== "other" && x[0] === a.store);
     const where = st ? {store:st[0], storeName:""} : {store:"other", storeName:a.storeName || String(a.store).replace(/^other:/, "") || "Other"};
     const key = orderKey(Object.assign({orderNo:a.orderNo}, where)), id = "sa-" + a.oid;
     let o = (S.orders || []).find(x => x.id === id) || (S.orders || []).find(x => orderKey(x) === key), isNew = false;
+    const seen = seenBefore != null && +a.createdAt <= seenBefore;
     if (!o){
       if (S.deletedOrders && S.deletedOrders[key]) return;   // deleted here on purpose
-      if (a.stage === "update") return;   // the details of an order whose steps this FAFO hasn't read
+      if (a.stage === "update" || seen) return;   // the details of an order whose steps this FAFO hasn't read, or one read before
       o = Object.assign({id, createdAt:a.createdAt}, where, {item:a.item || "Order", orderNo:a.orderNo, qty:String(a.qty || "1"), total:a.total || "", priceEach:"",
         at:a.at || new Date(a.createdAt).toISOString().slice(0, 10), shipTo:"", shipAddr:"", card:"", arrives:"", buyer:"", stage:"placed", inbox:"", image:"", fromSeller:true, profile:a.profile || ""});
       S.orders.push(o); isNew = true;
@@ -12107,8 +12156,15 @@ function applySellerAlerts(list){
     // The slot's profile, when the seller sent the order before its alert came (both are one order here).
     if (a.profile && !o.profile && o.fromSeller){ o.profile = String(a.profile).slice(0, 80); if (!isNew) news.changed = true; }
     if (a.stage === "update") return;
-    // When the step happened, as the seller's FAFO has it (an order sent after it shipped), else when the alert came.
+    // When the step happened, as the seller's FAFO has it (an order sent after it shipped), else when the alert came. The worker
+    // keeps it as first sent, so it also puts right a date a page before 1.9.138 took from when the alert came.
     const sd = a.dates && typeof a.dates[a.stage] === "string" && /^\d{4}-\d{2}-\d{2}/.test(a.dates[a.stage]) ? a.dates[a.stage] : "";
+    if (sd && a.stage !== "placed" && o.fromSeller && o.dates && o.dates[a.stage] && o.dates[a.stage] !== sd){
+      o.dates[a.stage] = sd;
+      if (o.stage === a.stage) o.statusAt = sd.slice(0, 10);
+      if (!isNew) news.changed = true;
+    }
+    if (seen) return;
     const when = sd || new Date(a.createdAt).toISOString(), cur = o.stage || "placed";
     let moved = false;
     if (a.stage !== "placed"){

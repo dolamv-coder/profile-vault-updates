@@ -3411,10 +3411,12 @@ async function alertsShare(request, env, ctx) {
       const at = /^\d{4}-\d{2}-\d{2}$/.test(String(ev && ev.at || "")) ? ev.at : "";
       if (!store || !ALERT_STAGES.includes(stage) || !orderNo) { bad++; res.push("bad"); continue; }
       // The account it was placed on: given to this buyer, its slot's profile goes with it; given to another, a remembered
-      // address doesn't send it here (that account's own alert reaches its buyer).
+      // address doesn't send it here (that account's own alert reaches its buyer). An account of the owner's own (their own
+      // slots) doesn't stop it, nor one given out after the order (the rule POST /alerts goes by).
       const account = clip(ev.account, 120).toLowerCase();
-      const a = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) ? await env.DB.prepare("SELECT key_hash, profile FROM accounts WHERE email_norm = ? AND store = ? AND key_hash IS NOT NULL AND sent_at IS NOT NULL")
+      let a = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) ? await env.DB.prepare("SELECT key_hash, profile, assigned_at FROM accounts WHERE email_norm = ? AND store = ? AND key_hash IS NOT NULL AND sent_at IS NOT NULL")
         .bind(account, store).first() : null;
+      if (a && (a.key_hash === lic.hash || (at && at < new Date((a.assigned_at || 0) - 86400000).toISOString().slice(0, 10)))) a = null;
       if (a && a.key_hash !== buyer.hash && ev.auto === true) { other++; res.push("other"); continue; }
       const profile = a && a.key_hash === buyer.hash ? String(a.profile || "") : "";
       const oid = (await sha256Hex(`${buyer.hash}|${store}|${orderNo}`)).slice(0, 20);
