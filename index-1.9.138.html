@@ -11713,19 +11713,22 @@ function shareAddrKey(addr){
   const numbered = parts.filter(x => /^\d+[A-Za-z]?(?:[-/]\d+[A-Za-z]?)?\s+\S/.test(x));
   const words = (x) => x.replace(/\./g, "").replace(/([A-Za-z])-(?=[A-Za-z])/g, "$1 ").toUpperCase().split(/\s+/).filter(Boolean);
   const typed = numbered.filter(x => words(x.replace(SHARE_UNIT_AT_END, "")).slice(1).some(y => SHARE_TYPE.has(y)));
-  // The only numbered part, without a type, only when it names something (100 Broadway), not a unit (12 B, 2 Fl).
-  const named = (x) => words(x).slice(1).some(y => /^[A-Z]{3,}$/.test(y) && !SHARE_UNIT_WORDS.has(y));
+  // The only numbered part, without a type, unless all it has after the number is a unit (12 B, 2 Fl, Apt 4): 100 Broadway,
+  // 350 S 400 E and FM 529 are streets.
+  const named = (x) => { const r = words(x).slice(1); return !((r.length === 1 && SHARE_UNITISH.test(r[0])) || (SHARE_UNIT_WORDS.has(r[0]) && r.length <= 2)); };
   const first = typed[0] || (numbered.length === 1 && named(numbered[0]) ? numbered[0] : ""); if (!first) return "";
   // The city (two towns can share a ZIP and their street names: Riverhead and Flanders, NY 11901), with Jig's Saint/St, Fort/Ft
   // and Mount/Mt written one way. With no comma before the state it's on line 1 already.
   const last = parts[parts.length - 1];
-  const city = parts.length >= 2 && last !== first && !/^\d/.test(last) && !/^#|^(?:apt|apartment|unit|ste|suite|spc|space|bldg|building|ofc|office|dept|fl|floor|rm|room|lot|trlr)\b/i.test(last)
+  const city = parts.length >= 2 && last !== first && !/^\d/.test(last) && !/^(?:#\s*|(?:apt|apartment|unit|ste|suite|spc|space|bldg|building|ofc|office|dept|fl|floor|rm|room|lot|trlr)\.?\s*#?\s*)(?:[A-Za-z-]*\d[A-Za-z0-9-]*|[A-Za-z])$/i.test(last)   // a unit, not Ste. Genevieve
     ? words(last).map(y => { const r = JIG_CITY.find(c => c.some(z => z.toUpperCase() === y)); return r ? r[1].toUpperCase() : y; }).join(" ") : "";
   let line1 = first.replace(/\s*#\s*$/, "").replace(/(\w)\.(?=\w)/g, "$1");   // a dot inside a word (Bl.dg) first
   // Jig for Pokémon Center's bare number after a unit on line 1 (Lot 5 219) goes with the unit.
   line1 = line1.replace(/(\s(?:apt|apartment|unit|ste|suite|spc|space|bldg|building|ofc|office|dept|fl|floor|rm|room|lot|trlr)\.?\s*#?\s*(?:[A-Za-z-]*\d[A-Za-z0-9-]*|[A-Za-z]))\s+\d{1,4}$/i, "$1");
   // A unit only comes off when a street type is left before it (not 12000 N RM 620, a Ranch to Market road, nor Old RM 12).
-  const hasType = (x) => words(x).slice(1).some(y => SHARE_TYPE.has(y));
+  const dirWord = (y) => JIG_DIRS.some(r => r.some(x => x.toUpperCase() === y));
+  // ...or a grid address is (350 S 400 E).
+  const hasType = (x) => { const r = words(x).slice(1); return r.some(y => SHARE_TYPE.has(y)) || (r.length === 3 && dirWord(r[0]) && /^\d+$/.test(r[1]) && dirWord(r[2])); };
   for (let k = 0; k < 2 && SHARE_UNIT_AT_END.test(line1) && hasType(line1.replace(SHARE_UNIT_AT_END, "")); k++) line1 = line1.replace(SHARE_UNIT_AT_END, "");
   const w = words(line1), out = [], kind = [];
   for (let i = 0; i < w.length; i++){
@@ -11738,7 +11741,7 @@ function shareAddrKey(addr){
     const d = JIG_DIRS.find(r => r.some(x => x.toUpperCase() === w[i]));
     // A direction that is the street's whole name (N St, North St: two streets) stays as written; Jig leaves it alone.
     const isDir = (y) => JIG_DIRS.some(r => r.some(x => x.toUpperCase() === y));
-    const whole = d && i === 1 && SHARE_TYPE.has(w[2] || "") && w.slice(3).every(y => isDir(y) || SHARE_UNITISH.test(y));   // N St, N St NW, North St 828
+    const whole = d && i === 1 && SHARE_TYPE.has(w[2] || "") && w.slice(3).every(isDir);   // N St, N St NW: as Jig decides (not W Avenue K)
     if (d){ out.push(whole ? w[i] : d[1].toUpperCase()); kind.push(whole ? "word" : "dir"); continue; }
     const o = /^[A-Z]+$/.test(w[i]) ? jigOrdinal(w[i], x => x.toUpperCase()) : null;
     out.push(o && /^\d/.test(o) ? o : w[i]); kind.push(SHARE_UNITISH.test(w[i]) ? "n" : "word");
@@ -12050,7 +12053,8 @@ function openSendToBuyer(ids){
             others.forEach(([ek]) => delete m[ek]);
             // Remembered for this buyer alone before: from then on still. Kept for another buyer too, orders there were
             // waiting to be picked, so only those from now on go.
-            m[k + "|" + b.id] = Object.assign({key:k, id:b.id, name, addr:a, at:had && +had.at && !others.length ? Math.min(+had.at, now) : now, set:now}, others.length ? {strict:true} : {});
+            // strict: started over because another buyer had it, now or when the start kept here was set.
+            m[k + "|" + b.id] = Object.assign({key:k, id:b.id, name, addr:a, at:had && +had.at && !others.length ? Math.min(+had.at, now) : now, set:now}, others.length || (had && had.strict) ? {strict:true} : {});
           }
           S.settings.buyerAddrs = m;
         }

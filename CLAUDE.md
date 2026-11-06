@@ -1704,20 +1704,21 @@ address's buyer (`shareTargetOf`) when FAFO added it, or it was placed, from the
 remembered for one buyer only; remembering one again keeps its first `at` only while no other buyer had it (orders waiting
 between two buyers stay waiting), and writes `set` (now), so it's an edit another device's older × doesn't undo; taking one of two
 buyers off an address (×, Stop sending: `dropBuyerAddrs`) starts the other's from now, for the same reason; such an entry
-(`strict`) only takes orders FAFO adds from then on, not one placed earlier that day, and Stop sending's toast says who still
+(`strict`, kept when that buyer is sent another order there) only takes orders FAFO adds from then on, not one placed earlier that day, and Stop sending's toast says who still
 gets the address. `shareAddrKey` is
 careful, since a missed match only waits for the seller and a wrong one is another buyer's order: line 1 is the part that starts
-with a house number (not "2nd Floor") and has a street type, else the only part that starts with one and names something (100
-Broadway, not 12 B or 2 Fl; a company or unit line before the street isn't taken for it, and two untyped ones give ""), a PO box
+with a house number (not "2nd Floor") and has a street type, else the only part that starts with one and has more than a unit after
+it (100 Broadway, 350 S 400 E, FM 529; not 12 B, 2 Fl or Apt 4; a company or unit line before the street isn't taken for it, and two untyped ones give ""), a PO box
 or HC box whole, a rural route with its box (RR 2, Box 15; without a box ""); for a street address, the city goes in the key
 (Riverhead and Flanders share NY 11901 and its street names), with `JIG_CITY`'s Saint/St, Fort/Ft and Mount/Mt written one way,
 and in Puerto Rico (PR, or a ZIP starting 006, 007 or 009) the urbanization, since streets and house numbers repeat inside a ZIP
 (without one ""); dots inside words out (Bl.dg) and a bare number after a unit on line 1 (Lot 5 219) with it, then a unit at its end
 (`SHARE_UNIT_AT_END`: its word then a space, # or number, or # alone, with a number or one letter; never a word like Lot Rd nor a
-type like Fls), only when a street type is left before it (not 12000 N RM 620, a Ranch to Market road); its words (letter-letter
+type like Fls), only when a street type, or a grid address (350 S 400 E), is left before it (not 12000 N RM 620, a Ranch to Market road); its words (letter-letter
 hyphens split: Farm-to-Market) after the house number with the street type (Publication 28's spellings folded together,
 `SHARE_TYPE`; one right after the house number is the street's name unless a number follows), direction (not one that is the
-street's whole name: N St and North St are two streets) and a numbered street written one way (`JIG_DIRS`, `jigOrdinal`), and a
+street's whole name, with only directions after the type, as Jig decides: N St and North St are two streets, while W Avenue K
+folds its W and keeps its K) and a numbered street written one way (`JIG_DIRS`, `jigOrdinal`), and a
 last bare number or letter (`SHARE_UNITISH`: Jig for Pokémon Center's, or a
 unit written bare) after a street type that follows the street's name dropped, but never after a road's or highway's
 (`SHARE_ROAD_TYPES` Rd, Loop, Spur, Pike, Tpke; `SHARE_ROUTES` Rte, Hwy, Fwy, Expy: County Road 12, Lee Road 379, Lake Rd

@@ -62,7 +62,9 @@ await test("every way Jig for Target writes an address has its key, and another 
     { line1: "500 W 21st St", line2: "Unit 12", city: "Fort Worth", zip: "76102" }, { line1: "77 Meadow Ln", line2: "", city: "Mount Vernon", zip: "10550" },
     { line1: "120 Oak Falls", line2: "Apt 3", city: "Austin", zip: "78701" }, { line1: "100 State St", line2: "", city: "Austin", zip: "78701" }, { line1: "100 County Road 12", line2: "", city: "Austin", zip: "78701" },
     { line1: "5000 Nolensville Pike", line2: "Ste 4", city: "Nashville", zip: "37211" }, { line1: "100 Business Loop 70", line2: "", city: "Columbia", zip: "65203" },
-    { line1: "100 N St NW", line2: "", city: "Washington", zip: "20001" }, { line1: "77 Saint Marks Pl", line2: "Apt 4", city: "New York", zip: "10003" }]) {
+    { line1: "100 N St NW", line2: "", city: "Washington", zip: "20001" }, { line1: "77 Saint Marks Pl", line2: "Apt 4", city: "New York", zip: "10003" },
+    { line1: "1200 N Hwy 75", line2: "Apt 3", city: "Sherman", zip: "75090" }, { line1: "3041 W Avenue K", line2: "", city: "Lancaster", zip: "93536" },
+    { line1: "10 Main St", line2: "", city: "Sainte Genevieve", zip: "63670" }, { line1: "350 S 400 E", line2: "Apt 2", city: "Salt Lake City", zip: "84111" }]) {
     const vs = api.jigChoices(a, ["line1", "line2", "city", "zip"]).order;
     assert.ok(vs.length > 5, `Jig writes ${oneLine(a)} many ways: ${vs.length}`);
     const keys = new Set(vs.map((v) => api.shareAddrKey(oneLine(v)))), want = api.shareAddrKey(oneLine(a));
@@ -122,7 +124,9 @@ await test("a numbered road's own number is never taken for a unit, nor a word f
   assert.equal(api.shareAddrKey("100 Maple Ave, Saint Paul, MN 55101"), api.shareAddrKey("100 Maple Avenue, St. Paul, MN 55101"));
   // Numbered lanes and drives, and a direction that is a street's whole name.
   for (const [a, b] of [["150 Fire Lane 12", "150 Fire Lane 13"], ["19 Private Drive 155", "19 Private Drive 263"], ["154 Pvt Dr 64", "154 Pvt Dr 65"], ["150 Fire Lane 12a", "150 Fire Ln 15"],
-    ["100 N St NW", "100 North St NW"], ["100 E St", "100 East St"]]) assert.notEqual(key(a), key(b), `${a} / ${b}`);
+    ["100 N St NW", "100 North St NW"], ["100 E St", "100 East St"], ["3041 W Avenue K", "3041 W Avenue J"], ["131 S Avenue 57", "131 S Avenue 56"],
+    ["100 E Avenue C", "100 E Avenue D"], ["500 N Street 5", "500 N Street 6"]]) assert.notEqual(key(a), key(b), `${a} / ${b}`);
+  for (const x of ["350 S 400 E", "1234 FM 529", "1234 CR 456"]) assert.ok(key(x), x + " keeps a key");
   assert.equal(key("100 N Main St"), key("100 North Main Street"), "a direction before a name is folded");
   // A unit line isn't the street when the house number is written out.
   assert.equal(api.shareAddrKey("One Lincoln St, 12 B, Boston, MA 02111"), "");
@@ -139,8 +143,7 @@ await test("every way Jig for Pokémon Center writes a building on a street has 
   const keyOf = (v) => api.shareAddrKey(oneLine({ ...v, city: "Austin", zip: "78701" }));
   for (const b of [{ line1: "1801 N Orchard Dr", line2: "" }, { line1: "1801 N Orchard Dr", line2: "Apt 4" }, { line1: "500 W 21st St Apt 12", line2: "" }, { line1: "77 Meadow Ln", line2: "# 3" },
     { line1: "200 18th Ave NW", line2: "" }, { line1: "100 State St", line2: "" }, { line1: "100 Park Ave", line2: "" }, { line1: "100 N Park Ave", line2: "" },
-    { line1: "100 Market St", line2: "Apt 4" }, { line1: "100 Forest Dr", line2: "" }, { line1: "1 Main St", line2: "Apt B" }, { line1: "120 Oak Fls", line2: "" }, { line1: "100 North St", line2: "" }, { line1: "100 N St NW", line2: "Apt 2" },
-    { line1: "100 Main St Lot 5", line2: "" }]) {
+    { line1: "100 Market St", line2: "Apt 4" }, { line1: "100 Forest Dr", line2: "" }, { line1: "1 Main St", line2: "Apt B" }, { line1: "120 Oak Fls", line2: "" }, { line1: "100 Main St Lot 5", line2: "" }]) {
     const want = keyOf(b);
     assert.ok(want, b.line1);
     for (let round = 0; round < 20; round++) for (const v of forms(b)) assert.equal(keyOf(v), want, `${b.line1} ${b.line2} → ${v.line1} | ${v.line2}`);
@@ -329,6 +332,7 @@ await test("taking one of two buyers off an address keeps the orders waiting the
   const today = order({ id: "y2", orderNo: "Y2", shipAddr: "1 Main St, Apt 30, Austin, TX 78701", createdAt: two[MAIN + "|b1"].at - 1000, at: new Date(two[MAIN + "|b1"].at).toISOString().slice(0, 10) });
   assert.equal(api.shareTargetOf(today, two), null, "one placed earlier that same day was waiting too");
   assert.ok(api.shareTargetOf(order({ shipAddr: "1 Main St, Austin, TX 78701", createdAt: two[MAIN + "|b1"].at + 1 }), two), "one added from then on goes");
+  assert.match(html, /others\.length \|\| \(had && had\.strict\) \? \{strict:true\} : \{\}/, "sending that buyer another order there keeps it strict");
   assert.match(html, /\? `\$\{off === 1 \? "Its address is" : "Their addresses are"\} still kept for /, "Stop sending says who still gets the address");
   reset([order({ shareTo: { id: "b1", name: "@sam", by: "hand" } })]); api.setServer(async () => ok());
   await api.reportSharedOrders();
