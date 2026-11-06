@@ -2902,12 +2902,12 @@ try {
   await test("an order the owner sends reaches that buyer with its ship-to and tracking, whatever account it was on, and isn't billed", async () => {
     const before = await alertsOf(ginaKey), last = Math.max(...before.map((a) => a.createdAt));
     const r = await (await share(ginaId, [shareEvent(), shareEvent({ orderNo: "ORD-1001", tracking: [] }), shareEvent({ stage: "lost", orderNo: "x" })])).json();
-    assert.deepEqual(r, { ok: true, sent: 1, already: 1, updated: 1, bad: 1 }, "ORD-1001's step reached Gina already (an account given to her): its details come as an update");
+    assert.deepEqual(r, { ok: true, sent: 1, already: 1, updated: 1, bad: 1, other: 0, res: ["sent", "updated", "bad"] }, "ORD-1001's step reached Gina already (an account given to her): its details come as an update");
     const got = await alertsOf(ginaKey, last);
     const sh = got.find((a) => a.orderNo === "SH-1"), up = got.find((a) => a.orderNo === "ORD-1001");
     const { id, oid, createdAt, ...rest } = sh;
     assert.deepEqual(rest, { store: "target", storeName: "Target", profile: "", orderNo: "SH-1", item: "Ditto Premium Collection", qty: "2", total: "$119.98", stage: "placed", at: today,
-      shipTo: "Sam Buyer", shipAddr: "1 Main St, Apt 2, Austin, TX 78701", tracking: [{ number: "1ZWY0000000000001", carrier: "ups" }] });
+      shipTo: "Sam Buyer", shipAddr: "1 Main St, Apt 2, Austin, TX 78701", tracking: [{ number: "1ZWY0000000000001", carrier: "ups" }], dates: {} });
     assert.equal(up.stage, "update"); assert.equal(up.oid, firstAlert.oid, "the same order as the alert for her account");
     assert.deepEqual([up.shipTo, up.tracking], ["Sam Buyer", []]);
     const all = await alertsOf(ginaKey);
@@ -2917,11 +2917,11 @@ try {
   });
   await test("a step not sent yet goes; one sent goes again only as an update when its details changed", async () => {
     const t0 = Math.max(...(await alertsOf(ginaKey)).map((a) => a.createdAt));
-    assert.deepEqual(await (await share(ginaId, [shareEvent()])).json(), { ok: true, sent: 0, already: 1, updated: 0, bad: 0 }, "nothing changed");
-    assert.deepEqual(await (await share(ginaId, [shareEvent({ stage: "shipped" })])).json(), { ok: true, sent: 1, already: 0, updated: 0, bad: 0 });
+    assert.deepEqual(await (await share(ginaId, [shareEvent()])).json(), { ok: true, sent: 0, already: 1, updated: 0, bad: 0, other: 0, res: ["already"] }, "nothing changed");
+    assert.deepEqual(await (await share(ginaId, [shareEvent({ stage: "shipped" })])).json(), { ok: true, sent: 1, already: 0, updated: 0, bad: 0, other: 0, res: ["sent"] });
     const t1 = Math.max(...(await alertsOf(ginaKey)).map((a) => a.createdAt));
     const two = [{ number: "1ZWY0000000000001", carrier: "ups" }, { number: "9400100000000000000002", carrier: "usps" }];
-    assert.deepEqual(await (await share(ginaId, [shareEvent({ stage: "shipped", tracking: two })])).json(), { ok: true, sent: 0, already: 1, updated: 1, bad: 0 });
+    assert.deepEqual(await (await share(ginaId, [shareEvent({ stage: "shipped", tracking: two })])).json(), { ok: true, sent: 0, already: 1, updated: 1, bad: 0, other: 0, res: ["updated"] });
     const got = await alertsOf(ginaKey, t1);
     assert.deepEqual(got.map((a) => [a.orderNo, a.stage]), [["SH-1", "update"]]);
     assert.deepEqual(got[0].tracking, two);
@@ -2943,7 +2943,7 @@ try {
     assert.equal(a.shipTo.length, 80); assert.ok(a.shipAddr.length <= 160);
   });
   await test("a key made by hand gets them too; a buyer turned off, an unknown id or the owner's own FAFO doesn't", async () => {
-    assert.deepEqual(await (await share(ghHash.slice(0, 16), [shareEvent({ orderNo: "GH-1" })])).json(), { ok: true, sent: 1, already: 0, updated: 0, bad: 0 });
+    assert.deepEqual(await (await share(ghHash.slice(0, 16), [shareEvent({ orderNo: "GH-1" })])).json(), { ok: true, sent: 1, already: 0, updated: 0, bad: 0, other: 0, res: ["sent"] });
     assert.ok((await alertsOf(GH_KEY)).some((a) => a.orderNo === "GH-1" && a.shipTo === "Sam Buyer"));
     await admin("/admin/revoke", { key: rosaKey });
     assert.ok(!(await (await getAuth("/alerts/buyers", bobKey)).json()).buyers.some((b) => b.id === rosaId), "a license turned off isn't listed");
@@ -2956,6 +2956,38 @@ try {
     assert.equal((await share(ginaId, [shareEvent()], ginaKey)).status, 403, "only the sender");
     assert.equal((await share(ginaId, [])).status, 400);
     assert.equal((await share(ginaId, Array.from({ length: 201 }, () => shareEvent()))).status, 400);
+  });
+  await test("when each step happened goes with it, kept as first sent; a date in the future or nonsense is left out", async () => {
+    const d = { placed: "2026-11-02", shipped: "2026-11-03T10:00:00.000Z", delivered: "2099-01-01", canceled: "soon", arriving: "<b>" };
+    await share(ginaId, [shareEvent({ orderNo: "SH-D", stage: "shipped", dates: d })]);
+    const got = (await alertsOf(ginaKey)).filter((a) => a.orderNo === "SH-D");
+    assert.ok(got.length && got.every((a) => JSON.stringify(a.dates) === JSON.stringify({ placed: "2026-11-02", shipped: "2026-11-03T10:00:00.000Z" })), JSON.stringify(got));
+    await share(ginaId, [shareEvent({ orderNo: "SH-D", stage: "delivered", dates: { placed: "2026-11-01", shipped: "2026-11-04", delivered: "2026-11-05" } })]);
+    const after = (await alertsOf(ginaKey)).filter((a) => a.orderNo === "SH-D");
+    assert.deepEqual(after.find((a) => a.stage === "delivered").dates, { placed: "2026-11-02", shipped: "2026-11-03T10:00:00.000Z", delivered: "2026-11-05" }, "the first-sent dates stay, a new step's is added");
+  });
+  await test("an order on an account given to another buyer: a remembered address doesn't send it there, the owner picking that buyer does", async () => {
+    const r = await (await share(ginaId, [shareEvent({ orderNo: "SH-R", account: rosaNew.toUpperCase(), auto: true }), shareEvent({ orderNo: "SH-S", account: rosaNew, auto: false })])).json();
+    assert.deepEqual([r.sent, r.other, r.res], [1, 1, ["other", "sent"]]);
+    const got = await alertsOf(ginaKey);
+    assert.ok(!got.some((a) => a.orderNo === "SH-R") && got.some((a) => a.orderNo === "SH-S" && a.profile === ""), "never Rosa's slot's profile on Gina's order");
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM alert_details WHERE order_no = 'SH-R'")[0].n, 0, "nothing kept for it");
+  });
+  await test("an order on an account given to that buyer gets its slot's profile, also when the owner sent it before its alert came", async () => {
+    const first = await (await share(ginaId, [shareEvent({ orderNo: "SH-P", account: ginaAcct.email, auto: true })])).json();
+    assert.deepEqual(first.res, ["sent"]);
+    assert.equal((await alertsOf(ginaKey)).find((a) => a.orderNo === "SH-P").profile, ginaAcct.profile);
+    await share(ginaId, [shareEvent({ orderNo: "SH-Q" })]);   // no account: sent before its alert
+    const t = Math.max(...(await alertsOf(ginaKey)).map((a) => a.createdAt));
+    assert.equal((await alertsOf(ginaKey)).find((a) => a.orderNo === "SH-Q").profile, "");
+    const r = await (await slots("/alerts", bobKey, { events: [orderEvent({ orderNo: "sh-q" })] })).json();
+    assert.deepEqual([r.sent, r.already], [0, 1], "the step was there");
+    const later = (await alertsOf(ginaKey, t)).filter((a) => a.orderNo === "SH-Q");
+    assert.deepEqual(later.map((a) => [a.stage, a.profile]), [["update", ginaAcct.profile]], "the update row brings the profile");
+    assert.ok((await alertsOf(ginaKey)).filter((a) => a.orderNo === "SH-Q").every((a) => a.profile === ginaAcct.profile), "on its step too");
+    const again = await (await slots("/alerts", bobKey, { events: [orderEvent({ orderNo: "sh-q" })] })).json();
+    assert.equal(again.already, 1);
+    assert.equal((await alertsOf(ginaKey, t)).filter((a) => a.orderNo === "SH-Q").length, 1, "only once");
   });
   await test("a buyer's own Discord webhook gets the steps sent, never the updates or the address", async () => {
     const hook = `http://127.0.0.1:${DISCORD_PORT}/buyerhook/123456789/tok_rosa_abcdefghijklmnopqrstuvwxyz`;

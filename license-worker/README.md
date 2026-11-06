@@ -605,14 +605,18 @@ the name they last sent slots under, and keys made by hand that have sent slots)
 alerts (above), on the desktop or the web.
 
 - **They show up on the buyer's Orders page** as "From your seller", with the item, price, order number, ship-to name and
-  address and tracking numbers, and each step after that until they're delivered. Never the card.
-- **Never billed**: they don't go on an invoice, whatever the buyer's plan.
+  address and tracking numbers, and each step after that (with when it happened) until they're delivered. Never the card.
+  What the buyer changed on the order themselves (its ship-to, a tracking number they took off) stays as they left it.
+- **Sending adds nothing to an invoice**, whatever the buyer's plan. (An order on an account you gave that buyer is on
+  their invoice through its own order alert, as before, sent or not.)
 - **"Also send future orders shipping to this address"** (ticked to start with) remembers the address for that buyer:
-  orders your FAFO finds from then on that ship to the same street address and ZIP, whatever the unit and however Jig
-  wrote it, go to them by themselves. An address kept for two buyers waits for you to pick. Your remembered addresses are
-  in **Settings → Orders sent to buyers**, where × stops one. **Stop sending** in the Send to buyer window stops an order's
+  orders your FAFO finds from then on that ship to the same street address and ZIP, whatever the unit and the ways Jig
+  writes it, go to them by themselves, unless the order is on an account you gave another buyer. An address FAFO can't
+  read that way (no house number, or no state and ZIP) isn't remembered, and one kept for two buyers waits for you to
+  pick. Leave it off for a package forwarder or a building other buyers ship to. Your remembered addresses are in
+  **Settings → Orders sent to buyers**, where × stops one. **Stop sending** in the Send to buyer window stops an order's
   updates (the buyer keeps what they already got).
-- The worker keeps them as that buyer's alerts (`POST /alerts/share`), with the ship-to and tracking in the
+- The worker keeps them as that buyer's alerts (`POST /alerts/share`), with the ship-to, tracking and dates in the
   `alert_details` table, which `npm run db:init` (and the deploy Action) adds. A buyer on a FAFO before 1.9.138 gets the
   orders and their steps without the ship-to and tracking.
 

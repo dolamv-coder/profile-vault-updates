@@ -342,6 +342,7 @@ CREATE TABLE IF NOT EXISTS alert_details (
   ship_to    TEXT NOT NULL DEFAULT '',
   ship_addr  TEXT NOT NULL DEFAULT '',
   tracking   TEXT NOT NULL DEFAULT '[]',        -- JSON [{number, carrier}]
+  dates      TEXT NOT NULL DEFAULT '{}',        -- JSON {step: when it happened}, each kept as first sent
   updated_at INTEGER NOT NULL,
   PRIMARY KEY (key_hash, store, order_no)
 );
