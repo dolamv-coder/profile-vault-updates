@@ -597,6 +597,25 @@ hear about it in their FAFO without ever seeing the account:
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/alerts
 ```
 
+### Sending a buyer orders yourself
+
+From FAFO 1.9.138 you can send any order to one of your buyers, whatever account it was placed on: on **Orders**, tick the
+orders, choose **Send to buyer** and pick them from your buyers (every license that isn't turned off, by Discord name and
+the name they last sent slots under, and keys made by hand that have sent slots). It's only in the FAFO that sends order
+alerts (above), on the desktop or the web.
+
+- **They show up on the buyer's Orders page** as "From your seller", with the item, price, order number, ship-to name and
+  address and tracking numbers, and each step after that until they're delivered. Never the card.
+- **Never billed**: they don't go on an invoice, whatever the buyer's plan.
+- **"Also send future orders shipping to this address"** (ticked to start with) remembers the address for that buyer:
+  orders your FAFO finds from then on that ship to the same street address and ZIP, whatever the unit and however Jig
+  wrote it, go to them by themselves. An address kept for two buyers waits for you to pick. Your remembered addresses are
+  in **Settings → Orders sent to buyers**, where × stops one. **Stop sending** in the Send to buyer window stops an order's
+  updates (the buyer keeps what they already got).
+- The worker keeps them as that buyer's alerts (`POST /alerts/share`), with the ship-to and tracking in the
+  `alert_details` table, which `npm run db:init` (and the deploy Action) adds. A buyer on a FAFO before 1.9.138 gets the
+  orders and their steps without the ship-to and tracking.
+
 ## Premium buyers
 
 From FAFO 1.9.127, **Generate** (making profiles in bulk, Jig and Mass edit on drafts) is only for the buyers you

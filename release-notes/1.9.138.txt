@@ -1,0 +1,1 @@
+Your seller can now send orders they place for you straight to your Orders page, with the ship-to name, address and tracking number, and each update as they ship and arrive. For sellers: tick orders on Orders and choose Send to buyer; FAFO can also send that buyer future orders to the same address by itself.

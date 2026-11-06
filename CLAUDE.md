@@ -288,6 +288,20 @@ alone (every store's rows of one account) from reading the whole table. Only
   `GET /alerts?since=` every 5 minutes (cursor `settings.sellerSince`; the web version too from 1.9.115, below). It adds each alert as an order
   with id `sa-<oid>`, `fromSeller` and `profile`, moves it along, and notifies (`sendAlert`).
   A deleted one stays deleted: from 1.9.69 the order editor's Delete also records `deletedOrders`.
+  Since 2026-11-06 (the owner's request, with a screenshot of two Target orders shipping to a buyer: "a function to share
+  this a specific buyer that has FAFO… I want to send this to his Order page"; their choices: its updates too, the ship-to name
+  and address with the tracking, remembering the address for future orders, never billed) the sender can also send any order
+  to a buyer it picks, whatever account it was on: `GET /alerts/buyers` (sender only) lists every license not turned off (Discord
+  name, last4) and keys made by hand that sent slots and are still on the list, each with the name it last sent slots under, by
+  an id that's the first 16 hex of its key hash (never a key); `POST /alerts/share {to, events}` (sender only, up to 200; 400 for
+  its own FAFO, 404 unknown, 410 a license turned off or a key off the list, 503 while the GitHub list can't be read) keeps each
+  step as that buyer's alert with the same oid and row as an alert for an account given to them (so the two are one order
+  there), `profile` empty, and the ship-to name (80), address (160) and up to 5 tracking numbers (known carriers, else
+  `other`) in D1 `alert_details` (a new table, by buyer, store and order number, kept 60 days after the order was last sent),
+  which `GET /alerts` gives with each of that order's rows (`shipTo`, `shipAddr`, `tracking`). Details that change with no new
+  step move the order's one `update` row on (`stage` "update", upserted with a new id and time), which only page 1.9.138+
+  reads: older pages skip a step they don't know. Never billed (no `alertLine` or `cancelStmt`), and the buyer's own Discord
+  webhook gets the steps as before, never an update or the address. Page 1.9.138 below.
   From 1.9.57 a store waiting for a login is linked to the saved login with the profile's email on
   its own: once per vault at unlock (`settings._linkedByEmail`), on Import profiles and inbox
   submissions, and by ticking the profile in the store login editor (`linkByEmail`).
@@ -1654,6 +1668,34 @@ at a time (`SPAM_MOVING`): a sync's on a mailbox the 10 minutes' run is on does 
 said on every sync. Needs desktop 14 like the rest of Find in Spam; `clean-rules.test.mjs` tests it, the reviews' findings too (a 5-day lock,
 a sync skipped during a sleep, a sync's 7 days after a 10-day sleep, an inbox moved to another mailbox, a copy saved twice
 whose sync fails, and every copy failing), and fails if the newest page has no `spamMovesTick`. Nothing gains a field.
+
+From 1.9.138 the seller's own FAFO can **Send to buyer** (the owner's request, 2026-11-06; the worker section above): the Orders
+selection bar's button (`orders-send`, only where `canShare`: `isPremiumOwner()`, the FAFO that sends order alerts, on the desktop
+or the web, with `sellerLic()`) opens `openSendToBuyer`: the buyers from `GET /alerts/buyers` (`loadShareBuyers`, 10 minutes in
+memory, emptied at lock) with a search, the one the orders were sent to or their address is remembered for picked to start
+with, and "Also send future orders shipping to this address" (ticked to start with, the owner's choice), which says when an
+order moves to another buyer (that FAFO keeps what it got) or an address was another buyer's; **Stop sending** for orders
+already sent. Orders from the seller and ones with no number can't be sent. Orders gain `shareTo` (`{id, name, by:"hand"|"addr",
+at}`, or `{off:true}`) and `shareTold` (`{id, steps, det}`: what that buyer was sent), and settings gain `buyerAddrs`
+(`{"<address key>|<buyer id>": {key, id, name, addr, at}}`, merged per entry by `syncMerge`, as `spamMoves`), which 1.9.112
+syncs as they are. `reportSharedOrders` (25 seconds after unlock, every 5 minutes, after each email sync and after Send) sends
+`sharePlan`'s events a buyer at a time, 100 to a request, and marks them once the worker took them (`shareMark`): each order's
+placed and current step once, and its step again when its ship-to or tracking changed (`shareDetOf`); a new buyer starts over.
+A buyer the worker refuses (400, 404, 410) is noted (`SHARE.err`, the row's pill says "Not sent to …") and the rest go on; a
+403 checks `refreshPremium`; a 5xx, 429 or no connection stops until the next run. An order goes to a remembered address's buyer
+(`shareTargetOf`) when FAFO added it, or it was placed, from the day the address was remembered, while it's remembered for one
+buyer only. `shareAddrKey` reads `shipAddr` ("line 1, [line 2,] City, ST 12345") as line 1's words after the house number with
+the street type, direction and a numbered street written one way (`JIG_TYPES`, `JIG_DIRS`, `jigOrdinal`), no unit (on line 1,
+line 2, or a bare number after the street's type or direction, unless it's a route: `SHARE_ROUTES`), no dot inside a word, and
+the 5-digit ZIP, so every way Jig writes an address has its key (the test runs `jigChoices`). The row says "Sent to @name", and
+Settings → **Orders sent to buyers** (`sentBuyersSectionHTML`) lists the remembered addresses with × (`share-forget`). On the
+buyer's FAFO, `applySellerAlerts` takes `update` rows (for an order it has) and `sellerDetailsApply` puts the ship-to name and
+address in where they're empty or still what the seller sent before (`o.sellerSent`), never over what the buyer typed, adds the
+tracking, and takes off one the seller sent and then dropped (not one the buyer typed); all from the worker, so every device
+ends up the same. A change with no new step redraws with no notification (`news.changed`). The pill "From your seller" says
+"Your seller placed this order for you and sent it to your FAFO". `.github/scripts/send-to-buyer.test.mjs` runs the SHARE-START
+block, `reportSharedOrders` against a pretend worker and `applySellerAlerts` (on pull requests; it fails if the newest page has
+no SHARE-START), and `sync-merge.test.mjs` the merge of `buyerAddrs`.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

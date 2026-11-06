@@ -2875,6 +2875,101 @@ try {
     assert.doesNotMatch(JSON.stringify(d), /ORD-1001|Booster|review_token/);
   });
 
+  console.log("\nOrders the owner sends a buyer (app 1.9.138)");
+  // Bob's FAFO sends order alerts now (above). Gina and Rosa are buyers, and GH_KEY is a key made by hand that sent slots.
+  const idOf = async (k) => (await hashOfKey(k.toUpperCase())).slice(0, 16);
+  const shareEvent = (o) => ({ store: "target", storeName: "Target", orderNo: "sh-1", item: "Ditto Premium Collection", qty: "2", total: "$119.98", stage: "placed", at: today,
+    shipTo: "Sam Buyer", shipAddr: "1 Main St, Apt 2, Austin, TX 78701", tracking: [{ number: "1ZWY0000000000001", carrier: "ups" }], ...o });
+  const share = (to, events, key = bobKey) => slots("/alerts/share", key, { to, events });
+  const alertsOf = async (key, since = 0) => (await (await getAuth("/alerts?since=" + since, key)).json()).alerts;
+  let ginaId, rosaId;
+  await test("only the sender lists its buyers: every license not turned off and keys made by hand that sent slots, never a key", async () => {
+    ginaId = await idOf(ginaKey); rosaId = await idOf(rosaKey);
+    assert.equal((await getAuth("/alerts/buyers", ginaKey)).status, 403);
+    assert.equal((await getAuth("/alerts/buyers", "PVLT-NOPE-NOPE-NOPE-NOPE")).status, 401);
+    const r = await (await getAuth("/alerts/buyers", bobKey)).json();
+    const gina = r.buyers.find((b) => b.id === ginaId), gh = r.buyers.find((b) => b.id === ghHash.slice(0, 16));
+    assert.deepEqual([gina.user, gina.last4], ["gina", ginaKey.slice(-4)]);
+    assert.ok(gh && gh.user === "" && gh.last4 === GH_KEY.slice(-4), "a key made by hand that sent slots");
+    const bobId = await idOf(bobKey);
+    assert.ok(!r.buyers.some((b) => b.id === bobId), "not its own FAFO");
+    assert.ok(r.buyers.some((b) => b.id === rosaId));
+    assert.ok(r.buyers.every((b) => Object.keys(b).sort().join() === "at,id,last4,name,user" && /^[0-9a-f]{16}$/.test(b.id)));
+    const text = JSON.stringify(r);
+    for (const k of [ginaKey, rosaKey, GH_KEY]) assert.ok(!text.includes(k.replace(/-/g, "").slice(4, 12)) && !text.includes(k), "never a key");
+    assert.ok(!text.includes(ghHash), "never a whole hash");
+  });
+  await test("an order the owner sends reaches that buyer with its ship-to and tracking, whatever account it was on, and isn't billed", async () => {
+    const before = await alertsOf(ginaKey), last = Math.max(...before.map((a) => a.createdAt));
+    const r = await (await share(ginaId, [shareEvent(), shareEvent({ orderNo: "ORD-1001", tracking: [] }), shareEvent({ stage: "lost", orderNo: "x" })])).json();
+    assert.deepEqual(r, { ok: true, sent: 1, already: 1, updated: 1, bad: 1 }, "ORD-1001's step reached Gina already (an account given to her): its details come as an update");
+    const got = await alertsOf(ginaKey, last);
+    const sh = got.find((a) => a.orderNo === "SH-1"), up = got.find((a) => a.orderNo === "ORD-1001");
+    const { id, oid, createdAt, ...rest } = sh;
+    assert.deepEqual(rest, { store: "target", storeName: "Target", profile: "", orderNo: "SH-1", item: "Ditto Premium Collection", qty: "2", total: "$119.98", stage: "placed", at: today,
+      shipTo: "Sam Buyer", shipAddr: "1 Main St, Apt 2, Austin, TX 78701", tracking: [{ number: "1ZWY0000000000001", carrier: "ups" }] });
+    assert.equal(up.stage, "update"); assert.equal(up.oid, firstAlert.oid, "the same order as the alert for her account");
+    assert.deepEqual([up.shipTo, up.tracking], ["Sam Buyer", []]);
+    const all = await alertsOf(ginaKey);
+    assert.ok(all.filter((a) => a.orderNo === "ORD-1001" && a.stage !== "update").every((a) => a.shipTo === "Sam Buyer"), "its steps have the details too");
+    assert.ok(before.filter((a) => a.orderNo === "BOB-7").length === 0 && (await alertsOf(bobKey)).every((a) => a.orderNo !== "SH-1"), "nobody else's");
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM billing_lines")[0].n, 0, "never billed");
+  });
+  await test("a step not sent yet goes; one sent goes again only as an update when its details changed", async () => {
+    const t0 = Math.max(...(await alertsOf(ginaKey)).map((a) => a.createdAt));
+    assert.deepEqual(await (await share(ginaId, [shareEvent()])).json(), { ok: true, sent: 0, already: 1, updated: 0, bad: 0 }, "nothing changed");
+    assert.deepEqual(await (await share(ginaId, [shareEvent({ stage: "shipped" })])).json(), { ok: true, sent: 1, already: 0, updated: 0, bad: 0 });
+    const t1 = Math.max(...(await alertsOf(ginaKey)).map((a) => a.createdAt));
+    const two = [{ number: "1ZWY0000000000001", carrier: "ups" }, { number: "9400100000000000000002", carrier: "usps" }];
+    assert.deepEqual(await (await share(ginaId, [shareEvent({ stage: "shipped", tracking: two })])).json(), { ok: true, sent: 0, already: 1, updated: 1, bad: 0 });
+    const got = await alertsOf(ginaKey, t1);
+    assert.deepEqual(got.map((a) => [a.orderNo, a.stage]), [["SH-1", "update"]]);
+    assert.deepEqual(got[0].tracking, two);
+    assert.ok(t1 > t0);
+    await new Promise((ok) => setTimeout(ok, 5));
+    await share(ginaId, [shareEvent({ stage: "shipped", tracking: two, shipAddr: "1 Main Street, Apt 2, Austin, TX 78701" })]);
+    const again = await alertsOf(ginaKey, got[0].createdAt);
+    assert.deepEqual(again.map((a) => [a.orderNo, a.stage, a.shipAddr]), [["SH-1", "update", "1 Main Street, Apt 2, Austin, TX 78701"]], "one update row per order, moved on");
+    assert.notEqual(again[0].id, got[0].id);
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM alerts WHERE order_no = 'SH-1' AND stage = 'update'")[0].n, 1);
+  });
+  await test("tracking is cleaned: numbers only, known carriers, five at most; long text is cut", async () => {
+    const junk = [{ number: "1Z 999", carrier: "UPS" }, { number: "<b>x</b>", carrier: "ups" }, { number: "TBA1234567890", carrier: "spaceship" }, { number: "TBA1234567890", carrier: "amazon" },
+      ...Array.from({ length: 6 }, (_, i) => ({ number: "N0000" + i, carrier: "fedex" }))];
+    await share(ginaId, [shareEvent({ orderNo: "SH-2", tracking: junk, shipTo: "x".repeat(200), shipAddr: "y ".repeat(200) })]);
+    const a = (await alertsOf(ginaKey)).find((x) => x.orderNo === "SH-2");
+    assert.deepEqual(a.tracking, [{ number: "1Z999", carrier: "ups" }, { number: "TBA1234567890", carrier: "other" }, { number: "N00000", carrier: "fedex" }, { number: "N00001", carrier: "fedex" },
+      { number: "N00002", carrier: "fedex" }], "the first five that are numbers, once each");
+    assert.equal(a.shipTo.length, 80); assert.ok(a.shipAddr.length <= 160);
+  });
+  await test("a key made by hand gets them too; a buyer turned off, an unknown id or the owner's own FAFO doesn't", async () => {
+    assert.deepEqual(await (await share(ghHash.slice(0, 16), [shareEvent({ orderNo: "GH-1" })])).json(), { ok: true, sent: 1, already: 0, updated: 0, bad: 0 });
+    assert.ok((await alertsOf(GH_KEY)).some((a) => a.orderNo === "GH-1" && a.shipTo === "Sam Buyer"));
+    await admin("/admin/revoke", { key: rosaKey });
+    assert.ok(!(await (await getAuth("/alerts/buyers", bobKey)).json()).buyers.some((b) => b.id === rosaId), "a license turned off isn't listed");
+    const off = await share(rosaId, [shareEvent()]);
+    assert.equal(off.status, 410); assert.match((await off.json()).error, /turned off/);
+    await admin("/admin/restore", { key: rosaKey });
+    assert.equal((await share("0123456789abcdef", [shareEvent()])).status, 404);
+    assert.equal((await share("not-an-id", [shareEvent()])).status, 400);
+    assert.equal((await share(await idOf(bobKey), [shareEvent()])).status, 400, "its own FAFO");
+    assert.equal((await share(ginaId, [shareEvent()], ginaKey)).status, 403, "only the sender");
+    assert.equal((await share(ginaId, [])).status, 400);
+    assert.equal((await share(ginaId, Array.from({ length: 201 }, () => shareEvent()))).status, 400);
+  });
+  await test("a buyer's own Discord webhook gets the steps sent, never the updates or the address", async () => {
+    const hook = `http://127.0.0.1:${DISCORD_PORT}/buyerhook/123456789/tok_rosa_abcdefghijklmnopqrstuvwxyz`;
+    assert.deepEqual(await (await putAuth("/alerts/webhook", rosaKey, { url: hook })).json(), { set: true });
+    const before = buyerHookPosts.length;
+    await share(rosaId, [shareEvent({ orderNo: "RS-1" })]);
+    await share(rosaId, [shareEvent({ orderNo: "RS-1", tracking: [] })]);
+    await new Promise((ok) => setTimeout(ok, 500));
+    const posted = buyerHookPosts.slice(before);
+    assert.equal(posted.length, 1, "the step only");
+    assert.equal(posted[0].content, `✅ **Order placed** · Target\nDitto Premium Collection ×2 · $119.98\n-# Order #RS-1 · ${today}`);
+    assert.deepEqual((await alertsOf(rosaKey)).filter((a) => a.orderNo === "RS-1").map((a) => a.stage), ["placed", "update"]);
+  });
+
   console.log("\nInboxes on the one list (2026-10-23)");
   // Bob's FAFO sends order alerts (above), so it's the owner's here; Owen is a buyer. Every account these tests add is
   // ibx.…@example.com, and the free ones already on the list are held while they run, so the tests know which are free.
