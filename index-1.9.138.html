@@ -11737,8 +11737,9 @@ function shareAddrKey(addr){
     if (t){ out.push(t); kind.push("type"); continue; }
     const d = JIG_DIRS.find(r => r.some(x => x.toUpperCase() === w[i]));
     // A direction that is the street's whole name (N St, North St: two streets) stays as written; Jig leaves it alone.
-    const whole = d && i === 1 && SHARE_TYPE.has(w[2] || "") && (w.length === 3 || (w.length === 4 && JIG_DIRS.some(r => r.some(x => x.toUpperCase() === w[3]))));
-    if (d && !whole){ out.push(d[1].toUpperCase()); kind.push("dir"); continue; }
+    const isDir = (y) => JIG_DIRS.some(r => r.some(x => x.toUpperCase() === y));
+    const whole = d && i === 1 && SHARE_TYPE.has(w[2] || "") && w.slice(3).every(y => isDir(y) || SHARE_UNITISH.test(y));   // N St, N St NW, North St 828
+    if (d){ out.push(whole ? w[i] : d[1].toUpperCase()); kind.push(whole ? "word" : "dir"); continue; }
     const o = /^[A-Z]+$/.test(w[i]) ? jigOrdinal(w[i], x => x.toUpperCase()) : null;
     out.push(o && /^\d/.test(o) ? o : w[i]); kind.push(SHARE_UNITISH.test(w[i]) ? "n" : "word");
   }

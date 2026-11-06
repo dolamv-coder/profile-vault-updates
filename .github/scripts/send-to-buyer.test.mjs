@@ -61,7 +61,8 @@ await test("every way Jig for Target writes an address has its key, and another 
   for (const a of [{ line1: "1801 N Orchard Dr", line2: "Apt 4", city: "Saint Paul", zip: "55101" }, { line1: "200 18th Ave NW", line2: "", city: "Austin", zip: "78701" },
     { line1: "500 W 21st St", line2: "Unit 12", city: "Fort Worth", zip: "76102" }, { line1: "77 Meadow Ln", line2: "", city: "Mount Vernon", zip: "10550" },
     { line1: "120 Oak Falls", line2: "Apt 3", city: "Austin", zip: "78701" }, { line1: "100 State St", line2: "", city: "Austin", zip: "78701" }, { line1: "100 County Road 12", line2: "", city: "Austin", zip: "78701" },
-    { line1: "5000 Nolensville Pike", line2: "Ste 4", city: "Nashville", zip: "37211" }, { line1: "100 Business Loop 70", line2: "", city: "Columbia", zip: "65203" }]) {
+    { line1: "5000 Nolensville Pike", line2: "Ste 4", city: "Nashville", zip: "37211" }, { line1: "100 Business Loop 70", line2: "", city: "Columbia", zip: "65203" },
+    { line1: "100 N St NW", line2: "", city: "Washington", zip: "20001" }, { line1: "77 Saint Marks Pl", line2: "Apt 4", city: "New York", zip: "10003" }]) {
     const vs = api.jigChoices(a, ["line1", "line2", "city", "zip"]).order;
     assert.ok(vs.length > 5, `Jig writes ${oneLine(a)} many ways: ${vs.length}`);
     const keys = new Set(vs.map((v) => api.shareAddrKey(oneLine(v)))), want = api.shareAddrKey(oneLine(a));
@@ -138,7 +139,8 @@ await test("every way Jig for Pokémon Center writes a building on a street has 
   const keyOf = (v) => api.shareAddrKey(oneLine({ ...v, city: "Austin", zip: "78701" }));
   for (const b of [{ line1: "1801 N Orchard Dr", line2: "" }, { line1: "1801 N Orchard Dr", line2: "Apt 4" }, { line1: "500 W 21st St Apt 12", line2: "" }, { line1: "77 Meadow Ln", line2: "# 3" },
     { line1: "200 18th Ave NW", line2: "" }, { line1: "100 State St", line2: "" }, { line1: "100 Park Ave", line2: "" }, { line1: "100 N Park Ave", line2: "" },
-    { line1: "100 Market St", line2: "Apt 4" }, { line1: "100 Forest Dr", line2: "" }, { line1: "1 Main St", line2: "Apt B" }, { line1: "120 Oak Fls", line2: "" }]) {
+    { line1: "100 Market St", line2: "Apt 4" }, { line1: "100 Forest Dr", line2: "" }, { line1: "1 Main St", line2: "Apt B" }, { line1: "120 Oak Fls", line2: "" }, { line1: "100 North St", line2: "" }, { line1: "100 N St NW", line2: "Apt 2" },
+    { line1: "100 Main St Lot 5", line2: "" }]) {
     const want = keyOf(b);
     assert.ok(want, b.line1);
     for (let round = 0; round < 20; round++) for (const v of forms(b)) assert.equal(keyOf(v), want, `${b.line1} ${b.line2} → ${v.line1} | ${v.line2}`);
