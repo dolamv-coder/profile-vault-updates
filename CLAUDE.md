@@ -1725,8 +1725,8 @@ unit written bare) after a street type that follows the street's name dropped, b
 54-56 and Maple Loop 5 are all their own; a bare number after a road's own number goes), nor a numbered lane's or drive's
 (`SHARE_NUMBERED`: Fire Lane 12, Private Drive 155, County Ln 4); then the 5-digit ZIP; "" when it can't be
 read that way. Every way Jig for Target (`jigChoices`) or Jig for Pokémon Center (`pkcForms`) writes a building on a street with
-another type has its key (the test runs both); on a road, a highway or a street with no type (Broadway), Pokémon Center's bare
-number on line 1 keeps a key of its own, so those orders wait. Settings → **Orders sent to buyers** (`sentBuyersSectionHTML`) lists the remembered addresses with ×
+another type has its key (the test runs both); on a road, a highway, a street with no type (Broadway) or one named by a
+direction alone (North St), Pokémon Center's bare number on line 1 keeps a key of its own, so those orders wait. Settings → **Orders sent to buyers** (`sentBuyersSectionHTML`) lists the remembered addresses with ×
 (`share-forget`). On the buyer's FAFO, `applySellerAlerts` takes `update` rows (for an order it has), the slot's profile when
 the order has none, and each step's date from `dates` (else when the alert came; the worker's, kept as first sent, also puts
 right one a page before 1.9.138 took from when the alert came), and `sellerDetailsApply` puts in, on every row and after every
