@@ -20,7 +20,7 @@ on:
     branches: [main]
     paths: ["index-*.html", "release-notes/**", "update.json", "web-update.json", "channels.json"]
   pull_request:
-    paths: ["index-*.html", "release-notes/**", "update.json", "web-update.json", "channels.json", "web-worker/wrangler.toml", ".github/scripts/publish-update*.mjs", ".github/scripts/sync-merge.test.mjs", ".github/scripts/one-store.test.mjs", ".github/scripts/clean-rules.test.mjs", "desktop/imap-sync.js", ".github/workflows/publish-update.yml"]
+    paths: ["index-*.html", "release-notes/**", "update.json", "web-update.json", "channels.json", "web-worker/wrangler.toml", ".github/scripts/publish-update*.mjs", ".github/scripts/sync-merge.test.mjs", ".github/scripts/one-store.test.mjs", ".github/scripts/clean-rules.test.mjs", ".github/scripts/send-to-buyer.test.mjs", "desktop/imap-sync.js", ".github/workflows/publish-update.yml"]
   workflow_dispatch:
     inputs:
       version:
@@ -57,6 +57,9 @@ jobs:
 
       - name: Test what the newest page's Clean emails clears
         run: node .github/scripts/clean-rules.test.mjs
+
+      - name: Test the newest page's Send to buyer
+        run: node .github/scripts/send-to-buyer.test.mjs
 
   # Before the key is handed out: it must be readable only by this job on main, and the newest
   # worker deploy on main must have worked.

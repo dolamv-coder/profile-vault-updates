@@ -72,7 +72,14 @@
 //                              total, stage, at}]}: each is kept for the buyer that account was given to,
 //                              without the account, and posted to their own Discord webhook if they set one
 //   GET  /alerts?since=MS      {alerts:[{id, oid, store, storeName, profile, orderNo, item, qty, total,
-//                              stage, at, createdAt}]}: this license's, newer than MS
+//                              stage, at, createdAt, shipTo?, shipAddr?, tracking?, dates?}]}: this license's, newer than MS;
+//                              stage "update" (an order sent with /alerts/share whose details changed) only from 1.9.138
+//   GET  /alerts/buyers        the sender only (app 1.9.138+): {buyers:[{id, user, name, last4, at}]}, the buyers it can
+//                              send orders to: every license not turned off, and keys made by hand that sent slots
+//   POST /alerts/share         the sender only (app 1.9.138+): {to, events:[{store, storeName, orderNo, item, qty, total,
+//                              stage, at, account, auto, shipTo, shipAddr, tracking:[{number, carrier}], dates}]}: orders
+//                              the owner sends that buyer whatever account they were placed on, with the ship-to, tracking
+//                              and each step's date; {ok, sent, already, updated, bad, other, res: [one per event]}. Never billed
 //   GET  /alerts/webhook       {set, lastOk, lastError}: this license's Discord webhook for its alerts
 //   PUT  /alerts/webhook       {url}: set it (it gets a test post first), or "" to remove it
 // Payments (Stripe; off until STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set; page 1.9.130+, license Bearer):
@@ -205,6 +212,8 @@ export default {
       if (path === "/alerts/sender" && request.method === "POST") return await alertSenderPost(request, env, ctx, url);
       if (path.startsWith("/alerts/review/")) return await alertSenderReview(request, env, ctx, url, path.slice("/alerts/review/".length));
       if (path === "/alerts/accounts" && request.method === "GET") return await alertAccounts(request, env, ctx);
+      if (path === "/alerts/buyers" && request.method === "GET") return await alertBuyers(request, env);
+      if (path === "/alerts/share" && request.method === "POST") return await alertsShare(request, env, ctx);
       if (path === "/alerts/webhook" && request.method === "GET") return await alertWebhookGet(request, env);
       if (path === "/alerts/webhook" && request.method === "PUT") return await alertWebhookPut(request, env);
       if (path === "/alerts" && request.method === "GET") return await alertsGet(request, env, url);
@@ -3264,7 +3273,17 @@ async function alertsPost(request, env, ctx) {
       order_no: orderNo, item: clip(ev.item, 120), qty: clip(ev.qty, 6) || "1", total: clip(ev.total, 20), stage, at, created_at: now + fresh.length };
     const r = await env.DB.prepare(`INSERT OR IGNORE INTO alerts (id, key_hash, oid, store, store_name, profile, order_no, item, qty, total, stage, at, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(row.id, row.key_hash, oid, store, row.store_name, row.profile, orderNo, row.item, row.qty, row.total, stage, at, row.created_at).run();
-    if (r.meta && r.meta.changes) fresh.push(row); else already++;   // that step was already sent
+    if (r.meta && r.meta.changes) fresh.push(row);
+    else {
+      already++;   // that step was already sent
+      // ...without the slot's profile, by Send to buyer (1.9.138): it gets it, and the order's update row moves on.
+      if (row.profile) {
+        const u = await env.DB.prepare("UPDATE alerts SET profile = ? WHERE key_hash = ? AND store = ? AND order_no = ? AND profile = ''").bind(row.profile, a.key_hash, store, orderNo).run();
+        if (u.meta && u.meta.changes) await env.DB.prepare(`INSERT INTO alerts (id, key_hash, oid, store, store_name, profile, order_no, item, qty, total, stage, at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'update', ?, ?) ON CONFLICT (key_hash, store, order_no, stage) DO UPDATE SET id = excluded.id, created_at = excluded.created_at, profile = excluded.profile`)
+          .bind(randomId(12), a.key_hash, oid, store, row.store_name, row.profile, orderNo, row.item, row.qty, row.total, at, now + list.length + fresh.length).run();
+      }
+    }
     if (bill && stage !== "canceled") {
       try { const l = await alertLine(env, bill, a, store, orderNo, { account, at, storeName: clip(ev.storeName, 40), item: row.item, qty: row.qty }); if (l) billing.push(l); }
       catch (e) { console.error("billing", e); }
@@ -3286,9 +3305,155 @@ async function alertsGet(request, env, url) {
   const lic = await slotLicense(request, env);
   if (!lic) return json({ error: "license not recognized" }, 401);
   const since = Math.max(0, Math.floor(Number(url.searchParams.get("since"))) || 0);
-  const { results } = await env.DB.prepare("SELECT * FROM alerts WHERE key_hash = ? AND created_at > ? ORDER BY created_at LIMIT 200").bind(lic.hash, since).all();
-  return json({ alerts: results.map((a) => ({ id: a.id, oid: a.oid, store: a.store, storeName: a.store_name, profile: a.profile, orderNo: a.order_no,
-    item: a.item, qty: a.qty, total: a.total, stage: a.stage, at: a.at, createdAt: a.created_at })), now: Date.now() }, 200, { "cache-control": "no-store" });
+  // With the details the owner sent with an order they sent this buyer themselves (POST /alerts/share), if any.
+  const { results } = await env.DB.prepare(`SELECT a.*, d.ship_to, d.ship_addr, d.tracking, d.dates FROM alerts a
+    LEFT JOIN alert_details d ON d.key_hash = a.key_hash AND d.store = a.store AND d.order_no = a.order_no
+    WHERE a.key_hash = ? AND a.created_at > ? ORDER BY a.created_at LIMIT 200`).bind(lic.hash, since).all();
+  return json({ alerts: results.map((a) => Object.assign({ id: a.id, oid: a.oid, store: a.store, storeName: a.store_name, profile: a.profile, orderNo: a.order_no,
+    item: a.item, qty: a.qty, total: a.total, stage: a.stage, at: a.at, createdAt: a.created_at },
+    a.tracking == null ? {} : { shipTo: a.ship_to, shipAddr: a.ship_addr, tracking: shareTracking(a.tracking), dates: shareDates(a.dates) })), now: Date.now() }, 200, { "cache-control": "no-store" });
+}
+
+// Orders the owner sends a buyer themselves (app 1.9.138, the owner's request, 2026-11-06, with a screenshot of two Target
+// orders shipping to a buyer: "a function to share this with a specific buyer that has FAFO… I want to send this to his Order
+// page"). The owner's FAFO picks the buyer from GET /alerts/buyers and sends each order's steps with POST /alerts/share, kept
+// as that buyer's alerts whatever account the order was placed on (the same oid and row as an alert for an account given to
+// them, so the two are one order there), with the ship-to name and address and the tracking numbers (alert_details), and
+// never billed (the owner's choice). Details that change with no new step move the order's "update" row on, which only
+// 1.9.138+ reads: older pages skip a step they don't know, and get the orders without the details. An order on an account given
+// to another buyer never goes to this one by a remembered address (auto): the alert for that account reaches its own buyer. Each
+// event's details and step are written together (one batch), so one that fails is written again whole.
+const SHARE_ID_RE = /^[0-9a-f]{16}$/;
+const SHARE_CARRIERS = ["ups", "fedex", "usps", "dhl", "ontrac", "amazon", "other"];
+const shareBuyerId = (hash) => String(hash).slice(0, 16);
+function shareTracking(v) {
+  let list; try { list = typeof v === "string" ? JSON.parse(v) : v; } catch { list = []; }
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const t of list.slice(0, 20)) {
+    const number = String(t && t.number || "").replace(/\s+/g, "").slice(0, 40), carrier = String(t && t.carrier || "").toLowerCase();
+    if (/^[A-Za-z0-9-]{4,40}$/.test(number) && !out.some((x) => x.number === number)) out.push({ number, carrier: SHARE_CARRIERS.includes(carrier) ? carrier : "other" });
+    if (out.length === 5) break;
+  }
+  return out;
+}
+
+// When each step happened, as the owner's FAFO has it: an ISO time or a day, not later than a day from now. JSON in, {step: when} out.
+function shareDates(v, now = Date.now()) {
+  let o; try { o = typeof v === "string" ? JSON.parse(v) : v; } catch { o = null; }
+  const out = {};
+  if (!o || typeof o !== "object" || Array.isArray(o)) return out;
+  for (const k of ["placed", ...ALERT_STAGES]) {
+    const t = String(o[k] == null ? "" : o[k]).trim();
+    if (!t || t.length > 30 || !/^\d{4}-\d{2}-\d{2}(?:[T ][\d:.]+(?:Z|[+-]\d{2}:?\d{2})?)?$/.test(t)) continue;
+    const ms = Date.parse(t);
+    if (Number.isFinite(ms) && ms <= now + 86400000 && ms > Date.UTC(2020, 0, 1)) out[k] = t;
+  }
+  return out;
+}
+
+// Who the owner can send orders to: every license not turned off (with its Discord name), and keys made by hand that have
+// sent slots and are still on the list, each with the name it last sent slots under. Never a whole key: the id is the start of
+// its hash, as the Billing page's links use.
+async function alertBuyers(request, env) {
+  const { error, lic } = await alertSender(request, env);
+  if (error) return error;
+  const [ls, named, seen] = await env.DB.batch([
+    env.DB.prepare("SELECT username, license_key, key_hash, issued_at, revoked_at FROM licenses"),
+    env.DB.prepare("SELECT key_hash, name, MAX(created_at) AS at FROM submissions WHERE name <> '' GROUP BY key_hash"),
+    env.DB.prepare("SELECT key_hash, key_last4, MAX(created_at) AS at FROM submissions GROUP BY key_hash"),
+  ]);
+  const names = new Map((named.results || []).map((r) => [r.key_hash, r.name])), last = new Map((seen.results || []).map((r) => [r.key_hash, r]));
+  const lics = new Map((ls.results || []).map((r) => [r.key_hash, r])), out = [];
+  for (const r of lics.values()) {
+    if (r.revoked_at || r.key_hash === lic.hash) continue;
+    out.push({ id: shareBuyerId(r.key_hash), user: r.username || "", name: names.get(r.key_hash) || "", last4: last4Of(r.license_key),
+      at: Math.max(+r.issued_at || 0, +(last.get(r.key_hash) || {}).at || 0) });
+  }
+  for (const [h, r] of last) {
+    if (lics.has(h) || h === lic.hash) continue;
+    if ((await ghListHas(env, h)) === false) continue;   // a key made by hand that's off the list (or expired)
+    out.push({ id: shareBuyerId(h), user: "", name: names.get(h) || "", last4: String(r.key_last4 || ""), at: +r.at || 0 });
+  }
+  out.sort((a, b) => b.at - a.at);
+  return json({ buyers: out.slice(0, 2000) }, 200, { "cache-control": "no-store" });
+}
+
+async function shareBuyer(env, id) {
+  const l = await env.DB.prepare("SELECT key_hash, revoked_at FROM licenses WHERE substr(key_hash, 1, 16) = ?").bind(id).first();
+  if (l) return l.revoked_at ? { status: 410, error: "This buyer's license is turned off." } : { hash: l.key_hash };
+  const s = await env.DB.prepare("SELECT key_hash FROM submissions WHERE substr(key_hash, 1, 16) = ? LIMIT 1").bind(id).first();
+  if (!s) return { status: 404, error: "There's no buyer with that id." };
+  const has = await ghListHas(env, s.key_hash);
+  if (has === null) return { status: 503, error: "Couldn't check that buyer's key just now. Try again in a minute." };
+  if (!has) return { status: 410, error: "This buyer's key isn't on the list of keys any more." };
+  return { hash: s.key_hash };
+}
+
+async function alertsShare(request, env, ctx) {
+  const { error, lic } = await alertSender(request, env);
+  if (error) return error;
+  const text = await request.text();
+  if (text.length > 300_000) return json({ error: "too large" }, 413);
+  let b; try { b = JSON.parse(text) || {}; } catch { b = {}; }
+  const to = String(b.to || ""), list = Array.isArray(b.events) ? b.events : null;
+  if (!SHARE_ID_RE.test(to)) return json({ error: "to" }, 400);
+  if (!list || !list.length || list.length > ALERTS_PER_POST) return json({ error: "events" }, 400);
+  const buyer = await shareBuyer(env, to);
+  if (buyer.error) return json({ error: buyer.error }, buyer.status);
+  if (buyer.hash === lic.hash) return json({ error: "That's your own FAFO." }, 400);
+  const clip = (v, n) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, n);
+  const now = Date.now(), fresh = [], res = [];
+  let n = 0, already = 0, updated = 0, bad = 0, other = 0;
+  try {
+    for (const ev of list) {
+      const store = clip(ev && ev.store, 64), stage = clip(ev && ev.stage, 12), orderNo = clip(ev && ev.orderNo, 40).toUpperCase();
+      const at = /^\d{4}-\d{2}-\d{2}$/.test(String(ev && ev.at || "")) ? ev.at : "";
+      if (!store || !ALERT_STAGES.includes(stage) || !orderNo) { bad++; res.push("bad"); continue; }
+      // The account it was placed on: given to this buyer, its slot's profile goes with it; given to another, a remembered
+      // address doesn't send it here (that account's own alert reaches its buyer). An account of the owner's own (their own
+      // slots) doesn't stop it, nor one given out after the order (the rule POST /alerts goes by).
+      const account = clip(ev.account, 120).toLowerCase();
+      let a = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) ? await env.DB.prepare("SELECT key_hash, profile, assigned_at FROM accounts WHERE email_norm = ? AND store = ? AND key_hash IS NOT NULL AND sent_at IS NOT NULL")
+        .bind(account, store).first() : null;
+      if (a && (a.key_hash === lic.hash || (at && at < new Date((a.assigned_at || 0) - 86400000).toISOString().slice(0, 10)))) a = null;
+      if (a && a.key_hash !== buyer.hash && ev.auto === true) { other++; res.push("other"); continue; }
+      const profile = a && a.key_hash === buyer.hash ? String(a.profile || "") : "";
+      const oid = (await sha256Hex(`${buyer.hash}|${store}|${orderNo}`)).slice(0, 20);
+      const row = { id: randomId(12), key_hash: buyer.hash, oid, store, store_name: clip(ev.storeName, 40) || store, profile,
+        order_no: orderNo, item: clip(ev.item, 120), qty: clip(ev.qty, 6) || "1", total: clip(ev.total, 20), stage, at, created_at: now + n++ };
+      const had = await env.DB.prepare("SELECT ship_to, ship_addr, tracking, dates FROM alert_details WHERE key_hash = ? AND store = ? AND order_no = ?")
+        .bind(buyer.hash, store, orderNo).first();
+      // Each step's date is kept as it was first sent, so the buyer's devices never disagree.
+      const dates = JSON.stringify(Object.assign(shareDates(ev.dates, now), had ? shareDates(had.dates, now) : {}));
+      const det = { ship_to: clip(ev.shipTo, 80), ship_addr: clip(ev.shipAddr, 160), tracking: JSON.stringify(shareTracking(ev.tracking)), dates };
+      const blank = !det.ship_to && !det.ship_addr && det.tracking === "[]" && dates === "{}";
+      const changed = had ? had.ship_to !== det.ship_to || had.ship_addr !== det.ship_addr || had.tracking !== det.tracking || had.dates !== dates : !blank;
+      const stmts = [];
+      if (had || !blank) stmts.push(env.DB.prepare(`INSERT INTO alert_details (key_hash, store, order_no, ship_to, ship_addr, tracking, dates, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (key_hash, store, order_no) DO UPDATE SET ship_to = excluded.ship_to, ship_addr = excluded.ship_addr, tracking = excluded.tracking, dates = excluded.dates, updated_at = excluded.updated_at`)
+        .bind(buyer.hash, store, orderNo, det.ship_to, det.ship_addr, det.tracking, dates, now));
+      const stepAt = stmts.length;
+      stmts.push(env.DB.prepare(`INSERT OR IGNORE INTO alerts (id, key_hash, oid, store, store_name, profile, order_no, item, qty, total, stage, at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(row.id, row.key_hash, oid, store, row.store_name, profile, orderNo, row.item, row.qty, row.total, stage, at, row.created_at));
+      // The slot's profile on a step an earlier send wrote without it.
+      if (profile) stmts.push(env.DB.prepare("UPDATE alerts SET profile = ? WHERE key_hash = ? AND store = ? AND order_no = ? AND profile = ''").bind(profile, buyer.hash, store, orderNo));
+      // When the details changed, the order's update row moves on, so a buyer who has the step reads them again.
+      if (changed) stmts.push(env.DB.prepare(`INSERT INTO alerts (id, key_hash, oid, store, store_name, profile, order_no, item, qty, total, stage, at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'update', ?, ?) ON CONFLICT (key_hash, store, order_no, stage) DO UPDATE SET id = excluded.id, created_at = excluded.created_at, profile = excluded.profile`)
+        .bind(randomId(12), buyer.hash, oid, store, row.store_name, profile, orderNo, row.item, row.qty, row.total, at, now + n++));
+      const out = await env.DB.batch(stmts);   // one transaction: all of it, or none of it and the next send writes it whole
+      if (out[stepAt].meta && out[stepAt].meta.changes) { fresh.push(row); res.push("sent"); }
+      else if (changed) { already++; updated++; res.push("updated"); }
+      else { already++; res.push("already"); }
+    }
+  } finally {
+    // Steps already written get their Discord post even when a later one failed.
+    if (fresh.length) ctx.waitUntil(alertWebhooks(env, fresh).catch((e) => console.error("alert webhooks", e)));
+  }
+  ctx.waitUntil(env.DB.batch([env.DB.prepare("DELETE FROM alerts WHERE created_at < ?").bind(now - ALERT_KEEP_MS),
+    env.DB.prepare("DELETE FROM alert_details WHERE updated_at < ?").bind(now - ALERT_KEEP_MS)]).catch(() => {}));
+  return json({ ok: true, sent: fresh.length, already, updated, bad, other, res });
 }
 
 function alertText(a) {

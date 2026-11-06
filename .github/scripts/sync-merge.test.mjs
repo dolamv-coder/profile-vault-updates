@@ -414,4 +414,28 @@ if (html.includes(':spamMoves"')) test("saved Find in Spam searches added on two
   }
 });
 
+// 1.9.138+: addresses the seller sent a buyer (settings.buyerAddrs, {"<address key>|<buyer id>": {key, id, name, addr, at}}):
+// two devices that each remember one before they agree keep both, and one forgotten on one side stays forgotten.
+if (html.includes(':buyerAddrs"')) test("addresses sent to buyers remembered on two devices keep both; one forgotten stays forgotten", () => {
+  const e = (key, id, at) => ({ key, id, name: "@" + id, addr: key, at });
+  for (const base of [blank(), null]) {
+    const a = blank(), b = blank();
+    a.settings.buyerAddrs = { "1 MAIN ST|78701|b1": e("1 MAIN ST|78701", "b1", 1) }; b.settings.buyerAddrs = { "2 OAK AVE|78702|b2": e("2 OAK AVE|78702", "b2", 2) };
+    const k = [...syncUnits(a).map.keys()].find((x) => x.endsWith(":buyerAddrs"));
+    for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+      const r = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, {});
+      assert.deepEqual(Object.keys(r.state.settings.buyerAddrs).sort(), ["1 MAIN ST|78701|b1", "2 OAK AVE|78702|b2"]);
+    }
+  }
+  const base = blank(); base.settings.buyerAddrs = { "1 MAIN ST|78701|b1": e("1 MAIN ST|78701", "b1", 1) };
+  const a = blank(), b = blank();
+  a.settings.buyerAddrs = {};   // forgotten here
+  b.settings.buyerAddrs = { "1 MAIN ST|78701|b1": e("1 MAIN ST|78701", "b1", 1), "3 ELM DR|78703|b1": e("3 ELM DR|78703", "b1", 3) };
+  const k = [...syncUnits(base).map.keys()].find((x) => x.endsWith(":buyerAddrs"));
+  for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+    const r = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, origOf(base, [k]));
+    assert.deepEqual(Object.keys(r.state.settings.buyerAddrs), ["3 ELM DR|78703|b1"]);
+  }
+});
+
 console.log(`\n${passed} passed`);

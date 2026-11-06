@@ -324,12 +324,28 @@ CREATE TABLE IF NOT EXISTS alerts (
   item       TEXT NOT NULL DEFAULT '',
   qty        TEXT NOT NULL DEFAULT '1',
   total      TEXT NOT NULL DEFAULT '',
-  stage      TEXT NOT NULL,                     -- placed | shipped | arriving | delivered | canceled
+  stage      TEXT NOT NULL,                     -- placed | shipped | arriving | delivered | canceled, or update (1.9.138)
   at         TEXT NOT NULL DEFAULT '',          -- the order's date, YYYY-MM-DD
   created_at INTEGER NOT NULL,
   UNIQUE (key_hash, store, order_no, stage)
 );
 CREATE INDEX IF NOT EXISTS alerts_key ON alerts (key_hash, created_at);
+
+-- What the owner's FAFO sends with an order it sends a buyer itself (app 1.9.138, POST /alerts/share): the ship-to name
+-- and address and the tracking numbers, the latest for each order, which GET /alerts gives with each of its steps. When they
+-- change with no new step, the order's "update" row in alerts (one per order) moves on, so the buyer's FAFO reads them again.
+-- Its own table, since db:init can't add columns. Kept 60 days after the order was last sent, as alerts.
+CREATE TABLE IF NOT EXISTS alert_details (
+  key_hash   TEXT NOT NULL,                     -- the buyer's license
+  store      TEXT NOT NULL,
+  order_no   TEXT NOT NULL,
+  ship_to    TEXT NOT NULL DEFAULT '',
+  ship_addr  TEXT NOT NULL DEFAULT '',
+  tracking   TEXT NOT NULL DEFAULT '[]',        -- JSON [{number, carrier}]
+  dates      TEXT NOT NULL DEFAULT '{}',        -- JSON {step: when it happened}, each kept as first sent
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (key_hash, store, order_no)
+);
 
 -- A buyer's own Discord webhook, which gets their order alerts too (optional).
 CREATE TABLE IF NOT EXISTS alert_webhooks (
