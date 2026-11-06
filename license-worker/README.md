@@ -613,7 +613,8 @@ alerts (above), on the desktop or the web.
   orders your FAFO finds from then on that ship to the same street address and ZIP, whatever the unit and the ways Jig
   writes it, go to them by themselves, unless the order is on an account you gave another buyer. An address FAFO can't
   read that way (no house number, or no state and ZIP) isn't remembered, and one kept for two buyers waits for you to
-  pick. Leave it off for a package forwarder or a building other buyers ship to. Your remembered addresses are in
+  pick. On a street with no type (Broadway) or a numbered road (County Road 12), an address Jig for Pokémon Center wrote
+  with a bare number on line 1 waits for you too. Leave it off for a package forwarder or a building other buyers ship to. Your remembered addresses are in
   **Settings → Orders sent to buyers**, where × stops one. **Stop sending** in the Send to buyer window stops an order's
   updates (the buyer keeps what they already got).
 - The worker keeps them as that buyer's alerts (`POST /alerts/share`), with the ship-to, tracking and dates in the

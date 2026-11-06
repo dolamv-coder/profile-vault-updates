@@ -297,7 +297,8 @@ alone (every store's rows of one account) from reading the whole table. Only
   its own FAFO, 404 unknown, 410 a license turned off or a key off the list, 503 while the GitHub list can't be read) keeps each
   step as that buyer's alert with the same oid and row as an alert for an account given to them (so the two are one order
   there), with the slot's `profile` when its `account` is one given to that buyer (else empty; one an event marked `auto`, a
-  remembered address's, has on an account given to another buyer is refused: `other`), and the ship-to name (80), address
+  remembered address's, has on an account given to another buyer is refused: `other`; an account of the owner's own slots, or
+  one given out after the order, by POST /alerts' rule, counts as none), and the ship-to name (80), address
   (160), up to 5 tracking numbers (known carriers, else `other`) and each step's date (`dates`, kept as first sent, none
   in the future) in D1 `alert_details` (a new table, by buyer, store and order number, kept 60 days after the order was last
   sent), written with the step in one D1 batch, which `GET /alerts` gives with each of that order's rows (`shipTo`,
@@ -1690,29 +1691,41 @@ alerts went, and the orders picked at once after Send) sends `sharePlan`'s event
 order's never split), each with its `account` (`sentTo` or inbox), `auto` (a remembered address's) and `dates`
 (`shareDatesOf`), and marks each order by the worker's `res` (`shareMark`): its placed and current step once, and its step again
 when its ship-to or tracking changed (`shareDetOf`); a new buyer starts over. One run at a time (`SHARE.running`; another waits
-for it). Except after Send, it waits like `pollSellerAlerts` for a copy that has caught up with the online one (`shareWait`,
+for it). Except after Send, and only with something to send, it waits like `pollSellerAlerts` for a copy that has caught up with the online one (`shareWait`,
 `sharedOrdersSynced` from `syncExclusive`: a copy behind may not know of a Stop sending or an address forgotten elsewhere), and
 for a window, email sync or the order alerts (`OALERT.busy`), so an order on a slot's account reaches its buyer with the slot's
 profile. A buyer the worker refuses (400, 404, 410) is noted (`SHARE.err` {why, at}, the row's pill says "Not sent to …") and
 left an hour (`SHARE_REFUSED_MS`; Send asks at once), and the rest go on; a 403 checks `refreshPremium`; a 5xx, 429 or no
-connection stops until the next run. The row says "Sending to …" until it went, then "Sent to …". An order goes to a remembered
+connection stops until the next run. The row says "Sending to …" until it went, then "Sent to …". Send's toast counts
+the orders already on that buyer's page with nothing new as there. A remembered address's order the worker refused as another
+buyer's (`shareTo` `{off, why:"other"}`) isn't preselected for that address's buyer, and the window says so. An order goes to a remembered
 address's buyer (`shareTargetOf`) when FAFO added it, or it was placed, from the day the address was remembered, while it's
-remembered for one buyer only. `shareAddrKey` is careful, since a missed match only waits for the seller and a wrong one is
-another buyer's order: line 1 is the first part that starts with a house number (not "2nd Floor"; a PO box or rural route is kept
-whole), without a unit at its end (`SHARE_UNIT_AT_END`: its word or # with a number or one letter, never a word like Lot Rd), its
-words after the house number with the street type (Publication 28's spellings folded together, `SHARE_TYPE`; one right after
-the house number is the street's name unless a number follows), direction and a numbered street written one way (`JIG_DIRS`,
-`jigOrdinal`), no dot inside a word, and a bare number Jig for Pokémon Center puts after a street type that follows a street
-name dropped, never a numbered road's own (`SHARE_ROUTES`: Route, Highway, Loop…; `SHARE_ROAD_SYS`: County Road, State Road,
-Park Road, Farm to Market Road…; after a road's number it drops the second), then the 5-digit ZIP; "" when it can't be read
-that way. Every way Jig for Target (`jigChoices`) or Jig for Pokémon Center (`pkcForms`) writes an address has its key (the
-test runs both). Settings → **Orders sent to buyers** (`sentBuyersSectionHTML`) lists the remembered addresses with ×
+remembered for one buyer only; remembering one again keeps its first `at` only while no other buyer had it (orders waiting
+between two buyers stay waiting). `shareAddrKey` is careful, since a missed match only waits for the seller and a wrong one is
+another buyer's order: line 1 is the part that starts with a house number (not "2nd Floor") and has a street type, else the only
+part that starts with one (100 Broadway; a company or unit line before the street isn't taken for it, and two untyped ones give
+""), a PO box whole, a rural route with its box (RR 2, Box 15; without a box ""); without a unit at its end
+(`SHARE_UNIT_AT_END`: its word then a space, # or number, or # alone, with a number or one letter, never a word like Lot Rd nor a
+type like Fls); its words (letter-letter hyphens split: Farm-to-Market) after the house number with the street type
+(Publication 28's spellings folded together, `SHARE_TYPE`; one right after the house number is the street's name unless a
+number follows), direction and a numbered street written one way (`JIG_DIRS`, `jigOrdinal`), no dot inside a word, and a last
+bare number or letter (`SHARE_UNITISH`: Jig for Pokémon Center's, or a unit written bare) after a street type that follows the
+street's name dropped, unless it's a numbered road's own: after a highway type always (`SHARE_ROUTES`: Rte, Hwy, Fwy, Expy),
+after a road type (`SHARE_ROAD_TYPES`: Rd, Loop, Spur, Pike…) when the word before names a road system (`SHARE_ROAD_SYS`:
+County, Cty, State, Ranch, Farm to Market, Forest, Business…; a bare number after a road's own number goes); then the 5-digit
+ZIP; "" when it can't be read that way. Every way Jig for Target (`jigChoices`) or Jig for Pokémon Center (`pkcForms`) writes a
+typed street has its key (the test runs both, on ordinary streets and numbered roads); on a street with no type (Broadway) or a
+numbered road, Pokémon Center's bare number keeps its own, so those orders wait. Settings → **Orders sent to buyers** (`sentBuyersSectionHTML`) lists the remembered addresses with ×
 (`share-forget`). On the buyer's FAFO, `applySellerAlerts` takes `update` rows (for an order it has), the slot's profile when
-the order has none, and each step's date from `dates` (else when the alert came), and `sellerDetailsApply` puts in only what the
-seller changed since its last alert (`o.sellerSent` {shipTo, shipAddr, trk, mine}): the ship-to name and address where they're
-empty or still the seller's (a clear too), never over what the buyer typed; tracking numbers the seller added (not one the buyer
-took off), ones the seller took off (not one the buyer had first, `mine`), a carrier the seller corrected (not one the buyer
-changed), the seller's in their order and then the buyer's own; details don't move `updatedAt`. All from the worker, so every
+the order has none, and each step's date from `dates` (else when the alert came; the worker's, kept as first sent, also puts
+right one a page before 1.9.138 took from when the alert came), and `sellerDetailsApply` puts in, on every row (`o.sellerSent`
+{shipTo, shipAddr, trk, mine}): the ship-to name and address the seller changed while the order still has the seller's (a clear
+too), or where they're empty, never over what the buyer typed; the seller's tracking numbers, but for those the buyer took off in
+the order editor (`o.trkOff`, which its save notes on an order from the seller, kept while the seller still sends them), so one a
+sync merge dropped comes back; ones the seller took off go (not one the order had first, `mine`); a carrier the seller corrected
+(not one the buyer changed); the seller's in their order and then the buyer's own; details don't move `updatedAt`. Rows asked
+again from `sellerDetSince` that some device already read (at or before `sellerSince` less the overlap) bring only details, the
+profile and dates (`applySellerAlerts`' `seenBefore`): nothing is added, moved or notified again. All from the worker, so every
 device ends up the same. A change with no new step redraws with no notification (`news.changed`). Pages before 1.9.138 move
 `sellerSince` past the `update` rows they skip, so the buyer's FAFO also asks from `settings.sellerDetSince` (synced; the newest
 seen by a 1.9.138+ page, from `SELLER_DET_FROM`, 2026-11-06, the first time) when that's older. The pill "From your seller" says
