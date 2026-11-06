@@ -102,7 +102,7 @@ await test("a numbered road's own number is never taken for a unit, nor a word f
     ["21000 Pacific Coast Hwy 1", "21000 Pacific Coast Hwy 2"], ["100 Business Loop 70", "100 Business Loop 44"], ["100 Historic Route 66", "100 Historic Route 9"],
     ["120 Oak Fls", "120 Oak Fld"], ["120 Oak Fls", "120 Oak Flt"], ["120 Oak Fls", "120 Oak"], ["1234 Lee Road 379", "1234 Lee Road 430"], ["1234 Lee Rd 379 Apt 2", "1234 Lee Road 298"],
     ["100 Lake Rd 54-56", "100 Lake Rd 54-80"], ["12000 N RM 620", "12000 N RM 2222"], ["100 Old RM 12", "100 Old RM 13"], ["12000 N RM 620", "12000 N Lot 5"]])
-    assert.notEqual(key(a), key(b), `${a} / ${b}`);
+    assert.ok(!key(a) || key(a) !== key(b), `${a} / ${b}: ${key(a)}`);   // "" never matches: those wait
   assert.equal(key("120 Oak Fls"), key("120 Oak Falls"), "Fls is a street type, not a floor");
   assert.equal(key("100 Route 66 707"), key("100 Route 66"));
   assert.equal(key("1 Main St B"), key("1 Main St Apt B"), "a letter unit written bare");
@@ -114,6 +114,19 @@ await test("a numbered road's own number is never taken for a unit, nor a word f
   assert.notEqual(pr("Urb Las Gladiolas, 150 Calle A, San Juan, PR 00926"), pr("Urb Sevilla, 150 Calle A, San Juan, PR 00926"));
   assert.equal(pr("Urb Las Gladiolas, 150 Calle A, San Juan, PR 00926"), pr("150 Calle A, Urb. Las Gladiolas, San Juan, PR 00926-3232"));
   assert.equal(pr("150 Calle A, San Juan, PR 00926"), "", "no urbanization: it waits");
+  assert.ok(pr("PO Box 1234, San Juan, PR 00936") && pr("HC 01 Box 1234, Utuado, PR 00641"), "a box needs none");
+  assert.notEqual(pr("HC 01 Box 1234, Utuado, PR 00641"), pr("HC 01 Box 1235, Utuado, PR 00641"));
+  // Two towns in one ZIP with the same street names; the city as Jig writes it is the same city.
+  assert.notEqual(api.shareAddrKey("100 Maple Ave, Riverhead, NY 11901"), api.shareAddrKey("100 Maple Ave, Flanders, NY 11901"));
+  assert.equal(api.shareAddrKey("100 Maple Ave, Saint Paul, MN 55101"), api.shareAddrKey("100 Maple Avenue, St. Paul, MN 55101"));
+  // Numbered lanes and drives, and a direction that is a street's whole name.
+  for (const [a, b] of [["150 Fire Lane 12", "150 Fire Lane 13"], ["19 Private Drive 155", "19 Private Drive 263"], ["154 Pvt Dr 64", "154 Pvt Dr 65"], ["150 Fire Lane 12a", "150 Fire Ln 15"],
+    ["100 N St NW", "100 North St NW"], ["100 E St", "100 East St"]]) assert.notEqual(key(a), key(b), `${a} / ${b}`);
+  assert.equal(key("100 N Main St"), key("100 North Main Street"), "a direction before a name is folded");
+  // A unit line isn't the street when the house number is written out.
+  assert.equal(api.shareAddrKey("One Lincoln St, 12 B, Boston, MA 02111"), "");
+  assert.equal(api.shareAddrKey("One Main St, 2 Fl, Boston, MA 02110"), "");
+  assert.equal(key("100 Main St Lot 5 219"), key("100 Main St Lot 5"), "Jig for Pokémon Center's number after a unit on line 1");
   assert.equal(key("100 County Road 12 595"), key("100 County Road 12"), "Jig for Pokémon Center's bare number after a road's own");
   assert.equal(key("100 County Rd 12"), key("100 County Road 12"));
   assert.equal(key("200 18th Ave NW 45"), key("200 18th Ave NW"));
@@ -310,7 +323,11 @@ await test("taking one of two buyers off an address keeps the orders waiting the
   const left = api.dropBuyerAddrs(two, [MAIN + "|b9"]);
   assert.deepEqual(left, { [MAIN]: "@sam" });
   assert.equal(api.shareTargetOf(y, two), null, "still waiting: the one left starts from now");
-  assert.ok(two[MAIN + "|b1"].set && two[MAIN + "|b1"].at > T0 + 2 * DAY);
+  assert.ok(two[MAIN + "|b1"].set && two[MAIN + "|b1"].strict && two[MAIN + "|b1"].at > T0 + 2 * DAY);
+  const today = order({ id: "y2", orderNo: "Y2", shipAddr: "1 Main St, Apt 30, Austin, TX 78701", createdAt: two[MAIN + "|b1"].at - 1000, at: new Date(two[MAIN + "|b1"].at).toISOString().slice(0, 10) });
+  assert.equal(api.shareTargetOf(today, two), null, "one placed earlier that same day was waiting too");
+  assert.ok(api.shareTargetOf(order({ shipAddr: "1 Main St, Austin, TX 78701", createdAt: two[MAIN + "|b1"].at + 1 }), two), "one added from then on goes");
+  assert.match(html, /\? `\$\{off === 1 \? "Its address is" : "Their addresses are"\} still kept for /, "Stop sending says who still gets the address");
   reset([order({ shareTo: { id: "b1", name: "@sam", by: "hand" } })]); api.setServer(async () => ok());
   await api.reportSharedOrders();
   assert.ok(api.calls.includes("signal"), "the share request has a time limit");

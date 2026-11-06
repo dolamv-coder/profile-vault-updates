@@ -11674,6 +11674,9 @@ const SHARE_TYPE = (() => {
 // Pokémon Center's (State St 644), so on a road its bare number keeps its own key and those orders wait to be picked.
 const SHARE_ROUTES = new Set(["RTE", "HWY", "FWY", "EXPY"]);
 const SHARE_ROAD_TYPES = new Set(["RD", "RDS", "LOOP", "SPUR", "PIKE", "TPKE"]);
+// Numbered lanes and drives some counties use (Fire Lane 12, Private Drive 155, County Ln 4): their number is kept too.
+const SHARE_NUMBERED = new Set(["FIRE", "PRIVATE", "PRIV", "PVT", "PRVT", "COUNTY", "CNTY", "CTY", "TOWNSHIP", "TWP", "TWSP"]);
+const SHARE_UNIT_WORDS = new Set(["APT", "APARTMENT", "UNIT", "STE", "SUITE", "SPC", "SPACE", "BLDG", "BUILDING", "OFC", "OFFICE", "DEPT", "FL", "FLOOR", "RM", "ROOM", "LOT", "TRLR"]);
 // A unit at the end of line 1: its word and then a space, # or its number, or # alone, with a number or one letter (Apt B), never
 // a word (Lot Rd) nor a street type that starts like one (Fls, Fld, Flt).
 const SHARE_UNIT_AT_END = /\s+(?:(?:apt|apartment|unit|ste|suite|spc|space|bldg|building|ofc|office|dept|fl|floor|rm|room|lot|trlr)\.?(?:\s*#\s*|\s+#?\s*|(?=\d))|#\s*(?:fl)?\s*)(?:[A-Za-z-]*\d[A-Za-z0-9-]*|[A-Za-z])$/i;
@@ -11690,28 +11693,37 @@ function shareAddrKey(addr){
   if (!tail) return "";
   const parts = s.slice(0, tail.index).split(",").map(x => x.trim()).filter(Boolean);
   const boxOf = (x) => x.toUpperCase().replace(/[.#]/g, " ").replace(/^(?:P\s*O\s*BOX|POST OFFICE BOX)/, "PO BOX").replace(/^RURAL ROUTE/, "RR").replace(/\s+/g, " ").trim();
+  const bi = parts.findIndex(x => /^(?:p\.?\s*o\.?\s*box|post office box|rr|hc|rural route)\s*#?\s*\d/i.test(x));
+  if (bi >= 0){
+    let box = boxOf(parts[bi]);
+    // A rural route's box on a line of its own (RR 2, Box 15): the box is the address.
+    if (/^(?:RR|HC)\b/.test(box) && !/\bBOX\b/.test(box)){ const nx = parts[bi + 1] && boxOf(parts[bi + 1]); if (!nx || !/^BOX \d/.test(nx)) return ""; box += " " + nx; }
+    return box + "|" + tail[2];   // a box number is the address in its ZIP
+  }
   // Puerto Rico repeats street names and house numbers inside a ZIP, one set per urbanization (USPS Publication 28): its
-  // urbanization goes in the key, and an address there without one waits.
+  // urbanization goes in the key, and a street address there without one waits.
   let urb = "";
   if (/^PR$/i.test(tail[1]) || /^00[679]/.test(tail[2])){
     const u = parts.find(x => /^(?:urb|urbanizaci[oó]n|ext|extensi[oó]n|repto|reparto|parc|parcelas|bo|barrio|res|residencial|cond|condominio|sector|villa|jard|jardines)\b/i.test(x));
     if (!u) return "";
     urb = u.normalize("NFD").replace(/[\u0300-\u036f.]/g, "").toUpperCase().replace(/\s+/g, " ").trim() + "|";
   }
-  const bi = parts.findIndex(x => /^(?:p\.?\s*o\.?\s*box|post office box|rr|hc|rural route)\s*#?\s*\d/i.test(x));
-  if (bi >= 0){
-    let box = boxOf(parts[bi]);
-    // A rural route's box on a line of its own (RR 2, Box 15): the box is the address.
-    if (/^(?:RR|HC)\b/.test(box) && !/\bBOX\b/.test(box)){ const nx = parts[bi + 1] && boxOf(parts[bi + 1]); if (!nx || !/^BOX \d/.test(nx)) return ""; box += " " + nx; }
-    return urb + box + "|" + tail[2];
-  }
   // Line 1: the part that starts with a house number (not 2nd Floor or 4B) and has a street type; else the only part that starts
   // with one (100 Broadway). A company or unit before the street (7 Seas Logistics, 2 Floor) isn't taken for it.
   const numbered = parts.filter(x => /^\d+[A-Za-z]?(?:[-/]\d+[A-Za-z]?)?\s+\S/.test(x));
   const words = (x) => x.replace(/\./g, "").replace(/([A-Za-z])-(?=[A-Za-z])/g, "$1 ").toUpperCase().split(/\s+/).filter(Boolean);
   const typed = numbered.filter(x => words(x.replace(SHARE_UNIT_AT_END, "")).slice(1).some(y => SHARE_TYPE.has(y)));
-  const first = typed[0] || (numbered.length === 1 ? numbered[0] : ""); if (!first) return "";
+  // The only numbered part, without a type, only when it names something (100 Broadway), not a unit (12 B, 2 Fl).
+  const named = (x) => words(x).slice(1).some(y => /^[A-Z]{3,}$/.test(y) && !SHARE_UNIT_WORDS.has(y));
+  const first = typed[0] || (numbered.length === 1 && named(numbered[0]) ? numbered[0] : ""); if (!first) return "";
+  // The city (two towns can share a ZIP and their street names: Riverhead and Flanders, NY 11901), with Jig's Saint/St, Fort/Ft
+  // and Mount/Mt written one way. With no comma before the state it's on line 1 already.
+  const last = parts[parts.length - 1];
+  const city = parts.length >= 2 && last !== first && !/^\d/.test(last) && !/^#|^(?:apt|apartment|unit|ste|suite|spc|space|bldg|building|ofc|office|dept|fl|floor|rm|room|lot|trlr)\b/i.test(last)
+    ? words(last).map(y => { const r = JIG_CITY.find(c => c.some(z => z.toUpperCase() === y)); return r ? r[1].toUpperCase() : y; }).join(" ") : "";
   let line1 = first.replace(/\s*#\s*$/, "").replace(/(\w)\.(?=\w)/g, "$1");   // a dot inside a word (Bl.dg) first
+  // Jig for Pokémon Center's bare number after a unit on line 1 (Lot 5 219) goes with the unit.
+  line1 = line1.replace(/(\s(?:apt|apartment|unit|ste|suite|spc|space|bldg|building|ofc|office|dept|fl|floor|rm|room|lot|trlr)\.?\s*#?\s*(?:[A-Za-z-]*\d[A-Za-z0-9-]*|[A-Za-z]))\s+\d{1,4}$/i, "$1");
   // A unit only comes off when a street type is left before it (not 12000 N RM 620, a Ranch to Market road, nor Old RM 12).
   const hasType = (x) => words(x).slice(1).some(y => SHARE_TYPE.has(y));
   for (let k = 0; k < 2 && SHARE_UNIT_AT_END.test(line1) && hasType(line1.replace(SHARE_UNIT_AT_END, "")); k++) line1 = line1.replace(SHARE_UNIT_AT_END, "");
@@ -11724,7 +11736,9 @@ function shareAddrKey(addr){
     const t = i > 1 || /^\d+$/.test(w[i + 1] || "") ? SHARE_TYPE.get(w[i]) : null;
     if (t){ out.push(t); kind.push("type"); continue; }
     const d = JIG_DIRS.find(r => r.some(x => x.toUpperCase() === w[i]));
-    if (d){ out.push(d[1].toUpperCase()); kind.push("dir"); continue; }
+    // A direction that is the street's whole name (N St, North St: two streets) stays as written; Jig leaves it alone.
+    const whole = d && i === 1 && SHARE_TYPE.has(w[2] || "") && (w.length === 3 || (w.length === 4 && JIG_DIRS.some(r => r.some(x => x.toUpperCase() === w[3]))));
+    if (d && !whole){ out.push(d[1].toUpperCase()); kind.push("dir"); continue; }
     const o = /^[A-Z]+$/.test(w[i]) ? jigOrdinal(w[i], x => x.toUpperCase()) : null;
     out.push(o && /^\d/.test(o) ? o : w[i]); kind.push(SHARE_UNITISH.test(w[i]) ? "n" : "word");
   }
@@ -11736,10 +11750,10 @@ function shareAddrKey(addr){
     if (kind[ti] === "n"){ if (kind[ti - 1] === "type" && (SHARE_ROUTES.has(out[ti - 1]) || SHARE_ROAD_TYPES.has(out[ti - 1]))) drop(); }   // Route 66 707
     else {
       if (kind[ti] === "dir" && kind[ti - 1] === "type") ti--;
-      if (kind[ti] === "type" && ti >= 2 && (kind[ti - 1] === "word" || kind[ti - 1] === "type") && !SHARE_ROUTES.has(out[ti]) && !SHARE_ROAD_TYPES.has(out[ti])) drop();
+      if (kind[ti] === "type" && ti >= 2 && (kind[ti - 1] === "word" || kind[ti - 1] === "type") && !SHARE_ROUTES.has(out[ti]) && !SHARE_ROAD_TYPES.has(out[ti]) && !SHARE_NUMBERED.has(out[ti - 1])) drop();
     }
   }
-  return out.length >= 2 ? urb + out.join(" ") + "|" + tail[2] : "";
+  return out.length >= 2 ? urb + out.join(" ") + "|" + (city ? city + "|" : "") + tail[2] : "";
 }
 // What the buyer gets besides the step: the ship-to name and address and the tracking.
 const shareDetOf = (o) => JSON.stringify([o.shipTo || "", o.shipAddr || "", (o.tracking || []).map(t => [t.number, t.carrier])]);
@@ -11760,7 +11774,9 @@ function shareTargetOf(o, addrs){
   const ents = Object.values(addrs || {}).filter(e => e && e.key === k && e.id);
   if (!ents.length || new Set(ents.map(e => e.id)).size > 1) return null;
   const e = ents[0], day = new Date(+e.at || 0).toISOString().slice(0, 10);
-  if (!((+o.createdAt || 0) >= (+e.at || 0) || (o.at || "") >= day)) return null;
+  // An entry that started over because another buyer had the address (strict) only takes orders FAFO adds from then on: one
+  // placed earlier that day was waiting between the two.
+  if (!((+o.createdAt || 0) >= (+e.at || 0) || (!e.strict && (o.at || "") >= day))) return null;
   return {id:e.id, name:e.name || "", by:"addr"};
 }
 // What to send: Map(buyer id -> [{o, to, det, steps, events}]), each step not sent to that buyer yet (the order itself, then
@@ -12016,9 +12032,11 @@ function openSendToBuyer(ids){
       if (stop) stop.addEventListener("click", () => {
         const now = Date.now(), m = Object.assign({}, S.settings.buyerAddrs);
         let off = 0;
-        ok.forEach(o => { const cur = orderById(o.id); if (cur && cur.shareTo && cur.shareTo.id){ dropBuyerAddrs(m, Object.entries(m).filter(([, e]) => e && e.id === cur.shareTo.id && e.key === shareAddrKey(cur.shipAddr)).map(([ek]) => ek)); cur.shareTo = {off:true, at:now}; off++; } });
+        const keys = new Set();
+        ok.forEach(o => { const cur = orderById(o.id); if (cur && cur.shareTo && cur.shareTo.id){ const k = shareAddrKey(cur.shipAddr); if (k) keys.add(k); dropBuyerAddrs(m, Object.entries(m).filter(([, e]) => e && e.id === cur.shareTo.id && e.key === k).map(([ek]) => ek)); cur.shareTo = {off:true, at:now}; off++; } });
         S.settings.buyerAddrs = m; persist(); close(); renderMain();
-        toast(`Stopped sending ${plural(off, "order")}. The buyer's FAFO keeps what it already got, and future orders to ${off === 1 ? "its address" : "their addresses"} stay here.`);
+        const still = [...new Set(Object.values(m).filter(e => e && keys.has(e.key)).map(e => e.name || "another buyer"))];
+        toast(`Stopped sending ${plural(off, "order")}. The buyer's FAFO keeps what it already got. ` + (still.length ? `${off === 1 ? "Its address is" : "Their addresses are"} still kept for ${still.join(", ")}: orders there from now on go to them. Take ${still.length === 1 ? "that" : "those"} off in Settings → Orders sent to buyers to keep them here.` : `Future orders to ${off === 1 ? "its address" : "their addresses"} stay here.`));
       });
       send.addEventListener("click", async () => {
         const b = (buyers || []).find(x => x.id === pick); if (!b) return;
@@ -12031,7 +12049,7 @@ function openSendToBuyer(ids){
             others.forEach(([ek]) => delete m[ek]);
             // Remembered for this buyer alone before: from then on still. Kept for another buyer too, orders there were
             // waiting to be picked, so only those from now on go.
-            m[k + "|" + b.id] = {key:k, id:b.id, name, addr:a, at:had && +had.at && !others.length ? Math.min(+had.at, now) : now, set:now};
+            m[k + "|" + b.id] = Object.assign({key:k, id:b.id, name, addr:a, at:had && +had.at && !others.length ? Math.min(+had.at, now) : now, set:now}, others.length ? {strict:true} : {});
           }
           S.settings.buyerAddrs = m;
         }
@@ -12052,7 +12070,7 @@ function dropBuyerAddrs(m, gone){
   for (const ek of gone){
     const e = m[ek]; if (!e) continue;
     delete m[ek];
-    for (const [k2, e2] of Object.entries(m)) if (e2 && e2.key === e.key){ m[k2] = Object.assign({}, e2, {at:Math.max(+e2.at || 0, now), set:now}); left[e.key] = e2.name || "another buyer"; }
+    for (const [k2, e2] of Object.entries(m)) if (e2 && e2.key === e.key){ m[k2] = Object.assign({}, e2, {at:Math.max(+e2.at || 0, now), set:now, strict:true}); left[e.key] = e2.name || "another buyer"; }
   }
   return left;
 }
