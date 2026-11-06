@@ -9828,6 +9828,7 @@ function oneStoreRun(why){
   const r = oneStorePass(S);
   // Order names and pictures are put right at the same moments (1.9.103, tidyOrders).
   if (tidyOrders()) r.changed = true;
+  if (sellerSentPass()) r.changed = true;   // what a merge dropped of the seller's details (1.9.138)
   if (!r.changed) return r;
   SYNC.gen++;
   if (why !== "merge"){
@@ -11006,10 +11007,13 @@ function openOrderEditor(existing){
           qty:val(panel,"qty") || "1", total:val(panel,"total"), at:val(panel,"at"), shipTo:val(panel,"shipTo"), shipAddr:val(panel,"shipAddr"), card:val(panel,"card"), arrives:val(panel,"arrives"), buyer:val(panel,"buyer"),
           image:kept && existing ? existing.image || "" : link};
         const tn = val(panel,"trk").toUpperCase().replace(/\s+/g, ""), tc = val(panel,"trkc");
-        const rest = (o.tracking || []).slice(1);
-        d.tracking = tn ? [{number:tn, carrier: tc === "auto" ? detectCarrier(tn, "") : tc, manual: tc !== "auto"}].concat(rest.filter(x => x.number !== tn)) : rest;
-        // An order from the seller notes the numbers taken off here, so the seller's next alert leaves them off (1.9.138).
-        if (existing && existing.fromSeller){
+        const rest = (o.tracking || []).slice(1), first = (o.tracking || [])[0];
+        // Left as it opened (the number and the carrier), the tracking isn't rewritten (1.9.138): a carrier the seller sent stays,
+        // and a save on another device doesn't take back numbers the seller sent meanwhile.
+        const untouched = existing && tn === (first ? first.number : "") && tc === (first && first.manual ? first.carrier : "auto");
+        if (!untouched) d.tracking = tn ? [{number:tn, carrier: tc === "auto" ? detectCarrier(tn, "") : tc, manual: tc !== "auto"}].concat(rest.filter(x => x.number !== tn)) : rest;
+        // An order the seller sent notes the numbers taken off here, so the seller's next alerts leave them off (1.9.138).
+        if (!untouched && existing && (existing.fromSeller || existing.sellerSent)){
           const kept = new Set(d.tracking.map(x => x.number)), off = new Set((existing.trkOff || []).filter(x => !kept.has(x)));
           (existing.tracking || []).forEach(x => { if (!kept.has(x.number)) off.add(x.number); });
           if (off.size || existing.trkOff) d.trkOff = [...off];
@@ -11665,14 +11669,11 @@ const SHARE_TYPE = (() => {
   rows.forEach((r, i) => { const root = rows[find(i)]; r.all.forEach(x => m.set(x, root.std || root.full)); });
   return m;
 })();
-// Numbered roads keep their number: after a highway type (Route 66, Pacific Coast Hwy 1) always, and after a road type when the
-// word before it names a road system rather than a street (County Road 12, Cty Rd 12, Farm to Market Road 1960, Business Loop 70,
-// N Ranch Rd 620, National Forest Rd 12). Any other street's last bare number is Jig for Pokémon Center's (State St 644, Maple Loop 5).
+// Roads keep their last number, whatever is before it (County Road 12, Lee Road 379, Lake Rd 54-56, Business Loop 70, Route
+// 66): a road of that name with another number is another road. Only after another street type is a last bare number Jig for
+// Pokémon Center's (State St 644), so on a road its bare number keeps its own key and those orders wait to be picked.
 const SHARE_ROUTES = new Set(["RTE", "HWY", "FWY", "EXPY"]);
 const SHARE_ROAD_TYPES = new Set(["RD", "RDS", "LOOP", "SPUR", "PIKE", "TPKE"]);
-const SHARE_ROAD_SYS = new Set(["COUNTY", "CNTY", "CTY", "CO", "CR", "STATE", "ST", "SR", "SH", "US", "PRIVATE", "PRIV", "PVT", "PRVT", "TOWNSHIP", "TWP", "TWSP",
-  "RANCH", "RNCH", "FARM", "FM", "RM", "MARKET", "MKT", "FOREST", "FRST", "FS", "FR", "NF", "NFS", "USFS", "SERVICE", "FIRE", "PARK", "RECREATION", "REC",
-  "BUSINESS", "BUS", "BUSN", "HISTORIC", "HIST", "OLD", "INTERSTATE", "I", "PARISH", "NATIONAL", "INDIAN", "TRIBAL", "BIA", "NAVAJO", "AGENCY", "SCHOOL", "MINE"]);
 // A unit at the end of line 1: its word and then a space, # or its number, or # alone, with a number or one letter (Apt B), never
 // a word (Lot Rd) nor a street type that starts like one (Fls, Fld, Flt).
 const SHARE_UNIT_AT_END = /\s+(?:(?:apt|apartment|unit|ste|suite|spc|space|bldg|building|ofc|office|dept|fl|floor|rm|room|lot|trlr)\.?(?:\s*#\s*|\s+#?\s*|(?=\d))|#\s*(?:fl)?\s*)(?:[A-Za-z-]*\d[A-Za-z0-9-]*|[A-Za-z])$/i;
@@ -11689,12 +11690,20 @@ function shareAddrKey(addr){
   if (!tail) return "";
   const parts = s.slice(0, tail.index).split(",").map(x => x.trim()).filter(Boolean);
   const boxOf = (x) => x.toUpperCase().replace(/[.#]/g, " ").replace(/^(?:P\s*O\s*BOX|POST OFFICE BOX)/, "PO BOX").replace(/^RURAL ROUTE/, "RR").replace(/\s+/g, " ").trim();
+  // Puerto Rico repeats street names and house numbers inside a ZIP, one set per urbanization (USPS Publication 28): its
+  // urbanization goes in the key, and an address there without one waits.
+  let urb = "";
+  if (/^PR$/i.test(tail[1]) || /^00[679]/.test(tail[2])){
+    const u = parts.find(x => /^(?:urb|urbanizaci[oó]n|ext|extensi[oó]n|repto|reparto|parc|parcelas|bo|barrio|res|residencial|cond|condominio|sector|villa|jard|jardines)\b/i.test(x));
+    if (!u) return "";
+    urb = u.normalize("NFD").replace(/[\u0300-\u036f.]/g, "").toUpperCase().replace(/\s+/g, " ").trim() + "|";
+  }
   const bi = parts.findIndex(x => /^(?:p\.?\s*o\.?\s*box|post office box|rr|hc|rural route)\s*#?\s*\d/i.test(x));
   if (bi >= 0){
     let box = boxOf(parts[bi]);
     // A rural route's box on a line of its own (RR 2, Box 15): the box is the address.
     if (/^(?:RR|HC)\b/.test(box) && !/\bBOX\b/.test(box)){ const nx = parts[bi + 1] && boxOf(parts[bi + 1]); if (!nx || !/^BOX \d/.test(nx)) return ""; box += " " + nx; }
-    return box + "|" + tail[2];
+    return urb + box + "|" + tail[2];
   }
   // Line 1: the part that starts with a house number (not 2nd Floor or 4B) and has a street type; else the only part that starts
   // with one (100 Broadway). A company or unit before the street (7 Seas Logistics, 2 Floor) isn't taken for it.
@@ -11702,8 +11711,10 @@ function shareAddrKey(addr){
   const words = (x) => x.replace(/\./g, "").replace(/([A-Za-z])-(?=[A-Za-z])/g, "$1 ").toUpperCase().split(/\s+/).filter(Boolean);
   const typed = numbered.filter(x => words(x.replace(SHARE_UNIT_AT_END, "")).slice(1).some(y => SHARE_TYPE.has(y)));
   const first = typed[0] || (numbered.length === 1 ? numbered[0] : ""); if (!first) return "";
-  let line1 = first.replace(/\s*#\s*$/, "");
-  for (let k = 0; k < 2 && SHARE_UNIT_AT_END.test(line1) && /\s\S+\s/.test(line1.replace(SHARE_UNIT_AT_END, " ")); k++) line1 = line1.replace(SHARE_UNIT_AT_END, "");
+  let line1 = first.replace(/\s*#\s*$/, "").replace(/(\w)\.(?=\w)/g, "$1");   // a dot inside a word (Bl.dg) first
+  // A unit only comes off when a street type is left before it (not 12000 N RM 620, a Ranch to Market road, nor Old RM 12).
+  const hasType = (x) => words(x).slice(1).some(y => SHARE_TYPE.has(y));
+  for (let k = 0; k < 2 && SHARE_UNIT_AT_END.test(line1) && hasType(line1.replace(SHARE_UNIT_AT_END, "")); k++) line1 = line1.replace(SHARE_UNIT_AT_END, "");
   const w = words(line1), out = [], kind = [];
   for (let i = 0; i < w.length; i++){
     if (!i){ out.push(w[0]); kind.push("num"); continue; }   // the house number
@@ -11717,19 +11728,18 @@ function shareAddrKey(addr){
     const o = /^[A-Z]+$/.test(w[i]) ? jigOrdinal(w[i], x => x.toUpperCase()) : null;
     out.push(o && /^\d/.test(o) ? o : w[i]); kind.push(SHARE_UNITISH.test(w[i]) ? "n" : "word");
   }
-  // Jig for Pokémon Center's bare number (or a unit written bare): after a numbered road's own number, or after a street type
-  // (or its direction) that follows the street's name, unless that makes it a numbered road.
+  // Jig for Pokémon Center's bare number (or a unit written bare): after a road's own number, or after a street type other than
+  // a road's (or its direction) that follows the street's name.
   const L = out.length, drop = () => { out.pop(); kind.pop(); };
   if (L >= 4 && kind[L - 1] === "n"){
     let ti = L - 2;
     if (kind[ti] === "n"){ if (kind[ti - 1] === "type" && (SHARE_ROUTES.has(out[ti - 1]) || SHARE_ROAD_TYPES.has(out[ti - 1]))) drop(); }   // Route 66 707
     else {
       if (kind[ti] === "dir" && kind[ti - 1] === "type") ti--;
-      const T = out[ti], W = out[ti - 1];
-      if (kind[ti] === "type" && ti >= 2 && (kind[ti - 1] === "word" || kind[ti - 1] === "type") && !SHARE_ROUTES.has(T) && !(SHARE_ROAD_TYPES.has(T) && SHARE_ROAD_SYS.has(W))) drop();
+      if (kind[ti] === "type" && ti >= 2 && (kind[ti - 1] === "word" || kind[ti - 1] === "type") && !SHARE_ROUTES.has(out[ti]) && !SHARE_ROAD_TYPES.has(out[ti])) drop();
     }
   }
-  return out.length >= 2 ? out.join(" ") + "|" + tail[2] : "";
+  return out.length >= 2 ? urb + out.join(" ") + "|" + tail[2] : "";
 }
 // What the buyer gets besides the step: the ship-to name and address and the tracking.
 const shareDetOf = (o) => JSON.stringify([o.shipTo || "", o.shipAddr || "", (o.tracking || []).map(t => [t.number, t.carrier])]);
@@ -11798,9 +11808,9 @@ function sellerDetailsApply(o, a){
   for (const [f, n] of [["shipTo", 80], ["shipAddr", 160]]){
     const v = String(a[f] || "").slice(0, n), before = String(was[f] || "");
     put[f] = v;
-    // What the seller changed, while the order still has the seller's; and an empty one filled in (a merge with an edit saved
-    // before the details came can leave it empty).
-    if ((o[f] || "") !== v && ((v !== before && (o[f] || "") === before) || (v && !o[f]))){ o[f] = v; changed = true; }
+    // What the seller changed, while the order still has the seller's; and an empty one filled in when this order has no
+    // sellerSent for it (a merge took a copy from a page before 1.9.138): one the buyer cleared stays clear.
+    if ((o[f] || "") !== v && ((v !== before && (o[f] || "") === before) || (v && !o[f] && was[f] === undefined))){ o[f] = v; changed = true; }
   }
   const list = [];
   for (const t of a.tracking){
@@ -11808,12 +11818,14 @@ function sellerDetailsApply(o, a){
     if (/^[A-Za-z0-9-]{4,40}$/.test(number) && !list.some(x => x.number === number)) list.push({number, carrier:CARRIERS[t.carrier] ? t.carrier : "other"});
     if (list.length === 5) break;
   }
-  // On every row, so a number a merge dropped comes back: the seller's numbers are put on the order, but for those the buyer took
-  // off in the order editor (o.trkOff); one the seller took off goes, but for those the order had before the seller sent them
-  // (sellerSent.mine); a carrier the seller corrected is taken, but for one the buyer changed. The seller's first, in their order.
-  const prev = new Map((was.trk || []).map(([nm, c]) => [nm, c])), now = new Set(list.map(t => t.number));
-  const off = (o.trkOff || []).filter(x => now.has(x)), mine = new Set(was.mine || []);
-  let tr = (o.tracking || []).filter(t => !(prev.has(t.number) && !now.has(t.number) && !mine.has(t.number)));
+  // On every row (and after each merge, sellerSentPass), so a number a merge dropped comes back: the seller's numbers are put on
+  // the order, but for those the buyer took off in the order editor (o.trkOff: off the order whatever a merge did, and kept off
+  // until the seller sends one again after dropping it); one the seller took off goes, but for those the order had before the
+  // seller sent them (sellerSent.mine); a carrier the seller corrected is taken, but for one the buyer changed. The seller's
+  // first, in their order.
+  const prev = new Map((was.trk || []).map(([nm, c]) => [nm, c])), now = new Set(list.map(t => t.number)), mine = new Set(was.mine || []);
+  const off = (o.trkOff || []).filter(x => !(now.has(x) && !prev.has(x) && was.trk));   // sent again: it goes on
+  let tr = (o.tracking || []).filter(t => !(prev.has(t.number) && !now.has(t.number) && !mine.has(t.number)) && !(off.includes(t.number) && (now.has(t.number) || prev.has(t.number))));
   for (const t of list){
     const at = tr.findIndex(x => x.number === t.number);
     if (at < 0){ if (!off.includes(t.number)) tr.push({number:t.number, carrier:t.carrier}); }
@@ -11829,12 +11841,25 @@ function sellerDetailsApply(o, a){
   if (JSON.stringify(was) !== JSON.stringify(put)){ o.sellerSent = put; changed = true; }
   return changed;
 }
+// After each merge and at unlock: every order the seller sent details to gets them again from its own sellerSent, so a tracking
+// number or ship-to a merge with another device's edit dropped comes back without waiting for the order's next alert.
+function sellerSentPass(){
+  let n = 0;
+  for (const o of (S && S.orders) || []){
+    const ss = o.sellerSent;
+    if (!ss || typeof ss !== "object" || !Array.isArray(ss.trk)) continue;
+    if (sellerDetailsApply(o, {shipTo:ss.shipTo, shipAddr:ss.shipAddr, tracking:ss.trk.map(x => ({number:x[0], carrier:x[1]}))})) n++;
+  }
+  return n;
+}
 /* SHARE-END */
 const SHARE = {busy:false, buyers:null, buyersAt:0, err:{}, timer:null, soon:null, want:false, running:null};
 // The seller's own FAFO: the one that sends order alerts for buyers (the worker's owner), on the desktop or the web.
 const canShare = () => !!S && MODE === "vault" && isPremiumOwner() && !!sellerLic();
 const shareBuyerName = (b) => b.user ? "@" + b.user + (b.name ? " · " + b.name : "") : (b.name ? b.name + " · " : "") + "License …" + (b.last4 || "");
 const SHARE_REFUSED_MS = 60 * 60000;   // a buyer the worker refused is asked again after an hour
+// A request that never answers (a network filter holding it) gives up, so the next run and Send aren't held behind it.
+const shareTimeout = () => typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(20000) : undefined;
 function scheduleSharedOrders(){
   clearInterval(SHARE.timer);
   shareSoon(25000);
@@ -11862,7 +11887,7 @@ function sharedOrdersSynced(){
 }
 async function loadShareBuyers(force){
   if (!force && SHARE.buyers && Date.now() - SHARE.buyersAt < 10 * 60000) return SHARE.buyers;
-  const r = await alertApi("/alerts/buyers");
+  const r = await alertApi("/alerts/buyers", {signal:shareTimeout()});
   if (!r.ok) throw Object.assign(new Error(r.status === 403 ? "Only your own FAFO, the one that sends order alerts for buyers, can send orders to buyers." : r.status === 401 ? "Your license wasn't recognized." : "The license server couldn't answer just now. Try again."), {status:r.status});
   SHARE.buyers = (await r.json()).buyers || []; SHARE.buyersAt = Date.now();
   return SHARE.buyers;
@@ -11900,7 +11925,7 @@ async function shareRun(only){
         const chunk = [];
         for (let n = 0; i < items.length && (!chunk.length || n + items[i].events.length <= 100); i++){ n += items[i].events.length; chunk.push(items[i]); }
         let r;
-        try { r = await alertApi("/alerts/share", {method:"POST", body:JSON.stringify({to:id, events:chunk.flatMap(x => x.events)})}); }
+        try { r = await alertApi("/alerts/share", {method:"POST", body:JSON.stringify({to:id, events:chunk.flatMap(x => x.events)}), signal:shareTimeout()}); }
         catch(err){ mine.why = "Couldn't reach the license server."; res.failed.push([items[0].to.name, mine.why]); return res; }
         if (S !== vault) return res;   // locked meanwhile
         if (r.status === 403){ refreshPremium(true); mine.why = "Only your own FAFO, the one that sends order alerts for buyers, can send orders to buyers."; res.failed.push(["", mine.why]); return res; }
@@ -11953,7 +11978,7 @@ function openSendToBuyer(ids){
     body:`<p class="item-sub" style="margin:0 0 12px">${n === 1 ? "It goes" : "They go"} to that buyer's FAFO, on their Orders page: the item, price, order number, ship-to name and address and tracking, and each update until ${n === 1 ? "it's" : "they're"} delivered. Sending adds nothing to their invoice.</p>
       <div class="field"><label for="sb-q">Buyer</label><input id="sb-q" type="search" placeholder="Search by Discord name or the name they send slots under" autocomplete="off" autofocus></div>
       <div class="sb-list" id="sb-list" role="radiogroup" aria-label="Buyers"><div class="item-sub" style="padding:8px">Loading your buyers…</div></div>
-      ${addrs.length ? `<label class="check" style="margin-top:12px"><input type="checkbox" id="sb-keep" checked><span>Also send future orders shipping to ${addrs.length === 1 ? "this address" : "these addresses"} to this buyer<br><span class="item-sub">${addrs.map(([, a]) => esc(a)).join("<br>")}<br>Any unit at the same street address and ZIP counts. Leave this off for a package forwarder, or a building other buyers ship to too.</span></span></label>` : ""}
+      ${addrs.length ? `<label class="check" style="margin-top:12px"><input type="checkbox" id="sb-keep"${otherAcct ? "" : " checked"}><span>Also send future orders shipping to ${addrs.length === 1 ? "this address" : "these addresses"} to this buyer<br><span class="item-sub">${addrs.map(([, a]) => esc(a)).join("<br>")}<br>Any unit at the same street address and ZIP counts. Leave this off for a package forwarder, or a building other buyers ship to too.</span></span></label>` : ""}
       ${noKey ? `<p class="item-sub" style="margin:8px 0 0">${plural(noKey, "address", "addresses")} can't be remembered (no house number, state and ZIP FAFO can read), so future orders there wait for you.</p>` : ""}
       <p class="item-sub" id="sb-note" style="margin:10px 0 0" hidden></p>
       ${otherAcct ? `<p class="item-sub" style="margin:8px 0 0"><strong>${plural(otherAcct, "of these is", "of these are")} on an account you gave another buyer</strong>, so ${otherAcct === 1 ? "it wasn't" : "they weren't"} sent by its address: that buyer gets ${otherAcct === 1 ? "it" : "them"} with their own order alerts. Send ${otherAcct === 1 ? "it" : "them"} only to the buyer ${otherAcct === 1 ? "it's" : "they're"} for.</p>` : ""}
@@ -11991,7 +12016,7 @@ function openSendToBuyer(ids){
       if (stop) stop.addEventListener("click", () => {
         const now = Date.now(), m = Object.assign({}, S.settings.buyerAddrs);
         let off = 0;
-        ok.forEach(o => { const cur = orderById(o.id); if (cur && cur.shareTo && cur.shareTo.id){ for (const [ek, e] of Object.entries(m)) if (e && e.id === cur.shareTo.id && e.key === shareAddrKey(cur.shipAddr)) delete m[ek]; cur.shareTo = {off:true, at:now}; off++; } });
+        ok.forEach(o => { const cur = orderById(o.id); if (cur && cur.shareTo && cur.shareTo.id){ dropBuyerAddrs(m, Object.entries(m).filter(([, e]) => e && e.id === cur.shareTo.id && e.key === shareAddrKey(cur.shipAddr)).map(([ek]) => ek)); cur.shareTo = {off:true, at:now}; off++; } });
         S.settings.buyerAddrs = m; persist(); close(); renderMain();
         toast(`Stopped sending ${plural(off, "order")}. The buyer's FAFO keeps what it already got, and future orders to ${off === 1 ? "its address" : "their addresses"} stay here.`);
       });
@@ -12006,7 +12031,7 @@ function openSendToBuyer(ids){
             others.forEach(([ek]) => delete m[ek]);
             // Remembered for this buyer alone before: from then on still. Kept for another buyer too, orders there were
             // waiting to be picked, so only those from now on go.
-            m[k + "|" + b.id] = {key:k, id:b.id, name, addr:a, at:had && +had.at && !others.length ? Math.min(+had.at, now) : now};
+            m[k + "|" + b.id] = {key:k, id:b.id, name, addr:a, at:had && +had.at && !others.length ? Math.min(+had.at, now) : now, set:now};
           }
           S.settings.buyerAddrs = m;
         }
@@ -12020,11 +12045,23 @@ function openSendToBuyer(ids){
     }
   });
 }
+// Takes remembered addresses off (keys of buyerAddrs). Where another buyer's entry for the same address stays, orders there
+// were waiting between the two: that one starts from now, so those keep waiting. Answers the buyers left, by address key.
+function dropBuyerAddrs(m, gone){
+  const now = Date.now(), left = {};
+  for (const ek of gone){
+    const e = m[ek]; if (!e) continue;
+    delete m[ek];
+    for (const [k2, e2] of Object.entries(m)) if (e2 && e2.key === e.key){ m[k2] = Object.assign({}, e2, {at:Math.max(+e2.at || 0, now), set:now}); left[e.key] = e2.name || "another buyer"; }
+  }
+  return left;
+}
 function forgetBuyerAddr(k){
   const m = Object.assign({}, S.settings.buyerAddrs); if (!m[k]) return;
-  delete m[k]; S.settings.buyerAddrs = m; persist();
+  const left = dropBuyerAddrs(m, [k]); S.settings.buyerAddrs = m; persist();
   const sec = $("#s-sentbuyers"); if (sec) sec.innerHTML = sentBuyersSectionHTML();
-  toast("Future orders to that address stay here now.");
+  const other = Object.values(left)[0];
+  toast(other ? `That address is still kept for ${other}: orders there from now on go to them. Take that one off too to keep them here.` : "Future orders to that address stay here now.");
 }
 function sentBuyersSectionHTML(){
   const ents = Object.entries(S.settings.buyerAddrs || {}).filter(([, e]) => e && e.key && e.id).sort((a, b) => (+b[1].at || 0) - (+a[1].at || 0));

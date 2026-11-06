@@ -30,7 +30,7 @@ const code = [
   block("const JIG_DIRS = ", "function jigAssign(rows"),   // Jig's tables, jigOrdinal, JIG_UNIT_AT_END and jigChoices
   block("const pkcNum = ", "// One key per building"), fn("function pkcForms(b){"),   // Jig for Pokémon Center's ways of writing an address
   block("/* SHARE-START", "/* SHARE-END */"),
-  block("const SHARE = {busy", "// Send to buyer, on the Orders selection bar"),
+  block("const SHARE = {busy", "// Send to buyer, on the Orders selection bar"), fn("function dropBuyerAddrs(m, gone){"),
   line(/^const SELLER_DET_FROM = .*$/m), fn("async function pollSellerAlerts(){"), fn("function applySellerAlerts(list, seenBefore){"),
 ].join("\n");
 const prelude = `let S = null; const MODE = "vault"; let OWNER = true; const UI = {view:"orders"}; const calls = [];
@@ -43,10 +43,10 @@ const prelude = `let S = null; const MODE = "vault"; let OWNER = true; const UI 
   const ALERT_STEP_TEXT = {placed:"order placed", shipped:"shipped", arriving:"arriving", delivered:"delivered", canceled:"canceled"}, sendAlert = () => {}, toast = () => {};
   let sellerBusy = false, sellerAskedAt = 0;
   let SERVER = async () => ({ok:true, status:200, json:async () => ({ok:true})});
-  const alertApi = (path, opts) => { calls.push([path, opts && opts.body ? JSON.parse(opts.body) : null]); return SERVER(path, opts && opts.body ? JSON.parse(opts.body) : null); };`;
+  const alertApi = (path, opts) => { calls.push([path, opts && opts.body ? JSON.parse(opts.body) : null]); if (opts && opts.signal) calls.push("signal"); return SERVER(path, opts && opts.body ? JSON.parse(opts.body) : null); };`;
 const api = new Function(prelude + code + `
   return {setS:(s) => { S = s; }, getS:() => S, setOwner:(v) => { OWNER = v; }, setServer:(f) => { SERVER = f; }, calls, SHARE, W, OALERT, SELLER_DET_FROM,
-    shareAddrKey, shareTargetOf, sharePlan, shareMark, sellerDetailsApply, reportSharedOrders, sharedOrdersSynced, applySellerAlerts, pollSellerAlerts, jigChoices, pkcForms, shareDetOf};`)();
+    shareAddrKey, shareTargetOf, sharePlan, shareMark, sellerDetailsApply, sellerSentPass, dropBuyerAddrs, reportSharedOrders, sharedOrdersSynced, applySellerAlerts, pollSellerAlerts, jigChoices, pkcForms, shareDetOf};`)();
 
 let passed = 0;
 const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok  " + name); } catch (e) { console.log("  FAIL " + name); throw e; } };
@@ -100,27 +100,42 @@ await test("a numbered road's own number is never taken for a unit, nor a word f
     ["100 National Forest Rd 12", "100 National Forest Rd 13"], ["100 N Ranch Rd 620", "100 N Ranch Rd 2222"], ["100 N Forest Rd 12", "100 N Forest Rd 13"],
     ["100 Ranch-to-Market Road 12", "100 Ranch-to-Market Road 13"], ["100 Farm-to-Market Road 12", "100 Farm-to-Market Road 13"], ["100 FS Rd 42", "100 FS Rd 11"],
     ["21000 Pacific Coast Hwy 1", "21000 Pacific Coast Hwy 2"], ["100 Business Loop 70", "100 Business Loop 44"], ["100 Historic Route 66", "100 Historic Route 9"],
-    ["120 Oak Fls", "120 Oak Fld"], ["120 Oak Fls", "120 Oak Flt"], ["120 Oak Fls", "120 Oak"]])
+    ["120 Oak Fls", "120 Oak Fld"], ["120 Oak Fls", "120 Oak Flt"], ["120 Oak Fls", "120 Oak"], ["1234 Lee Road 379", "1234 Lee Road 430"], ["1234 Lee Rd 379 Apt 2", "1234 Lee Road 298"],
+    ["100 Lake Rd 54-56", "100 Lake Rd 54-80"], ["12000 N RM 620", "12000 N RM 2222"], ["100 Old RM 12", "100 Old RM 13"], ["12000 N RM 620", "12000 N Lot 5"]])
     assert.notEqual(key(a), key(b), `${a} / ${b}`);
   assert.equal(key("120 Oak Fls"), key("120 Oak Falls"), "Fls is a street type, not a floor");
   assert.equal(key("100 Route 66 707"), key("100 Route 66"));
   assert.equal(key("1 Main St B"), key("1 Main St Apt B"), "a letter unit written bare");
+  assert.equal(key("100 Main St Bl.dg 3"), key("100 Main St"), "Jig for Target's dot inside a unit's word");
+  assert.equal(key("100 Main St Lot 5"), key("100 Main St"));
+  assert.notEqual(key("100 Broadway Apt 4"), key("100 Broadway 5"), "a street with no type keeps a unit on line 1: those wait");
+  // Puerto Rico: the urbanization is part of the address.
+  const pr = (x) => api.shareAddrKey(x);
+  assert.notEqual(pr("Urb Las Gladiolas, 150 Calle A, San Juan, PR 00926"), pr("Urb Sevilla, 150 Calle A, San Juan, PR 00926"));
+  assert.equal(pr("Urb Las Gladiolas, 150 Calle A, San Juan, PR 00926"), pr("150 Calle A, Urb. Las Gladiolas, San Juan, PR 00926-3232"));
+  assert.equal(pr("150 Calle A, San Juan, PR 00926"), "", "no urbanization: it waits");
   assert.equal(key("100 County Road 12 595"), key("100 County Road 12"), "Jig for Pokémon Center's bare number after a road's own");
   assert.equal(key("100 County Rd 12"), key("100 County Road 12"));
   assert.equal(key("200 18th Ave NW 45"), key("200 18th Ave NW"));
   assert.equal(key("100 Court St"), key("100 Court Street"), "a type that's the street's name");
   assert.notEqual(key("100 Court St"), key("100 St"));
 });
-await test("every way Jig for Pokémon Center writes a building has its key", () => {
+await test("every way Jig for Pokémon Center writes a building on a street has its key; on a road, its bare number keeps one of its own", () => {
+  const forms = (b) => { const f = api.pkcForms(b); return f.map((x) => x()).concat(f.more ? Array.from({ length: 10 }, () => f.more()()) : []); };
+  const keyOf = (v) => api.shareAddrKey(oneLine({ ...v, city: "Austin", zip: "78701" }));
   for (const b of [{ line1: "1801 N Orchard Dr", line2: "" }, { line1: "1801 N Orchard Dr", line2: "Apt 4" }, { line1: "500 W 21st St Apt 12", line2: "" }, { line1: "77 Meadow Ln", line2: "# 3" },
-    { line1: "100 County Road 12", line2: "" }, { line1: "200 18th Ave NW", line2: "" }, { line1: "100 State St", line2: "" }, { line1: "100 Park Ave", line2: "" },
-    { line1: "100 N Park Ave", line2: "" }, { line1: "100 Maple Loop", line2: "" }, { line1: "5000 Nolensville Pike", line2: "" }, { line1: "100 Market St", line2: "Apt 4" },
-    { line1: "100 Forest Dr", line2: "" }, { line1: "1 Main St", line2: "Apt B" }, { line1: "120 Oak Fls", line2: "" }, { line1: "100 Route 66", line2: "" }]) {
-    const want = api.shareAddrKey(oneLine({ ...b, city: "Austin", zip: "78701" }));
+    { line1: "200 18th Ave NW", line2: "" }, { line1: "100 State St", line2: "" }, { line1: "100 Park Ave", line2: "" }, { line1: "100 N Park Ave", line2: "" },
+    { line1: "100 Market St", line2: "Apt 4" }, { line1: "100 Forest Dr", line2: "" }, { line1: "1 Main St", line2: "Apt B" }, { line1: "120 Oak Fls", line2: "" }]) {
+    const want = keyOf(b);
     assert.ok(want, b.line1);
-    for (let round = 0; round < 20; round++) {
-      const forms = api.pkcForms(b), all = forms.map((f) => f()).concat(forms.more ? Array.from({ length: 10 }, () => forms.more()()) : []);
-      for (const v of all) assert.equal(api.shareAddrKey(oneLine({ ...v, city: "Austin", zip: "78701" })), want, `${b.line1} ${b.line2} → ${v.line1} | ${v.line2}`);
+    for (let round = 0; round < 20; round++) for (const v of forms(b)) assert.equal(keyOf(v), want, `${b.line1} ${b.line2} → ${v.line1} | ${v.line2}`);
+  }
+  for (const b of [{ line1: "100 County Road 12", line2: "" }, { line1: "100 Maple Loop", line2: "" }, { line1: "5000 Nolensville Pike", line2: "" }, { line1: "100 Route 66", line2: "" },
+    { line1: "100 Old Mill Rd", line2: "Apt 4" }]) {
+    const want = keyOf(b), street = want.split("|")[0];
+    for (let round = 0; round < 20; round++) for (const v of forms(b)) {
+      const k = keyOf(v);
+      assert.ok(k === want || (k.startsWith(street + " ") && /^\d+$/.test(k.split("|")[0].slice(street.length + 1))), `${b.line1} → ${v.line1} | ${v.line2}: ${k}`);
     }
   }
 });
@@ -288,6 +303,19 @@ await test("with nothing to send no sync round is started, and the wait's timer 
   await api.reportSharedOrders();
   assert.ok(o.shareTold);
 });
+await test("taking one of two buyers off an address keeps the orders waiting there waiting; a request gives up after a while", async () => {
+  const two = Object.assign(addrs(), { [MAIN + "|b9"]: { key: MAIN, id: "b9", name: "@lee", addr: "1 Main St, Apt 30, Austin, TX 78701", at: T0 + DAY } });
+  const y = order({ id: "y", orderNo: "Y1", shipTo: "Lee Neighbor", shipAddr: "1 Main St, Apt 30, Austin, TX 78701", createdAt: T0 + 2 * DAY, at: "2026-11-03" });
+  assert.equal(api.shareTargetOf(y, two), null, "waiting between two buyers");
+  const left = api.dropBuyerAddrs(two, [MAIN + "|b9"]);
+  assert.deepEqual(left, { [MAIN]: "@sam" });
+  assert.equal(api.shareTargetOf(y, two), null, "still waiting: the one left starts from now");
+  assert.ok(two[MAIN + "|b1"].set && two[MAIN + "|b1"].at > T0 + 2 * DAY);
+  reset([order({ shareTo: { id: "b1", name: "@sam", by: "hand" } })]); api.setServer(async () => ok());
+  await api.reportSharedOrders();
+  assert.ok(api.calls.includes("signal"), "the share request has a time limit");
+  assert.match(html, /<input type="checkbox" id="sb-keep"\$\{otherAcct \? "" : " checked"\}>/, "an order on another buyer's account starts with the address unticked");
+});
 await test("sent by hand: orders already on that buyer's page with nothing new count as done", async () => {
   const a = order({ id: "d1", orderNo: "D1", shareTo: { id: "b1", name: "@sam", by: "hand" } }), b = order({ id: "d2", orderNo: "D2", shareTo: { id: "b1", name: "@sam", by: "hand" } });
   reset([a, b]); api.setServer(async () => ok());
@@ -362,22 +390,35 @@ await test("an update brings what the seller changed, never over what the buyer 
   api.applySellerAlerts([alert({ stage: "update", createdAt: T0 + 1000, shipTo: "", shipAddr: "" })]);
   assert.deepEqual([t.orders[0].shipTo, t.orders[0].shipAddr], ["", ""], "cleared by the seller while it was still theirs");
 });
-await test("a number or ship-to a sync merge dropped comes back with the next row; one the buyer took off stays off until the seller drops it", () => {
+await test("a number or ship-to a sync merge dropped comes back right after the merge; one the buyer took off stays off until the seller sends it again", () => {
   const s = buyer(); api.setS(s);
   const two = [{ number: "1ZWY0000000000001", carrier: "ups" }, { number: "TBA123456789012", carrier: "amazon" }];
   api.applySellerAlerts([alert({ tracking: two })]);
   const o = s.orders[0];
-  o.tracking = []; o.shipTo = "";   // what a merge with an edit saved on another device before the details came leaves
+  o.tracking = [];   // a merge with an edit saved on another device before the numbers came
+  assert.equal(api.sellerSentPass(), 1);
+  assert.deepEqual(o.tracking.map((t) => t.number), ["1ZWY0000000000001", "TBA123456789012"], "back after the merge, with no row needed");
+  assert.equal(api.sellerSentPass(), 0, "and once only");
+  const { sellerSent, ...copy } = o; s.orders[0] = Object.assign(copy, { shipTo: "", tracking: [] });   // a whole-unit merge took a page before 1.9.138's copy
   api.applySellerAlerts([alert({ stage: "shipped", createdAt: T0 + 1000, tracking: two })]);
-  assert.deepEqual([o.tracking.map((t) => t.number), o.shipTo], [["1ZWY0000000000001", "TBA123456789012"], "Sam Buyer"], "back, with no new number needed");
-  o.tracking = [two[1]]; o.trkOff = ["1ZWY0000000000001"];
+  assert.deepEqual([s.orders[0].tracking.length, s.orders[0].shipTo], [2, "Sam Buyer"], "the next row fills it in");
+  const p = s.orders[0];
+  p.shipTo = "";   // the buyer cleared it
+  api.applySellerAlerts([alert({ stage: "update", createdAt: T0 + 1500, tracking: two })]); api.sellerSentPass();
+  assert.equal(p.shipTo, "", "one the buyer cleared stays clear");
+  p.tracking = [two[1]]; p.trkOff = ["1ZWY0000000000001"];
   api.applySellerAlerts([alert({ stage: "update", createdAt: T0 + 2000, tracking: two })]);
-  assert.deepEqual(o.tracking.map((t) => t.number), ["TBA123456789012"], "taken off by the buyer: stays off");
+  assert.deepEqual(p.tracking.map((t) => t.number), ["TBA123456789012"], "taken off by the buyer: stays off");
+  p.tracking = two.slice();   // a merge took the other device's tracking, with it still on
+  api.sellerSentPass();
+  assert.deepEqual(p.tracking.map((t) => t.number), ["TBA123456789012"], "taken off again: the buyer's choice wins over a merge");
   api.applySellerAlerts([alert({ stage: "update", createdAt: T0 + 3000, tracking: [two[1]] })]);
-  assert.equal(o.trkOff, undefined, "the seller dropped it too: nothing left to keep off");
+  assert.deepEqual(p.trkOff, ["1ZWY0000000000001"], "the seller dropped it: still kept off");
   api.applySellerAlerts([alert({ stage: "update", createdAt: T0 + 4000, tracking: two })]);
-  assert.deepEqual(o.tracking.map((t) => t.number), ["1ZWY0000000000001", "TBA123456789012"], "sent again later: it goes on");
-  assert.match(html, /if \(existing && existing\.fromSeller\)\{\s*const kept = new Set\(d\.tracking\.map\(x => x\.number\)\)/, "the order editor notes the numbers taken off");
+  assert.deepEqual([p.tracking.map((t) => t.number), p.trkOff], [["1ZWY0000000000001", "TBA123456789012"], undefined], "sent again later: it goes on");
+  assert.match(html, /if \(!untouched && existing && \(existing\.fromSeller \|\| existing\.sellerSent\)\)\{\s*const kept = new Set\(d\.tracking\.map\(x => x\.number\)\)/, "the order editor notes the numbers taken off");
+  assert.match(html, /if \(!untouched\) d\.tracking = /, "and leaves tracking it didn't change alone");
+  assert.match(fn("function oneStoreRun(why){"), /sellerSentPass\(\)/, "the pass runs after every merge and at unlock");
 });
 await test("rows read before (asked again from sellerDetSince) bring details and dates only: nothing is added, moved or notified again", () => {
   const s = buyer(); api.setS(s);
