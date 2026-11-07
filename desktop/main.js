@@ -93,6 +93,23 @@ ipcMain.handle("imap:spam-to-inbox", async (_e, cfg, uids, uidValidity) => {
   return imap.spamToInbox(c, uids, String(uidValidity || "").slice(0, 40));
 });
 
+// An order's emails on to a buyer (pages from 1.9.139): found by order number, then the ones the page picked forwarded by SMTP.
+ipcMain.handle("imap:find-order-mail", async (_e, cfg, orders, others, opts) => {
+  const c = clean(cfg);
+  if (!c.email || !c.password || !c.host) return { ok: false, error: "Email, app password and server are all needed." };
+  const list = (Array.isArray(orders) ? orders : []).slice(0, 500).map(o => ({ no: String(o && o.no || "").slice(0, 40), since: String(o && o.since || "").slice(0, 10) }));
+  const strs = (a, max, len) => (Array.isArray(a) ? a : []).slice(0, max).map(x => String(x || "").slice(0, len));
+  const o = opts && typeof opts === "object" ? opts : {};
+  return imap.findOrderMail(c, list, strs(others, 50000, 40), { skipFrom: strs(o.skipFrom, 5000, 200), skip: strs(o.skip, 20000, 64) });
+});
+ipcMain.handle("imap:forward-mail", async (_e, cfg, items, to) => {
+  const c = clean(cfg);
+  if (!c.email || !c.password || !c.host) return { ok: false, error: "Email, app password and server are all needed." };
+  const list = (Array.isArray(items) ? items : []).slice(0, 50).map(x => ({ id: String(x && x.id || "").slice(0, 64), folder: String(x && x.folder || "").slice(0, 300),
+    uid: Math.max(0, Math.floor(Number(x && x.uid) || 0)), uidValidity: String(x && x.uidValidity || "").slice(0, 40) }));
+  return imap.forwardMail(c, list, String(to || "").slice(0, 200));
+});
+
 // --- updates ---
 ipcMain.handle("update:info", () => ({ appVersion: app.getVersion(), version: updater.currentVersion(), source: updater.manifestUrl(), builtInSource: !!updater.cfg.manifestUrl, signed: !!updater.pubKey, status: updater.status }));
 ipcMain.handle("update:check", () => updater.check(true));
