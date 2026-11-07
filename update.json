@@ -1,10 +1,10 @@
 {
-  "version": "1.9.138",
-  "url": "index-1.9.138.html",
-  "sha256": "f51d1e626fa0083e2aee5ed29d33b9a476b82365a5233d6e92ffadc7e6c41097",
-  "signature": "Yh6NAfleSeQZs94rSHYxX4ToQ4YCcw66E54te0FmlVWzMnfLHsnx2YCAIqXq6DJH4DeoLIkTJwE7DV5dTC0cDw==",
+  "version": "1.9.139",
+  "url": "index-1.9.139.html",
+  "sha256": "6d153f9385317e3034d92b6f055eda504ab9255c056148d6783a6963480fc200",
+  "signature": "yGDgLl4BqasZH096knlfXg/W0umEYpkVoiU0A+QAFocxymzJY/alIVH0YuLASflHqdj9g8HTQ8FRURpjN7cJCg==",
   "minAppVersion": "0",
-  "notes": "Your seller can now send orders they place for you straight to your Orders page, with the ship-to name, address and tracking number, and each update as they ship and arrive. For sellers: tick orders on Orders and choose Send to buyer; FAFO can also send that buyer future orders to the same address by itself.",
+  "notes": "Orders your seller sends you now show which account they were placed with, and your seller can have the store's emails about them (the confirmation, shipping, delivery) forwarded to your email too. For sellers: type a buyer's email address in Send to buyer, and FAFO forwards every email about the orders you send them from the inbox it came to, as they come. Forwarding needs the newest FAFO download, which you can get from the Send to buyer window.",
   "installerUrl": "",
-  "publishedAt": "2026-11-06T11:32:41.288Z"
+  "publishedAt": "2026-11-07T18:42:06.561Z"
 }
