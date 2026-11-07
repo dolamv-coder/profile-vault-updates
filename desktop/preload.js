@@ -1,7 +1,7 @@
 // Exposes a small, fixed API to the page. The page never gets Node access.
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("pvDesktop", {
-  version: 14,
+  version: 15,
   focusApp: () => ipcRenderer.invoke("app:focus"),
   attention: () => ipcRenderer.invoke("app:attention"),
   rescueSpam: (cfg) => ipcRenderer.invoke("imap:rescue-spam", cfg),
@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld("pvDesktop", {
   trashOrderMail: (cfg, orders, keep) => ipcRenderer.invoke("imap:trash-order-mail", cfg, orders, keep),
   listSpam: (cfg) => ipcRenderer.invoke("imap:list-spam", cfg),
   spamToInbox: (cfg, uids, uidValidity) => ipcRenderer.invoke("imap:spam-to-inbox", cfg, uids, uidValidity),
+  findOrderMail: (cfg, orders, others, opts) => ipcRenderer.invoke("imap:find-order-mail", cfg, orders, others, opts),
+  forwardMail: (cfg, items, to) => ipcRenderer.invoke("imap:forward-mail", cfg, items, to),
   appReady: () => ipcRenderer.invoke("app:ready"),
   updateInfo: () => ipcRenderer.invoke("update:info"),
   checkForUpdates: () => ipcRenderer.invoke("update:check"),

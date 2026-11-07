@@ -347,6 +347,32 @@ CREATE TABLE IF NOT EXISTS alert_details (
   PRIMARY KEY (key_hash, store, order_no)
 );
 
+-- The account an order the owner sends a buyer was placed on (app 1.9.139, with POST /alerts/share), which GET /alerts gives
+-- with the order's rows: the owner lets their buyers see it (2026-11-07). Its own table, since db:init can't add columns.
+-- Kept 60 days after the order was last sent, as alert_details.
+CREATE TABLE IF NOT EXISTS alert_accounts (
+  key_hash   TEXT NOT NULL,                     -- the buyer's license
+  store      TEXT NOT NULL,
+  order_no   TEXT NOT NULL,
+  account    TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (key_hash, store, order_no)
+);
+
+-- The store's emails the owner's FAFO forwards to a buyer (app 1.9.139): one row per buyer, address (dest: a hash of it, so
+-- an address corrected after a typo gets them again) and email (msg_id: a hash of its Message-ID, the same on every computer),
+-- claimed by one run before it sends (claim, claimed_at) and marked sent after, so two computers on one mailbox send each
+-- email once. A claim never marked sent can be taken again after 15 minutes. Kept 180 days.
+CREATE TABLE IF NOT EXISTS forward_claims (
+  key_hash   TEXT NOT NULL,                     -- the buyer's license
+  dest       TEXT NOT NULL,
+  msg_id     TEXT NOT NULL,
+  claim      TEXT NOT NULL,
+  claimed_at INTEGER NOT NULL,
+  sent_at    INTEGER,
+  PRIMARY KEY (key_hash, dest, msg_id)
+);
+
 -- A buyer's own Discord webhook, which gets their order alerts too (optional).
 CREATE TABLE IF NOT EXISTS alert_webhooks (
   key_hash   TEXT PRIMARY KEY,

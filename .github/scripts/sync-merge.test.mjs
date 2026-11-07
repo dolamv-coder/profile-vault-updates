@@ -414,6 +414,30 @@ if (html.includes(':spamMoves"')) test("saved Find in Spam searches added on two
   }
 });
 
+// 1.9.139+: where each buyer's store emails are forwarded (settings.buyerEmails, {buyerId: {email, name, at}}): two devices
+// that each set one before they agree keep both, and one taken off on one side stays off.
+if (html.includes(':buyerEmails"')) test("buyers' emails set on two devices keep both; one taken off stays off", () => {
+  const e = (email, at) => ({ email, name: "@x", at });
+  for (const base of [blank(), null]) {
+    const a = blank(), b = blank();
+    a.settings.buyerEmails = { b1: e("one@example.com", 1) }; b.settings.buyerEmails = { b2: e("two@example.com", 2) };
+    const k = [...syncUnits(a).map.keys()].find((x) => x.endsWith(":buyerEmails"));
+    for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+      const r = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, {});
+      assert.deepEqual(Object.keys(r.state.settings.buyerEmails).sort(), ["b1", "b2"]);
+    }
+  }
+  const base = blank(); base.settings.buyerEmails = { b1: e("one@example.com", 1) };
+  const a = blank(), b = blank();
+  a.settings.buyerEmails = {};   // taken off here
+  b.settings.buyerEmails = { b1: e("one@example.com", 1), b3: e("three@example.com", 3) };
+  const k = [...syncUnits(base).map.keys()].find((x) => x.endsWith(":buyerEmails"));
+  for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+    const r = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, origOf(base, [k]));
+    assert.deepEqual(Object.keys(r.state.settings.buyerEmails), ["b3"]);
+  }
+});
+
 // 1.9.138+: addresses the seller sent a buyer (settings.buyerAddrs, {"<address key>|<buyer id>": {key, id, name, addr, at}}):
 // two devices that each remember one before they agree keep both, and one forgotten on one side stays forgotten.
 if (html.includes(':buyerAddrs"')) test("addresses sent to buyers remembered on two devices keep both; one forgotten stays forgotten", () => {

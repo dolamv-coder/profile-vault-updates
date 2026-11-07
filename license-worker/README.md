@@ -617,6 +617,14 @@ alerts (above), on the desktop or the web.
   alone (North St), an address Jig for Pokémon Center wrote with a bare number on line 1 waits for you too, and so does one in Puerto Rico without its urbanization. Leave it off for a package forwarder or a building other buyers ship to. Your remembered addresses are in
   **Settings → Orders sent to buyers**, where × stops one. **Stop sending** in the Send to buyer window stops an order's
   updates (the buyer keeps what they already got).
+- **The account each order was placed with** shows on the buyer's order (FAFO 1.9.139), and **the store's emails** about
+  the orders you send a buyer can go to their own inbox: type their email address in Send to buyer, and your desktop FAFO
+  (with the v1.9.139 download) forwards every email about those orders (the confirmation, shipping, delivery, cancellation)
+  from the inbox it came to, using the app password FAFO already has: only the store's own emails, never a reply, an
+  auto-reply or a bounce. Each email goes once to each address, even with two of your computers on one mailbox: FAFO
+  claims it here first (`POST /alerts/forward/claim`, `/alerts/forward/done`, D1 `forward_claims`, which keeps only a hash
+  of each email's Message-ID and of the address). An address you correct after a typo gets them all again. Settings →
+  Orders sent to buyers lists where each buyer's emails go.
 - The worker keeps them as that buyer's alerts (`POST /alerts/share`), with the ship-to, tracking and dates in the
   `alert_details` table, which `npm run db:init` (and the deploy Action) adds. A buyer on a FAFO before 1.9.138 gets the
   orders and their steps without the ship-to and tracking.

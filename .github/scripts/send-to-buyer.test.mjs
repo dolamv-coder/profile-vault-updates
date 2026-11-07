@@ -29,6 +29,7 @@ const code = [
   block("const CARRIERS = {", "function detectCarrier"), fn("function mergeTracking(o, list){"),
   block("const JIG_DIRS = ", "function jigAssign(rows"),   // Jig's tables, jigOrdinal, JIG_UNIT_AT_END and jigChoices
   block("const pkcNum = ", "// One key per building"), fn("function pkcForms(b){"),   // Jig for Pokémon Center's ways of writing an address
+  line(/^const orderNoPlain = .*$/m), line(/^const ORDER_NO_MAIL = .*$/m), fn("function mailboxKey(email){"), line(/^const cleanBoxKey = .*$/m), fn("function syncHash(str){"),
   block("/* SHARE-START", "/* SHARE-END */"),
   block("const SHARE = {busy", "// Send to buyer, on the Orders selection bar"), fn("function dropBuyerAddrs(m, gone){"),
   line(/^const SELLER_DET_FROM = .*$/m), fn("async function pollSellerAlerts(){"), fn("function applySellerAlerts(list, seenBefore){"),
@@ -42,11 +43,15 @@ const prelude = `let S = null; const MODE = "vault"; let OWNER = true; const UI 
   const DESK = true, document = {hidden:false}, sellerAlertsCan = () => true, sellerAlertsWait = () => 0, sellerAlertsSoon = () => {}, syncRender = () => {}, autoPicturesSoon = () => {};
   const ALERT_STEP_TEXT = {placed:"order placed", shipped:"shipped", arriving:"arriving", delivered:"delivered", canceled:"canceled"}, sendAlert = () => {}, toast = () => {};
   let sellerBusy = false, sellerAskedAt = 0;
+  // Forwarding's surroundings (1.9.139): the desktop app's two calls, and what holds a run back.
+  const PV = {calls:[], find:null, forward:null}, window = {pvDesktop:{findOrderMail:(...a) => { PV.calls.push(["find", ...a]); return PV.find(...a); }, forwardMail:(...a) => { PV.calls.push(["forward", ...a]); return PV.forward(...a); }}};
+  const SYNCING = new Set(), CLEAN = {busy:false}, ORDER_MAIL = {busy:0}; let autoCleanRunning = false;
   let SERVER = async () => ({ok:true, status:200, json:async () => ({ok:true})});
   const alertApi = (path, opts) => { calls.push([path, opts && opts.body ? JSON.parse(opts.body) : null]); if (opts && opts.signal) calls.push("signal"); return SERVER(path, opts && opts.body ? JSON.parse(opts.body) : null); };`;
 const api = new Function(prelude + code + `
   return {setS:(s) => { S = s; }, getS:() => S, setOwner:(v) => { OWNER = v; }, setServer:(f) => { SERVER = f; }, calls, SHARE, W, OALERT, SELLER_DET_FROM,
-    shareAddrKey, shareTargetOf, sharePlan, shareMark, sellerDetailsApply, sellerSentPass, dropBuyerAddrs, reportSharedOrders, sharedOrdersSynced, applySellerAlerts, pollSellerAlerts, jigChoices, pkcForms, shareDetOf};`)();
+    shareAddrKey, shareTargetOf, sharePlan, shareMark, sellerDetailsApply, sellerSentPass, dropBuyerAddrs,
+    forwardPlan, forwardFresh, forwardMark, forwardScope, forwardHad, fwdDest, forwardSharedMail, forwardSynced, FWD, PV, SYNCING, ORDER_MAIL, CAN_FORWARD, FWD_NOTE_RE, reportSharedOrders, sharedOrdersSynced, applySellerAlerts, pollSellerAlerts, jigChoices, pkcForms, shareDetOf};`)();
 
 let passed = 0;
 const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok  " + name); } catch (e) { console.log("  FAIL " + name); throw e; } };
@@ -499,6 +504,210 @@ await test("it reads the seller's updates from where it last read them, which a 
   assert.equal(n.settings.sellerDetSince, B - 3 * DAY);
 });
 
+if (html.includes("function forwardPlan(")) {
+  console.log("\nThe store's emails forwarded to a buyer (1.9.139)");
+  const IB = [{ id: "i1", email: "Seller.Box@gmail.com", password: "app-pw", host: "imap.gmail.com", port: 993 }, { id: "i2", email: "other@example.com", password: "pw", host: "imap.example.com" }];
+  const NOW = Date.UTC(2026, 10, 7, 12);
+  const sent = (o) => order({ shareTo: { id: "b1", name: "@sam", by: "hand" }, shareTold: { id: "b1", steps: { placed: 1 }, det: "" }, inbox: "sellerbox@gmail.com", at: "2026-11-05", ...o });
+  const EMAILS = { b1: { email: "sam.friend@example.com", name: "@sam", at: T0 } };
+  await test("it plans the orders sent to a buyer with an email, by the mailbox each came to, while they're current", () => {
+    const orders = [sent({ id: "f1", orderNo: "902003840648514" }), sent({ id: "f2", orderNo: "902003840648515", inbox: "other@example.com" }),
+      sent({ id: "f3", orderNo: "902003840648516", shareTold: undefined }),   // not sent yet
+      sent({ id: "f4", orderNo: "12" }),   // no number to search for
+      sent({ id: "f5", orderNo: "902003840648517", inbox: "" }),   // added by hand: no mailbox
+      sent({ id: "f6", orderNo: "902003840648518", stage: "delivered", dates: { delivered: "2026-10-20T10:00:00Z" } }),   // over a week ago
+      sent({ id: "f7", orderNo: "902003840648519", at: "2026-06-01" }),   // placed long ago
+      sent({ id: "f8", orderNo: "902003840648520", shareTo: { id: "b2", name: "@kim", by: "hand" }, shareTold: { id: "b2", steps: {} } })];   // no email for b2
+    const p = api.forwardPlan(orders, EMAILS, IB, NOW);
+    assert.deepStrictEqual(p.groups.map((g) => [g.to, g.email, g.ib.id, g.orders.map((o) => o.id)]), [["b1", "sam.friend@example.com", "i1", ["f1"]], ["b1", "sam.friend@example.com", "i2", ["f2"]]]);
+    assert.strictEqual(p.groups[0].dest, api.fwdDest(" Sam.Friend@example.com"), "the address as a hash, whatever its case");
+    assert.notStrictEqual(api.fwdDest("sam.friend@example.com"), api.fwdDest("sam.freind@example.com"));
+    assert.strictEqual(p.noInbox, 1);
+    assert.deepStrictEqual(api.forwardPlan(orders, EMAILS, IB, NOW, new Set(["f6", "f7"])).groups[0].orders.map((o) => o.id), ["f6", "f7"], "picked in Send to buyer: whenever (newest first)");
+    const many = [sent({ id: "n1", orderNo: "902003840640001", at: "2026-11-01" }), sent({ id: "n2", orderNo: "902003840640002", at: "2026-11-06" }), sent({ id: "n3", orderNo: "902003840640003", at: "2026-11-03" })];
+    assert.deepStrictEqual(api.forwardPlan(many, EMAILS, IB, NOW).groups[0].orders.map((o) => o.id), ["n2", "n3", "n1"], "newest first: the desktop app reads 500 a search");
+    assert.strictEqual(api.forwardPlan(orders, { b1: { email: "not an email" } }, IB, NOW).groups.length, 0);
+  });
+  await test("an email this buyer had (o.fwd) isn't forwarded again; a new buyer, or an address corrected after a typo, starts over", () => {
+    const D = api.fwdDest("sam.friend@example.com"), D2 = api.fwdDest("sam.friend2@example.com");
+    const o = sent({ id: "g1", orderNo: "902003840648514", fwd: { to: "b1", dest: D, ids: ["a".repeat(24)] } });
+    const g = { to: "b1", dest: D, orders: [o] }, found = [{ id: "a".repeat(24), no: ["902003840648514"] }, { id: "b".repeat(24), no: ["902003840648514"] }];
+    assert.deepStrictEqual(api.forwardFresh(g, found).map((x) => x.id), ["b".repeat(24)]);
+    assert.deepStrictEqual(api.forwardHad(g), ["a".repeat(24)]);
+    api.forwardMark([o], "b1", D, "b".repeat(24));
+    assert.deepStrictEqual(o.fwd.ids, ["a".repeat(24), "b".repeat(24)]);
+    assert.strictEqual(api.forwardFresh({ to: "b1", dest: D2, orders: [o] }, found).length, 2, "the corrected address gets them all");
+    assert.deepStrictEqual(api.forwardHad({ to: "b1", dest: D2, orders: [o] }), []);
+    assert.strictEqual(api.forwardFresh({ to: "b2", dest: D, orders: [o] }, found).length, 2, "another buyer gets them all");
+    api.forwardMark([o], "b2", D, "c".repeat(24));
+    assert.deepStrictEqual(o.fwd, { to: "b2", dest: D, ids: ["c".repeat(24)] });
+  });
+  await test("an email naming another order isn't forwarded, a deleted one's too; a number two orders share waits", () => {
+    const x = sent({ id: "s1", orderNo: "104523", store: "target" }), y = sent({ id: "s2", orderNo: "902003840648514" });
+    const own = order({ id: "s3", orderNo: "104523", store: "bestbuy" }), other = sent({ id: "s4", orderNo: "902003840600009", shareTo: { id: "b2", name: "@kim" } });
+    const g = { to: "b1", orders: [x, y] };
+    const r = api.forwardScope(g, [x, y, own, other], ["target|#902003840611111", "bestbuy|#902003840648514", "target||ditto|2026-11-01"]);
+    assert.deepStrictEqual(r.orders.map((o) => o.id), ["s2"], "104523 is the seller's own at another store too: it waits");
+    assert.deepStrictEqual(r.others.sort(), ["104523", "902003840600009", "902003840611111"], "a deleted order's number, but not a number an order here still has");
+  });
+  const claims = (w) => async (path, body) => {
+    if (path === "/alerts/forward/claim") { w.claims.push(body); const out = { claim: "cl" + w.claims.length, claimed: [], done: [], busy: [] }; body.ids.forEach((id) => (w.done.has(id) ? out.done : w.busy.has(id) ? out.busy : out.claimed).push(id)); return ok(out); }
+    if (path === "/alerts/forward/done") { w.dones.push(body); body.sent.forEach((id) => w.done.add(id)); return ok(); }
+    return ok();
+  };
+  const fw = (o) => ({ id: o.id, no: o.no || ["902003840648514"], folder: "[Gmail]/All Mail", uid: o.uid || 1, uidValidity: "7", date: "", ...o });
+  await test("it finds, claims, forwards and notes each email once; one another computer sent is noted, one it holds waits", async () => {
+    const o = sent({ id: "h1", orderNo: "902003840648514" }), mine = sent({ id: "h2", orderNo: "902003840600001", shareTo: undefined, shareTold: undefined });
+    reset([o, mine]); api.S = null;
+    api.getS().settings = { buyerEmails: EMAILS }; api.getS().inboxes = IB;
+    const w = { claims: [], dones: [], done: new Set(["d".repeat(24)]), busy: new Set(["e".repeat(24)]) };
+    api.setServer(claims(w)); api.PV.calls.length = 0;
+    api.PV.find = async () => ({ ok: true, found: [fw({ id: "a".repeat(24), uid: 1 }), fw({ id: "b".repeat(24), uid: 2 }), fw({ id: "d".repeat(24), uid: 3 }), fw({ id: "e".repeat(24), uid: 4 })] });
+    api.PV.forward = async (cfg, items, to) => ({ ok: true, sent: items.map((x) => x.id).filter((id) => id !== "b".repeat(24)), failed: [{ id: "b".repeat(24), error: "too big" }], gone: [] });
+    const r = await api.forwardSharedMail();
+    const find = api.PV.calls.find((c) => c[0] === "find"), fwd = api.PV.calls.find((c) => c[0] === "forward");
+    assert.deepStrictEqual([find[1].email, find[1].password, find[2]], ["Seller.Box@gmail.com", "app-pw", [{ no: "902003840648514", since: "2026-11-05" }]]);
+    assert.deepStrictEqual(find[3], ["902003840600001"], "an email naming the seller's own order too isn't forwarded");
+    assert.deepStrictEqual(find[4], { skipFrom: ["sam.friend@example.com"], skip: [] }, "never a buyer's own email; the ones it has are skipped there");
+    assert.deepStrictEqual([fwd[2].map((x) => x.id), fwd[3]], [["a".repeat(24), "b".repeat(24)], "sam.friend@example.com"]);
+    const D = api.fwdDest("sam.friend@example.com");
+    assert.deepStrictEqual(w.claims[0], { to: "b1", dest: D, ids: ["a".repeat(24), "b".repeat(24), "d".repeat(24), "e".repeat(24)] });
+    assert.deepStrictEqual(w.dones[0], { to: "b1", dest: D, claim: "cl1", sent: ["a".repeat(24)], released: ["b".repeat(24)] });
+    assert.deepStrictEqual(o.fwd, { to: "b1", dest: D, ids: ["d".repeat(24), "a".repeat(24)] }, "sent here, or by the other computer");
+    assert.deepStrictEqual([r.sent, r.byBuyer.b1.sent], [1, 1]);
+    assert.match(api.FWD.err.b1.why, /too big/);
+    api.PV.calls.length = 0; w.claims.length = 0;
+    api.PV.forward = async (cfg, items) => ({ ok: true, sent: items.map((x) => x.id), failed: [], gone: [] });
+    await api.forwardSharedMail();
+    assert.deepStrictEqual(w.claims[0].ids, ["b".repeat(24), "e".repeat(24)], "only the ones it doesn't have");
+    assert.deepStrictEqual(api.PV.calls.find((c) => c[0] === "find")[4].skip, ["d".repeat(24), "a".repeat(24)]);
+    // One a search read and left (a longer number, a bounce) isn't downloaded again until FAFO restarts or locks.
+    api.PV.calls.length = 0;
+    api.PV.find = async () => ({ ok: true, found: [], checked: ["0".repeat(24)] });
+    await api.forwardSharedMail(); await api.forwardSharedMail();
+    assert.deepStrictEqual(api.PV.calls.filter((c) => c[0] === "find").map((c) => c[4].skip.includes("0".repeat(24))), [false, true]);
+    assert.strictEqual(api.FWD.err.b1, undefined, "a run that went clears the note");
+    assert.strictEqual(api.ORDER_MAIL.busy, 0, "update restarts held only while it runs");
+  });
+  await test("it waits for email sync and Clean emails (not after Send), and stops on a lock, a mailbox it can't read or a server that can't send", async () => {
+    const o = sent({ id: "k1", orderNo: "902003840648514" });
+    reset([o]); api.getS().settings = { buyerEmails: EMAILS }; api.getS().inboxes = IB;
+    const w = { claims: [], dones: [], done: new Set(), busy: new Set() };
+    api.setServer(claims(w)); api.PV.calls.length = 0;
+    api.PV.find = async () => ({ ok: true, found: [fw({ id: "a".repeat(24) })] });
+    api.PV.forward = async (cfg, items) => ({ ok: true, sent: items.map((x) => x.id), failed: [], gone: [] });
+    api.SYNCING.add("i1");
+    await api.forwardSharedMail();
+    assert.strictEqual(api.PV.calls.length, 0, "email syncing: later");
+    assert.ok(api.FWD.soon, "it asks again in a minute"); clearTimeout(api.FWD.soon); api.FWD.soon = null;
+    await api.forwardSharedMail(new Set(["k1"]));
+    assert.strictEqual(api.PV.calls.length, 2, "Send's run goes now");
+    api.SYNCING.clear();
+    const p = sent({ id: "k2", orderNo: "902003840648515" });
+    reset([p]); api.getS().settings = { buyerEmails: EMAILS }; api.getS().inboxes = IB; api.PV.calls.length = 0;
+    api.PV.find = async () => ({ ok: false, error: "Sign-in failed." });
+    await api.forwardSharedMail();
+    assert.match(api.FWD.err.b1.why, /Seller\.Box@gmail\.com: Sign-in failed/);
+    api.PV.find = async () => ({ ok: true, found: [fw({ id: "f".repeat(24) })] });
+    api.PV.forward = async () => ({ ok: false, error: "This mail provider doesn't let apps send email", sent: [], smtp: true });
+    w.dones.length = 0;
+    await api.forwardSharedMail();
+    assert.deepStrictEqual(w.dones[0].released, ["f".repeat(24)], "the claim goes back, for the next run");
+    assert.match(api.FWD.err.b1.why, /doesn't let apps send/);
+    assert.strictEqual(p.fwd, undefined);
+    const q = sent({ id: "k3", orderNo: "902003840648516" });
+    reset([q]); api.getS().settings = { buyerEmails: EMAILS }; api.getS().inboxes = IB;
+    api.PV.find = async () => { api.setS(null); return { ok: true, found: [fw({ id: "a".repeat(24) })] }; };
+    await api.forwardSharedMail();
+    assert.strictEqual(q.fwd, undefined, "locked meanwhile: nothing more");
+    api.setS({ orders: [], settings: {} });
+  });
+  await test("a copy behind the online one waits for sync to catch up (not after Send); a Stop sending or the address taken off mid-run stops it", async () => {
+    const o = sent({ id: "m1", orderNo: "902003840648514" });
+    reset([o], { on: true, caught: false }); api.getS().settings = { buyerEmails: { ...EMAILS } }; api.getS().inboxes = IB;
+    const w = { claims: [], dones: [], done: new Set(), busy: new Set() };
+    api.setServer(claims(w)); api.PV.calls.length = 0;
+    api.PV.find = async () => ({ ok: true, found: [fw({ id: "a".repeat(24) })] });
+    api.PV.forward = async (cfg, items) => ({ ok: true, sent: items.map((x) => x.id), failed: [], gone: [] });
+    await api.forwardSharedMail();
+    assert.deepStrictEqual([api.PV.calls.length, api.FWD.want, api.W.soon], [0, true, [0]], "behind: a sync round first");
+    clearTimeout(api.FWD.soon); api.FWD.soon = null;
+    api.W.caught = true; api.forwardSynced(); await api.FWD.running;
+    assert.strictEqual(api.PV.calls.filter((c) => c[0] === "forward").length, 1, "caught up: it goes");
+    // Stopped while the mailbox was being read: nothing is claimed or sent.
+    const p = sent({ id: "m2", orderNo: "902003840648515" });
+    reset([p]); api.getS().settings = { buyerEmails: { ...EMAILS } }; api.getS().inboxes = IB; api.PV.calls.length = 0; w.claims.length = 0;
+    api.PV.find = async () => { p.shareTo = { off: true, at: 1 }; return { ok: true, found: [fw({ id: "b".repeat(24), no: ["902003840648515"] })] }; };
+    await api.forwardSharedMail();
+    assert.deepStrictEqual([w.claims.length, api.PV.calls.filter((c) => c[0] === "forward").length], [0, 0], "Stop sending meanwhile");
+    const q = sent({ id: "m3", orderNo: "902003840648516" });
+    reset([q]); api.getS().settings = { buyerEmails: { ...EMAILS } }; api.getS().inboxes = IB; api.PV.calls.length = 0; w.dones.length = 0;
+    api.setServer(async (path, body) => { const r = await claims(w)(path, body); if (path === "/alerts/forward/claim") api.getS().settings.buyerEmails = {}; return r; });
+    api.PV.find = async () => ({ ok: true, found: [fw({ id: "c".repeat(24), no: ["902003840648516"] })] });
+    await api.forwardSharedMail();
+    assert.deepStrictEqual([api.PV.calls.filter((c) => c[0] === "forward").length, w.dones[0].released], [0, ["c".repeat(24)]], "the address taken off while claiming: released, not sent");
+  });
+  await test("a mail server limiting the mailbox holds it an hour; more found than one search returns asks again soon", async () => {
+    const o = sent({ id: "l1", orderNo: "902003840648514" });
+    reset([o]); api.getS().settings = { buyerEmails: EMAILS }; api.getS().inboxes = IB;
+    const w = { claims: [], dones: [], done: new Set(), busy: new Set() };
+    api.setServer(claims(w)); api.PV.calls.length = 0;
+    api.PV.find = async () => ({ ok: true, found: Array.from({ length: 12 }, (_, i) => fw({ id: String(i).padStart(24, "a"), uid: i + 1 })) });
+    api.PV.forward = async () => ({ ok: false, error: "The mail server is limiting how much this inbox sends", limited: true, sent: [] });
+    await api.forwardSharedMail();
+    assert.deepStrictEqual(w.claims.map((c) => c.ids.length), [10], "ten at a time, and it stops there");
+    assert.ok(api.FWD.hold[api.FWD.hold && Object.keys(api.FWD.hold)[0]].until > Date.now() + 50 * 60000);
+    api.PV.calls.length = 0;
+    await api.forwardSharedMail();
+    assert.strictEqual(api.PV.calls.length, 0, "held: not even read");
+    assert.match(api.FWD.err.b1.why, /limiting/);
+    Object.keys(api.FWD.hold).forEach((k) => delete api.FWD.hold[k]);
+    api.PV.find = async () => ({ ok: true, partial: true, found: [fw({ id: "9".repeat(24) })] });
+    api.PV.forward = async (cfg, items) => ({ ok: true, sent: items.map((x) => x.id), failed: [], gone: [] });
+    await api.forwardSharedMail();
+    assert.ok(api.FWD.soon, "more to find: again in a minute"); clearTimeout(api.FWD.soon); api.FWD.soon = null;
+  });
+  await test("the buyer's FAFO leaves a forward to the seller's alerts, and an order it had takes the seller's alert as the seller's", () => {
+    assert.ok(api.FWD_NOTE_RE.test("Forwarded by FAFO from your seller's inbox.\n\n---------- Forwarded message ---------\nFrom: Target"));
+    assert.ok(!api.FWD_NOTE_RE.test("---------- Forwarded message ---------\nForwarded by FAFO from your seller's inbox."));
+    assert.match(fn("function emailsToRows(emails, inbox){"), /if \(FWD_NOTE_RE\.test\(e\.text \|\| ""\)\) return;/);
+    const s = buyer(); api.setS(s);
+    s.orders.push({ id: "own1", store: "target", storeName: "", orderNo: "102000000000001", item: "Ditto", stage: "placed", at: "2026-11-02", inbox: "me@example.com" });
+    api.applySellerAlerts([alert({ account: "acct.one@example.com" })]);
+    assert.deepStrictEqual([s.orders.length, s.orders[0].fromSeller, s.orders[0].placedWith], [1, true, "acct.one@example.com"]);
+    const t = buyer(); api.setS(t);
+    t.orders.push({ id: "own2", store: "target", storeName: "", orderNo: "102000000000001", item: "Ditto", stage: "placed", at: "2026-11-02", inbox: "me@example.com" });
+    api.applySellerAlerts([alert({})]);
+    assert.strictEqual(t.orders[0].fromSeller, undefined, "an alert for an account (the seller's own FAFO's own slots): its order stays its own");
+    const u = buyer(); api.setS(u);
+    u.orders.push({ id: "own3", store: "target", storeName: "", orderNo: "102000000000001", item: "Ditto", stage: "placed", at: "2026-11-02", inbox: "me@example.com", sentTo: "Me@example.com" });
+    api.applySellerAlerts([alert({ account: "me@example.com" })]);
+    assert.strictEqual(u.orders[0].fromSeller, undefined, "on their own account: it stays theirs (and billed as theirs)");
+  });
+  await test("the buyer's FAFO shows the account an order was placed with, as the seller sent it", () => {
+    const s = buyer(); api.setS(s);
+    api.applySellerAlerts([alert({ account: "acct.one@example.com" })]);
+    assert.strictEqual(s.orders[0].placedWith, "acct.one@example.com");
+    const ch = api.applySellerAlerts([alert({ stage: "update", createdAt: T0 + 5, account: "acct.two@example.com" })]);
+    assert.deepStrictEqual([s.orders[0].placedWith, ch.changed], ["acct.two@example.com", true]);
+    assert.strictEqual(api.applySellerAlerts([alert({ stage: "update", createdAt: T0 + 6, account: "acct.two@example.com" })]).changed, undefined);
+    assert.match(html, /placed with <span class="o-acct">\$\{esc\(o\.placedWith\)\}<\/span>/);
+  });
+  await test("the page wires forwarding in: the window's field, Settings, the timers, lock and the merge of buyers' emails", () => {
+    assert.match(html, /<input id="sb-fwd" type="email"/);
+    assert.match(html, /if \(to && \(hadTo !== to \|\| em\[b\.id\]\.name !== name\)\) em\[b\.id\] = \{email:to, name, at:now\};/);
+    assert.match(html, /if \(DESK && CAN_FORWARD\)\{ fwdSoon\(60000\); FWD\.timer = setInterval\(\(\) => \{ if \(S && Date\.now\(\) - FWD\.lastAt > 12 \* 60000\) forwardSharedMail\(\); \}, 15 \* 60000\); \}/);
+    assert.match(html, /if \(CAN_FORWARD\) fwdSoon\(30000\);/);
+    assert.match(fn("async function syncExclusive(fn){"), /forwardSynced\(\)/);
+    assert.match(html, /FWD\.err = \{\}; FWD\.hold = \{\}; FWD\.want = false;/);
+    assert.match(html, /clearInterval\(FWD\.timer\); clearTimeout\(FWD\.soon\); FWD\.err = \{\};/);
+    assert.match(html, /k === SYNC_CODE\.settings \+ ":buyerEmails"\)\) bv = \{\};/);
+    assert.match(html, /\$\{fwdSectionHTML\(\)\}/);
+    assert.match(html, /case "share-fwd-forget": forgetBuyerEmail\(id\); break;/);
+    assert.strictEqual(api.CAN_FORWARD, true);
+  });
+}
+
 // The page wires it in: the bar's button, the timer, the email sync, the sync round, lock, Settings, and the sync merge of remembered addresses.
 await test("the page runs it, shows it to the seller's own FAFO only, and merges remembered addresses per entry", () => {
   assert.match(html, /canShare\(\) \? `<button class="btn btn-sm" data-act="orders-send">/);
@@ -507,7 +716,7 @@ await test("the page runs it, shows it to the seller's own FAFO only, and merges
   assert.match(html, /reportOrderAlerts\(\)\.finally\(\(\) => shareSoon\(3000\)\);/);
   assert.match(fn("async function syncExclusive(fn){"), /sharedOrdersSynced\(\)/);
   assert.match(html, /SHARE\.buyers = null; SHARE\.buyersAt = 0; SHARE\.err = \{\};/);
-  assert.match(html, /k === SYNC_CODE\.settings \+ ":buyerAddrs"\)\) bv = \{\};/);
+  assert.match(html, /k === SYNC_CODE\.settings \+ ":buyerAddrs"(?: \|\| k === SYNC_CODE\.settings \+ ":buyerEmails")?\)\) bv = \{\};/);
   assert.match(html, /<section id="s-sentbuyers" class="set-sec">\$\{sentBuyersSectionHTML\(\)\}<\/section>/);
 });
 

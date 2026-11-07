@@ -2993,6 +2993,52 @@ try {
     assert.equal(again.already, 1);
     assert.equal((await alertsOf(ginaKey, t)).filter((a) => a.orderNo === "SH-Q").length, 1, "only once");
   });
+  await test("the account an order was placed on goes with it (1.9.139), and comes to an order sent before as an update", async () => {
+    await share(ginaId, [shareEvent({ orderNo: "SH-A", account: "Acct.Seven@Example.com" })]);
+    const rows = (await alertsOf(ginaKey)).filter((a) => a.orderNo === "SH-A");
+    assert.ok(rows.length && rows.every((a) => a.account === "acct.seven@example.com"), JSON.stringify(rows));
+    const t = Math.max(...(await alertsOf(ginaKey)).map((a) => a.createdAt));
+    const r = await (await share(ginaId, [shareEvent({ account: "acct.eight@example.com" })])).json();   // SH-1, sent before with no account
+    assert.deepStrictEqual(r.res, ["updated"]);
+    const later = (await alertsOf(ginaKey, t)).filter((a) => a.orderNo === "SH-1");
+    assert.deepStrictEqual(later.map((a) => [a.stage, a.account]), [["update", "acct.eight@example.com"]]);
+    assert.deepStrictEqual((await (await share(ginaId, [shareEvent({ account: "acct.eight@example.com" })])).json()).res, ["already"], "the same again: nothing");
+    assert.ok(!(await alertsOf(ginaKey)).some((a) => a.orderNo === "ORD-1001" && a.account), "an alert for an account given to them never names it on its own");
+    await share(ginaId, [shareEvent({ orderNo: "ORD-1001", account: ginaAcct.email })]);
+    assert.ok((await alertsOf(ginaKey)).filter((a) => a.orderNo === "ORD-1001").every((a) => a.account === ginaAcct.email.toLowerCase()),
+      "once the owner sends that order to them, it does (the owner lets the buyers they send orders to see the accounts; its forwarded emails name it anyway)");
+    sqlRun("UPDATE alert_accounts SET updated_at = 1 WHERE order_no = 'SH-A'");
+    await share(ginaId, [shareEvent({ orderNo: "SH-A", account: "acct.seven@example.com" })]);
+    assert.ok(dbRows("SELECT updated_at FROM alert_accounts WHERE order_no = 'SH-A'")[0].updated_at > 1, "kept from the order's last send, as its details");
+  });
+  await test("the store's emails forwarded to a buyer are claimed first, so two computers send each once (1.9.139)", async () => {
+    const ids = ["a".repeat(24), "b".repeat(24), "c".repeat(24)], D = "k2x9q1";
+    const claim = async (body, key = bobKey) => { const r = await slots("/alerts/forward/claim", key, body); return { status: r.status, body: await r.json() }; };
+    const done = async (body) => (await slots("/alerts/forward/done", bobKey, body)).status;
+    const one = await claim({ to: ginaId, dest: D, ids });
+    assert.strictEqual(one.status, 200);
+    assert.deepStrictEqual([one.body.claimed.sort(), one.body.done, one.body.busy], [ids, [], []]);
+    const two = await claim({ to: ginaId, dest: D, ids });
+    assert.deepStrictEqual([two.body.claimed, two.body.busy.sort()], [[], ids], "the other computer finds them taken");
+    assert.strictEqual(await done({ to: ginaId, dest: D, claim: two.body.claim, sent: [ids[0]], released: [ids[1]] }), 200);
+    assert.strictEqual(dbRows(`SELECT COUNT(*) AS n FROM forward_claims WHERE sent_at IS NOT NULL`)[0].n, 0, "another run's claim isn't its to mark");
+    assert.strictEqual(await done({ to: ginaId, dest: D, claim: one.body.claim, sent: [ids[0]], released: [ids[1]] }), 200);
+    const three = await claim({ to: ginaId, dest: D, ids });
+    assert.deepStrictEqual([three.body.done, three.body.claimed, three.body.busy], [[ids[0]], [ids[1]], [ids[2]]], "sent once, released goes again, the rest still taken");
+    sqlRun(`UPDATE forward_claims SET claimed_at = claimed_at - ${16 * 60000} WHERE msg_id = '${ids[2]}'`);
+    assert.deepStrictEqual((await claim({ to: ginaId, dest: D, ids: [ids[2]] })).body.claimed, [ids[2]], "a claim left over 15 minutes can be taken again");
+    assert.deepStrictEqual((await claim({ to: rosaId, dest: D, ids: [ids[0]] })).body.claimed, [ids[0]], "each buyer apart");
+    assert.deepStrictEqual((await claim({ to: ginaId, dest: "k2x9q2", ids: [ids[0]] })).body.claimed, [ids[0]], "an address corrected after a typo gets them again");
+    const hundred = Array.from({ length: 100 }, (_, i) => (i + 1).toString(16).padStart(24, "0"));
+    const big = await claim({ to: ginaId, dest: D, ids: hundred });
+    assert.deepStrictEqual([big.status, big.body.claimed.length], [200, 100], "100 at once");
+    assert.strictEqual((await claim({ to: ginaId, dest: D, ids }, ginaKey)).status, 403, "the sender only");
+    for (const bad of [{ to: ginaId, dest: D, ids: [] }, { to: ginaId, dest: D, ids: ["nothex"] }, { to: ginaId, dest: D, ids: Array.from({ length: 101 }, (_, i) => i.toString(16).padStart(24, "0")) }, { to: "x", dest: D, ids }, { to: ginaId, ids }, { to: ginaId, dest: "Not-A-Hash!", ids }])
+      assert.strictEqual((await claim(bad)).status, 400, JSON.stringify(bad).slice(0, 60));
+    assert.strictEqual((await claim({ to: await idOf(bobKey), dest: D, ids })).status, 400, "its own FAFO");
+    assert.strictEqual(await done({ to: ginaId, dest: D, claim: "x", sent: ids }), 400);
+    assert.ok(!dbRows("SELECT * FROM forward_claims").some((r) => Object.values(r).some((v) => /@/.test(String(v)))), "only hashes are kept");
+  });
   await test("a buyer's own Discord webhook gets the steps sent, never the updates or the address", async () => {
     const hook = `http://127.0.0.1:${DISCORD_PORT}/buyerhook/123456789/tok_rosa_abcdefghijklmnopqrstuvwxyz`;
     assert.deepEqual(await (await putAuth("/alerts/webhook", rosaKey, { url: hook })).json(), { set: true });
@@ -4030,6 +4076,8 @@ try {
       { ok: true, added: 1, canceled: 0, ignored: 4 });
     assert.deepEqual(await report([order()]), { ok: true, added: 0, canceled: 0, ignored: 1 }, "the same report again adds nothing");
     assert.deepEqual(await report([order({ orderNo: "UO-2", stage: "canceled" }), order({ orderNo: "UO-2" })]), { ok: true, added: 1, canceled: 1, ignored: 0 }, "placed first, then canceled");
+    sqlRun(`INSERT INTO alert_accounts (key_hash, store, order_no, account, updated_at) VALUES ('${umaHash}', 'target', 'UO-S1', 'acct.s@example.com', ${Date.now()})`);
+    assert.deepEqual(await report([order({ orderNo: "uo-s1" })]), { ok: true, added: 0, canceled: 0, ignored: 1 }, "an order the owner sent them (a FAFO before 1.9.139 took its forwarded email for its own): never billed");
     const st = await billOf(umaKey);
     const l = st.lines.find((x) => x.orderNo === "UO-1");
     assert.deepEqual([l.source, l.state, l.acctHash, l.disputable, l.item, st.lines.find((x) => x.orderNo === "UO-2").state], ["buyer", "due", acctOf("uma.one@example.com"), true, "Sample ETB", "canceled"]);

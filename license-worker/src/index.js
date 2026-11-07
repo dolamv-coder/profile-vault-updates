@@ -72,14 +72,19 @@
 //                              total, stage, at}]}: each is kept for the buyer that account was given to,
 //                              without the account, and posted to their own Discord webhook if they set one
 //   GET  /alerts?since=MS      {alerts:[{id, oid, store, storeName, profile, orderNo, item, qty, total,
-//                              stage, at, createdAt, shipTo?, shipAddr?, tracking?, dates?}]}: this license's, newer than MS;
+//                              stage, at, createdAt, shipTo?, shipAddr?, tracking?, dates?, account?}]}: this license's, newer than MS;
 //                              stage "update" (an order sent with /alerts/share whose details changed) only from 1.9.138
 //   GET  /alerts/buyers        the sender only (app 1.9.138+): {buyers:[{id, user, name, last4, at}]}, the buyers it can
 //                              send orders to: every license not turned off, and keys made by hand that sent slots
 //   POST /alerts/share         the sender only (app 1.9.138+): {to, events:[{store, storeName, orderNo, item, qty, total,
 //                              stage, at, account, auto, shipTo, shipAddr, tracking:[{number, carrier}], dates}]}: orders
 //                              the owner sends that buyer whatever account they were placed on, with the ship-to, tracking
-//                              and each step's date; {ok, sent, already, updated, bad, other, res: [one per event]}. Never billed
+//                              and each step's date; {ok, sent, already, updated, bad, other, res: [one per event]}. Never billed.
+//                              From 1.9.139 the account it was placed on goes to the buyer too (GET /alerts' `account`)
+//   POST /alerts/forward/claim the sender only (app 1.9.139+, desktop 15): {to, ids:[24 hex]}: the store's emails about orders
+//                              sent to that buyer, by a hash of their Message-ID, claimed before the owner's FAFO forwards
+//                              them; {claim, claimed, done (sent before), busy (another run has them)}
+//   POST /alerts/forward/done  {to, claim, sent:[ids], released:[ids]}: which of that claim's went, and which can go again
 //   GET  /alerts/webhook       {set, lastOk, lastError}: this license's Discord webhook for its alerts
 //   PUT  /alerts/webhook       {url}: set it (it gets a test post first), or "" to remove it
 // Payments (Stripe; off until STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set; page 1.9.130+, license Bearer):
@@ -214,6 +219,8 @@ export default {
       if (path === "/alerts/accounts" && request.method === "GET") return await alertAccounts(request, env, ctx);
       if (path === "/alerts/buyers" && request.method === "GET") return await alertBuyers(request, env);
       if (path === "/alerts/share" && request.method === "POST") return await alertsShare(request, env, ctx);
+      if (path === "/alerts/forward/claim" && request.method === "POST") return await alertsForwardClaim(request, env, ctx);
+      if (path === "/alerts/forward/done" && request.method === "POST") return await alertsForwardDone(request, env);
       if (path === "/alerts/webhook" && request.method === "GET") return await alertWebhookGet(request, env);
       if (path === "/alerts/webhook" && request.method === "PUT") return await alertWebhookPut(request, env);
       if (path === "/alerts" && request.method === "GET") return await alertsGet(request, env, url);
@@ -3306,12 +3313,15 @@ async function alertsGet(request, env, url) {
   if (!lic) return json({ error: "license not recognized" }, 401);
   const since = Math.max(0, Math.floor(Number(url.searchParams.get("since"))) || 0);
   // With the details the owner sent with an order they sent this buyer themselves (POST /alerts/share), if any.
-  const { results } = await env.DB.prepare(`SELECT a.*, d.ship_to, d.ship_addr, d.tracking, d.dates FROM alerts a
+  // And the account it was placed on (1.9.139), when the owner sent it.
+  const { results } = await env.DB.prepare(`SELECT a.*, d.ship_to, d.ship_addr, d.tracking, d.dates, c.account AS placed_with FROM alerts a
     LEFT JOIN alert_details d ON d.key_hash = a.key_hash AND d.store = a.store AND d.order_no = a.order_no
+    LEFT JOIN alert_accounts c ON c.key_hash = a.key_hash AND c.store = a.store AND c.order_no = a.order_no
     WHERE a.key_hash = ? AND a.created_at > ? ORDER BY a.created_at LIMIT 200`).bind(lic.hash, since).all();
   return json({ alerts: results.map((a) => Object.assign({ id: a.id, oid: a.oid, store: a.store, storeName: a.store_name, profile: a.profile, orderNo: a.order_no,
     item: a.item, qty: a.qty, total: a.total, stage: a.stage, at: a.at, createdAt: a.created_at },
-    a.tracking == null ? {} : { shipTo: a.ship_to, shipAddr: a.ship_addr, tracking: shareTracking(a.tracking), dates: shareDates(a.dates) })), now: Date.now() }, 200, { "cache-control": "no-store" });
+    a.tracking == null ? {} : { shipTo: a.ship_to, shipAddr: a.ship_addr, tracking: shareTracking(a.tracking), dates: shareDates(a.dates) },
+    a.placed_with ? { account: a.placed_with } : {})), now: Date.now() }, 200, { "cache-control": "no-store" });
 }
 
 // Orders the owner sends a buyer themselves (app 1.9.138, the owner's request, 2026-11-06, with a screenshot of two Target
@@ -3390,6 +3400,59 @@ async function shareBuyer(env, id) {
   return { hash: s.key_hash };
 }
 
+// The store's emails about an order the owner sent a buyer go to that buyer's inbox too (app 1.9.139, desktop 15): the owner's
+// FAFO finds them in the mailbox and forwards them by SMTP, claiming each email here first (POST /alerts/forward/claim {to,
+// dest, ids}: the hashes of their Message-IDs), then saying which went (POST /alerts/forward/done {to, dest, claim, sent,
+// released}), so two of the owner's computers syncing one mailbox send each email once. dest is a hash of the address they go
+// to, so one corrected after a typo gets them all again. A claim not marked sent can be taken again after FWD_STALE_MS (a FAFO
+// closed mid-send). Sender only, like /alerts/share; nothing about the emails or the address but those hashes is kept.
+const FWD_ID_RE = /^[0-9a-f]{24}$/, FWD_DEST_RE = /^[0-9a-z]{1,16}$/;
+const FWD_STALE_MS = 15 * 60000, FWD_KEEP_MS = 180 * 86400000, FWD_PER_ASK = 100;
+async function fwdAsk(request, env) {
+  const { error, lic } = await alertSender(request, env);
+  if (error) return { error };
+  let b; try { b = JSON.parse(await request.text()) || {}; } catch { b = {}; }
+  const to = String(b.to || "");
+  if (!SHARE_ID_RE.test(to)) return { error: json({ error: "to" }, 400) };
+  const buyer = await shareBuyer(env, to);
+  if (buyer.error) return { error: json({ error: buyer.error }, buyer.status) };
+  if (buyer.hash === lic.hash) return { error: json({ error: "That's your own FAFO." }, 400) };
+  const dest = String(b.dest || "");
+  if (!FWD_DEST_RE.test(dest)) return { error: json({ error: "dest" }, 400) };
+  return { b, buyer, dest };
+}
+const fwdIds = (v) => Array.isArray(v) ? Array.from(new Set(v.map(String))) : null;
+async function alertsForwardClaim(request, env, ctx) {
+  const { error, b, buyer, dest } = await fwdAsk(request, env);
+  if (error) return error;
+  const ids = fwdIds(b.ids);
+  if (!ids || !ids.length || ids.length > FWD_PER_ASK || !ids.every(x => FWD_ID_RE.test(x))) return json({ error: "ids" }, 400);
+  const now = Date.now(), claim = randomId(16);
+  await env.DB.batch(ids.map(id => env.DB.prepare(`INSERT INTO forward_claims (key_hash, dest, msg_id, claim, claimed_at, sent_at) VALUES (?, ?, ?, ?, ?, NULL)
+    ON CONFLICT (key_hash, dest, msg_id) DO UPDATE SET claim = excluded.claim, claimed_at = excluded.claimed_at
+    WHERE forward_claims.sent_at IS NULL AND forward_claims.claimed_at < ?`).bind(buyer.hash, dest, id, claim, now, now - FWD_STALE_MS)));
+  // json_each: D1 binds at most 100 values a query.
+  const { results } = await env.DB.prepare("SELECT msg_id, claim, sent_at FROM forward_claims WHERE key_hash = ? AND dest = ? AND msg_id IN (SELECT value FROM json_each(?))")
+    .bind(buyer.hash, dest, JSON.stringify(ids)).all();
+  const claimed = [], done = [], busy = [];
+  for (const r of results) (r.sent_at ? done : r.claim === claim ? claimed : busy).push(r.msg_id);
+  ctx.waitUntil(env.DB.prepare("DELETE FROM forward_claims WHERE claimed_at < ?").bind(now - FWD_KEEP_MS).run().catch(() => {}));
+  return json({ ok: true, claim, claimed, done, busy }, 200, { "cache-control": "no-store" });
+}
+async function alertsForwardDone(request, env) {
+  const { error, b, buyer, dest } = await fwdAsk(request, env);
+  if (error) return error;
+  const claim = String(b.claim || ""), sent = fwdIds(b.sent || []), released = fwdIds(b.released || []);
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(claim) || !sent || !released || sent.length + released.length > FWD_PER_ASK * 2 ||
+    ![...sent, ...released].every(x => FWD_ID_RE.test(x))) return json({ error: "ids" }, 400);
+  const now = Date.now(), stmts = [];
+  // Only this run's claims: one another run took over after FWD_STALE_MS stays its.
+  for (const id of sent) stmts.push(env.DB.prepare("UPDATE forward_claims SET sent_at = ? WHERE key_hash = ? AND dest = ? AND msg_id = ? AND claim = ?").bind(now, buyer.hash, dest, id, claim));
+  for (const id of released) if (!sent.includes(id)) stmts.push(env.DB.prepare("DELETE FROM forward_claims WHERE key_hash = ? AND dest = ? AND msg_id = ? AND claim = ? AND sent_at IS NULL").bind(buyer.hash, dest, id, claim));
+  if (stmts.length) await env.DB.batch(stmts);
+  return json({ ok: true });
+}
+
 async function alertsShare(request, env, ctx) {
   const { error, lic } = await alertSender(request, env);
   if (error) return error;
@@ -3424,12 +3487,20 @@ async function alertsShare(request, env, ctx) {
         order_no: orderNo, item: clip(ev.item, 120), qty: clip(ev.qty, 6) || "1", total: clip(ev.total, 20), stage, at, created_at: now + n++ };
       const had = await env.DB.prepare("SELECT ship_to, ship_addr, tracking, dates FROM alert_details WHERE key_hash = ? AND store = ? AND order_no = ?")
         .bind(buyer.hash, store, orderNo).first();
+      // The account it was placed on, which the buyer sees (1.9.139; the owner lets the buyers they send orders to see the
+      // accounts' emails, one given to that buyer too: the store's emails forwarded to them name it anyway).
+      const acct = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) ? account : "";
+      const hadAcct = acct ? await env.DB.prepare("SELECT account FROM alert_accounts WHERE key_hash = ? AND store = ? AND order_no = ?").bind(buyer.hash, store, orderNo).first() : null;
+      const acctChanged = !!acct && (!hadAcct || hadAcct.account !== acct);
       // Each step's date is kept as it was first sent, so the buyer's devices never disagree.
       const dates = JSON.stringify(Object.assign(shareDates(ev.dates, now), had ? shareDates(had.dates, now) : {}));
       const det = { ship_to: clip(ev.shipTo, 80), ship_addr: clip(ev.shipAddr, 160), tracking: JSON.stringify(shareTracking(ev.tracking)), dates };
       const blank = !det.ship_to && !det.ship_addr && det.tracking === "[]" && dates === "{}";
-      const changed = had ? had.ship_to !== det.ship_to || had.ship_addr !== det.ship_addr || had.tracking !== det.tracking || had.dates !== dates : !blank;
+      const changed = (had ? had.ship_to !== det.ship_to || had.ship_addr !== det.ship_addr || had.tracking !== det.tracking || had.dates !== dates : !blank) || acctChanged;
       const stmts = [];
+      // Written on every send of the order (kept 60 days after it was last sent, as alert_details).
+      if (acct) stmts.push(env.DB.prepare(`INSERT INTO alert_accounts (key_hash, store, order_no, account, updated_at) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (key_hash, store, order_no) DO UPDATE SET account = excluded.account, updated_at = excluded.updated_at`).bind(buyer.hash, store, orderNo, acct, now));
       if (had || !blank) stmts.push(env.DB.prepare(`INSERT INTO alert_details (key_hash, store, order_no, ship_to, ship_addr, tracking, dates, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (key_hash, store, order_no) DO UPDATE SET ship_to = excluded.ship_to, ship_addr = excluded.ship_addr, tracking = excluded.tracking, dates = excluded.dates, updated_at = excluded.updated_at`)
         .bind(buyer.hash, store, orderNo, det.ship_to, det.ship_addr, det.tracking, dates, now));
@@ -3452,7 +3523,8 @@ async function alertsShare(request, env, ctx) {
     if (fresh.length) ctx.waitUntil(alertWebhooks(env, fresh).catch((e) => console.error("alert webhooks", e)));
   }
   ctx.waitUntil(env.DB.batch([env.DB.prepare("DELETE FROM alerts WHERE created_at < ?").bind(now - ALERT_KEEP_MS),
-    env.DB.prepare("DELETE FROM alert_details WHERE updated_at < ?").bind(now - ALERT_KEEP_MS)]).catch(() => {}));
+    env.DB.prepare("DELETE FROM alert_details WHERE updated_at < ?").bind(now - ALERT_KEEP_MS),
+    env.DB.prepare("DELETE FROM alert_accounts WHERE updated_at < ?").bind(now - ALERT_KEEP_MS)]).catch(() => {}));
   return json({ ok: true, sent: fresh.length, already, updated, bad, other, res });
 }
 
@@ -4683,8 +4755,14 @@ async function billingCheckouts(request, env, ctx) {
     env.DB.prepare("SELECT COUNT(*) AS n FROM billing_lines WHERE key_hash = ? AND mode = ? AND source = 'buyer' AND created_at > ?").bind(lic.hash, c.mode, c.now - 86400000),
     env.DB.prepare("SELECT store, acct_hash, sent_at, pulled_at FROM billing_accounts WHERE key_hash = ?").bind(lic.hash),
   ]);
+  // An order the owner sent them (Send to buyer) is never billed, also when their FAFO took its forwarded email for an order of
+  // its own (a page before 1.9.139, which didn't know a forward's note).
+  const nos = JSON.stringify([...new Set(orders.filter((o) => o.stage === "placed").map((o) => o.orderNo))]);
+  const shared = new Set(nos !== "[]" ? (await env.DB.prepare(`SELECT store, order_no FROM alert_details WHERE key_hash = ?1 AND order_no IN (SELECT value FROM json_each(?2))
+    UNION SELECT store, order_no FROM alert_accounts WHERE key_hash = ?1 AND order_no IN (SELECT value FROM json_each(?2))`).bind(lic.hash, nos).all()).results.map((r) => r.store + "|" + r.order_no) : []);
   const placed = [];
   for (const x of orders.filter((o) => o.stage === "placed")) {
+    if (shared.has(x.store + "|" + x.orderNo)) { ignored++; continue; }
     const acct = await acctHash(x.account), ok = await billable(c, w, x.at);
     if (ok.ok && inWindow(wins.results, x.store, acct, x.at)) placed.push({ x, acct, ok }); else ignored++;
   }

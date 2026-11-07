@@ -307,6 +307,22 @@ alone (every store's rows of one account) from reading the whole table. Only
   time), which only page 1.9.138+ reads: older pages skip a step they don't know. POST /alerts gives a step sent before its
   alert (`profile` '') the slot's profile and moves the update row on too. Never billed (no `alertLine` or `cancelStmt`), and the buyer's own Discord
   webhook gets the steps as before, never an update or the address. Page 1.9.138 below.
+  Since 2026-11-07 (the owner's request: "make it to where the email gets forwarded to that specific buyer too… I choose to
+  allow them to see the emails that are being used because these are my close friends"; their choices: to the buyer's own
+  inbox, every email about the order, and the account shown) the account a shared order was placed on goes with it: D1
+  `alert_accounts` (a new table, by buyer, store and order number, kept as `alert_details`), written by `/alerts/share` from
+  each event's `account` on every send (so it's kept 60 days after the order was last sent), which `GET /alerts` gives as
+  `account` on every row of that order (a changed one moves the update row on). An alert for an account given to a buyer never
+  names it on its own, but once the owner sends that order to that buyer it does (the owner lets the buyers they send orders to
+  see the accounts' emails; the forwarded emails name it anyway). And the owner's FAFO forwards the store's emails about those
+  orders to the buyer's inbox (page 1.9.139, desktop 15, below), claiming each one here first: `POST /alerts/forward/claim
+  {to, dest, ids}` (sender only, up to 100 ids, each 24 hex, a hash of the email's Message-ID; `dest` a hash of the address
+  they go to, so one corrected after a typo gets them all again; D1 `forward_claims`, by buyer, dest and id, only hashes kept,
+  180 days; the ids are read back with `json_each`, as D1 binds at most 100 values a query) answers `{claim, claimed, done,
+  busy}`, and `POST /alerts/forward/done {to, dest, claim, sent, released}` marks those sent or lets them go again, only for
+  that claim, so two computers on one mailbox send each once; a claim never marked sent can be taken again after 15 minutes
+  (`FWD_STALE_MS`). A buyer's FAFO that reports a checkout on an order the owner sent them (`alert_details` or `alert_accounts`
+  has it; a page before 1.9.139 takes its forwarded email for an order of its own) isn't billed for it (`billingCheckouts`).
   From 1.9.57 a store waiting for a login is linked to the saved login with the profile's email on
   its own: once per vault at unlock (`settings._linkedByEmail`), on Import profiles and inbox
   submissions, and by ticking the profile in the store login editor (`linkByEmail`).
@@ -493,8 +509,10 @@ that version is out. `pvDesktop.version` is 10 in the v1.9.49 download, 11
 from the v1.9.61 download, 12 from the v1.9.76 download, the first that is
 `FAFO.exe` (in `FAFO-win32-x64`; `build.mjs` renames the base's `Orbit.exe` and
 writes FAFO into its version information), 13 from the v1.9.105 download
-(`trashOrderMail`, for Orders → Delete canceled), and 14 from the v1.9.136 download (`listSpam` and `spamToInbox`,
-for Clean emails → Find in Spam; the owner asked for it, a new download, on 2026-11-05). It keeps Profile Vault's data folder
+(`trashOrderMail`, for Orders → Delete canceled), 14 from the v1.9.136 download (`listSpam` and `spamToInbox`,
+for Clean emails → Find in Spam; the owner asked for it, a new download, on 2026-11-05), and 15 from the v1.9.139 download
+(`findOrderMail` and `forwardMail`, for Send to buyer's forwarded emails; the owner chose a forward to the buyer's own inbox,
+a new download, on 2026-11-07). It keeps Profile Vault's data folder
 and Windows app ID, and on its first start `shortcuts.js` replaces the Orbit
 Start menu shortcut with FAFO and points desktop and pinned shortcuts to an
 older `Orbit.exe` or `Profile Vault.exe` at it.
@@ -1748,6 +1766,57 @@ seen by a 1.9.138+ page, from `SELLER_DET_FROM`, 2026-11-06, the first time) whe
 "Your seller placed this order for you and sent it to your FAFO". `.github/scripts/send-to-buyer.test.mjs` runs the SHARE-START
 block, the Jig code, `reportSharedOrders` against a pretend worker, `pollSellerAlerts` and `applySellerAlerts` (on pull
 requests; it fails if the newest page has no SHARE-START), and `sync-merge.test.mjs` the merge of `buyerAddrs`.
+
+From 1.9.139 the store's emails about the orders sent to a buyer are **forwarded to that buyer's inbox**, and the buyer's
+order shows **the account it was placed with** (the owner's request, 2026-11-07, the worker section above). Send to buyer has
+"Forward the store's emails to" (`#sb-fwd`, the buyer's email address, kept per buyer in the synced setting `buyerEmails`
+{buyerId: {email, name, at}}, merged per entry by `syncMerge` as `buyerAddrs`; empty takes it off; what's typed is for the buyer
+picked when it was typed, so picking another shows that one's own), and Settings → Orders sent to buyers lists them with ×
+(`fwdSectionHTML`, `share-fwd-forget`). Forwarding needs desktop 15 (`CAN_FORWARD`: the v1.9.139 download's
+`findOrderMail(cfg, [{no, since}], others, {skipFrom, skip})` and `forwardMail(cfg, items, to)`; an older download says to get
+it, and the web version says the desktop forwards them). The desktop app finds an order's emails by its number as
+`trashOrderMail` does, in the main folder (All Mail on Gmail, never Sent or Trash) and Spam, the newest 3000 candidates, their
+headers first: only the store's own emails go, never one FAFO forwarded (`X-FAFO-Forwarded`), one sent from that mailbox or
+from a buyer's address (`skipFrom`), a reply ("Re:" and other languages'), an auto-reply or a bounce (`notStoreMail`:
+mailer-daemon and postmaster, `multipart/report`, `Auto-Submitted: auto-replied`, X-Autoreply, subjects like "Automatic reply"
+or "Undeliverable", In-Reply-To or References naming a forward, whose Message-ID is `<fafo-fwd.…>`), and ones the buyer has
+(`skip`: their ids) are never downloaded, so a run reads only what's new (Gmail stops IMAP for a day past 2.5 GB). The rest are
+downloaded and kept only when the number is a whole word in one and no number of an order not going to that buyer is
+(`others`), and not when the whole email quotes a forward (a bounce), which is answered as `checked`, so the page passes it in
+`skip` until FAFO restarts or locks (`FWD.checked`); one left for its numbers isn't, as that can change. Each has an id from its Message-ID (`mailKey`, 24 hex); the
+newest 500 are answered, oldest first (`partial` when there were more: the page searches again in a minute). It forwards the
+ones picked, by folder, UID and UIDVALIDITY (an email whose folder was rebuilt or that's gone isn't sent), from that mailbox
+over SMTP with the same app password (`smtpServers`: the provider's server, or smtp. for imap. on 465 then 587; `nodemailer`,
+one connection and sign-in a call), as a mail app's Forward writes it: "Fwd:", the original's From, Date, Subject and To, then
+its own HTML, styles and inline pictures (`forwardOf`), with "Forwarded by FAFO from your seller's inbox." as the first line of
+its text (`FWD_NOTE`). A sending limit (Gmail's daily quota, 421 and 45x answers), the buyer's address refused, a sign-in or a
+connection failing stops the rest of a call (`smtpStops`; a limit, also at sign-in, is `limited`, and the page leaves that
+mailbox an hour, `FWD.hold`), while one email the server won't take doesn't. `forwardSharedMail` (`fwdRun`; a minute after unlock, every 15
+minutes when no run read the mailboxes in the last 12, 30 seconds after each email sync, and after Send for the orders picked)
+plans with `forwardPlan`: each order sent to a buyer with an email (`shareTold` for its `shareTo`, a number to search for, the
+mailbox it came to, `o.inbox`), from placing until a week after it's delivered or canceled (and within 120 days; an order
+picked in Send to buyer whenever), newest first, one search per buyer and mailbox (`forwardScope`: the numbers of every other
+order, and of orders deleted or canceled and deleted, are `others`, and an order whose number another order has too waits);
+skips what that buyer had at that address (`o.fwd` {to, dest, ids}, `forwardFresh`, `forwardHad`; `dest` is `fwdDest`, a
+hash of the address, so a new buyer or a corrected address starts over), claims the rest with the worker ten at a time (so FAFO
+closing mid-send sends few twice), forwards the claimed, then says which went (`forwardMark` notes them, and ones another
+computer sent). Before each claim and each send it checks again that the orders are still that buyer's and the address the same
+(a Stop sending, another buyer or × meanwhile stops it). Except after Send, it waits for email sync and Clean emails, and like
+`shareRun` for a copy that has caught up with the online one (`fwdWait`, run again from `forwardSynced` in `syncExclusive`),
+which knows of a Stop sending or an address changed on another device. It holds update restarts (`ORDER_MAIL.busy`), stops when
+locked, leaves a buyer the worker refused (400, 404, 410) an hour, and a mailbox it can't read or a server that won't send is
+noted for that buyer (`FWD.err`, on the row's pill and in Settings). The row's tip says whether the order's emails go, by
+`forwardPlan`'s rules, or why not. The account goes in what Send to buyer sends (`shareAcctOf`, kept as `shareTold.acct`, apart
+from `det`, so a seller's 1.9.138 device syncing the same vault, which compares `det` in its own format, and a 1.9.139 one
+don't send each other's orders again and again; an order sent before goes once more with it), and the buyer's FAFO shows
+"placed with …" by From your seller (`o.placedWith`, from the rows' `account`). The buyer's FAFO leaves a forward (its text
+starting with `FWD_NOTE`, `FWD_NOTE_RE`) out of the orders its own email sync adds (`emailsToRows`), as the order comes with the
+seller's alerts, and an order it had added before (a page before 1.9.139, or typed in) becomes the seller's (`fromSeller`) when
+an alert with an account comes for it (only Send to buyer's rows have one: the seller's own FAFO gets alerts for its own slots'
+accounts, and its orders stay its own), unless that account is the order's own (`sentTo || inbox`: an order on the buyer's own
+account stays theirs, and billed as theirs). Orders gain `fwd` and `placedWith`, `shareTold` gains `acct`, and settings
+`buyerEmails`, which 1.9.112 keeps. `send-to-buyer.test.mjs` runs the plan and the run against a pretend desktop and worker,
+and `desktop/test/forward-mail.test.cjs` the desktop's side against a pretend mail server and nodemailer's in-memory transport.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

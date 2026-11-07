@@ -647,3 +647,283 @@ async function trashOrderMail(cfg, orders, keep) {
 module.exports.trashOrderMail = trashOrderMail;
 module.exports._orderMail = { moveOrderMail, orderTokens, orderNoList, ORDER_NO, moveMail };
 module.exports._clean = { PROTECT, SPAM_KEEP, looksPromoSender, forwardedFrom, normSubject, cleanRules, isSurvey, isSale, isProtected };
+
+// ================= An order's emails on to a buyer (desktop 15, pages from 1.9.139) =================
+// The seller's own FAFO sends orders to one of its buyers' FAFOs (Send to buyer, 1.9.138), and the owner asked for the
+// store's emails about each one to go to that buyer's inbox too (2026-11-07: "the email gets forwarded to that specific
+// buyer too"; their buyers are close friends who may see the accounts' emails). findOrderMail finds them, as moveOrderMail
+// does, in the main folder (All Mail on Gmail, never Sent or Trash) and Spam: read and kept only when one of the numbers is a
+// whole word in it and none of `others` is (another buyer's order, or the seller's own, which a note about several orders
+// would carry along), never one FAFO forwarded itself (FWD_MARK) or one sent from this mailbox. Each comes with an id from its
+// Message-ID (`mailKey`), the same in every folder and on every computer, so the page forwards each email once. forwardMail
+// sends the ones the page picked, by folder, UID and UIDVALIDITY, from this mailbox over SMTP with the same app password, as a
+// mail app's Forward writes it: "Fwd:", the original's From, Date, Subject and To, then its own HTML with its pictures and
+// attachments. The page asks the license worker before each send, so two computers on one mailbox don't both send it.
+// Only the store's own emails go: never a reply (a buyer answering a forward, or anyone's "Re:"), an auto-reply or a bounce
+// (`notStoreMail`), nor one from an address in `skipFrom` (the buyers' own), which would go back to them or, once an order
+// moves to another buyer, to that one; and a bounce quoting a forward (FWD_MARK anywhere in it) never goes again, so a
+// mistyped address can't loop. The newest are kept when more match than one call returns, after the ids the buyer has.
+const crypto = require("crypto");
+const FWD_MARK = "X-FAFO-Forwarded";
+// The first line of a forward's text: the buyer's own FAFO reads it and leaves the email to the seller's alerts.
+const FWD_NOTE = "Forwarded by FAFO from your seller's inbox.";
+const FWD_FIND_MAX = 500, FWD_SEND_MAX = 50, FWD_ATTACH_MAX = 15 * 1024 * 1024;
+const FWD_TO = /^[^\s@,;:<>()"'\\]+@[^\s@,;:<>()"'\\]+\.[A-Za-z]{2,}$/;
+const fwdAddr = (to) => { const t = String(to || "").trim(); return t.length <= 200 && FWD_TO.test(t) ? t : ""; };
+const FWD_REPLY = /^\s*(re|aw|sv|vs|antw|odp|r|ynt|res)\s*(\[\d+\])?\s*:/i;
+const FWD_AUTO = /^\s*(automatic reply|auto(matic)?[- ]?(reply|response)|autoreply|out of (the )?office|ooo\b|away from|undeliverable|undelivered|not delivered|delivery (status notification|failure|failed|has failed|incomplete|delayed)|mail delivery (failed|failure|subsystem)|returned mail|returned to sender|failure notice|message (not delivered|delivery failure|blocked)|could not be delivered|warning: could not send)/i;
+const headerText = (mail, name) => { const v = mail.headers && mail.headers.get(name); return v == null ? "" : typeof v === "string" ? v : String(v.value || v.text || (Array.isArray(v) ? v.join(" ") : "")); };
+// A reply, auto-reply or bounce, not the store's own email.
+function notStoreMail(mail, raw) {
+  const from = mail.from && mail.from.value && mail.from.value[0] ? String(mail.from.value[0].address || "").toLowerCase() : "";
+  if (/^(mailer-daemon|postmaster|mail-daemon|bounces?\+?[^@]*|mailerdaemon)@/.test(from)) return true;
+  const subject = String(mail.subject || "");
+  if (FWD_REPLY.test(subject) || FWD_AUTO.test(subject)) return true;
+  const ct = mail.headers && mail.headers.get("content-type");
+  if (ct && /^multipart\/report$/i.test(String(ct.value || ct))) return true;
+  if (/^auto-(replied|notified)/i.test(headerText(mail, "auto-submitted").trim())) return true;
+  if (mail.headers && (mail.headers.has("x-autoreply") || mail.headers.has("x-autorespond") || mail.headers.has("x-autoresponse"))) return true;
+  if (/^auto[_-]?reply$/i.test(headerText(mail, "precedence").trim())) return true;
+  if (/fafo-fwd\./i.test(headerText(mail, "in-reply-to") + " " + headerText(mail, "references"))) return true;   // answers a forward
+  if (raw && /x-fafo-forwarded\s*:/i.test(raw)) return true;   // one FAFO forwarded, or a bounce quoting one
+  return false;
+}
+function mailKey(mail) {
+  const from = mail.from && mail.from.value && mail.from.value[0] ? String(mail.from.value[0].address || "").toLowerCase() : "";
+  const k = String(mail.messageId || "").trim() || [from, mail.date ? mail.date.toISOString() : "", mail.subject || ""].join("|");
+  return crypto.createHash("sha256").update(k).digest("hex").slice(0, 24);
+}
+// opts: skipFrom [addresses] (the buyers' own, whose mail never goes), skip [ids] (the ones the buyer has, left out before
+// FWD_FIND_MAX counts). orders come newest first, so the 500 kept are the newest.
+async function findOrderMailOn(c, cfg, orders, others, opts) {
+  const want = new Map();
+  const skipFrom = new Set((Array.isArray(opts && opts.skipFrom) ? opts.skipFrom : []).slice(0, 5000).map(a => String(a || "").trim().toLowerCase()).filter(Boolean));
+  const skipIds = new Set((Array.isArray(opts && opts.skip) ? opts.skip : []).slice(0, 20000).map(String));
+  for (const o of Array.isArray(orders) ? orders : []) {
+    const [no] = orderNoList([o && o.no], 1);
+    if (!no) continue;
+    const at = /^\d{4}-\d{2}-\d{2}$/.test(String(o.since || "")) ? new Date(o.since + "T00:00:00Z") : null;
+    const since = at && !isNaN(at) ? new Date(at.getTime() - 3 * 86400000) : new Date(Date.now() - 120 * 86400000);
+    if (!want.has(no) || since < want.get(no)) want.set(no, since);
+    if (want.size >= 500) break;
+  }
+  const otherSet = new Set(orderNoList(others, 50000).filter(n => !want.has(n)));
+  const found = [], seen = new Set(), checked = [], self = String(cfg.email || "").trim().toLowerCase();
+  let mixed = 0, partial = false;
+  if (!want.size) return { ok: true, found, mixed, partial, boxes: [], checked };
+  const isGmail = /gmail\.com|googlemail\.com/i.test(cfg.host) || c.capabilities?.has?.("X-GM-EXT-1");
+  const list = await c.list();
+  const trash = list.find(b => b.specialUse === "\\Trash") || list.find(b => /(^|\/)(trash|bin|deleted items|deleted messages)$/i.test(b.path));
+  const boxes = (await pickMailboxes(c, isGmail)).filter(p => !trash || p !== trash.path);
+  const nos = Array.from(want.keys()), done = [];
+  for (const [bi, box] of boxes.entries()) {
+    let lock;
+    try { lock = await c.getMailboxLock(box); } catch (e) { if (bi === 0) throw e; continue; }
+    try {
+      const cand = new Set();
+      for (let i = 0; i < nos.length; i += 20) {
+        const batch = nos.slice(i, i + 20);
+        const since = new Date(Math.min(...batch.map(n => want.get(n).getTime())));
+        const uids = isGmail
+          ? await c.search({ gmraw: "(" + batch.map(n => '"' + n + '"').join(" OR ") + ") after:" + gmDate(since) + " -in:sent" }, { uid: true })
+          : await c.search({ since, or: batch.flatMap(n => [{ subject: n }, { body: n }]) }, { uid: true });
+        if (!Array.isArray(uids)) throw new Error("SEARCH_FAILED");
+        for (const u of uids) cand.add(u);
+        if (cand.size >= 3000 && i + 20 < nos.length) { partial = true; break; }
+      }
+      if (cand.size > 3000) partial = true;
+      const uidValidity = String(c.mailbox && c.mailbox.uidValidity || "");
+      if (cand.size) {
+        // The newest 3000 (UIDs grow as mail comes in). Their headers first: what the buyer has, what isn't the store's, and
+        // what this mailbox or a buyer sent is never downloaded, so a run every few minutes reads only what's new (Gmail
+        // stops IMAP for a day past 2.5 GB downloaded).
+        const uids = Array.from(cand).map(Number).sort((a, b) => b - a).slice(0, 3000), need = [];
+        for await (const m of c.fetch(uids, { uid: true, headers: true }, { uid: true })) {
+          try {
+            const raw = Buffer.isBuffer(m.headers) ? m.headers.toString("latin1") : String(m.headers || "");
+            const head = await simpleParser(raw.replace(/(\r?\n)*$/, "\r\n\r\n"));
+            if (head.headers && head.headers.has(FWD_MARK.toLowerCase())) continue;   // one FAFO forwarded
+            const from = head.from && head.from.value && head.from.value[0] ? String(head.from.value[0].address || "").toLowerCase() : "";
+            if (from && (from === self || skipFrom.has(from))) continue;   // sent from this mailbox, or by a buyer
+            if (notStoreMail(head, raw)) continue;
+            const id = mailKey(head);
+            if (seen.has(id) || skipIds.has(id)) continue;   // found in a folder before, or the buyer has it
+            need.push(m.uid);
+          } catch {}
+        }
+        if (need.length) for await (const m of c.fetch(need, { uid: true, source: true }, { uid: true })) {
+          let id = "";
+          try {
+            const mail = await simpleParser(m.source);
+            id = mailKey(mail);
+            if (seen.has(id) || skipIds.has(id)) continue;
+            const from = mail.from && mail.from.value && mail.from.value[0] ? String(mail.from.value[0].address || "").toLowerCase() : "";
+            // A bounce quoting a forward in its body: said (checked), so the page leaves it out of the next searches. One that
+            // names no order here as a whole word, or another order too, isn't: that can change (its other order sent to this
+            // buyer too), and the next search reads it again.
+            if (notStoreMail(mail, Buffer.isBuffer(m.source) ? m.source.toString("latin1") : String(m.source || ""))) { checked.push(id); continue; }
+            const words = orderTokens(mailText(mail));
+            const hits = nos.filter(n => words.has(n));
+            if (!hits.length) continue;
+            if (otherSet.size && Array.from(words).some(w => otherSet.has(w))) { mixed++; continue; }
+            seen.add(id);
+            found.push({ id, no: hits, folder: box, uid: m.uid, uidValidity, subject: String(mail.subject || "").slice(0, 200), date: mail.date && !isNaN(mail.date) ? mail.date.toISOString() : "", from, bi });
+          } catch {}
+        }
+      }
+      done.push(box);
+    } finally { lock.release(); }
+  }
+  // The newest FWD_FIND_MAX, then oldest first, so the buyer's inbox reads in order.
+  const older = (a, b) => String(a.date).localeCompare(String(b.date)) || a.bi - b.bi || a.uid - b.uid;
+  found.sort((a, b) => older(b, a));
+  if (found.length > FWD_FIND_MAX) { partial = true; found.length = FWD_FIND_MAX; }
+  found.sort(older);
+  found.forEach(f => { delete f.bi; });
+  return { ok: true, found, mixed, partial, boxes: done, checked: Array.from(new Set(checked)).slice(0, 3000) };
+}
+// The email as a mail app forwards it.
+const fwdEsc = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]);
+function forwardOf(mail, from, to, id) {
+  const who = (a) => (a && a.text) || "";
+  const head = [["From", who(mail.from)], ["Date", mail.date && !isNaN(mail.date) ? mail.date.toUTCString() : ""], ["Subject", mail.subject || ""], ["To", who(mail.to)]].filter(([, v]) => v);
+  const subject = /^\s*fwd?\s*:/i.test(mail.subject || "") ? String(mail.subject) : "Fwd: " + (mail.subject || "");
+  let body = mail.html ? String(mail.html) : `<pre style="white-space:pre-wrap;font-family:inherit">${fwdEsc(mail.text || "")}</pre>`;
+  const styles = (body.match(/<style[\s\S]*?<\/style>/gi) || []).join("");
+  body = body.replace(/<!DOCTYPE[^>]*>/gi, "").replace(/<head[\s\S]*?<\/head>/gi, "").replace(/<\/?(?:html|body)\b[^>]*>/gi, "");
+  const html = `${styles}<div style="font-family:Arial,sans-serif;font-size:13px">---------- Forwarded message ---------<br>${head.map(([k, v]) => `${k}: ${fwdEsc(v)}`).join("<br>")}</div><br>${body}`;
+  const plain = mail.text || String(mail.html || "").replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|tr|li|h\d)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&quot;/gi, '"').replace(/&amp;/gi, "&").replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n\n").trim();
+  const text = `${FWD_NOTE}\n\n---------- Forwarded message ---------\n${head.map(([k, v]) => `${k}: ${v}`).join("\n")}\n\n${plain}`;
+  let size = 0;
+  const attachments = [];
+  for (const a of mail.attachments || []) {
+    const n = a.content ? a.content.length : 0;
+    if (size + n > FWD_ATTACH_MAX) continue;   // a mailbox takes about 25 MB a message
+    size += n;
+    attachments.push({ filename: a.filename || undefined, content: a.content, contentType: a.contentType, cid: a.cid || undefined, contentDisposition: a.contentDisposition === "inline" ? "inline" : "attachment" });
+  }
+  // Its own Message-ID says it's a forward, so a reply to it (In-Reply-To, References) is never forwarded.
+  const domain = (String(from || "").split("@")[1] || "fafo.invalid").replace(/[^A-Za-z0-9.-]/g, "") || "fafo.invalid";
+  const messageId = `<fafo-fwd.${String(id).replace(/[^0-9a-f]/gi, "")}.${crypto.randomBytes(6).toString("hex")}@${domain}>`;
+  return { from, to, subject, html, text, attachments, messageId, headers: { [FWD_MARK]: id }, references: mail.messageId || undefined };
+}
+// The SMTP server of the IMAP server's provider: its known one, or smtp. in place of imap., on 465 then 587.
+function smtpServers(host) {
+  const h = String(host || "").toLowerCase();
+  const known = [[/gmail\.com$|googlemail\.com$/, "smtp.gmail.com", 465], [/(^|\.)mail\.me\.com$|icloud\.com$/, "smtp.mail.me.com", 587],
+    [/yahoo\.com$/, "smtp.mail.yahoo.com", 465], [/aol\.com$/, "smtp.aol.com", 465], [/outlook\.com$|office365\.com$|hotmail\.com$|live\.com$/, "smtp-mail.outlook.com", 587],
+    [/fastmail\.com$/, "smtp.fastmail.com", 465], [/zoho\.com$/, "smtp.zoho.com", 465], [/gmx\.(com|net)$/, "mail.gmx.com", 587]];
+  for (const [re, server, port] of known) if (re.test(h)) return [{ host: server, port }];
+  const server = /^imap\./.test(h) ? h.replace(/^imap\./, "smtp.") : h;
+  return [{ host: server, port: 465 }, { host: server, port: 587 }];
+}
+function smtpTransport(cfg, s) {
+  const nodemailer = require("nodemailer");
+  // One connection and one sign-in for the whole call (pool), not one a message.
+  return nodemailer.createTransport({ host: s.host, port: s.port, secure: s.port === 465, requireTLS: s.port !== 465, pool: true, maxConnections: 1, maxMessages: 100,
+    auth: { user: cfg.email, pass: cfg.password }, connectionTimeout: 20000, greetingTimeout: 20000, socketTimeout: 60000,
+    tls: cfg.insecureTls ? { rejectUnauthorized: false } : Object.assign({ servername: s.host }, trust.tlsOptions()) });
+}
+const smtpAuthFailed = (e) => !!e && (e.code === "EAUTH" || /\b535\b|authentication|Username and Password not accepted/i.test(String(e.response || e.message || "")));
+// Sending limits and throttling (Gmail's daily quota, 421 and 45x answers, "too many"), as opposed to one email the server
+// won't take: the rest would be refused the same way, and trying each one only keeps the mailbox throttled longer.
+const SMTP_LIMIT = /\b5\.4\.5\b|\b4\.7\.\d+\b|quota|rate.?limit|too many|limit exceeded|sending limit|try again later|temporarily (deferred|rejected|blocked)/i;
+const smtpLimited = (e) => !!e && (Number(e.responseCode) === 421 || (Number(e.responseCode) >= 450 && Number(e.responseCode) < 460) || SMTP_LIMIT.test(String(e.response || "")));
+// What stops the rest of a call: signing in, the connection, the buyer's address refused (every one goes there), a limit.
+const smtpStops = (e) => smtpAuthFailed(e) || smtpLimited(e) || !!e && (e.code === "EENVELOPE" || /ECONNREFUSED|ECONNRESET|ECONNECTION|ETIMEDOUT|ESOCKET|ENOTFOUND|EAI_AGAIN|ETLS/i.test(String(e.code || e.message || "")));
+function smtpError(e) {
+  const m = String((e && (e.response || e.message)) || e || "");
+  if (/basic authentication is disabled|5\.7\.139/i.test(m)) return "This mail provider doesn't let apps send email with an app password, so FAFO can't forward from this inbox.";
+  if (smtpLimited(e)) return "The mail server is limiting how much this inbox sends, so FAFO stopped forwarding from it for now: " + m.slice(0, 120);
+  if (e && e.code === "EENVELOPE") return "The mail server refused the buyer's address: " + m.slice(0, 120);
+  if (smtpAuthFailed(e)) return "The mail server didn't let FAFO send from this inbox. Use an app password, not your normal password.";
+  if (/ENOTFOUND|EAI_AGAIN/i.test(m)) return "Couldn't find this inbox's outgoing mail server.";
+  if (/ECONNREFUSED|ETIMEDOUT|ESOCKET|timed? ?out/i.test(m)) return "Couldn't connect to this inbox's outgoing mail server.";
+  if (/certificate|self.signed|TLS/i.test(m)) return CERT_ERROR;
+  return m.slice(0, 160) || "The mail server didn't send the email.";
+}
+// With a connected IMAP client and send(message) (one SMTP connection, opened by the caller): items [{id, folder, uid,
+// uidValidity}], each sent only while its folder's UIDVALIDITY is the one found and the email there is still that one. res
+// ({sent, failed, gone}) fills as it goes, so what was sent before a failure that stops the rest is still said.
+async function forwardMailOn(c, cfg, items, to, send, res) {
+  const out = res || { sent: [], failed: [], gone: [] }, { sent, failed, gone } = out;
+  const byFolder = new Map();
+  for (const it of (Array.isArray(items) ? items : []).slice(0, FWD_SEND_MAX)) {
+    if (!it || !it.id || !it.folder || !(Number(it.uid) > 0)) continue;
+    if (!byFolder.has(it.folder)) byFolder.set(it.folder, []);
+    byFolder.get(it.folder).push(it);
+  }
+  for (const [folder, list] of byFolder) {
+    let lock;
+    try { lock = await c.getMailboxLock(folder); } catch { list.forEach(it => gone.push(it.id)); continue; }
+    try {
+      const uv = String(c.mailbox && c.mailbox.uidValidity || "");
+      const ok = list.filter(it => String(it.uidValidity) === uv);
+      list.filter(it => String(it.uidValidity) !== uv).forEach(it => gone.push(it.id));
+      const byUid = new Map(), seen = new Set();
+      for (const it of ok) { if (byUid.has(Number(it.uid))) gone.push(it.id); else byUid.set(Number(it.uid), it); }   // one email a UID
+      if (byUid.size) {
+        const sources = [];
+        for await (const m of c.fetch(Array.from(byUid.keys()), { uid: true, source: true }, { uid: true })) sources.push(m);
+        for (const m of sources) {
+          const it = byUid.get(Number(m.uid)); if (!it) continue;
+          seen.add(it.id);
+          let mail;
+          try { mail = await simpleParser(m.source, { keepCidLinks: true }); } catch { failed.push({ id: it.id, error: "FAFO couldn't read this email." }); continue; }
+          if (mailKey(mail) !== it.id) { gone.push(it.id); continue; }   // another email has that number now
+          try { await send(forwardOf(mail, cfg.email, to, it.id)); sent.push(it.id); }
+          catch (e) {
+            failed.push({ id: it.id, error: smtpError(e) });
+            if (smtpStops(e)) { if (e && typeof e === "object") e.fafoSmtp = true; throw e; }   // the rest would fail the same way
+          }
+        }
+      }
+      Array.from(byUid.values()).filter(it => !seen.has(it.id)).forEach(it => gone.push(it.id));   // deleted or moved since
+    } finally { lock.release(); }
+  }
+  return Object.assign(out, { ok: true });
+}
+async function findOrderMail(cfg, orders, others, opts) {
+  const c = await open(cfg);
+  try {
+    await c.connect();
+    return await findOrderMailOn(c, cfg, orders, others, opts);
+  } catch (e) {
+    return { ok: false, error: await explain(e, cfg) };
+  } finally {
+    try { await c.logout(); } catch { try { c.close(); } catch {} }
+  }
+}
+// opts.transport (tests only): nodemailer transport options in place of the inbox's SMTP server.
+async function forwardMail(cfg, items, to, opts) {
+  const dest = fwdAddr(to);
+  if (!dest) return { ok: false, error: "That isn't an email address FAFO can forward to." };
+  if (!Array.isArray(items) || !items.length) return { ok: true, sent: [], failed: [], gone: [] };
+  await trust.ready;
+  // The SMTP server first: one that can't be reached or signed in to stops here, before the mailbox is read.
+  let tx = null, lastErr = null;
+  for (const s of opts && opts.transport ? [null] : smtpServers(cfg.host)) {
+    const t = s ? smtpTransport(cfg, s) : require("nodemailer").createTransport(opts.transport);
+    try { if (s) await t.verify(); tx = t; break; }
+    catch (e) { lastErr = e; try { t.close(); } catch {} if (smtpAuthFailed(e)) break; }
+  }
+  if (!tx) return { ok: false, error: smtpError(lastErr), smtp: true, limited: smtpLimited(lastErr) || undefined };
+  const c = await open(cfg);
+  const out = { sent: [], failed: [], gone: [] };
+  try {
+    await c.connect();
+    await forwardMailOn(c, cfg, items, dest, (msg) => tx.sendMail(msg), out);
+  } catch (e) {
+    const smtp = !!(e && e.fafoSmtp);
+    return Object.assign(out, { ok: false, error: smtp ? smtpError(e) : await explain(e, cfg), limited: smtpLimited(e) || undefined });
+  } finally {
+    try { await c.logout(); } catch { try { c.close(); } catch {} }
+    try { tx.close(); } catch {}
+  }
+  return out;
+}
+module.exports.findOrderMail = findOrderMail;
+module.exports.forwardMail = forwardMail;
+module.exports._forward = { findOrderMailOn, forwardMailOn, forwardOf, mailKey, smtpServers, smtpError, smtpStops, smtpLimited, notStoreMail, fwdAddr, FWD_MARK, FWD_NOTE, FWD_SEND_MAX };
+

@@ -1,14 +1,15 @@
 {
   "name": "profile-vault",
   "productName": "FAFO",
-  "version": "1.9.136",
+  "version": "1.9.139",
   "description": "FAFO: encrypted checkout profiles and order tracking",
   "main": "main.js",
   "author": "FAFO",
   "private": true,
   "dependencies": {
     "imapflow": "1.7.8",
-    "mailparser": "3.9.28"
+    "mailparser": "3.9.28",
+    "nodemailer": "10.0.10"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
