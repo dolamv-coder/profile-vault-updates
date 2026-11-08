@@ -16258,7 +16258,10 @@ async function cleanScanFolder(ib, folder, days, codeDays, noCount){
   const same = (x) => !!(x && x.ok && Array.isArray(x.groups) && String(x.uidValidity || "") === String(r.uidValidity || ""));
   const guard = cfg.loose ? SPAM_KEEP : CLEAN_APP_PROTECT;
   let seen = null;
-  if (same(c) && counts && !noCount && c.groups.some(g => g && Array.isArray(g.uids) && cleanCodeDrop(g.senderAddr, g.subject, g.sender) && cleanGuarded(g.subject || "", guard))){
+  // Only while the other scan may have counted one (a code it kept, not one it handed back too: Target's in Spam, 1.9.140,
+  // which the app's Spam rule doesn't keep).
+  const inR = new Set((r.groups || []).flatMap(g => g && Array.isArray(g.uids) ? g.uids : []));
+  if (same(c) && counts && !noCount && c.groups.some(g => g && Array.isArray(g.uids) && cleanCodeDrop(g.senderAddr, g.subject, g.sender) && cleanGuarded(g.subject || "", guard) && g.uids.some(u => !inR.has(u)))){
     // Which of them the other scan read (and counted): those a codes' scan after it finds too, unless midnight passed meanwhile,
     // when its look-back may have started a day apart from either; then none are added this time.
     let c2 = null;

@@ -356,6 +356,15 @@ await test("one row per sender for its codes, numbers hidden, real sender for Hi
   }
 });
 
+if (HAS_TGT) await test("a Target code in Spam, which the app's Spam rule hands back, needs no recount: two scans, as for none", async () => {
+  server([], [msg("tgt-spam-code", { name: "Target", address: TGT, subject: "Enter code 557017 to sign in to your Target.com account" })]);
+  const { ids, r } = await offered(setup(file), "spam");
+  assert.deepEqual([ids, r.protectedCount, SERVER.scans.length], [["tgt-spam-code"], 0, 2]);
+  server([], [msg("riot-spam-code", { name: "Riot Games", address: RIOT, subject: "Login Code: 123456" })]);
+  const riot = await offered(setup(file), "spam");
+  assert.deepEqual([riot.ids, riot.r.protectedCount, SERVER.scans.length], [["riot-spam-code"], 0, 3], "Riot's, which the app keeps there, still does");
+});
+
 await test("Always keep on the sender keeps them, and the list after Always keep is as it was", async () => {
   server(corpus());
   const all = (await offered(setup(file))).ids;
