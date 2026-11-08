@@ -1818,6 +1818,20 @@ account stays theirs, and billed as theirs). Orders gain `fwd` and `placedWith`,
 `buyerEmails`, which 1.9.112 keeps. `send-to-buyer.test.mjs` runs the plan and the run against a pretend desktop and worker,
 and `desktop/test/forward-mail.test.cjs` the desktop's side against a pretend mail server and nodemailer's in-memory transport.
 
+From 1.9.140 Clean emails also clears Target's "Enter code 557017 to sign in to your Target.com account" and "Your Target.com
+password reset code is 123456" (the owner's request, 2026-11-08, with a screenshot of their inbox: "Add these to the clean out
+email list"), as 1.9.134 does Riot Games' and Best Buy's: a third entry in `CLEAN_CODE_DROP` (any target.com address, under the
+name "Target", and only those two whole subjects, with the code's digits or the Clean page's dots), so "Target" joins the codes'
+scan's survey senders (`CLEAN_CODE_FROM`). That scan hands back everything named "Target", orders too, and `cleanAddCodes`
+takes only the codes; the rest stays the other scan's, as before. Auto-clean leaves each an hour first (`CLEAN_CODE_WAIT`), one
+row per kind on the Clean page ("Enter code •••••• to sign in…"), and `CLEAN_RULES_KEY` changes, so auto-clean looks back 30
+days once. `SPAM_KEEP` still keeps sign-in codes in other words. Like 1.9.134's forwards, a Target code forwarded under its own
+subject ("FW: Enter code …") is kept in the Inbox (the app's own subject check), but in Spam with Clear all of Spam on, where the
+app's Spam rule doesn't keep that wording, the codes' scan hands it back like Target's own and it goes too.
+`clean-rules.test.mjs` has Target's codes (straight and by Hide My Email) and what stays (orders and shipping from the same
+address, "password was changed", a look-alike, a forward, a reply from guest services) when the newest page has them
+(`HAS_TGT`). Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
