@@ -1,10 +1,10 @@
 {
-  "version": "1.9.139",
-  "url": "index-1.9.139.html",
-  "sha256": "6d153f9385317e3034d92b6f055eda504ab9255c056148d6783a6963480fc200",
-  "signature": "yGDgLl4BqasZH096knlfXg/W0umEYpkVoiU0A+QAFocxymzJY/alIVH0YuLASflHqdj9g8HTQ8FRURpjN7cJCg==",
+  "version": "1.9.140",
+  "url": "index-1.9.140.html",
+  "sha256": "0b4ecf6f5a4847d845f4a21f0a2f6706e5049aba9142aeea77d3286c2a4829eb",
+  "signature": "QJhB34ZKJi5Lv8Uj5CEl4IN7bfJzIHvkwMUGkpkQ7P0SM+bDLrGk67sz5iBrWMDADTX5RB8iVbq8yRqZsJQzBQ==",
   "minAppVersion": "0",
-  "notes": "Orders your seller sends you now show which account they were placed with, and your seller can have the store's emails about them (the confirmation, shipping, delivery) forwarded to your email too. For sellers: type a buyer's email address in Send to buyer, and FAFO forwards every email about the orders you send them from the inbox it came to, as they come. Forwarding needs the newest FAFO download, which you can get from the Send to buyer window.",
+  "notes": "Clean emails now also clears Target's sign-in codes (\"Enter code … to sign in to your Target.com account\") and password reset codes, like Riot Games' and Best Buy's. Auto-clean leaves each one for an hour first, in case you're signing in with it. Target's orders and other emails stay as before.",
   "installerUrl": "",
-  "publishedAt": "2026-11-07T18:42:06.561Z"
+  "publishedAt": "2026-11-08T22:52:25.172Z"
 }
