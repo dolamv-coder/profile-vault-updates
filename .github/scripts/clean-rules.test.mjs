@@ -1,5 +1,6 @@
 // Tests what Clean emails clears in the newest page (index-X.Y.Z.html), from 1.9.134: Riot Games' login codes and welcome
-// emails and Best Buy's password reset codes go, and nothing else changes from 1.9.133, in the Inbox, in Spam and both. Each
+// emails and Best Buy's password reset codes go (and from 1.9.140 Target's sign-in and password reset codes), and nothing else
+// changes from 1.9.133, in the Inbox, in Spam and both. Each
 // email goes through the desktop app's own scanner (scanPromos in desktop/imap-sync.js, against a pretend mail server) and then
 // the page's own code: cleanScanFolder (both scans), applyCleanSafety, cleanScan (the Clean page's Scan) and runAutoClean,
 // with its hour's wait. Sample senders and addresses only.
@@ -153,7 +154,9 @@ const scanDays = () => { const all = SERVER.scans.splice(0); return { code: all.
 
 // A mailbox with the three kinds asked for and everything around them that has to stay as it was.
 const HME = (local, domain) => `${local}_at_${domain.replace(/\./g, "_")}_abcdefghijkl_mnopqr@icloud.com`;
-const RIOT = "noreply@mail.accounts.riotgames.com", BBY = "BestBuyInfo@emailinfo.bestbuy.com";
+const RIOT = "noreply@mail.accounts.riotgames.com", BBY = "BestBuyInfo@emailinfo.bestbuy.com", TGT = "orders@oe.target.com";
+// Target's codes (1.9.140) are in the corpus only for a page that has them.
+const HAS_TGT = (readFileSync(file, "utf8").match(/const CLEAN_CODE_DROP = \[[\s\S]*?\n\];/) || [""])[0].includes("name:/^\\s*target\\s*$/i");
 const corpus = (p = "") => [
   // Asked for: these go.
   msg(p + "riot-code-1", { name: "Riot Games", address: RIOT, subject: "Login Code: 469078" }),
@@ -170,6 +173,20 @@ const corpus = (p = "") => [
     body: fwd(`Riot Games <${RIOT}>`, "Login Code: 778800", "Someone is trying to get into your account") }),
   msg(p + "bby-reset", { name: "Best Buy", address: BBY, subject: "Your Password Reset verification code" }),
   msg(p + "bby-reset-hme", { name: "Best Buy", address: HME("BestBuyInfo", "emailinfo.bestbuy.com"), subject: "Your Password Reset verification code" }),
+  ...(HAS_TGT ? [
+    msg(p + "tgt-signin-code", { name: "Target", address: TGT, subject: "Enter code 557017 to sign in to your Target.com account" }),
+    msg(p + "tgt-signin-code-2", { name: "Target", address: TGT, subject: "Enter code 033061 to sign in to your Target.com account" }),
+    msg(p + "tgt-signin-code-hme", { name: "Target", address: HME("orders", "oe.target.com"), subject: "Enter code 908172 to sign in to your Target.com account" }),
+    msg(p + "tgt-reset-code", { name: "Target", address: TGT, subject: "Your Target.com password reset code is 123456" }),
+    // Kept: Target's orders (the codes' scan hands back everything named "Target"), other account emails, a look-alike, a
+    // forward that keeps its subject, and a reply from guest services.
+    msg(p + "tgt-order", { name: "Target", address: TGT, subject: "Here's your order #102000000000001" }),
+    msg(p + "tgt-shipped", { name: "Target", address: TGT, subject: "Items from order #102000000000001 have shipped" }),
+    msg(p + "tgt-pw-changed", { name: "Target", address: TGT, subject: "Your Target.com password was changed" }),
+    msg(p + "tgt-code-spoof", { name: "Target", address: "security@target-account.example.com", subject: "Enter code 445566 to sign in to your Target.com account" }),
+    msg(p + "tgt-code-fw", { name: "Sam", address: "sam.account1@example.com", subject: "FW: Enter code 778811 to sign in to your Target.com account",
+      body: fwd(`Target <${TGT}>`, "Enter code 778811 to sign in to your Target.com account", "This temporary code can be used only once.") }),
+    msg(p + "tgt-guest-reply", { name: "Target", address: "guestservices@target.com", subject: "RE: Your Target.com password reset code is 123456" })] : []),
   // Kept, as before: orders, receipts, other codes and security notices from the same senders.
   msg(p + "bby-order", { name: "Best Buy", address: BBY, subject: "Thanks for your order, Sam!", bulk: true }),
   msg(p + "bby-shipped", { name: "Best Buy", address: BBY, subject: "Your order has shipped" }),
@@ -221,10 +238,16 @@ const corpus = (p = "") => [
   msg(p + "target-news", { name: "Target", address: "targetnews@em.target.com", subject: "New arrivals for fall", bulk: true }),
   msg(p + "survey", { name: "Target", address: "target@medallia.com", subject: "How was your Target order?" })
 ];
-const ASKED = ["riot-code-1", "riot-code-2", "riot-code-hme", "riot-welcome", "riot-welcome-mail", "riot-welcome-fw", "riot-welcome-fw-verify", "fw-code-newsubj", "bby-reset", "bby-reset-hme"];
+const ASKED = ["riot-code-1", "riot-code-2", "riot-code-hme", "riot-welcome", "riot-welcome-mail", "riot-welcome-fw", "riot-welcome-fw-verify", "fw-code-newsubj", "bby-reset", "bby-reset-hme",
+  ...(HAS_TGT ? ["tgt-signin-code", "tgt-signin-code-2", "tgt-signin-code-hme", "tgt-reset-code"] : [])];
 // The known gaps, as the codes' scan hands these back like the site's own email: a forwarded welcome, and a code forwarded
 // under a subject that protects nothing, go; one the app kept by its opening lines (the welcome) stays in the kept-safe count.
 const STILL_COUNTED = ["riot-welcome-fw-verify"];
+// And a Target code forwarded under its own subject (1.9.140): kept in the Inbox by the app's own subject check, but in Spam
+// with Clear all of Spam on, where the app's Spam rule doesn't keep "Enter code … to sign in", the codes' scan hands it back
+// like Target's own, so it goes too (an hour later, by auto-clean), as a Target code.
+const SPAM_GAP = HAS_TGT ? ["tgt-code-fw"] : [];
+const asked = (id, spamAll = true) => ASKED.includes(bare(id)) || (spamAll && /^s:/.test(id) && SPAM_GAP.includes(bare(id)));
 const bare = (id) => id.replace(/^s:/, "");
 const isCode = (id) => /code|reset/.test(bare(id)) && !/welcome/.test(id);
 
@@ -276,7 +299,7 @@ for (const folder of ["inbox", "spam", "all"]) {
     both(); const { ids: before, r: rBefore } = await offered(reference(), folder);
     assert.deepEqual(before.filter((id) => !now.includes(id)), [], "offered before, kept now");
     const added = now.filter((id) => !before.includes(id));
-    assert.deepEqual(added.filter((id) => !ASKED.includes(bare(id))), [], "offered now, not before, and not asked for");
+    assert.deepEqual(added.filter((id) => !asked(id)), [], "offered now, not before, and not asked for");
     assert.ok(added.length > 0);
     // Each code newly offered was counted as kept safe before; a welcome email nothing kept wasn't.
     assert.equal(rBefore.protectedCount - rNow.protectedCount, added.filter(isCode).length, `kept safe: ${rBefore.protectedCount} before, ${rNow.protectedCount} now`);
@@ -290,14 +313,14 @@ await test("each email alone, in the Inbox and in Spam: offered and counted as k
     const { ids, r } = await offered(api, folder);
     return [ids.length > 0, r.protectedCount];
   };
-  const KEEP = [RIOT, "noreply@riotgames.com", "noreply@mail.riotgames.com", BBY.toLowerCase()];
+  const KEEP = [RIOT, "noreply@riotgames.com", "noreply@mail.riotgames.com", BBY.toLowerCase(), TGT];
   for (const keep of [null, KEEP]) for (const folder of ["inbox", "spam"]) for (const m0 of corpus()) {
     const m = () => Object.assign({}, m0);
     const [offNow, cntNow] = await one(setup(file), m(), folder, keep);
     const [offBefore, cntBefore] = await one(reference(), m(), folder, keep);
     if (keep) { assert.deepEqual([offNow, cntNow], [offBefore, cntBefore], `${m0.id} in ${folder}, Always keep on: [offered, kept safe] as before`); continue; }
     const where = `${m0.id} in ${folder}`;
-    if (ASKED.includes(m0.id)) {
+    if (asked(folder === "spam" ? "s:" + m0.id : m0.id)) {
       assert.ok(offNow, `${where} is offered`);
       assert.equal(cntNow, STILL_COUNTED.includes(m0.id) ? cntBefore : 0, `${where}: counted as kept safe`);
     } else {
@@ -312,7 +335,8 @@ await test("forwards, other codes, security notices and lookalike senders are ke
   for (const id of ["bby-order", "bby-shipped", "bby-signin", "bby-pickup", "bby-reset-used", "bby-reset-notme", "riot-verify", "riot-receipt",
     "riot-thanks", "riot-code-used", "riot-code-asked", "riot-welcome-receipt", "riot-spoof", "riot-named", "riot-other-name", "bby-reply",
     "riot-reply", "riot-reply-2", "fw-riot-reply", "target-code", "pkc-order",
-    "fw-code", "fw-pickup", "fw-getting", "fw-signin", "fw-riot-buy", "fw-riot-id"])
+    "fw-code", "fw-pickup", "fw-getting", "fw-signin", "fw-riot-buy", "fw-riot-id",
+    ...(HAS_TGT ? ["tgt-order", "tgt-shipped", "tgt-pw-changed", "tgt-code-spoof", "tgt-code-fw", "tgt-guest-reply"] : [])])
     assert.ok(!ids.includes(id), `${id} is kept`);
   for (const id of ["s:fw-pickup", "s:fw-getting", "s:fw-signin", "s:fw-riot-buy", "s:bby-order", "s:target-code"]) assert.ok(!ids.includes(id), `${id} is kept in Spam`);
   for (const id of ["bby-news", "bby-sale", "riot-news", "target-news", "survey"]) assert.ok(ids.includes(id), `${id} still goes`);
@@ -325,6 +349,20 @@ await test("one row per sender for its codes, numbers hidden, real sender for Hi
   assert.deepEqual(codes.map((g) => [g.senderAddr, g.subject, g.uids.length]), [[RIOT, "Login Code: ••••••", 4]], "three codes, and the one forwarded under a new subject");
   const reset = r.groups.filter((g) => /Password Reset/.test(g.subject));
   assert.deepEqual(reset.map((g) => [g.senderAddr, g.uids.length]), [[BBY.toLowerCase(), 2]]);
+  if (HAS_TGT) {
+    const tgt = r.groups.filter((g) => /Target\.com/.test(g.subject));
+    assert.deepEqual(tgt.map((g) => [g.senderAddr, g.subject, g.uids.length]).sort(), [[TGT, "Enter code •••••• to sign in to your Target.com account", 3],
+      [TGT, "Your Target.com password reset code is ••••••", 1]], "Target's: one row for its sign-in codes (Hide My Email's too), one for its reset codes");
+  }
+});
+
+if (HAS_TGT) await test("a Target code in Spam, which the app's Spam rule hands back, needs no recount: two scans, as for none", async () => {
+  server([], [msg("tgt-spam-code", { name: "Target", address: TGT, subject: "Enter code 557017 to sign in to your Target.com account" })]);
+  const { ids, r } = await offered(setup(file), "spam");
+  assert.deepEqual([ids, r.protectedCount, SERVER.scans.length], [["tgt-spam-code"], 0, 2]);
+  server([], [msg("riot-spam-code", { name: "Riot Games", address: RIOT, subject: "Login Code: 123456" })]);
+  const riot = await offered(setup(file), "spam");
+  assert.deepEqual([riot.ids, riot.r.protectedCount, SERVER.scans.length], [["riot-spam-code"], 0, 3], "Riot's, which the app keeps there, still does");
 });
 
 await test("Always keep on the sender keeps them, and the list after Always keep is as it was", async () => {
@@ -356,7 +394,7 @@ await test("a second scan that fails, or finds the folder rebuilt, adds nothing 
 
 for (const folder of ["inbox", "spam", "all"]) {
   await test(`${folder}: auto-clean moves everything else as 1.9.133 did, and the ones asked for an hour later`, async () => {
-    const KEEP = [RIOT, "noreply@riotgames.com", BBY.toLowerCase()];
+    const KEEP = [RIOT, "noreply@riotgames.com", BBY.toLowerCase(), TGT];
     for (const sweep of [false, true]) for (const keep of [null, KEEP]) for (const spamAll of [true, false]) {
       const run = async (api) => {
         NOW = Date.UTC(2026, 10, 4, 15, 0, 0); both();
@@ -368,10 +406,10 @@ for (const folder of ["inbox", "spam", "all"]) {
       };
       const now = await run(setup(file)), before = await run(reference());
       const where = `${folder}, ${sweep ? "first 30-day look-back" : "swept"}, Always keep ${keep ? "on" : "off"}, Clear all of Spam ${spamAll ? "on" : "off"}`;
-      assert.deepEqual(now.first, before.first.filter((id) => !ASKED.includes(bare(id))), `${where}: moved at once`);
+      assert.deepEqual(now.first, before.first.filter((id) => !asked(id, spamAll)), `${where}: moved at once`);
       const added = now.hour.filter((id) => !before.hour.includes(id));
       assert.deepEqual(before.hour.filter((id) => !now.hour.includes(id)), [], `${where}: moved before, kept now`);
-      assert.deepEqual(added.filter((id) => !ASKED.includes(bare(id))), [], `${where}: moved after the hour, not asked for`);
+      assert.deepEqual(added.filter((id) => !asked(id, spamAll)), [], `${where}: moved after the hour, not asked for`);
       if (!keep) assert.ok(added.length > 0, `${where}: the ones asked for go after the hour`);
     }
   });
@@ -481,7 +519,8 @@ await test("auto-clean moves newsletters at once and leaves the codes an hour af
   NOW += 15 * 60000; await api.runAutoClean();
   for (const id of ASKED) assert.ok(SERVER.moved.includes(id), `${id} goes after an hour`);
   assert.ok(!SERVER.moved.includes("riot-code-late"), "one that came later waits its own hour");
-  for (const id of ["bby-order", "bby-shipped", "bby-signin", "target-code", "riot-verify", "fw-code", "fw-pickup", "riot-code-used"]) assert.ok(!SERVER.moved.includes(id), `${id} stays`);
+  for (const id of ["bby-order", "bby-shipped", "bby-signin", "target-code", "riot-verify", "fw-code", "fw-pickup", "riot-code-used",
+    ...(HAS_TGT ? ["tgt-order", "tgt-shipped", "tgt-pw-changed", "tgt-code-spoof", "tgt-code-fw", "tgt-guest-reply"] : [])]) assert.ok(!SERVER.moved.includes(id), `${id} stays`);
   NOW += 61 * 60000; await api.runAutoClean();
   assert.ok(SERVER.moved.includes("riot-code-late"));
   const book = JSON.parse(api.store.getItem("orbit-clean-codes") || "{}");

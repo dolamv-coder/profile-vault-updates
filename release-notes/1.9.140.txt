@@ -1,0 +1,1 @@
+Clean emails now also clears Target's sign-in codes ("Enter code … to sign in to your Target.com account") and password reset codes, like Riot Games' and Best Buy's. Auto-clean leaves each one for an hour first, in case you're signing in with it. Target's orders and other emails stay as before.
