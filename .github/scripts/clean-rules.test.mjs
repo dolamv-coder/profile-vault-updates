@@ -160,7 +160,7 @@ const RIOT = "noreply@mail.accounts.riotgames.com", BBY = "BestBuyInfo@emailinfo
 const CODE_DROP_SRC = (readFileSync(file, "utf8").match(/const CLEAN_CODE_DROP = \[[\s\S]*?\n\];/) || [""])[0];
 const HAS_TGT = CODE_DROP_SRC.includes("name:/^\\s*target\\s*$/i");
 // From 1.9.141 (the owner's choice: "Right away") auto-clean moves Target's codes on the run that first sees them (wait: 0).
-const TGT_NOW = HAS_TGT && /\{wait:0, from:[^\n]*target/.test(CODE_DROP_SRC);
+const TGT_NOW = HAS_TGT && CODE_DROP_SRC.split("\n").some((l) => /\bwait\s*:\s*0\b/.test(l) && l.includes("target\\.com"));
 const TGT_CODES = HAS_TGT ? ["tgt-signin-code", "tgt-signin-code-2", "tgt-signin-code-hme", "tgt-reset-code"] : [];
 const corpus = (p = "") => [
   // Asked for: these go.
@@ -400,7 +400,7 @@ await test("a second scan that fails, or finds the folder rebuilt, adds nothing 
 });
 
 for (const folder of ["inbox", "spam", "all"]) {
-  await test(`${folder}: auto-clean moves everything else as 1.9.133 did, and the ones asked for an hour later`, async () => {
+  await test(`${folder}: auto-clean moves everything else as 1.9.133 did, and the ones asked for an hour later${TGT_NOW ? " (Target's codes at once)" : ""}`, async () => {
     const KEEP = [RIOT, "noreply@riotgames.com", BBY.toLowerCase(), TGT];
     for (const sweep of [false, true]) for (const keep of [null, KEEP]) for (const spamAll of [true, false]) {
       const run = async (api) => {

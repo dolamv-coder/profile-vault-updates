@@ -16817,8 +16817,9 @@ const cleanCodeNeed = (ibId, folder) => {
   return Math.min(CLEAN_CODE_MAX, Math.max(0, ...need.map(Number).filter(n => n > 0)));
 };
 // Sorts r's UIDs (after applyCleanSafety) for auto-clean: go, to move now, is all but sign-in emails first seen less than
-// CLEAN_CODE_WAIT ago, and, when the codes' scan didn't count (r.codesMissed), the other scan's that look like them, not
-// those left in a group the codes were taken out of (g.trimmed). days: how far back the codes' scan looked. done(moved)
+// their wait ago (cleanCodeWaitOf: CLEAN_CODE_WAIT, Target's none from 1.9.141), and, when the codes' scan didn't count
+// (r.codesMissed), the other scan's that look like them (Target's go at once there too), not those left in a group the codes
+// were taken out of (g.trimmed). days: how far back the codes' scan looked. done(moved)
 // notes what it saw once the move is known: a code moved is forgotten, one whose move failed stays due. Nothing is noted when
 // the codes' scan didn't count (what's noted stays as it was), nor after Erase vault (gen: cleanCodeGen when the run started).
 function cleanCodeSort(ibId, folder, r, days, gen){
