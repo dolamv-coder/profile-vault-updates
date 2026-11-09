@@ -431,6 +431,20 @@ the web version reads `web-update.json` beside it, and the publish Action below
 updates both as soon as a new page and its notes reach `main` (only
 `web-update.json` while `channels.json` pauses desktop updates).
 
+## Fix with the next page release
+
+The owner asked on 2026-11-09 ("Fix it next time we need to update something") that this go into the next page
+release, whatever that release is for. Take it out of this list once it's shipped.
+
+- **Auto-clean stops silently when its one inbox is gone.** This happens when auto-clean's Inboxes menu names one inbox
+  (`autoClean.inboxId`, not `"all"`) and that inbox is deleted or has no password.
+  - `autoCleanTargets` then returns nothing, and `runAutoClean` returns before setting `lastRun` or `lastError`.
+  - The timed runs ignore that return, so the Clean page's "Last run" line just stops changing.
+  - The Inboxes menu can still read All inboxes, because it has no option for the missing id.
+  - Fix: fall back to all inboxes, or at least show the error. Also check the Delete inbox handler
+    (`case "delete-inbox"`), which may leave `inboxId` pointing at the deleted id.
+  - Add a test in `clean-rules.test.mjs`.
+
 ## Releases
 
 One commit per release, titled `Release X.Y.Z`, updates `web-update.json` (the web version) and `update.json`
