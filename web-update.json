@@ -1,10 +1,10 @@
 {
-  "version": "1.9.140",
-  "url": "index-1.9.140.html",
-  "sha256": "0b4ecf6f5a4847d845f4a21f0a2f6706e5049aba9142aeea77d3286c2a4829eb",
-  "signature": "QJhB34ZKJi5Lv8Uj5CEl4IN7bfJzIHvkwMUGkpkQ7P0SM+bDLrGk67sz5iBrWMDADTX5RB8iVbq8yRqZsJQzBQ==",
+  "version": "1.9.141",
+  "url": "index-1.9.141.html",
+  "sha256": "6f9f78623ee1649b5db976ee03d861957b2cbf891539d5113dba83bc137b6279",
+  "signature": "r3BtE5gFr0RQsI2YVxAcgZeBE2UW2zGRjyDA52kMDVgRTOeZben0+ecExkn6P/e2aFl1IwQahZXXZoHxXET2Cw==",
   "minAppVersion": "0",
-  "notes": "Clean emails now also clears Target's sign-in codes (\"Enter code … to sign in to your Target.com account\") and password reset codes, like Riot Games' and Best Buy's. Auto-clean leaves each one for an hour first, in case you're signing in with it. Target's orders and other emails stay as before.",
+  "notes": "Auto-clean now clears Target's sign-in and password reset codes on its next run, instead of leaving each one for an hour after FAFO first sees it. Riot Games' and Best Buy's codes still wait their hour.",
   "installerUrl": "",
-  "publishedAt": "2026-11-08T22:52:25.172Z"
+  "publishedAt": "2026-11-09T08:00:22.818Z"
 }
