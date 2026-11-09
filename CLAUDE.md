@@ -1832,6 +1832,15 @@ app's Spam rule doesn't keep that wording, the codes' scan hands it back like Ta
 address, "password was changed", a look-alike, a forward, a reply from guest services) when the newest page has them
 (`HAS_TGT`). Nothing gains a field.
 
+From 1.9.141 auto-clean (and Clean emails from the phone) moves Target's codes on the run that first sees them, with no
+hour's wait (the owner's report, 2026-11-09: "it scans, finds it but doesn't delete automatically"; asked, they chose "Right
+away" for Target's). The hour counted from when this FAFO first saw each code, so after restarting into 1.9.140 codes already
+hours old waited another hour, which looked like nothing happening. Target's `CLEAN_CODE_DROP` entry has `wait: 0`, and
+`cleanCodeSort` goes by `cleanCodeWaitOf` (the smallest wait of the entries a group matches, `CLEAN_CODE_WAIT` when an entry
+has none), so Riot Games' and Best Buy's keep their hour. `CLEAN_RULES_KEY` doesn't change, so there's no new 30-day look-back.
+`clean-rules.test.mjs` expects Target's codes at once when the newest page's entry has `wait:0` (`TGT_NOW`). Nothing gains a
+field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

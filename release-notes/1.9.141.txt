@@ -1,0 +1,1 @@
+Auto-clean now clears Target's sign-in and password reset codes on its next run, instead of leaving each one for an hour after FAFO first sees it. Riot Games' and Best Buy's codes still wait their hour.
