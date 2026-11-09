@@ -1,6 +1,7 @@
 // Tests what Clean emails clears in the newest page (index-X.Y.Z.html), from 1.9.134: Riot Games' login codes and welcome
 // emails and Best Buy's password reset codes go (and from 1.9.140 Target's sign-in and password reset codes), and nothing else
-// changes from 1.9.133, in the Inbox, in Spam and both. Each
+// changes from 1.9.133, in the Inbox, in Spam and both (from 1.9.141 auto-clean moves Target's on its first run, the others an
+// hour after it first sees them). Each
 // email goes through the desktop app's own scanner (scanPromos in desktop/imap-sync.js, against a pretend mail server) and then
 // the page's own code: cleanScanFolder (both scans), applyCleanSafety, cleanScan (the Clean page's Scan) and runAutoClean,
 // with its hour's wait. Sample senders and addresses only.
@@ -156,7 +157,11 @@ const scanDays = () => { const all = SERVER.scans.splice(0); return { code: all.
 const HME = (local, domain) => `${local}_at_${domain.replace(/\./g, "_")}_abcdefghijkl_mnopqr@icloud.com`;
 const RIOT = "noreply@mail.accounts.riotgames.com", BBY = "BestBuyInfo@emailinfo.bestbuy.com", TGT = "orders@oe.target.com";
 // Target's codes (1.9.140) are in the corpus only for a page that has them.
-const HAS_TGT = (readFileSync(file, "utf8").match(/const CLEAN_CODE_DROP = \[[\s\S]*?\n\];/) || [""])[0].includes("name:/^\\s*target\\s*$/i");
+const CODE_DROP_SRC = (readFileSync(file, "utf8").match(/const CLEAN_CODE_DROP = \[[\s\S]*?\n\];/) || [""])[0];
+const HAS_TGT = CODE_DROP_SRC.includes("name:/^\\s*target\\s*$/i");
+// From 1.9.141 (the owner's choice: "Right away") auto-clean moves Target's codes on the run that first sees them (wait: 0).
+const TGT_NOW = HAS_TGT && /\{wait:0, from:[^\n]*target/.test(CODE_DROP_SRC);
+const TGT_CODES = HAS_TGT ? ["tgt-signin-code", "tgt-signin-code-2", "tgt-signin-code-hme", "tgt-reset-code"] : [];
 const corpus = (p = "") => [
   // Asked for: these go.
   msg(p + "riot-code-1", { name: "Riot Games", address: RIOT, subject: "Login Code: 469078" }),
@@ -239,16 +244,18 @@ const corpus = (p = "") => [
   msg(p + "survey", { name: "Target", address: "target@medallia.com", subject: "How was your Target order?" })
 ];
 const ASKED = ["riot-code-1", "riot-code-2", "riot-code-hme", "riot-welcome", "riot-welcome-mail", "riot-welcome-fw", "riot-welcome-fw-verify", "fw-code-newsubj", "bby-reset", "bby-reset-hme",
-  ...(HAS_TGT ? ["tgt-signin-code", "tgt-signin-code-2", "tgt-signin-code-hme", "tgt-reset-code"] : [])];
+  ...TGT_CODES];
 // The known gaps, as the codes' scan hands these back like the site's own email: a forwarded welcome, and a code forwarded
 // under a subject that protects nothing, go; one the app kept by its opening lines (the welcome) stays in the kept-safe count.
 const STILL_COUNTED = ["riot-welcome-fw-verify"];
 // And a Target code forwarded under its own subject (1.9.140): kept in the Inbox by the app's own subject check, but in Spam
 // with Clear all of Spam on, where the app's Spam rule doesn't keep "Enter code … to sign in", the codes' scan hands it back
-// like Target's own, so it goes too (an hour later, by auto-clean), as a Target code.
+// like Target's own, so it goes too (by auto-clean an hour later, or from 1.9.141 at once), as a Target code.
 const SPAM_GAP = HAS_TGT ? ["tgt-code-fw"] : [];
 const asked = (id, spamAll = true) => ASKED.includes(bare(id)) || (spamAll && /^s:/.test(id) && SPAM_GAP.includes(bare(id)));
 const bare = (id) => id.replace(/^s:/, "");
+// The ones auto-clean moves on its first run (TGT_NOW): Target's codes, and in Spam with Clear all of Spam on its forward.
+const atOnce = (id, spamAll = true) => TGT_NOW && (TGT_CODES.includes(bare(id)) || (spamAll && /^s:/.test(id) && SPAM_GAP.includes(bare(id))));
 const isCode = (id) => /code|reset/.test(bare(id)) && !/welcome/.test(id);
 
 const offered = async (api, folder = "inbox") => {
@@ -406,7 +413,9 @@ for (const folder of ["inbox", "spam", "all"]) {
       };
       const now = await run(setup(file)), before = await run(reference());
       const where = `${folder}, ${sweep ? "first 30-day look-back" : "swept"}, Always keep ${keep ? "on" : "off"}, Clear all of Spam ${spamAll ? "on" : "off"}`;
-      assert.deepEqual(now.first, before.first.filter((id) => !asked(id, spamAll)), `${where}: moved at once`);
+      assert.deepEqual(now.first.filter((id) => !atOnce(id, spamAll)), before.first.filter((id) => !asked(id, spamAll)), `${where}: moved at once`);
+      for (const id of now.hour.filter((id) => atOnce(id, spamAll))) assert.ok(now.first.includes(id), `${where}: ${id} goes at once`);
+      if (TGT_NOW && !keep) assert.ok(now.first.some((id) => atOnce(id, spamAll)), `${where}: Target's codes go at once`);
       const added = now.hour.filter((id) => !before.hour.includes(id));
       assert.deepEqual(before.hour.filter((id) => !now.hour.includes(id)), [], `${where}: moved before, kept now`);
       assert.deepEqual(added.filter((id) => !asked(id, spamAll)), [], `${where}: moved after the hour, not asked for`);
@@ -466,6 +475,26 @@ await test("a server that looks back exact seconds: a code at the edge that only
   assert.equal(r.protectedCount, 1, "the Target code is still counted");
 });
 
+if (TGT_NOW) await test("Target's codes hours old when FAFO restarts go on auto-clean's first run, in the Inbox and Spam; Riot's of the same age wait their hour", async () => {
+  NOW = Date.UTC(2026, 10, 9, 15, 0, 0);
+  const mk = (p) => [msg(p + "t1", { name: "Target", address: TGT, subject: "Enter code 557017 to sign in to your Target.com account", at: NOW - 3 * 3600000 }),
+    msg(p + "t2", { name: "Target", address: TGT, subject: "Your Target.com password reset code is 123456", at: NOW - 15 * 60000 }),
+    msg(p + "t3", { name: "Target", address: HME("orders", "oe.target.com"), subject: "Enter code 112233 to sign in to your Target.com account", at: NOW - 5 * 3600000 }),
+    msg(p + "r1", { name: "Riot Games", address: RIOT, subject: "Login Code: 445566", at: NOW - 3 * 3600000 }),
+    msg(p + "o1", { name: "Target", address: TGT, subject: "Thanks for your order! #102000123456", at: NOW - 3 * 3600000 })];
+  for (const spamAll of [true, false]) {
+    server(mk(""), mk("s:"));
+    const api = setup(file); const st = api.getS().settings; st.cleanSpamAll = spamAll; swept(api, "all");
+    await api.runAutoClean();
+    const first = SERVER.moved.slice().sort();
+    assert.deepEqual(first, ["s:t1", "s:t2", "s:t3", "t1", "t2", "t3"], `Clear all of Spam ${spamAll ? "on" : "off"}: Target's codes at once`);
+    NOW += 61 * 60000; await api.runAutoClean();
+    assert.deepEqual(SERVER.moved.slice().sort(), ["r1", "s:r1", "s:t1", "s:t2", "s:t3", "t1", "t2", "t3"], "Riot's after its hour, the order stays");
+    assert.deepEqual(JSON.parse(api.store.getItem("orbit-clean-codes") || "{}"), {}, "forgets the ones that went");
+    NOW -= 61 * 60000;
+  }
+});
+
 await test("a reply or forward under another name from the same address and subject isn't taken with the site's own", async () => {
   const mk = () => [msg("own-welcome", { name: "Riot Games", address: "noreply@riotgames.com", subject: "Welcome to Riot Games", at: NOW - 2 * DAY }),
     msg("ps-reply", { name: "Riot Games Player Support", address: "noreply@riotgames.com", subject: "RE: Welcome to Riot Games" }),
@@ -506,15 +535,17 @@ await test("an old code first seen by a later 31-day run (the folder rebuilt) st
   assert.deepEqual(SERVER.moved.slice().sort(), ["old5", "old6"]);
 });
 
-await test("auto-clean moves newsletters at once and leaves the codes an hour after it first sees them", async () => {
+await test(`auto-clean moves newsletters${TGT_NOW ? " and Target's codes" : ""} at once and leaves the ${TGT_NOW ? "other " : ""}codes an hour after it first sees them`, async () => {
   NOW = Date.UTC(2026, 10, 4, 15, 0, 0);
   server(corpus());
   const api = setup(file); swept(api);
   await api.runAutoClean();
   assert.ok(SERVER.moved.includes("bby-news") && SERVER.moved.includes("survey"), "newsletters go now");
-  for (const id of ASKED.filter((id) => id !== "riot-welcome-mail")) assert.ok(!SERVER.moved.includes(id), `${id} waits`);
+  for (const id of ASKED.filter((id) => atOnce(id))) assert.ok(SERVER.moved.includes(id), `${id} goes now`);
+  const WAITS = ASKED.filter((id) => id !== "riot-welcome-mail" && !atOnce(id));
+  for (const id of WAITS) assert.ok(!SERVER.moved.includes(id), `${id} waits`);
   NOW += 50 * 60000; await api.runAutoClean();
-  for (const id of ASKED.filter((id) => id !== "riot-welcome-mail")) assert.ok(!SERVER.moved.includes(id), `${id} still waits at 50 minutes`);
+  for (const id of WAITS) assert.ok(!SERVER.moved.includes(id), `${id} still waits at 50 minutes`);
   SERVER.boxes.INBOX.msgs.push(msg("riot-code-late", { name: "Riot Games", address: RIOT, subject: "Login Code: 556677", at: NOW }));
   NOW += 15 * 60000; await api.runAutoClean();
   for (const id of ASKED) assert.ok(SERVER.moved.includes(id), `${id} goes after an hour`);
