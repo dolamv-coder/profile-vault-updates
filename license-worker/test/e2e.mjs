@@ -3631,6 +3631,231 @@ try {
     assert.equal(webhookPosts.length, before, "nothing posted");
   });
 
+  console.log("\nInterests (page 1.9.142, 2026-11-12)");
+  // Bob's FAFO sends order alerts (above), so it's the owner's here, and the only one that changes the list; Gina is a buyer.
+  // The seed (INTEREST_SEED) is filled in from the product lookup separately, so only its shape is checked here.
+  const iGet = async (key, q = "") => { const r = await fetchOnce(BASE + "/interests" + q, { headers: key ? { authorization: "Bearer " + key } : {}, cache: "no-store" }); return { status: r.status, cc: r.headers.get("cache-control"), body: await r.json() }; };
+  const iPut = async (key, body) => { const r = await fetchOnce(BASE + "/interests", { method: "PUT", headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, cc: r.headers.get("cache-control"), body: await r.json() }; };
+  const iPicUp = async (key, data) => { const r = await fetchOnce(BASE + "/interests/pic", { method: "POST", headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" }, body: JSON.stringify({ data }) }); return { status: r.status, body: await r.json() }; };
+  const iPicGet = async (ref) => { const r = await fetchOnce(BASE + "/interests/pic/" + ref, { cache: "no-store" }); return { status: r.status, h: (n) => r.headers.get(n), bytes: Buffer.from(await r.arrayBuffer()) }; };
+  const iItem = (sku, name, extra = {}) => ({ sku, store: "target", name, about: "", set: "", pic: "", tcg: "", ...extra });
+  const iShown = (it) => ({ sku: it.sku, store: it.store, name: it.name, about: it.about, set: it.set, ref: it.pic || (it.tcg ? "t" + it.tcg : "") });
+  const iPng = "data:image/png;base64," + PIXEL.toString("base64");
+  const iFile = (store, storeKey, names, kind = "profiles") => kind === "logins"
+    ? { store, storeKey, kind, text: names.map((n) => `${n.split(" ")[0].toLowerCase()}.${storeKey}@example.com:Sample-Pw-1`).join("\r\n") }
+    : { store, storeKey, kind, text: slotCsv(names.map((n) => slotRow(n, `${n.split(" ")[0].toLowerCase()}.${storeKey}@example.com`))), assigned: 0 };
+  const iSubmit = async (files, extra = {}) => {
+    const before = webhookPosts.length;
+    const r = await fetchOnce(BASE + "/submissions", { method: "POST", headers: { authorization: "Bearer " + ginaKey, "content-type": "application/json" },
+      body: JSON.stringify({ files, name: "Gina", slots: files.filter((f) => f.kind === "profiles").length, batch: "int" + rid(), ...extra }) });
+    assert.equal(r.status, 200, await r.clone().text());
+    const posts = webhookPosts.slice(before).filter((m) => m.content.startsWith("📦") || m.content.startsWith("-# More files"));
+    return { d: await r.json(), posts, files: posts.flatMap((m) => m.files) };
+  };
+  let irev = 0, iUp;
+  await test("interests: a license is needed; a buyer gets the seed, the owner gets it with each item's pic and tcg", async () => {
+    assert.equal((await iGet(null)).status, 401);
+    assert.equal((await iGet("PVLT-NOPE-NOPE-NOPE-NOPE")).status, 401);
+    const g = await iGet(ginaKey);
+    assert.equal(g.status, 200); assert.equal(g.cc, "no-store");
+    assert.equal(g.body.rev, 0, "the seed, until the owner saves a list");
+    assert.equal(g.body.owner, false);
+    assert.equal(g.body.items.length, 30, "the 30 SKUs the owner gave");
+    for (const it of g.body.items) {
+      assert.deepEqual(Object.keys(it), ["sku", "store", "name", "about", "set", "ref"], "a buyer gets no pic or tcg");
+      assert.ok(/^[A-Za-z0-9-]{3,24}$/.test(it.sku) && ["target", "pokemoncenter"].includes(it.store) && typeof it.name === "string" && it.name.trim() === it.name && it.name.length >= 1 && it.name.length <= 120, JSON.stringify(it));
+      assert.ok(typeof it.about === "string" && it.about.length <= 400 && typeof it.set === "string" && it.set.length <= 60, JSON.stringify(it));
+      assert.match(it.ref, /^(t\d{1,10})?$/, "a TCGplayer product's picture, or none");
+    }
+    assert.equal(new Set(g.body.items.map((it) => it.store + ":" + it.sku)).size, 30, "each once");
+    const o = await iGet(bobKey);
+    assert.equal(o.status, 200); assert.equal(o.body.owner, true); assert.equal(o.body.rev, 0);
+    assert.deepEqual(o.body.items.map((it) => iShown(it)), g.body.items, "the same list");
+    assert.ok(o.body.items.every((it) => it.pic === "" && /^(\d{1,10})?$/.test(it.tcg) && it.ref === (it.tcg ? "t" + it.tcg : "")), "with what the owner edits");
+    assert.deepEqual((await iGet(ginaKey, "?rev=0")).body, { rev: 0, owner: false, same: true }, "nothing new");
+    assert.equal((await iGet(ginaKey, "?rev=3")).body.items.length, 30, "another rev gets the list");
+    assert.equal((await iGet(ginaKey, "?rev=")).body.items.length, 30, "and so does none");
+    assert.equal((await fetch(BASE + "/interests", { method: "OPTIONS" })).status, 204);
+  });
+  await test("interests: only the owner's FAFO changes the list, and only from the rev it has", async () => {
+    const list = [iItem("88897899", "Sample Elite Trainer Box")];
+    assert.equal((await iPut(null, { rev: 0, items: list })).status, 401);
+    const g = await iPut(ginaKey, { rev: 0, items: list });
+    assert.equal(g.status, 403); assert.deepEqual(g.body, { error: "only your seller's FAFO can change this" });
+    assert.equal(g.cc, "no-store");
+    for (const rev of [5, undefined, "0", -1]) {
+      const r = await iPut(bobKey, { rev, items: list });
+      assert.equal(r.status, 409, String(rev)); assert.deepEqual(r.body, { error: "changed", rev: 0 });
+    }
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM interest_list")[0].n, 0, "nothing written");
+    assert.equal((await iGet(ginaKey)).body.rev, 0);
+  });
+  await test("interests: a list with a bad product is refused, saying which", async () => {
+    const good = iItem("88897899", "Sample Elite Trainer Box");
+    const bad = [
+      [{ sku: "12" }, /SKU/], [{ sku: "888 97899" }, /SKU/], [{ sku: "x".repeat(25) }, /SKU/], [{ sku: null }, /SKU/],
+      [{ store: "walmart" }, /store/], [{ store: "Target" }, /store/],
+      [{ name: "" }, /name/], [{ name: " \n\t " }, /name/], [{ name: "x".repeat(121) }, /name/], [{ name: 7 }, /name/],
+      [{ about: "x".repeat(401) }, /description/], [{ set: "x".repeat(61) }, /set/],
+      [{ pic: "javascript:alert(1)" }, /picture/], [{ pic: "h" + "0".repeat(32) }, /picture wasn't uploaded/],
+      [{ tcg: "12a" }, /TCGplayer/], [{ tcg: "12345678901" }, /TCGplayer/],
+      [{ sku: "88897899", name: "The same SKU again" }, /already/],
+    ];
+    for (const [change, err] of bad) {
+      const r = await iPut(bobKey, { rev: 0, items: [good, iItem("88897898", "Sample Booster Box", change)] });
+      assert.equal(r.status, 400, JSON.stringify(change)); assert.match(r.body.error, err); assert.equal(r.body.at, 1, JSON.stringify(change));
+    }
+    assert.deepEqual((await iPut(bobKey, { rev: 0, items: [good, "nope"] })).body, { error: "that isn't a product", at: 1 });
+    assert.equal((await iPut(bobKey, { rev: 0, items: "nope" })).status, 400);
+    const many = await iPut(bobKey, { rev: 0, items: Array.from({ length: 301 }, (_, i) => iItem(String(10000000 + i), "Sample " + i)) });
+    assert.equal(many.status, 400); assert.equal(many.body.at, 300);
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM interest_list")[0].n, 0, "nothing written");
+  });
+  await test("interests: a good save bumps the rev; every FAFO gets it, cleaned, and ?rev= of it answers same", async () => {
+    const list = [
+      { ...iItem(" 88897899 ", "  Sample\n\tElite Trainer Box\u0007 ", { about: "Nine packs,\r\nsleeves and dice.", set: "Sample Set" }), extra: "dropped" },
+      iItem("100-10001", "Sample Booster Bundle", { store: "pokemoncenter", set: "Sample Set", tcg: 712103 }),
+      iItem("88897899", "The same SKU at the other store", { store: "pokemoncenter" }),
+    ];
+    const r = await iPut(bobKey, { rev: 0, items: list });
+    assert.equal(r.status, 200, JSON.stringify(r.body)); assert.equal(r.cc, "no-store");
+    const saved = [
+      iItem("88897899", "Sample Elite Trainer Box", { about: "Nine packs, sleeves and dice.", set: "Sample Set" }),
+      iItem("100-10001", "Sample Booster Bundle", { store: "pokemoncenter", set: "Sample Set", tcg: "712103" }),
+      iItem("88897899", "The same SKU at the other store", { store: "pokemoncenter" }),
+    ];
+    assert.deepEqual(r.body, { rev: 1, owner: true, items: saved.map((it) => ({ ...iShown(it), pic: it.pic, tcg: it.tcg })) }, "answered as GET, for the owner");
+    assert.deepEqual((await iGet(ginaKey)).body, { rev: 1, owner: false, items: saved.map(iShown) }, "a buyer gets it");
+    assert.deepEqual((await iGet(ginaKey, "?rev=1")).body, { rev: 1, owner: false, same: true });
+    assert.deepEqual((await iGet(bobKey, "?rev=1")).body, { rev: 1, owner: true, same: true });
+    const stale = await iPut(bobKey, { rev: 0, items: list });
+    assert.equal(stale.status, 409); assert.deepEqual(stale.body, { error: "changed", rev: 1 }, "made from the seed: another device saved since");
+    assert.deepEqual(dbRows("SELECT rev FROM interest_list"), [{ rev: 1 }]);
+    irev = 1;
+  });
+  await test("interests: the owner uploads a picture; it's served once the list shows it, with its type and headers", async () => {
+    assert.equal((await iPicUp(null, iPng)).status, 401);
+    assert.equal((await iPicUp(ginaKey, iPng)).status, 403, "only the owner's FAFO");
+    for (const data of ["data:image/gif;base64,R0lGODlhAQABAAAAACw=", "not a picture", "data:image/png;base64,", "data:image/png;base64," + Buffer.from("<p>hi</p>").toString("base64"), 7]) {
+      assert.equal((await iPicUp(bobKey, data)).status, 400, String(data));
+    }
+    const big = Buffer.concat([PIXEL, Buffer.alloc(150 * 1024)]);
+    assert.equal((await iPicUp(bobKey, "data:image/png;base64," + big.toString("base64"))).status, 413, "150 KB at most");
+    const up = await iPicUp(bobKey, iPng);
+    assert.equal(up.status, 200);
+    assert.deepEqual(up.body, { ref: "h" + createHash("sha256").update(PIXEL).digest("hex").slice(0, 32) }, "named by its hash");
+    assert.deepEqual((await iPicUp(bobKey, iPng)).body, up.body, "the same picture again is the same one");
+    assert.deepEqual(dbRows(`SELECT type FROM interest_pics WHERE ref = '${up.body.ref}'`), [{ type: "image/png" }]);
+    iUp = up.body.ref;
+    const before = await iPicGet(iUp);
+    assert.equal(before.status, 404, "not before the list shows it"); assert.equal(before.h("cache-control"), "no-store");
+    const r = await iPut(bobKey, { rev: irev, items: [iItem("88897899", "Sample Elite Trainer Box", { pic: iUp, tcg: "712100" }), iItem("88897898", "Sample Booster Box", { tcg: "712101" })] });
+    assert.equal(r.status, 200); irev = r.body.rev;
+    assert.deepEqual(r.body.items.map((it) => [it.ref, it.pic, it.tcg]), [[iUp, iUp, "712100"], ["t712101", "", "712101"]], "an upload shows over its TCGplayer picture");
+    const p = await iPicGet(iUp);
+    assert.equal(p.status, 200);
+    assert.equal(p.h("content-type"), "image/png");
+    assert.equal(p.h("cache-control"), "public, max-age=31536000, immutable");
+    assert.equal(p.h("access-control-allow-origin"), "*");
+    assert.equal(p.h("cross-origin-resource-policy"), "cross-origin");
+    assert.equal(p.h("x-content-type-options"), "nosniff");
+    assert.deepEqual(p.bytes, PIXEL);
+    for (const ref of ["h" + "f".repeat(32), "t999999", "x1", "h12", "t712100"]) {
+      const n = await iPicGet(ref);
+      assert.equal(n.status, 404, ref); assert.equal(n.h("cache-control"), "no-store", ref);
+    }
+  });
+  await test("interests: a TCGplayer product's picture is fetched once from its image servers, kept, then served from here", async () => {
+    imageHits.length = 0;
+    const a = await iPicGet("t712101");
+    assert.equal(a.status, 200);
+    assert.equal(a.h("content-type"), "image/png");
+    assert.equal(a.h("cache-control"), "public, max-age=604800");
+    assert.equal(a.h("access-control-allow-origin"), "*"); assert.equal(a.h("cross-origin-resource-policy"), "cross-origin"); assert.equal(a.h("x-content-type-options"), "nosniff");
+    assert.deepEqual(a.bytes, PIXEL);
+    assert.deepEqual(imageHits, ["/img/fit/712101.jpg"]);
+    assert.deepEqual(dbRows("SELECT type FROM interest_pics WHERE ref = 't712101'"), [{ type: "image/png" }], "kept");
+    const b = await iPicGet("t712101");
+    assert.equal(b.status, 200); assert.deepEqual(b.bytes, PIXEL);
+    assert.deepEqual(imageHits, ["/img/fit/712101.jpg"], "the second time from here");
+    // One whose picture doesn't come (the stand-in servers answer a page for 650002): 404, not kept, and asked again.
+    const r = await iPut(bobKey, { rev: irev, items: [iItem("88897899", "Sample Elite Trainer Box", { pic: iUp, tcg: "712100" }), iItem("88897898", "Sample Booster Box", { tcg: "712101" }),
+      iItem("88897904", "Sample Collection", { tcg: "650002" })] });
+    assert.equal(r.status, 200); irev = r.body.rev;
+    imageHits.length = 0;
+    const c = await iPicGet("t650002");
+    assert.equal(c.status, 404); assert.equal(c.h("cache-control"), "no-store");
+    const tries = imageHits.length;
+    assert.ok(tries > 0, "TCGplayer was asked");
+    assert.equal((await iPicGet("t650002")).status, 404);
+    assert.ok(imageHits.length > tries, "and asked again the next time");
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM interest_pics WHERE ref = 't650002'")[0].n, 0);
+    imageHits.length = 0;
+    assert.equal((await iPicGet("t712102")).status, 404);
+    assert.deepEqual(imageHits, [], "a product the list doesn't show isn't fetched");
+  });
+  await test("interests: a picture the list stops showing isn't served; saving drops TCGplayer's, and uploads a day old", async () => {
+    const r = await iPut(bobKey, { rev: irev, items: [iItem("88897899", "Sample Elite Trainer Box", { tcg: "712100" })] });
+    assert.equal(r.status, 200); irev = r.body.rev;
+    assert.equal((await iPicGet(iUp)).status, 404, "the upload, off the list");
+    assert.equal((await iPicGet("t712101")).status, 404, "a product off the list");
+    assert.deepEqual(dbRows("SELECT ref FROM interest_pics ORDER BY ref").map((x) => x.ref), [iUp], "TCGplayer's no item shows went; the upload is kept a day");
+    sqlRun(`UPDATE interest_pics SET at = at - ${2 * 86400000} WHERE ref = '${iUp}'`);
+    const again = await iPut(bobKey, { rev: irev, items: r.body.items.map((it) => ({ ...it, ref: undefined })) });
+    assert.equal(again.status, 200); irev = again.body.rev;
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM interest_pics")[0].n, 0, "an upload over a day old that nothing shows goes");
+    assert.equal((await iPut(bobKey, { rev: irev, items: [iItem("88897899", "Sample", { pic: iUp })] })).status, 400, "and can't be used without uploading it again");
+  });
+  await test("interests: a batch carries the SKUs ticked for each of its stores, on the list, in its order, after that store's files", async () => {
+    const r = await iPut(bobKey, { rev: irev, items: [iItem("88897899", "Sample Elite Trainer Box"), iItem("100-10001", "Sample PC Bundle", { store: "pokemoncenter" }),
+      iItem("88897898", "Sample Booster Box"), iItem("100-10002", "Sample PC Tin", { store: "pokemoncenter" }), iItem("1011407490", "Sample Tin"), iItem("88897904", "Sample Collection")] });
+    assert.equal(r.status, 200); irev = r.body.rev;
+    const files = [iFile("Target", "target", ["Gina Int1", "Gina Int2"]), iFile("Target", "target", ["Gina Int1", "Gina Int2"], "logins"), iFile("Pokémon Center", "pokemoncenter", ["Gina Int3"])];
+    const interests = { target: ["1011407490", "88897899", "88897899", "99999999", "100-10001"], pokemoncenter: ["100-10002"], walmart: ["12345678"] };
+    const stores = [{ name: "Target", n: 2 }, { name: "Pokémon Center", n: 1 }];
+    const s = await iSubmit(files, { interests, stores });
+    assert.deepEqual(s.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-skus.txt",
+      "Gina-pokemon-center-aycd.json", "Gina-pokemon-center-shikari.csv", "Gina-pokemon-center-skus.txt"]);
+    const sk = s.files.filter((f) => f.name.endsWith("-skus.txt"));
+    assert.deepEqual(sk.map((f) => f.text), ["88897899\r\n1011407490", "100-10002"], "the list's order, once each, only that store's, only what's on the list");
+    assert.ok(sk.every((f) => /^text\/plain/.test(f.type)));
+    assert.deepEqual(s.d.skus, { target: 2, pokemoncenter: 1 });
+    // The message is as it was without them (the owner chose a file only).
+    const plainBatch = await iSubmit(files, { stores });
+    assert.deepEqual(plainBatch.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-pokemon-center-aycd.json", "Gina-pokemon-center-shikari.csv"]);
+    assert.equal(plainBatch.d.skus, undefined);
+    assert.equal(s.posts.length, 1); assert.equal(plainBatch.posts.length, 1);
+    assert.equal(s.posts[0].content.split("\n⏳")[0], plainBatch.posts[0].content.split("\n⏳")[0]);
+  });
+  await test("interests: no file for a store the batch doesn't have, none ticked, or interests that aren't right; the batch goes on", async () => {
+    const files = [iFile("Target", "target", ["Gina Int4"])];
+    const pcOnly = await iSubmit(files, { interests: { pokemoncenter: ["100-10001"] } });
+    assert.deepEqual(pcOnly.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv"], "Pokémon Center isn't in this batch");
+    assert.equal(pcOnly.d.skus, undefined);
+    for (const interests of [{ target: [] }, { target: ["99999999"] }, "nope", [["target", ["88897899"]]], { target: "88897899" }, { target: [null, {}, ["88897899"], "8 8"] }, null]) {
+      const s = await iSubmit(files, { interests });
+      assert.deepEqual(s.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv"], JSON.stringify(interests));
+      assert.equal(s.d.skus, undefined);
+    }
+  });
+  await test("interests: with more than 10 files, each store's SKUs still follow its files into the next message", async () => {
+    const files = [
+      iFile("Walmart", "walmart", ["Gina W1"]), iFile("Walmart", "walmart", ["Gina W1"], "logins"),
+      iFile("Best Buy", "bestbuy", ["Gina B1"]), iFile("Best Buy", "bestbuy", ["Gina B1"], "logins"),
+      iFile("Pokémon Center", "pokemoncenter", ["Gina P1"]),
+      iFile("Target", "target", ["Gina T1"]), iFile("Target", "target", ["Gina T1"], "logins"),
+    ];
+    const s = await iSubmit(files, { interests: { target: ["88897898"], pokemoncenter: ["100-10001", "100-10002"] } });
+    assert.equal(s.posts.length, 2, "two messages");
+    assert.deepEqual(s.posts.map((m) => m.files.map((f) => f.name)), [
+      ["Gina-walmart-aycd.json", "Gina-walmart-shikari.csv", "Gina-walmart-logins.txt", "Gina-best-buy-aycd.json", "Gina-best-buy-shikari.csv", "Gina-best-buy-logins.txt",
+        "Gina-pokemon-center-aycd.json", "Gina-pokemon-center-shikari.csv", "Gina-pokemon-center-skus.txt", "Gina-target-aycd.json"],
+      ["Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-skus.txt"]]);
+    assert.match(s.posts[1].content, /^-# More files for the batch from \*\*Gina\*\* · @gina · license …\w{4} \(11–13 of 13\)\.$/);
+    assert.deepEqual(s.files.filter((f) => f.name.endsWith("-skus.txt")).map((f) => f.text), ["100-10001\r\n100-10002", "88897898"]);
+    assert.deepEqual(s.d.skus, { pokemoncenter: 2, target: 1 });
+  });
+
   console.log("\nPayments: off until the Stripe keys are set (2026-10-18)");
   // Bob's FAFO sends order alerts (above), so it's the owner's here.
   const acctOf = (e) => createHash("sha256").update("acct:" + String(e).trim().toLowerCase()).digest("hex");
