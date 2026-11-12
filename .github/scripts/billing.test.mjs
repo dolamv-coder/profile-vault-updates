@@ -6,13 +6,21 @@
 // page runs in Chromium (Playwright), as the web version at app.fafoaco.com, against a pretend license worker, as
 // interests.test.mjs runs it: a vault made with Use this browser only, then a license key kept as Submit keeps one typed
 // there. Sample keys and amounts only.
+// From 1.9.144 (the owner's requests, 2026-11-12: "Change invoice due date to every Sunday", "Change friends and family cost
+// to $5"): with the worker's prices.dueRule "sunday" a checkout is due by the end of the Sunday after it, Eastern time, and
+// Invoice says so and shows each due date as that Sunday in Eastern time, wherever the computer is (this test runs in
+// Tokyo's time zone, where the instant is Monday); Friends and Family who pay (family: true, exempt null) get the pay per
+// checkout page at their own price, with no plan cards or monthly plan; at $0 (exempt "family") they have nothing to pay,
+// as before; and an older worker's answer (no dueRule, no family) shows what 1.9.143 did.
 //   node .github/scripts/billing.test.mjs [path/to/index-X.Y.Z.html]
-// The newest page must read plans (billMonthlyOffered); a page named on the command line that doesn't is skipped.
+// The newest page must read plans (billMonthlyOffered) and the Sunday rule (billDueDay); a page named on the command line
+// that doesn't read plans is skipped, and one that doesn't read the Sunday rule skips those tests.
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const cmp = (a, b) => { const x = a.split(".").map(Number), y = b.split(".").map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
@@ -23,11 +31,14 @@ if (!/const billMonthlyOffered = /.test(HTML)) {
   if (!process.argv[2]) { console.error(`${file} doesn't read the worker's plans (billMonthlyOffered): update this test if that's on purpose`); process.exit(1); }
   console.log(`${file}: no plans from the worker, skipped`); process.exit(0);
 }
+const SUNDAY = /const billDueDay = /.test(HTML);
+if (!SUNDAY && !process.argv[2]) { console.error(`${file} doesn't read the worker's Sunday due dates (billDueDay): update this test if that's on purpose`); process.exit(1); }
 // The app runs inside one function, so the copy served here hands the test a few of its own names (window.__t).
 const END = "\ntry { if (window.pvDesktop && window.pvDesktop.appReady) window.pvDesktop.appReady(); } catch(e){}\n})();";
 assert.equal(HTML.split(END).length, 2, "couldn't find the end of the app's code");
 const PAGE = HTML.replace(END, "\nwindow.__t = {get S(){ return S; }, get billMem(){ return billMem; }, set billMem(v){ billMem = v; }, BILL, keepTypedLic, persist, render, renderMain, refreshBilling, billOpen, billRead, billPlan,"
-  + " billMonthly, billMonthlyOffered, billingBlockDialog, slotLimitDialog, slotAllowHTML, closeAllLayers, refreshSlotAllow};" + END);
+  + " billMonthly, billMonthlyOffered, billingBlockDialog, slotLimitDialog, slotAllowHTML, closeAllLayers, refreshSlotAllow"
+  + (SUNDAY ? ", billDay, billDueDay, billDueWhen, billSum, billNotices, billSubmitNote, billBadge, billingSectionHTML, reportCheckouts" : "") + "};" + END);
 let chromium;
 try { ({ chromium } = createRequire(import.meta.url)("playwright")); }
 catch (e) { console.error("This test needs Playwright: npm install --no-save playwright, then npx playwright install chromium"); process.exit(1); }
@@ -38,13 +49,15 @@ const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok
 // ---- The pretend license worker ----
 const LIC = "PVLT-TEST-TEST-TEST-TEST";
 const DAY = 86400000;
+// An older worker's prices (before 1.9.144: no dueRule, no family), and the Sunday rule's.
 const PRICES = { checkout: 500, monthly: 2500, extra: 2500, monthlySlots: 10, extraSlots: 15, extraMax: 1, dueDays: 3 };
+const PRICES_SUN = Object.assign({}, PRICES, { family: 500, dueRule: "sunday", dueTz: "America/New_York" });
 const NO_PLAN = { block: { reason: "no-plan", text: "Pick a plan to submit." } };
 // GET /billing's answer, as the worker's billingBody writes it (tag: which answer this is, for the test).
 const base = (o) => Object.assign({ on: true, mode: "live", exempt: null, plan: null, nextPlan: null, block: null, now: Date.now(), prices: PRICES, sub: null,
   lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null }, o);
 const SUB = (o) => Object.assign({ status: "active", cancelAtEnd: false, extras: 0, paused: false, periodEnd: Date.now() + 20 * DAY, slots: 10 }, o);
-const W = { billing: base({}), plans: [], checkouts: [], limit: { limit: 20, request: null, canRequest: true } };
+const W = { billing: base({}), plans: [], checkouts: [], reports: [], limit: { limit: 20, request: null, canRequest: true } };
 const offered = () => !Array.isArray(W.billing.plans) || W.billing.plans.includes("monthly");
 const GONE = { error: "The monthly plan isn't offered any more." };
 const CORS = { "access-control-allow-origin": "*" };
@@ -72,6 +85,8 @@ async function worker(route, req, u) {
     if (["monthly", "extras", "resume"].includes(b.kind) && !offered()) return json(route, 409, GONE);
     return json(route, 200, { url: "https://checkout.stripe.com/c/pay/sample", pay: "" });
   }
+  // Checkouts on the buyer's own accounts, reported by their FAFO.
+  if (p === "/billing/checkouts" && m === "POST") { const b = JSON.parse(req.postData()); W.reports.push(b); return json(route, 200, { added: (b.orders || []).length }); }
   if (p === "/premium") return json(route, 200, { premium: false, owner: false });
   if (p === "/slots/limit") return json(route, 200, W.limit);
   if (p === "/interests") return json(route, 200, { rev: 1, owner: false, items: [] });
@@ -79,7 +94,9 @@ async function worker(route, req, u) {
 }
 
 const browser = await chromium.launch();
-const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+// In Tokyo's time zone, where a Sunday's last moment in Eastern time is already Monday afternoon: the due dates must still
+// read as the Sunday.
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: "en-US", timezoneId: "Asia/Tokyo" });
 await ctx.route("**/*", async (route) => {
   const req = route.request(), u = new URL(req.url());
   // The page as the web version serves it; the license worker at either of its addresses; nothing else from outside.
@@ -299,6 +316,177 @@ try {
     assert.deepEqual(await alone({ sub: undefined, plans: undefined }), [true, true, true, "monthly"]);
     await answer({ plans: ["checkout"], plan: "checkout" });
   });
+
+  if (SUNDAY) {
+    // Sunday Nov 15 2026, 23:59:59.999 Eastern (EST): Monday 00:00 less 1 ms, as the worker stores a due date.
+    const SUN_NOV15 = Date.parse("2026-11-16T04:59:59.999Z");
+    const line = (o) => Object.assign({ id: "l" + Math.random().toString(36).slice(2, 8), store: "target", storeName: "", orderNo: "1000000001", item: "Sample Booster Bundle", qty: 1,
+      orderAt: "2026-11-10", source: "alert", amount: 500, createdAt: Date.now() - DAY, dueAt: SUN_NOV15, state: "due", paidAt: null, acctHash: null, profile: "Sample 1", disputable: false }, o);
+    const dueCells = () => page.$$eval("#main .inv-table tbody tr", (trs) => trs.map((tr) => { const td = tr.querySelectorAll("td")[5], sp = td.querySelector("span"); return [td.textContent.trim(), sp ? sp.title : ""]; }));
+    const dueHead = () => page.$eval("#main .inv-table thead th:nth-child(6)", (e) => [e.textContent, e.style.width]);
+    const clearToasts = () => ev(() => document.querySelectorAll("#toasts .toast").forEach((t) => t.remove()));
+    // Waits for a request the page sends to the pretend worker (n: how many there were before).
+    const sentAfter = async (list, n) => { for (let i = 0; i < 100 && list.length === n; i++) await page.waitForTimeout(50); return list.slice(n); };
+
+    await test("Sunday rule: the plan card and the pay per checkout page say due by the end of the Sunday after it (Eastern time), and from Monday it's overdue", async () => {
+      await answer(Object.assign({ plans: ["checkout"], prices: PRICES_SUN }, NO_PLAN));
+      let t = await mainText();
+      assert.match(t, /Each is due by the end of the Sunday after it \(Eastern time\), and free if the store cancels it before you pay\./);
+      assert.doesNotMatch(t, /3 days/);
+      await answer({ plans: ["checkout"], plan: "checkout", prices: PRICES_SUN });
+      t = await mainText();
+      assert.equal(await sub(), "Pay per checkout · $5 each");
+      assert.match(t, /Each checkout is \$5, due by the end of the Sunday after it \(Eastern time\)\. From Monday it's overdue and Submit turns off until it's paid\./);
+      assert.doesNotMatch(t, /3 days|An overdue checkout turns Submit off/);
+    });
+
+    await test("the Due by column shows each due date as its Sunday in Eastern time (Tokyo's own date is Monday), across daylight saving", async () => {
+      // This computer's own date for it is Monday Nov 16 (the reason for Eastern time).
+      assert.equal(await ev((ms) => window.__t.billDay(ms), SUN_NOV15), "Nov 16");
+      const due = [
+        [SUN_NOV15, "Sun, Nov 15"],
+        [SUN_NOV15 + 1, "Sun, Nov 15"],                              // Monday 00:00 itself is the Sunday it ends
+        [Date.parse("2026-11-02T04:59:59.999Z"), "Sun, Nov 1"],      // the day daylight saving ends
+        [Date.parse("2027-03-15T03:59:59.999Z"), "Sun, Mar 14"],     // the day it starts (EDT)
+        [Date.parse("2027-11-08T04:59:59.999Z"), "Sun, Nov 7"],
+      ];
+      const lines = due.map(([dueAt], i) => line({ orderNo: "100000001" + i, dueAt, state: i === 1 ? "overdue" : "due" }))
+        .concat([line({ orderNo: "1000000019", state: "paid", paidAt: Date.now() - DAY, dueAt: SUN_NOV15 })]);
+      await answer({ plans: ["checkout"], plan: "checkout", prices: PRICES_SUN, lines, owed: 2500, overdue: 500, paid30: 500 });
+      const cells = await dueCells();
+      assert.deepEqual(cells.map((c) => c[0]), due.map((x) => x[1]).concat(["—"]));
+      assert.equal(cells[0][1], "Due by the end of Sun, Nov 15, Eastern time");
+      assert.deepEqual(await dueHead(), ["Due by", "10%"]);
+      for (const [ms, want] of due) assert.equal(await ev((x) => window.__t.billDueDay(x), ms), want);
+    });
+
+    await test("Submit's note, a new checkout's notice and the day's reminder name the Sunday in Eastern time", async () => {
+      await answer({ plans: ["checkout"], plan: "checkout", prices: PRICES_SUN, lines: [line({})], owed: 500 });
+      assert.match(await ev(() => window.__t.billSubmitNote()), /\$5 due by Sun, Nov 15 · /);
+      // The reminder on the day says the time, in Eastern time.
+      assert.equal(await ev((ms) => window.__t.billDueWhen(ms, { prices: { dueRule: "sunday" } }), SUN_NOV15), "Sun, Nov 15, 11:59 PM EST");
+      // A checkout new to this device: its toast names the Sunday.
+      await clearToasts();
+      await ev((l) => window.__t.billNotices({ prices: { dueRule: "sunday" }, lines: [l] }), line({ createdAt: Date.now() + 30 * DAY }));
+      await toastSays(/1 checkout added to your invoice · \$5 due by Sun, Nov 15/);
+      await clearToasts();
+    });
+
+    await test("Friends and Family who pay: the pay per checkout page at their price, no plan cards and no monthly plan", async () => {
+      const lines = [line({ orderNo: "2000000001" }), line({ orderNo: "2000000002", state: "paid", paidAt: Date.now() - DAY })];
+      await answer({ plans: ["checkout", "monthly"], family: true, exempt: null, plan: "checkout", prices: PRICES_SUN, lines, owed: 500, paid30: 500 });
+      assert.equal(await sub(), "Friends and Family · $5 per checkout");
+      assert.equal(await page.$$eval("#main .inv-plan", (e) => e.length), 0, "no plan cards");
+      assert.ok(await has('#main [data-act="bill-pay"]'), "Pay");
+      assert.ok(await has("#main .inv-table"), "the checkouts");
+      assert.ok(!(await has('#main [data-act="bill-monthly"]')), "no Switch to the monthly plan, even with it offered");
+      assert.doesNotMatch(await mainText(), MONTHLY);
+      assert.match(await mainText(), /Each checkout is \$5, due by the end of the Sunday after it \(Eastern time\)\./);
+      assert.equal(await ev(() => window.__t.billMonthly()), false);
+      assert.equal(await ev(() => window.__t.billBadge()), 1);
+      assert.equal(await page.$eval('#side [data-id="invoice"] .n', (e) => e.textContent), "1");
+      // Their price is the worker's, and a plan the worker didn't name is still pay per checkout.
+      await answer({ plans: ["checkout"], family: true, exempt: null, plan: null, prices: Object.assign({}, PRICES_SUN, { checkout: 1000 }), lines, owed: 1000 });
+      assert.equal(await sub(), "Friends and Family · $10 per checkout");
+      assert.equal(await page.$$eval("#main .inv-plan", (e) => e.length), 0);
+      assert.equal(await ev(() => window.__t.billPlan(window.__t.BILL.d)), "checkout");
+      // Overdue: Submit's window has them pay it.
+      const w = await windowOf(() => window.__t.billingBlockDialog({ reason: "overdue", text: "A checkout is overdue. Pay it to submit again." }));
+      assert.equal(w.title, "Pay what's overdue");
+      // This device keeps that they're Friends and Family, and another tab's answer that only says so is news.
+      const kept = await ev(() => JSON.parse(localStorage.getItem("orbit-billing")));
+      assert.equal(kept.family, true);
+      assert.ok(!("lines" in kept) && !("prices" in kept), "no amounts kept");
+      assert.notEqual(await ev((k) => window.__t.billSum(k), kept), await ev((k) => window.__t.billSum(Object.assign({}, k, { family: false })), kept));
+    });
+
+    await test("Friends and Family who pay report checkouts on their own accounts; at $0 they don't", async () => {
+      const email = "sample.buyer@example.com", hash = createHash("sha256").update("acct:" + email).digest("hex");
+      await ev((e) => { window.__t.S.orders = (window.__t.S.orders || []).concat([{ id: "o-bill-test", orderNo: "3000000001", at: "2026-11-10", stage: "placed", store: "target", sentTo: e, item: "Sample Elite Trainer Box", qty: "1" }]); }, email);
+      try {
+        const report = { from: "2026-11-01", accts: [hash] };
+        await answer({ plans: ["checkout"], family: true, exempt: "family", plan: null, prices: Object.assign({}, PRICES_SUN, { checkout: 0, family: 0 }), report });
+        let n = W.reports.length;
+        await ev(() => window.__t.reportCheckouts());
+        assert.equal(W.reports.length, n, "nothing reported at $0");
+        await answer({ plans: ["checkout"], family: true, exempt: null, plan: "checkout", prices: PRICES_SUN, report });
+        n = W.reports.length;
+        await ev(() => window.__t.reportCheckouts());
+        const sent = (await sentAfter(W.reports, n)).flatMap((b) => b.orders);
+        assert.deepEqual(sent.filter((x) => x.orderNo === "3000000001").map((x) => [x.account, x.store, x.stage]), [[email, "target", "placed"]]);
+        assert.deepEqual(await ev(() => window.__t.S.orders.find((o) => o.id === "o-bill-test").billTold), { placed: 1 });
+      } finally {
+        await ev(() => { window.__t.S.orders = window.__t.S.orders.filter((o) => o.id !== "o-bill-test"); });
+      }
+    });
+
+    await test("Friends and Family with a monthly plan from before: it shows, paused, with Cancel plan, and cancelling keeps them on pay per checkout", async () => {
+      await answer({ plans: ["checkout"], family: true, exempt: null, plan: "checkout", prices: PRICES_SUN, sub: SUB({ paused: true }) });
+      assert.equal(await sub(), "Friends and Family · $5 per checkout");
+      assert.match(await mainText(), /Monthly plan · paused while you're Friends and Family/);
+      const n = W.checkouts.length;
+      await page.click('#main [data-act="bill-cancel"]');
+      await page.waitForSelector("#cf-go");
+      const t = await layerText();
+      assert.match(t, /As Friends and Family you go on paying \$5 per checkout, as you do now\./);
+      assert.doesNotMatch(t, /nothing is charged/);
+      await page.click("#cf-go");
+      assert.deepEqual(await sentAfter(W.checkouts, n), [{ kind: "cancel", then: "checkout" }]);
+      await page.waitForFunction(() => !document.querySelector("#layers .panel"));
+    });
+
+    await test("Friends and Family at $0: nothing to pay, no count, as before", async () => {
+      await answer({ plans: ["checkout"], family: true, exempt: "family", plan: null, prices: Object.assign({}, PRICES_SUN, { checkout: 0, family: 0 }) });
+      assert.equal(await sub(), "Friends and Family");
+      assert.match(await mainText(), /Nothing to pay/);
+      assert.match(await mainText(), /Your seller doesn't charge you\./);
+      assert.equal(await ev(() => window.__t.billBadge()), "");
+      // With a plan from before, Cancel plan says nothing is charged, and sends no plan for after.
+      await answer({ plans: ["checkout"], family: true, exempt: "family", plan: null, prices: Object.assign({}, PRICES_SUN, { checkout: 0, family: 0 }), sub: SUB({ paused: true }) });
+      assert.match(await mainText(), /Monthly plan · no charge while you're Friends and Family/);
+      await page.click('#main [data-act="bill-cancel"]');
+      await page.waitForSelector("#cf-go");
+      assert.match(await layerText(), /You're Friends and Family, so nothing is charged meanwhile or after\./);
+      const n = W.checkouts.length;
+      await page.click("#cf-go");
+      assert.deepEqual(await sentAfter(W.checkouts, n), [{ kind: "cancel", then: null }]);
+      await page.waitForFunction(() => !document.querySelector("#layers .panel"));
+    });
+
+    await test("an older worker's answer (no dueRule, no family): what 1.9.143 showed, 3 days and this computer's own dates", async () => {
+      await answer(Object.assign({ plans: ["checkout"] }, NO_PLAN));
+      assert.match(await mainText(), /Each is due 3 days after it, and free if the store cancels it before you pay\./);
+      assert.doesNotMatch(await mainText(), /Sunday|Eastern/);
+      await answer({ plans: ["checkout"], plan: "checkout", lines: [line({})], owed: 500 });
+      const t = await mainText();
+      assert.equal(await sub(), "Pay per checkout · $5 each");
+      assert.match(t, /Each checkout is \$5, due 3 days after it\. An overdue checkout turns Submit off until it's paid\./);
+      assert.doesNotMatch(t, /Sunday|Eastern|From Monday/);
+      assert.deepEqual(await dueCells(), [["Nov 16", ""]]);
+      assert.deepEqual(await dueHead(), ["Due by", "8%"]);
+      assert.match(await ev(() => window.__t.billSubmitNote()), /\$5 due by Nov 16 · /);
+      assert.equal(await ev((ms) => window.__t.billDueWhen(ms, { prices: {} }), SUN_NOV15), new Date(SUN_NOV15).toLocaleString("en-US", { timeZone: "Asia/Tokyo", weekday: "short", hour: "numeric", minute: "2-digit" }));
+      // Friends and Family there are all exempt "family": nothing to pay.
+      await answer({ plans: ["checkout"], exempt: "family", plan: null });
+      assert.match(await mainText(), /Nothing to pay/);
+      const kept = await ev(() => JSON.parse(localStorage.getItem("orbit-billing")));
+      assert.equal(kept.family, false);
+    });
+
+    await test("the seller's Settings → Billing names the Friends and Family price and the Sunday rule, or says what an older worker does", async () => {
+      await answer({ exempt: "owner", plans: ["checkout"], prices: PRICES_SUN });
+      let h = await ev(() => window.__t.billingSectionHTML());
+      assert.match(h, /are Friends and Family: they pay \$5 per checkout, the price you set for them on the billing page \(\$0 means they aren't charged\)\. Your own FAFO is never charged\. Checkouts are due by the end of the Sunday after them, Eastern time\./);
+      assert.doesNotMatch(h, /Friends and Family and aren't charged/);
+      await answer({ exempt: "owner", plans: ["checkout"], prices: Object.assign({}, PRICES_SUN, { family: 0 }) });
+      assert.match(await ev(() => window.__t.billingSectionHTML()), /they aren't charged, since their price on the billing page is \$0/);
+      await answer({ exempt: "owner", plans: ["checkout"] });
+      h = await ev(() => window.__t.billingSectionHTML());
+      assert.match(h, /Plans, invoices and Friends and Family\. Buyers you approved before payments started are Friends and Family and aren't charged\.<\/p>/);
+      await answer({ plans: ["checkout"], plan: "checkout" });
+      await ev(() => window.__t.billOpen());
+    });
+  }
 
   await test("the page threw nothing", () => assert.deepEqual(errors, []));
 } finally {
