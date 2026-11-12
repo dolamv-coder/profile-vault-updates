@@ -4339,7 +4339,10 @@ async function billingState(env, c, hash) {
   // With the monthly plan no longer offered, a monthly plan whose subscription is gone (or never was) is no plan: they pick
   // pay per checkout, never left waiting on a plan that can't be started.
   const gone = !!b && b.plan === "monthly" && !live && !monthlyOffered(env);
-  Object.assign(out, { exempt: w.exempt, plan: b && !gone ? b.plan : null, nextPlan: b && !gone ? b.next_plan : null, sub: live ? subOut(s) : null });
+  Object.assign(out, { exempt: w.exempt, plan: b && !gone ? b.plan : null, nextPlan: b && !gone ? b.next_plan : null });
+  // Nor is one never paid for (still being set up when the plan went) shown as theirs: an older FAFO (1.9.130 to 1.9.142)
+  // would offer only to finish paying for it in Invoice, which /billing/checkout refuses now.
+  out.sub = live && !(s.status === "incomplete" && out.plan !== "monthly" && !monthlyOffered(env)) ? subOut(s) : null;
   out.monthlyOk = out.plan === "monthly" && !!s && (s.status === "active" || s.status === "trialing");
   if (w.exempt) return out;
   Object.assign(out, await lineTotals(env, c, hash));
@@ -4975,6 +4978,8 @@ async function billingCheckout(request, env, ctx, url) {
     }
     const st = await billingState(env, c, lic.hash), s = await liveSubOf(env, c, w);
     if (!s) return body(409, { error: "You don't have a monthly plan." });
+    // Paying the first invoice of one never paid for (being set up when the plan went) would start the plan: refused too.
+    if (kind === "invoice" && s.status === "incomplete" && !monthlyOffered(env)) return body(409, { error: NO_MONTHLY });
     const path = `/v1/subscriptions/${encodeURIComponent(s.sub_id)}`;
     if (kind === "extras") {
       if (!st.monthlyOk) return body(409, { error: "Your monthly plan needs to be paid up for that." });

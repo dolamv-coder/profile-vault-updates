@@ -4850,7 +4850,11 @@ try {
     assert.equal(await hook("customer.subscription.created", stuck), 200);
     assert.equal(dbRows(`SELECT sub_id FROM billing WHERE key_hash = '${xiaHash}' AND mode = 'live'`)[0].sub_id, stuck.id);
     const st = await billOf(xiaKey);
-    assert.deepEqual([st.plan, st.block], [null, NO_PLAN], "not setting-up, which they couldn't finish");
+    assert.deepEqual([st.plan, st.block, st.sub], [null, NO_PLAN, null], "not setting-up, which they couldn't finish (an older FAFO offers Finish payment for a sub shown)");
+    const asked = stripeCalls.filter((x) => x.path === "/v1/invoices").length;
+    const fin = await checkout(xiaKey, { kind: "invoice" });
+    assert.deepEqual([fin.status, fin.body.error, fin.body.plan, fin.body.block], [409, NO_MONTHLY.error, null, NO_PLAN], "paying its first invoice would start the plan");
+    assert.equal(stripeCalls.filter((x) => x.path === "/v1/invoices").length, asked, "Stripe never asked for its invoice");
     const r = await submit(xiaKey, [ownFile([["Xia Own", "xia.own@example.com"]]), loginsFile(["xia.own@example.com"])], { name: "Xia", on: 1 });
     assert.equal(r.status, 402); assert.equal((await r.json()).billing.reason, "no-plan");
     Object.assign(stuck, { status: "incomplete_expired", ended_at: sxNow() });
