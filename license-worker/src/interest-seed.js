@@ -97,3 +97,23 @@ export const INTEREST_SEED = [
     name: "Ascended Heroes Deluxe Pin Collection: Tepig",
     about: "Listed at Target as the Tepig Deluxe Pin Collection." },
 ];
+
+// Products added to the live list once, after the seed (interest_adds records each batch applied): kept on a list the
+// owner already saved, never brought back once the owner takes one off. Placeholder names; filled in from the lookup.
+export const INTEREST_ADDS = [
+  { id: "2026-11-13-friday", items: [
+    { sku: "1013645543", store: "target", name: "Target item 1013645543", about: "", set: "", tcg: "" },
+    { sku: "1012470483", store: "target", name: "Target item 1012470483", about: "", set: "", tcg: "" },
+    { sku: "1012663804", store: "target", name: "Target item 1012663804", about: "", set: "", tcg: "" },
+    { sku: "1010892071", store: "target", name: "Target item 1010892071", about: "", set: "", tcg: "" },
+    { sku: "1013166578", store: "target", name: "Target item 1013166578", about: "", set: "", tcg: "" },
+    { sku: "1012793604", store: "target", name: "Target item 1012793604", about: "", set: "", tcg: "" },
+    { sku: "1013166573", store: "target", name: "Target item 1013166573", about: "", set: "", tcg: "" },
+    { sku: "1013166576", store: "target", name: "Target item 1013166576", about: "", set: "", tcg: "" },
+    { sku: "1012850572", store: "target", name: "Target item 1012850572", about: "", set: "", tcg: "" },
+    { sku: "1012850570", store: "target", name: "Target item 1012850570", about: "", set: "", tcg: "" },
+    { sku: "94681790", store: "target", name: "Target item 94681790", about: "", set: "", tcg: "" },
+    { sku: "1012793603", store: "target", name: "Target item 1012793603", about: "", set: "", tcg: "" },
+    { sku: "1012850573", store: "target", name: "Target item 1012850573", about: "", set: "", tcg: "" },
+  ] },
+];
