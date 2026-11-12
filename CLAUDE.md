@@ -389,6 +389,22 @@ alone (every store's rows of one account) from reading the whole table. Only
   owner's change on 2026-11-12, from $10: `PRICE_CHECKOUT`; a line already on an invoice keeps what it was billed) (one
   order is one checkout, due 3 days after it, free if the store cancels it before it's paid; no automatic refund after),
   or monthly, $25 for 10 slots switched on at once with nothing per checkout, plus one add-on of 15 slots for another $25.
+  Since 2026-11-12 (the owner's requests: "Maybe I want to change it to $10 later", then "Remove $25 plan completely") the
+  price per checkout is the owner's to set, and the monthly plan isn't offered (worker and page 1.9.143):
+  - **The price:** Price per checkout on the Billing page, $1 to $100 (`PRICE_MIN`, `PRICE_MAX`, `priceCents`), kept as
+    `price:checkout` in `billing_config` (one price for test and live) and read in SQL as each line is written (`priceSql`
+    in `lineStmt`; `checkoutPrice` for pages and `GET /billing`'s `prices.checkout`), else `PRICE_CHECKOUT`. A new checkout
+    takes the price of the moment it's added; lines already there keep theirs, and so do payments and refunds. A change
+    posts "💲 Price per checkout: $5 → $10 (from now on; checkouts already on an invoice keep their price)" to the channel;
+    the same price writes and posts nothing (one D1 batch reads the old price and writes the new one).
+  - **No monthly plan** (`monthlyOffered`: only with `BILLING_MONTHLY = "on"`, which the tests set; production has none):
+    `/billing/plan` monthly and `/billing/checkout` `monthly`, `extras` and `resume` answer 409 "The monthly plan isn't
+    offered any more." (`NO_MONTHLY`), and so does `invoice` for a subscription still being set up. `GET /billing` says
+    `plans: ["checkout"]` (`plansOf`; both when offered), a buyer whose plan is monthly with no live subscription counts as
+    having none (`no-plan`, never `setting-up` for a plan that can't start), and one with a live subscription keeps it
+    (coverage, Cancel, paying a failed invoice, its slots, `over-limit`) until it ends, with no extras to add or remove.
+    `/slots/limit`'s `canRequest:false` is only for those. The Billing page says how many still have one. The monthly
+    code stays, for them and for the tests.
   The owner's words: "Buyers that I already approved should not be charged for anything", so **Friends and Family**
   (`exemptOf`): everyone issued a license before payments came on (`on_since:<mode>` in `billing_config`, stamped by the
   first request that sees the keys), every hand-made key, and anyone the owner moves there, is never charged or refused
@@ -1473,7 +1489,7 @@ From 1.9.130 the app has **Invoice** (the owner's request, 2026-10-18: payment p
 section above), shown only once the worker says payments are on for this license (`GET /billing` → `on:true`; with them
 off every view's markup is 1.9.129's). `refreshBilling` asks at unlock, every 5 minutes while shown, when Invoice or Submit
 is drawn, on coming back to the tab or online, and every 4 seconds for 3 minutes after Stripe was opened; a 401 counts as
-off, other errors keep the last answer. Only `{h, on, plan, exempt, block reason}` goes to localStorage (`orbit-billing`,
+off, other errors keep the last answer. Only `{h, on, plan, exempt, block reason}` (from 1.9.143 also `plans` and whether there's a subscription, `sub`) goes to localStorage (`orbit-billing`,
 for other tabs and a fresh unlock); the invoice and amounts stay in memory and go at lock. `renderInvoice` (sidebar after
 Submit, with "!" when blocked or the number owed; phone tab after Submit) shows Friends and Family ("Nothing to pay"), no
 plan (the two plan cards: Pay per checkout, or Monthly with "Add 15 more slots"), pay per checkout (counts strip, the
