@@ -18416,11 +18416,12 @@ const billPrices = (d) => Object.assign({}, BILL_PRICES, (d && d.prices) || {});
 // has "monthly", never decided here, so the owner could bring it back from the worker alone. An answer without plans (an
 // older worker), or none yet, offers both, as before.
 const billMonthlyOffered = (b) => !b || !Array.isArray(b.plans) || b.plans.includes("monthly");
-// A subscription the buyer still has: being paid, past due or set to end, not one never paid for (incomplete). The answer
-// kept on this device only says whether there is one (sub: true).
-const billSubKept = (b) => !!b && (b.sub === true || (!!b.sub && typeof b.sub === "object" && b.sub.status !== "incomplete"));
-// The plan the buyer is on. With the monthly plan no longer offered, one picked and never paid for, or one that ended, is
-// none (the owner's request, 2026-11-12): the worker blocks Submit as no-plan, and Invoice offers pay per checkout.
+// A subscription the buyer still has (the worker sends none once it's ended). The answer kept on this device only says
+// whether there is one (sub: true).
+const billSubKept = (b) => !!b && !!b.sub;
+// The plan the buyer is on. With the monthly plan no longer offered, one with no subscription (never paid for, or ended) is
+// none (the owner's request, 2026-11-12), as the worker reads it: it blocks Submit as no-plan, and Invoice offers pay per
+// checkout.
 const billPlan = (b) => { const p = (b && b.plan) || null; return p === "monthly" && !billMonthlyOffered(b) && !billSubKept(b) ? null : p; };
 const billOwed = (d) => (d.lines || []).filter(l => BILL_OWED.includes(l.state));
 // What Pay takes: the owed checkouts but disputed ones (the seller decides those) and held ones (not due yet).

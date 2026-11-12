@@ -5405,11 +5405,13 @@ async function billingListPage(request, env, ctx, url, id) {
     const last4 = l ? last4Of(l.license_key) : n ? n.key_last4 : "";
     const name = [l ? "@" + l.username : "", n && n.name || ""].filter(Boolean).join(" · ") || (last4 ? `License …${last4}` : "A key made by hand");
     const live = s && !subEnded(s);
+    // A monthly plan with no subscription left is no plan while the plan isn't offered, as billingState reads it.
+    const gone = !!b && b.plan === "monthly" && !live && !monthlyOffered(env);
     const plan = exempt === "owner" ? "Your FAFO" : exempt === "family" ? "Friends and Family" + (live ? " · monthly plan paused" : "")
-      : !b || !b.plan ? "No plan" : b.plan === "checkout" ? "Pay per checkout"
+      : !b || !b.plan || gone ? "No plan" : b.plan === "checkout" ? "Pay per checkout"
       : `Monthly · ${s ? MONTHLY_SLOTS + EXTRA_SLOTS * s.extras : MONTHLY_SLOTS} slots${s && s.period_end ? ` · ${s.cancel_at_end ? "ends" : "renews"} ${day(s.period_end)}` : ""}`;
     const status = exempt ? "Not charged" : !reach ? "Not a tester" : b && b.dispute_hold ? "Dispute hold" : tot.overdue ? `${money(tot.overdue)} overdue`
-      : b && b.plan === "monthly" && s && ["past_due", "unpaid", "incomplete", "paused"].includes(s.status) && !s.paused ? "Payment failed"
+      : b && b.plan === "monthly" && !gone && s && ["past_due", "unpaid", "incomplete", "paused"].includes(s.status) && !s.paused ? "Payment failed"
       : tot.owed ? `${money(tot.owed)} owed` : !(p && p.seen_at) ? "Older FAFO" : "Paid up";
     return { h, l, p, b, s, tot, exempt, tester, reach, last4, name, plan, status, off: !!(l && l.revoked_at), monthly: !exempt && b && b.plan === "monthly" && live };
   });
