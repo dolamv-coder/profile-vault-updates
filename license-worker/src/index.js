@@ -99,7 +99,7 @@
 //   PUT  /alerts/webhook       {url}: set it (it gets a test post first), or "" to remove it
 // Payments (Stripe; off until STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set; page 1.9.130+, license Bearer):
 //   GET  /billing              {on:false}, or {on, mode, exempt, plan, nextPlan, block, prices, sub, lines, owed, overdue,
-//                              paid30, payments, report}: this license's plan and invoice ($10 per checkout, or $25 a month)
+//                              paid30, payments, report}: this license's plan and invoice ($5 per checkout, or $25 a month)
 //   POST /billing/plan         {plan:"checkout"}: pay per checkout (a monthly plan ends first)
 //   POST /billing/checkouts    {orders:[{account, store, orderNo, at, stage}]}: checkouts their FAFO found on their own
 //                              accounts, billed when that account was out as one of their slots then
@@ -4041,17 +4041,20 @@ async function premiumListPage(request, env, url, id) {
 // ---- payments (Stripe) --------------------------------------------------------------------------
 // The owner's decisions (2026-10-18): "$10 per checkout or $25 a month plan or 10 slots", paid with Stripe, plus "an
 // additional 15 slots for additional $25"; buyers already approved are Friends and Family and never charged; a buyer who
-// isn't paid up can't submit. Anyone else not on a paid monthly plan pays $10 for each checkout on slots they sent: an order
-// on an account the owner gave them (order alerts), or on their own account while it was out as a slot (their FAFO reports
-// those, checked against when it went out and was pulled: billing_accounts), or one the owner adds. Each is due 3 days
-// after the order and free if the store cancels it before it's paid. The worker keeps the invoice lines and plans, and
-// Stripe takes the money: a Checkout session for what's owed, or a subscription for the monthly plan. Webhooks only make it
-// quicker: each answer is checked with Stripe again (reconcile), so a lost one changes nothing. Off until both
-// STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set; a test key (not _live_) reaches only licenses marked Tester (and the
-// owner's own FAFO, which is never charged). Removing the keys turns it off here, while Stripe goes on billing subscriptions.
+// isn't paid up can't submit. On 2026-11-12 the owner made a checkout $5 ("Can I change it to $5 a checkout?"). Anyone
+// else not on a paid monthly plan pays $5 for each checkout on slots they sent: an order on an account the owner gave them
+// (order alerts), or on their own account while it was out as a slot (their FAFO reports those, checked against when it
+// went out and was pulled: billing_accounts), or one the owner adds. Each is due 3 days after the order and free if the
+// store cancels it before it's paid. The worker keeps the invoice lines and plans, and Stripe takes the money: a Checkout
+// session for what's owed, or a subscription for the monthly plan. Webhooks only make it quicker: each answer is checked
+// with Stripe again (reconcile), so a lost one changes nothing. Off until both STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET
+// are set; a test key (not _live_) reaches only licenses marked Tester (and the owner's own FAFO, which is never charged).
+// Removing the keys turns it off here, while Stripe goes on billing subscriptions.
 const STRIPE_VERSION = "2026-09-30.endive";
 const stripeApi = (env) => String(env.STRIPE_API_BASE || "https://api.stripe.com").replace(/\/+$/, "");   // tests set it
-const PRICE_CHECKOUT = 1000, PRICE_MONTHLY = 2500, PRICE_EXTRA = 2500;   // cents, usd
+// cents, usd. The checkout was 1000 ($10) until 2026-11-12. Each billing_lines row keeps its own amount, so a line already
+// on an invoice keeps what it was billed at (lineStmt's upsert never changes it), and paying groups lines by amount.
+const PRICE_CHECKOUT = 500, PRICE_MONTHLY = 2500, PRICE_EXTRA = 2500;
 const MONTHLY_SLOTS = 10, EXTRA_SLOTS = 15, EXTRA_MAX = 1;
 const DUE_MS = 3 * 86400000;
 // An order's date is the day where whoever reported it is: windows and plans stretch this much either side, in the buyer's favour.
@@ -4238,11 +4241,12 @@ async function billable(c, w, d) {
   const held = waiting && (cur.paid_through == null || cur.paid_through + TZ_SLACK_MS < start);
   return { ok: true, held: held ? cur.sub_id : null };
 }
-// The statement that puts one order on a buyer's invoice (billable already checked): $10, due 3 days after the order's day
-// (or after now, if that's later). One order belongs to one buyer, so an alert or the owner never adds one that an alert or
-// the owner put on another buyer's invoice (another buyer's own report doesn't count: it's only their word). An alert or the
-// owner takes over a line the buyer's FAFO reported, unless their FAFO said the store canceled it (the owner can charge it
-// again); a buyer's report never touches one from an alert or the owner. Nothing if it's there already.
+// The statement that puts one order on a buyer's invoice (billable already checked): PRICE_CHECKOUT ($5), due 3 days after
+// the order's day (or after now, if that's later). One order belongs to one buyer, so an alert or the owner never adds one
+// that an alert or the owner put on another buyer's invoice (another buyer's own report doesn't count: it's only their
+// word). An alert or the owner takes over a line the buyer's FAFO reported, unless their FAFO said the store canceled it
+// (the owner can charge it again); a buyer's report never touches one from an alert or the owner. Nothing if it's there
+// already, and a line already there keeps the amount it was billed at (the upsert never changes it: $10 before 2026-11-12).
 function lineStmt(env, c, l) {
   const due = Math.max(dayStart(l.orderAt) + 86400000, c.now) + DUE_MS;
   const solo = l.source === "buyer" ? "1" : "NOT EXISTS (SELECT 1 FROM billing_lines o WHERE o.store = ?3 AND o.order_no = ?4 AND o.mode = ?2 AND o.key_hash <> ?1 AND o.source <> 'buyer')";
@@ -5425,7 +5429,7 @@ async function billingListPage(request, env, ctx, url, id) {
     <p class="who">${c.mode === "test" ? "Test mode: only testers are charged" : "Payments are on"}</p>
     <p class="small">Owed ${money(sum((x) => x.tot.owed))} · Overdue ${money(sum((x) => x.tot.overdue))} · Paid in the last 30 days ${money(paid30.results[0].s)} · ${plural(monthly, "monthly plan")} · ${fam} Friends and Family</p>
     ${alerts}
-    <p class="small">$10 per checkout, due 3 days after it (free if the store cancels it first), or $25 a month for 10 slots ($50 for 25). Buyers you approved before payments began are Friends and Family and never charged; Details moves anyone either way. Refunds are made in your Stripe Dashboard; the prices are set in FAFO (a change to the license worker).</p>
+    <p class="small">$5 per checkout, due 3 days after it (free if the store cancels it first), or $25 a month for 10 slots ($50 for 25). Buyers you approved before payments began are Friends and Family and never charged; Details moves anyone either way. Refunds are made in your Stripe Dashboard; the prices are set in FAFO (a change to the license worker).</p>
     ${pastePart}
     <h3>Buyers</h3>
     ${body ? `<div class="find"><input type="search" id="find" placeholder="Search by name, last 4, plan or status" aria-label="Search buyers"><span class="shown" id="shown"></span></div>

@@ -18371,18 +18371,20 @@ async function removeInterest(key){
 }
 
 /* ================= INVOICE: PAYING THE SELLER (1.9.130) ================= */
-// The seller can charge for checkouts (the owner's decisions, 2026-10-18), through Stripe: $10 per checkout, each due 3
-// days after it and free if the store cancels it before it's paid, or a monthly plan, $25 for 10 slots switched on at
-// once (+$25 for 15 more). Buyers the seller approved before payments started are Friends and Family and pay nothing. The
-// license worker keeps the plan and the invoice (GET /billing) and refuses Submit to a buyer who isn't paid up (402); this
-// page shows them on Invoice, opens Stripe, and reports the orders on the buyer's own accounts sent as slots (POST
-// /billing/checkouts: the worker bills the ones placed while the slot was out). With payments off on the worker, or for
-// the seller's own FAFO, GET /billing answers {on:false} (or exempt "owner") and none of this shows.
+// The seller can charge for checkouts (the owner's decisions, 2026-10-18), through Stripe: $5 per checkout ($10 until
+// 2026-11-12, when the owner lowered it), each due 3 days after it and free if the store cancels it before it's paid, or a
+// monthly plan, $25 for 10 slots switched on at once (+$25 for 15 more). Buyers the seller approved before payments
+// started are Friends and Family and pay nothing. The license worker keeps the plan and the invoice (GET /billing) and
+// refuses Submit to a buyer who isn't paid up (402); this page shows them on Invoice, opens Stripe, and reports the orders
+// on the buyer's own accounts sent as slots (POST /billing/checkouts: the worker bills the ones placed while the slot was
+// out). With payments off on the worker, or for the seller's own FAFO, GET /billing answers {on:false} (or exempt
+// "owner") and none of this shows. The prices shown are the worker's (prices in GET /billing): BILL_PRICES is only a
+// fallback, and each invoice line shows its own amount.
 // The answer stays in memory (amounts, order numbers); this device keeps only {h, on, plan, exempt, block reason, at} for
 // the license (orbit-billing, h a hash of the key, as orbit-premium), so Invoice and Submit's note show at once at unlock.
 const BILL_STORE = "orbit-billing", BILL_EVERY_MS = 5 * 60000, BILL_WATCH_MS = 3 * 60000;
 const BILL = {d:null, h:"", at:0, tried:0, busy:false, p:null, watch:0, watchPay:"", wait:null, shown:"", names:new Map(), naming:false, checking:false};
-const BILL_PRICES = {checkout:1000, monthly:2500, extra:2500, monthlySlots:10, extraSlots:15, extraMax:1, dueDays:3};
+const BILL_PRICES = {checkout:500, monthly:2500, extra:2500, monthlySlots:10, extraSlots:15, extraMax:1, dueDays:3};
 // What each block says without the worker's own words (only its reason is kept on this device).
 const BILL_BLOCK = {"disputed-payment":"A payment is disputed with your bank. Contact your seller.", overdue:"A checkout is overdue. Pay it to submit again.",
   "past-due":"Your monthly payment didn't go through.", "setting-up":"Your monthly plan is being set up on Stripe.", "no-plan":"Pick a plan to submit."};

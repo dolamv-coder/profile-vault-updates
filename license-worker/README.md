@@ -704,21 +704,22 @@ for another store, are left out, and nothing about them can stop a batch.
 
 ## Payments (Stripe)
 
-From FAFO 1.9.130 your buyers can pay you for checkouts through Stripe (the owner's decisions, 2026-10-18): **$10 per
-checkout**, or a **monthly plan, $25 for 10 slots switched on at once** with nothing per checkout, plus **15 more slots
-for another $25** (25 slots, $50 a month). It stays off until you add the two Stripe secrets below; until then nothing
-changes anywhere.
+From FAFO 1.9.130 your buyers can pay you for checkouts through Stripe (the owner's decisions, 2026-10-18): **$5 per
+checkout** ($10 until 2026-11-12, when the owner lowered it), or a **monthly plan, $25 for 10 slots switched on at once**
+with nothing per checkout, plus **15 more slots for another $25** (25 slots, $50 a month). It stays off until you add the
+two Stripe secrets below; until then nothing changes anywhere.
 
-- **Who pays.** Anyone who isn't Friends and Family and isn't on a paid monthly plan pays $10 for each checkout on the
+- **Who pays.** Anyone who isn't Friends and Family and isn't on a paid monthly plan pays $5 for each checkout on the
   slots they sent: an order on an account you gave them (from your FAFO's order alerts), an order on their own account
   while it was out as one of their slots (their FAFO finds it in their email and reports it; this worker checks the
   account was out then), or one you add on the Billing page. One order is one checkout, whatever the quantity. Each is
-  due 3 days after the order, and free if the store cancels it before it's paid. Orders from before payments came on
-  are never billed, and neither are checkouts on a declined batch's slots (add one by hand if you ran it), nor ones
-  after a slot was pulled (once your channel was told of the pull).
+  due 3 days after the order, and free if the store cancels it before it's paid. A checkout already on an invoice keeps
+  the price it was billed at ($10 before 2026-11-12). Orders from before payments came on are never billed, and neither
+  are checkouts on a declined batch's slots (add one by hand if you ran it), nor ones after a slot was pulled (once your
+  channel was told of the pull).
 - **The monthly plan** covers a month once Stripe says its invoice is paid (and stops covering when it ends, if you
   cancel it at once in Stripe). Checkouts while a renewal is being charged, or retried after it failed, wait: free if
-  it's paid, $10 each if the plan ends unpaid.
+  it's paid, $5 each if the plan ends unpaid.
 - **Who can submit.** A buyer has to pick a plan in FAFO's **Invoice** page first. Submit stays off for them while a
   checkout is overdue, their monthly payment has failed, or a payment is disputed with their bank, and a monthly buyer
   can't have more slots on than their plan has (10 or 25; they add the extra 15 in Invoice instead of asking you). A
@@ -745,7 +746,7 @@ changes anywhere.
    - Products and Prices: **Write** (the worker makes "FAFO monthly plan (10 slots)" and "FAFO extra 15 slots" the first
      time a buyer subscribes)
    - Invoices: **Read** (the page to pay a failed monthly payment)
-   - Refunds: **Write** (when a buyer paid for a checkout the store canceled meanwhile, that $10 goes back by itself)
+   - Refunds: **Write** (when a buyer paid for a checkout the store canceled meanwhile, its price goes back by itself)
    - PaymentIntents: **Read** (to tell whose payment a bank dispute is about)
 
    A live key (its name has `_live_` in it) puts payments in **live mode**; a sandbox's test key, in **test mode**.
