@@ -1,10 +1,10 @@
 {
-  "version": "1.9.141",
-  "url": "index-1.9.141.html",
-  "sha256": "6f9f78623ee1649b5db976ee03d861957b2cbf891539d5113dba83bc137b6279",
-  "signature": "r3BtE5gFr0RQsI2YVxAcgZeBE2UW2zGRjyDA52kMDVgRTOeZben0+ecExkn6P/e2aFl1IwQahZXXZoHxXET2Cw==",
+  "version": "1.9.142",
+  "url": "index-1.9.142.html",
+  "sha256": "5c5845858af058bbf349fd23be7732e4ad80a904162023db4d3557b18b206273",
+  "signature": "DUzawZwITwHVzwYvbFhQ8t7fypX9Sp8ec+/JR6lI8rqm2FTkrWRnEMtWeG1rq+pNh9XEjXAoWfpgWpuJ4xJnCg==",
   "minAppVersion": "0",
-  "notes": "Auto-clean now clears Target's sign-in and password reset codes on its next run, instead of leaving each one for an hour after FAFO first sees it. Riot Games' and Best Buy's codes still wait their hour.",
+  "notes": "New: Interests, between IMAP and Submit. See the products your seller runs and tick the ones you'd like on your profiles. Each batch you submit sends your seller the ones ticked then. Auto-clean set to an inbox you've since deleted now cleans all your inboxes instead of stopping, and one set to an inbox without its password says so on the Clean page.",
   "installerUrl": "",
-  "publishedAt": "2026-11-09T08:00:22.818Z"
+  "publishedAt": "2026-11-12T07:37:43.687Z"
 }
