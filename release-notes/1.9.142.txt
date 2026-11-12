@@ -1,0 +1,1 @@
+New: Interests, between IMAP and Submit. See the products your seller runs, with a picture and what's in each, and tick the ones you'd like on your profiles. Each batch you submit sends your seller the ones ticked then. Auto-clean also keeps going when the inbox it was set to is deleted.

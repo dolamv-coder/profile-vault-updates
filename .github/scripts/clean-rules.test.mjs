@@ -1658,5 +1658,55 @@ if (HAS_SPAM) {
   }
 }
 
+// ---- Auto-clean when the one inbox it was set to is gone (1.9.142, from CLAUDE.md's "Fix with the next page release") ----
+// Until 1.9.142 it found nothing to clean and stopped before noting the run, so the Clean page's Last run line froze while its
+// Inboxes menu read All inboxes. Now it cleans every inbox with a password and saves All inboxes; with none, it says so.
+const VER = (/index-(\d+\.\d+\.\d+)\.html$/.exec(file) || [])[1];
+if (VER && cmp(VER, "1.9.142") >= 0) {
+  const PAGE = readFileSync(file, "utf8");
+  const two = (api) => { api.getS().inboxes = [{ id: "ib1", email: "one@example.com", password: "pw" }, { id: "ib2", email: "two@example.com", password: "pw" }]; return api; };
+  const scanned = () => [...new Set(SERVER.scans.map((c) => c.email))].sort();
+  for (const [why, set] of [["deleted", (api) => { api.getS().settings.autoClean.inboxId = "ib-gone"; }],
+    ["left without a password", (api) => { api.getS().inboxes.push({ id: "ib3", email: "three@example.com", password: "" }); api.getS().settings.autoClean.inboxId = "ib3"; }]]) {
+    await test(`auto-clean set to one inbox that was ${why} cleans every inbox with a password, and saves All inboxes`, async () => {
+      NOW = Date.UTC(2026, 10, 4, 15, 0, 0); server([msg("gone-news", { name: "Best Buy", address: "BestBuy@email.bestbuy.com", subject: "Top deals of the week", bulk: true })]);
+      const api = two(setup(file)); set(api);
+      const res = await api.runAutoClean();
+      assert.deepEqual(scanned(), ["one@example.com", "two@example.com"]);
+      const c = api.getS().settings.autoClean;
+      assert.equal(c.inboxId, "all", "the Clean page's Inboxes menu and what runs agree");
+      assert.equal(c.lastRun, NOW, "the Last run line moves on");
+      assert.equal(c.lastError, "");
+      assert.equal(res.error, "");
+      assert.ok(SERVER.moved.includes("gone-news"));
+    });
+  }
+  await test("auto-clean with no inbox that has a password says so on the Clean page, and a picked inbox that's still there stays picked", async () => {
+    NOW = Date.UTC(2026, 10, 4, 15, 0, 0); server([]);
+    let api = setup(file); api.getS().inboxes = [{ id: "ib1", email: "one@example.com", password: "" }]; api.getS().settings.autoClean.inboxId = "ib1";
+    const res = await api.runAutoClean();
+    const c = api.getS().settings.autoClean;
+    assert.equal(res.error, "There's no inbox to clean. Add one in FAFO's settings.");
+    assert.equal(c.lastError, res.error, "Last run failed: …, not a line that never changes");
+    assert.equal(c.lastRun, NOW);
+    assert.equal(c.inboxId, "all");
+    assert.equal(SERVER.scans.length, 0);
+    // The phone's request with none says so to the phone only.
+    api = setup(file); api.getS().inboxes = []; api.getS().settings.autoClean = { on: false };
+    assert.equal((await api.runAutoClean(true)).error, "There's no inbox to clean. Add one in FAFO's settings.");
+    assert.equal(api.getS().settings.autoClean.lastError, undefined);
+    // An inbox picked that's there and has a password is the only one cleaned, as before.
+    server([]); api = two(setup(file)); api.getS().settings.autoClean.inboxId = "ib2";
+    await api.runAutoClean();
+    assert.deepEqual(scanned(), ["two@example.com"]);
+    assert.equal(api.getS().settings.autoClean.inboxId, "ib2");
+  });
+  await test("Delete inbox sets auto-clean to All inboxes when it was set to that inbox", () => {
+    const i = PAGE.indexOf('case "delete-inbox":'); assert.ok(i >= 0);
+    const handler = PAGE.slice(i, PAGE.indexOf("break; }", i));
+    assert.match(handler, /if \(autoCleanCfg\(\)\.inboxId === id\) S\.settings\.autoClean = Object\.assign\(\{\}, autoCleanCfg\(\), \{inboxId:"all"\}\);\s*persist\(\);/);
+  });
+}
+
 Date.now = realNow;
 console.log(`${passed} passed`);
