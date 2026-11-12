@@ -1142,7 +1142,7 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .int-set-head .selall{margin-left:auto}
 .int-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
 .int-card{flex-direction:row;align-items:flex-start;gap:14px}
-.int-card.is-on{border-color:color-mix(in srgb,var(--ok) 80%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ok) 80%,transparent)}
+.int-card.is-on,:root[data-stars] .int-card.is-on:hover{border-color:color-mix(in srgb,var(--ok) 80%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ok) 80%,transparent)}
 .int-pic{position:relative;flex:none;width:96px;height:96px;border-radius:12px;background:#fff;display:grid;place-items:center;overflow:hidden}
 .int-pic img{width:100%;height:100%;object-fit:contain;padding:6px}
 .int-pic .smark{display:none}
@@ -17824,7 +17824,7 @@ function setInterestPicks(keys, on){
   return n;
 }
 // The products the search box leaves: every word in the name, SKU, set or description.
-const interestPlain = (x) => norm(x).normalize("NFD").replace(/[̀-ͯ]/g, "");
+const interestPlain = (x) => norm(x).normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 function interestsInView(){
   const words = interestPlain(UI.q).split(" ").filter(Boolean), items = interestItems();
   if (!words.length) return items;
@@ -18075,7 +18075,7 @@ function openInterestEdit(key){
         <div class="c6 int-pic-row" data-field="ie_pic" id="ie-drop"><span id="ie-pic"></span><div class="int-pic-side">
           <div class="int-pic-acts"><button type="button" class="btn btn-sm" id="ie-find">${ic("search")}Find on TCGplayer</button><button type="button" class="btn btn-sm" id="ie-choose">${ic("image")}Paste or choose a picture</button><button type="button" class="btn btn-sm btn-quiet btn-danger" id="ie-nopic">Remove picture</button></div>
           <p class="item-sub" id="ie-say" role="status" style="margin:6px 0 0"></p><span class="err"></span>
-          <span class="hint">Paste a picture anywhere in this window (Ctrl+V), drop one here, or choose a file.</span><input type="file" id="ie-file" accept="image/*" hidden></div></div>
+          <p class="item-sub" style="margin:0">Paste a picture anywhere in this window (Ctrl+V), drop one here, or choose a file.</p><input type="file" id="ie-file" accept="image/*" hidden></div></div>
         <p class="c6 item-sub" style="margin:0">SKU ${esc(it0.sku)}</p>
       </div>`,
     foot:`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="ie-save">Save</button>`,

@@ -4,7 +4,8 @@
 // hour after it first sees them). Each
 // email goes through the desktop app's own scanner (scanPromos in desktop/imap-sync.js, against a pretend mail server) and then
 // the page's own code: cleanScanFolder (both scans), applyCleanSafety, cleanScan (the Clean page's Scan) and runAutoClean,
-// with its hour's wait. Sample senders and addresses only.
+// with its hour's wait; and from 1.9.142 auto-clean set to one inbox that's gone, or has no password. Sample senders and
+// addresses only.
 //   node .github/scripts/clean-rules.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must have these rules; a page named on the command line that doesn't is skipped.
 import { readFileSync, readdirSync, existsSync } from "node:fs";

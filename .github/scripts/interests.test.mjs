@@ -100,12 +100,16 @@ const picks = () => ev(() => window.__t.S.settings.interestPicks || {});
 const badge = () => page.$eval('#side [data-id="interests"] .n', (e) => e.textContent);
 const cards = () => page.$$eval("#main .int-card", (els) => els.map((e) => e.querySelector(".int-name").textContent));
 const lastToast = () => page.$$eval("#toasts .toast", (els) => els.map((e) => e.textContent).join(" | "));
+// A window puts the cursor in its first box 60 ms after it opens (the lock screen, 30 ms after it's drawn): text filled
+// into another box before then could land there instead.
+const focused = (id) => page.waitForFunction((x) => document.activeElement && document.activeElement.id === x, id);
 
 console.log(`Interests in ${file.split(/[\\/]/).pop()}`);
 try {
   await page.goto("https://app.fafoaco.com/");
   // A vault in this browser only, with no license key yet.
   await page.click("#lock-local");
+  await focused("pw1");
   await page.fill("#pw1", "sample-pass-142"); await page.fill("#pw2", "sample-pass-142"); await page.click("#lock-go");
   await page.waitForSelector('#side [data-id="orders"]', { timeout: 30000 });
 
@@ -250,6 +254,7 @@ try {
     assert.equal(await page.locator('#main [data-act="interest-edit"]').count(), 4);
     assert.equal(await page.locator('#main [data-act="interest-remove"]').count(), 4);
     await page.click('#main [data-act="interests-add"]');
+    await focused("ia-lines");
     await page.fill("#ia-lines", ["https://www.target.com/p/sample-trading-card-game-booster-box/-/A-44444444#lnk=sametab", "55555555 Sample Mini Tin",
       "11111111 Already here", "not a sku", "https://www.pokemoncenter.com/product/100-10002/sample-center-tin", ""].join("\n"));
     await page.fill("#ia-set", "Sample Set C");
@@ -272,7 +277,7 @@ try {
 
   await test("the seller's Edit: a picture chosen goes up first, then the whole list is saved with it", async () => {
     await page.click('#main [data-act="interest-edit"][data-id="target:33333333"]');
-    await page.waitForSelector("#ie-name");
+    await focused("ie-name");
     await page.fill("#ie-name", "Sample Tin, Second Print");
     await page.fill("#ie-about", "Three sample packs\nin a tin.");
     await page.setInputFiles("#ie-file", { name: "tin.png", mimeType: "image/png", buffer: PNG });
