@@ -385,7 +385,8 @@ alone (every store's rows of one account) from reading the whole table. Only
   1.9.127 and 1.9.129 below.
   Since 2026-10-18 (the owner's request: "Create payment option. $10 per checkout or $25 a month plan or 10 slots") it
   takes **payments through Stripe**, dormant until the owner adds the secrets `STRIPE_SECRET_KEY` and
-  `STRIPE_WEBHOOK_SECRET` (`billingOn`; setup in `license-worker/README.md` → Payments). Plans: $10 per checkout (one
+  `STRIPE_WEBHOOK_SECRET` (`billingOn`; setup in `license-worker/README.md` → Payments). Plans: $5 per checkout (the
+  owner's change on 2026-11-12, from $10: `PRICE_CHECKOUT`; a line already on an invoice keeps what it was billed) (one
   order is one checkout, due 3 days after it, free if the store cancels it before it's paid; no automatic refund after),
   or monthly, $25 for 10 slots switched on at once with nothing per checkout, plus one add-on of 15 slots for another $25.
   The owner's words: "Buyers that I already approved should not be charged for anything", so **Friends and Family**
