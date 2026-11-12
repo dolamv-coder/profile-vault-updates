@@ -18108,9 +18108,10 @@ function interestOwnLine(l){
 }
 // A tracker's tag after a dash at the end of the name ("— New Drop"), taken off.
 const INTEREST_DROP_TAG = /\s+[-–—]\s+(?:new drop|restock(?:ed)?|back in stock|live(?: now)?|recently updated|pre-?order)\s*$/i;
-// After "Mega Evolution", a product's own words: that's the set's own product (Mega Evolution Elite Trainer Box), which
-// keeps the set's name, where "Mega Evolution — Delta Reign …" is the series and then the set.
-const INTEREST_DROP_KIND = /^(?:elite|etb|booster|build|three|two|\d-(?:pack|booster)|blister|tin|mini|collection|premium|ultra|binder|poster|pin|sticker|tech|deck|battle|bundle|box|display|pack|figure|special|enhanced|sleeved|checklane|trainer|league)\b/i;
+// After "Mega Evolution" and a space, a product's own words: that's the set's own product (Mega Evolution Elite Trainer Box,
+// Pokémon Center's edition of it, a Mega … ex Box, a Knock Out Collection, a Stacking Tin: the review of 1.9.143), which
+// keeps the set's name, where "Mega Evolution — Delta Reign …" (a dash or colon after it) is the series and then the set.
+const INTEREST_DROP_KIND = /^(?:elite|etb|booster|build|three|two|\d-(?:pack|booster)|blister|tin|mini|collection|premium|ultra|binder|poster|pin|sticker|tech|deck|battle|bundle|box|display|pack|figure|special|enhanced|sleeved|checklane|trainer|league|pok[eé]mon\s+center|mega\s+\S+(?:\s+[xy])?\s+ex|knock|stacking|accessory|portfolio|playmat)\b/i;
 // A drop list's name as the list writes its own: no "Pokémon TCG:" or "Mega Evolution —" in front, no tracker's tag, a
 // style that may vary in brackets and any other part after a dash after a colon ("30th Celebration Ultra-Premium
 // Collection: Night", "Ascended Heroes Tech Sticker Collection: Gastly"), at most 120 characters, as the worker keeps.
@@ -18118,27 +18119,48 @@ function interestDropName(v){
   let s = interestText(String(v || "").normalize("NFC"), 400);
   while (INTEREST_DROP_TAG.test(s)) s = s.replace(INTEREST_DROP_TAG, "");
   s = s.replace(/^pok[eé]mon\s+(?:tcg|trading\s+card\s+game)\s*(?::|\s[-–—])\s*/i, "");
-  const m = /^mega\s+evolution(?:\s*[:–—-]\s*|\s+)(\S.*)$/i.exec(s);
-  if (m && !INTEREST_DROP_KIND.test(m[1])) s = m[1];
+  const m = /^mega\s+evolution(\s*[:–—-]\s*|\s+)(\S.*)$/i.exec(s);
+  if (m && (/\S/.test(m[1]) || !INTEREST_DROP_KIND.test(m[2]))) s = m[2];
   s = s.replace(/\s+[-–—]\s+styles?\s+may\s+vary\b/gi, " (styles may vary)").replace(/\s+[-–—]\s+/g, ": ");
   return interestLineText(s);
 }
+// The words after a SKU line's number, when they're its product's name ("SKU: 12345678 Sample Tin": the review of 1.9.143),
+// else "": what's left once anything after a "|" and a part in brackets ("(Target)") are off, if it has a letter and isn't
+// a store's name alone, the tracker's next field ("— Retail: $9.99") or its word for the stock ("In Stock").
+const INTEREST_SKU_STATUS = /^(?:new(?: drop)?|restock(?:ed)?|(?:back )?in stock|out of stock|sold out|online(?: only)?|in stores?(?: only)?|live(?: now)?|recently updated|pre-?order|coming soon)$/i;
+function interestSkuName(l){
+  const s = l.slice(INTEREST_DROP_SKU.exec(l)[0].length).split("|")[0].replace(/\([^)]*\)|\[[^\]]*\]/g, " ").replace(/^[\s,;:/·•–—-]+/, "").trim();
+  return !/\p{L}/u.test(s) || INTEREST_DROP_KEY.test(s) || INTEREST_SKU_STATUS.test(s) || /^(?:target|pok[eé]mon\s*center)$/i.test(s) ? "" : interestDropName(s);
+}
 // Every product a paste gives, in its order: an item, or false for a line that couldn't be read (blank lines and the
-// tracker's Retail, QL, Stock lines give none). A SKU line's name is the nearest line above it, past blank and tracker's
-// lines, back to the SKU line before (so never another product's name), unless that's a product of its own.
+// tracker's Retail, QL, Stock lines give none). A SKU line's name is on it, after the number, or else the nearest line
+// above it, past blank and tracker's lines, back to the SKU line before (so never another product's name), unless that's a
+// product of its own, or the line right under a SKU line that got no name. A tracker that writes the SKU line first and the
+// name under it (the review of 1.9.143) is read that way: when more SKU lines have a name right under them than right
+// above, or as many and the first has none above it, each one's name is the first line under it, in its block.
 function interestsFromText(text, store){
   const lines = String(text || "").split(/\r?\n/).map(l => l.trim());
   const kind = lines.map(l => !l ? "" : INTEREST_DROP_SKU.test(l) ? "sku" : INTEREST_DROP_KEY.test(l) ? "key" : "line");
   // What the next line with something on it is, for each line (one pass: this runs as the box is typed in).
   const next = []; for (let i = lines.length - 1, k = ""; i >= 0; i--){ next[i] = k; if (kind[i]) k = kind[i]; }
-  const nameAt = new Map(), named = new Set();
-  kind.forEach((k, i) => {
-    if (k !== "sku") return;
-    for (let j = i - 1; j >= 0 && kind[j] !== "sku"; j--){
-      if (kind[j] !== "line") continue;
-      if (!named.has(j) && !interestOwnLine(lines[j])){ named.add(j); nameAt.set(i, j); }
-      break;
+  const own = new Map(), nameAt = new Map(), named = new Set();
+  kind.forEach((k, i) => { const n = k === "sku" && interestSkuName(lines[i]); if (n) own.set(i, n); });
+  const plain = (j) => kind[j] === "line" && !interestOwnLine(lines[j]);
+  const above = (i) => { for (let j = i - 1; j >= 0 && kind[j] !== "sku"; j--) if (kind[j] === "line") return j; return -1; };
+  const bare = kind.map((k, i) => k === "sku" && !own.has(i) ? i : -1).filter(i => i >= 0);   // the SKU lines a name is looked for
+  const up = bare.filter(i => plain(i - 1)).length, down = bare.filter(i => plain(i + 1)).length;
+  const under = down > up || (down > 0 && down === up && !plain(above(bare[0])));
+  bare.forEach(i => {
+    if (under){
+      for (let j = i + 1; j < lines.length && kind[j] && kind[j] !== "sku"; j++){
+        if (kind[j] !== "line") continue;
+        if (!named.has(j) && plain(j)){ named.add(j); nameAt.set(i, j); }
+        break;
+      }
+      return;
     }
+    const j = above(i);
+    if (j >= 0 && !named.has(j) && plain(j) && !(kind[j - 1] === "sku" && !own.has(j - 1) && !nameAt.has(j - 1))){ named.add(j); nameAt.set(i, j); }
   });
   const out = [];
   lines.forEach((l, i) => {
@@ -18146,7 +18168,7 @@ function interestsFromText(text, store){
     if (!k || k === "key" || named.has(i)) return;
     if (k === "sku"){
       const sku = INTEREST_DROP_SKU.exec(l)[1], j = nameAt.get(i);
-      out.push({sku, store, name:(j !== undefined && interestDropName(lines[j])) || "SKU " + sku});
+      out.push({sku, store, name:own.get(i) || (j !== undefined && interestDropName(lines[j])) || "SKU " + sku});
       return;
     }
     // A name with the tracker's lines under it but no SKU line: nothing to add, and it's counted as not read.
@@ -18156,13 +18178,17 @@ function interestsFromText(text, store){
   });
   return out;
 }
-// The set already on the list that the product's name has in it, word for word without case or accents, the longest
-// first (as "Scarlet & Violet 151" before a set named "Scarlet & Violet"); "" for none. The owner chose "by set, as now",
-// so a drop list's products go into the sections they belong to, whatever the window's Set box says.
+// The set already on the list that the product's name has in it, word for word without case or accents; "" for none. Of
+// those it has, never one inside another ("Scarlet & Violet" in "Scarlet & Violet 151"), then the one that comes last in the
+// name, since the set comes after the series ("Mega Evolution — Delta Reign …" is Delta Reign's: the review of 1.9.143),
+// the longest on a tie. The owner chose "by set, as now", so a drop list's products go into the sections they belong to,
+// whatever the window's Set box says.
 const interestSetWords = (s) => " " + interestPlain(s).replace(/[^\p{L}\p{N}]+/gu, " ").trim() + " ";
 function interestSetFor(name, sets){
   const n = interestSetWords(name);
-  return sets.filter(s => !/^\s*other\s*$/i.test(s) && interestSetWords(s).trim() && n.includes(interestSetWords(s))).sort((a, b) => b.length - a.length)[0] || "";
+  const has = sets.filter(s => !/^\s*other\s*$/i.test(s) && interestSetWords(s).trim()).map(s => ({s, at:n.indexOf(interestSetWords(s)), len:interestSetWords(s).length})).filter(x => x.at >= 0);
+  const inside = (x) => has.some(y => y.len > x.len && y.at <= x.at && x.at + x.len <= y.at + y.len);
+  return (has.filter(x => !inside(x)).sort((a, b) => b.at - a.at || b.len - a.len)[0] || {}).s || "";
 }
 // The new products the preview lists by name and set (from 1.9.143, for a drop list's), at most this many.
 const INTEREST_ADD_SHOWN = 50;

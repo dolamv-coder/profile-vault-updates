@@ -10,7 +10,9 @@
 // wait for a save out, Add products or Edit closed while it waits saves nothing, and two waiting both save. From 1.9.143,
 // Add products reads a drop list as a restock tracker writes it (the owner's request, 2026-11-12, with the list of 24 they
 // pasted, used here as they sent it): each name over its SKU line, the tracker's tags and Retail, QL and Stock left out,
-// each product in the set on the list its name has, and the TCGplayer lookups after Add for the first 20. Sample names,
+// each product in the set on the list its name has, and the TCGplayer lookups after Add for the first 20. And what the
+// review of 1.9.143 found: a SKU line over its name, a name on the SKU line, a set's own products keeping "Mega Evolution",
+// a set of a series before the series, a name starting with a number and no SKU line, and the preview shown. Sample names,
 // SKUs and keys only, but for the owner's drop list (public products, as on the worker's seed list).
 //   node .github/scripts/interests.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must have Interests, and drop lists (interestsFromText); a page named on the command line that doesn't
@@ -881,6 +883,12 @@ Stock: <1000`;
       assert.deepEqual(await read("Sample Tin One\nTCIN: 12345678\nSample Tin Two\nsku#12345679\nSample Tin Three\nSKU 12345680\nSample Tin Four\nSku #: 12345681 (Target)\nPrice: $9.99\nLimit: 2\nRelease Date: Friday"), [
         ["12345678", "target", "Sample Tin One"], ["12345679", "target", "Sample Tin Two"], ["12345680", "target", "Sample Tin Three"], ["12345681", "target", "Sample Tin Four"]]);
       assert.deepEqual(await read("Pokémon Center Sample Box\nSKU: 100-10003", "pokemoncenter"), [["100-10003", "pokemoncenter", "Pokémon Center Sample Box"]]);
+      // A SKU line with the name after its number has its own (the review of 1.9.143), never a header's above it, which
+      // counts as a line that couldn't be read; a store, its word for the stock or its next field after the number isn't one.
+      assert.deepEqual(await read("Friday drops:\nSKU: 12345698 Sample Tin\nSKU: 12345699 - Pokémon TCG: Sample Box — New Drop"),
+        [false, ["12345698", "target", "Sample Tin"], ["12345699", "target", "Sample Box"]]);
+      assert.deepEqual(await read("Sample Bundle\nSKU: 12345700 · In Stock\nSample Pack\nSKU: 12345701 — Retail: $9.99\nSample Deck\nSKU: 12345702 Target | Online"),
+        [["12345700", "target", "Sample Bundle"], ["12345701", "target", "Sample Pack"], ["12345702", "target", "Sample Deck"]]);
       assert.equal(await nameOf("Pokemon TCG: Sample Bundle - Restock"), "Sample Bundle");
       assert.equal(await nameOf("Pokémon Trading Card Game: Sample Bundle – Back in Stock"), "Sample Bundle");
       assert.equal(await nameOf("Pokémon TCG: Sample Box — Pre-order"), "Sample Box");
@@ -890,6 +898,12 @@ Stock: <1000`;
       // "Mega Evolution" with only the set's own product after it is that set's product, and keeps its name.
       assert.equal(await nameOf("Pokémon TCG: Mega Evolution Elite Trainer Box — Mega Lucario"), "Mega Evolution Elite Trainer Box: Mega Lucario");
       assert.equal(await nameOf("Pokémon TCG: Mega Evolution"), "Mega Evolution");
+      // So does one of the set's other products (the review of 1.9.143); with a dash or a colon after "Mega Evolution", what
+      // follows is a set of the series, and it goes.
+      for (const p of ["Pokémon Center Elite Trainer Box", "Mega Sample ex Box", "Mega Sample X ex Ultra-Premium Collection", "Knock Out Collection", "Stacking Tin"])
+        assert.equal(await nameOf("Pokémon TCG: Mega Evolution " + p), "Mega Evolution " + p);
+      assert.equal(await nameOf("Pokémon TCG: Mega Evolution — Mega Sample ex Box"), "Mega Sample ex Box");
+      assert.equal(await nameOf("Pokémon TCG: Mega Evolution: Pokémon Center Sample Box"), "Pokémon Center Sample Box");
       // A dash inside a word stays, and a long name is cut at the worker's 120.
       assert.equal(await nameOf("Pokémon TCG: Scarlet & Violet—151 Ultra-Premium Collection"), "Scarlet & Violet—151 Ultra-Premium Collection");
       assert.equal((await nameOf("Pokémon TCG: " + "Sample ".repeat(30))).length, 120);
@@ -899,6 +913,8 @@ Stock: <1000`;
       // A block with no SKU line counts as a line that couldn't be read, and its Retail and Stock lines as nothing.
       assert.deepEqual(await read("Pokémon TCG: 30th Celebration Sample Box — New Drop\nRetail: $9.99\nStock: New Launch\n\nPokémon TCG: Sample Bundle\nSKU: 12345682\nStock: 1k+"),
         [false, ["12345682", "target", "Sample Bundle"]]);
+      // Also one whose name starts with a number ("151 …" read alone would be SKU 151).
+      assert.deepEqual(await read("151 Ultra-Premium Collection\nRetail: $119.99\nStock: 1k+"), [false]);
       // A name on its own, "30th …" too (no SKU 30th), and a SKU line with no name above it, back to the one before.
       assert.deepEqual(await read("30th Celebration Sample Tin"), [false]);
       assert.deepEqual(await read("Sample Bundle\nSKU: 12345683\nRetail: $5\nSKU: 12345684"), [["12345683", "target", "Sample Bundle"], ["12345684", "target", "SKU 12345684"]]);
@@ -911,6 +927,20 @@ Stock: <1000`;
       assert.deepEqual(await read("Sample Bundle\nSKU: TBD\nStock: Soon"), [false]);
     });
 
+    await test("a drop list with each SKU line over its name, as another tracker writes it, reads the same; a SKU line that got no name lends none", async () => {
+      // The owner's 24 with each block's SKU line first (the review of 1.9.143: each took the name of the product above).
+      const skuFirst = DROP.split("\n\n").map((b) => { const ls = b.split("\n"), s = ls.findIndex((l) => l.startsWith("SKU: ")); return [ls[s], ...ls.filter((_, i) => i !== s)].join("\n"); }).join("\n\n");
+      assert.notEqual(skuFirst, DROP);
+      assert.deepEqual(await read(skuFirst), await read(DROP));
+      // With no blank lines or tracker's lines, and under a header (a line that couldn't be read).
+      assert.deepEqual(await read("SKU: 12345691\nSample Tin\nSKU: 12345692\nSample Box"), [["12345691", "target", "Sample Tin"], ["12345692", "target", "Sample Box"]]);
+      assert.deepEqual(await read("Friday drops:\nSKU: 12345693\nSample Tin\nRetail: $9.99\n\nSKU: 12345694\nSample Box\nStock: 1k+"),
+        [false, ["12345693", "target", "Sample Tin"], ["12345694", "target", "Sample Box"]]);
+      // Names over their SKU lines, but one SKU line with none: the line right under it is never the next one's name.
+      assert.deepEqual(await read("Sample Tin\nSKU: 12345695\n\nSKU: 12345696\nSample Box\nSKU: 12345697"),
+        [["12345695", "target", "Sample Tin"], ["12345696", "target", "SKU 12345696"], false, ["12345697", "target", "SKU 12345697"]]);
+    });
+
     await test("links and \"SKU name\" lines in the same paste as a drop list's blocks still read, in the paste's order", async () => {
       assert.deepEqual(await read(["https://www.target.com/p/sample-trading-card-game-booster-box/-/A-44444446#lnk=sametab", "55555557 Sample Mini Tin", "",
         "Pokémon TCG: Mega Evolution — Sample Reign Booster Bundle — New Drop", "SKU: 12345688", "Retail: $31.99", "Stock: 50k+", "",
@@ -919,7 +949,7 @@ Stock: <1000`;
         ["12345688", "target", "Sample Reign Booster Bundle"], ["100-10004", "pokemoncenter", "Sample Center Tin"], ["12345689", "target", "SKU 12345689"], false]);
     });
 
-    await test("each product goes in the set on the list its name has, the longest first, without case or accents; else the Set box's", async () => {
+    await test("each product goes in the set on the list its name has, never one inside another, then the last in it, without case or accents; else the Set box's", async () => {
       const setFor = (name, sets) => ev(({ name, sets }) => window.__t.interestSetFor(name, sets), { name, sets });
       const sets = ["Scarlet & Violet", "Scarlet & Violet 151", "30th Celebration", "Pokémon Day", "Other"];
       assert.equal(await setFor("Scarlet & Violet 151 Mini Tin", sets), "Scarlet & Violet 151");
@@ -928,6 +958,18 @@ Stock: <1000`;
       assert.equal(await setFor("Pokemon Day Collection", sets), "Pokémon Day");
       assert.equal(await setFor("30th Celebrations Tin", sets), "", "word for word");
       assert.equal(await setFor("Sample Other Tin", sets), "", "Other is the section for none");
+      // A series and a set of it both on the list (the review of 1.9.143): the set, which comes after the series, from a
+      // Target link, a Pokémon Center link or a "SKU name" line; one of the series' own products stays the series'.
+      const series = ["Mega Evolution", "Sample Reign", "30th Celebration"];
+      for (const line of ["https://www.target.com/p/pok-233-mon-trading-card-game-mega-evolution-8212-sample-reign-mini-tin/-/A-99999999",
+        "https://www.pokemoncenter.com/product/100-10999/pokemon-tcg-mega-evolution-sample-reign-pokemon-center-elite-trainer-box",
+        "99999995 Pokémon TCG: Mega Evolution—Sample Reign Mini Tin"]) {
+        const [[, , name]] = await read(line);
+        assert.match(name, /Mega Evolution.*Sample Reign/, line);
+        assert.equal(await setFor(name, series), "Sample Reign", name);
+      }
+      const [[, , etb]] = await read("Pokémon TCG: Mega Evolution Pokémon Center Elite Trainer Box\nSKU: 99999994");
+      assert.equal(await setFor(etb, series), "Mega Evolution", etb);
     });
 
     await test("Add products with the owner's drop list: the 11 on the list skipped, the 13 new listed with their sets, saved in one PUT, then looked up", async () => {
@@ -942,6 +984,7 @@ Stock: <1000`;
       assert.equal(await page.$eval("#ia-go", (e) => e.textContent), "Add 13 products");
       const shown = () => page.$$eval("#ia-list li", (els) => els.map((e) => [e.querySelector(".ia-n").textContent, e.querySelector(".ia-s").textContent]));
       assert.deepEqual(await shown(), NEW.map(([sku, name, set]) => [name, `${set || "Other"} · Target SKU ${sku}`]));
+      assert.ok(await page.isVisible("#ia-list"), "the names and sets show before Add");
       await page.fill("#ia-lines", DROP);
       assert.equal(await page.$eval("#ia-prev", (e) => e.textContent), "13 products to add · 11 already on the list");
       // The Set box goes on those whose name has no set on the list; the others keep theirs.

@@ -3991,6 +3991,74 @@ try {
     assert.deepEqual(iAdded(), ADD_IDS, "noted as applied");
     irev += 1;
   });
+  // While this worker deploys, the worker from before answers too. Its seed had the rev before this one's, so its first save
+  // has this seed's rev (the review of 1.9.143).
+  const iSql = (v) => "'" + JSON.stringify(v).replace(/'/g, "''") + "'";
+  await test("interests: a first list the worker from before saves after this one read the seed is never saved over (409), and gets the additions with a new rev", async () => {
+    sqlRun("DELETE FROM interest_list"); sqlRun("DELETE FROM interest_adds");
+    await iFresh(APPROVAL_PORT + 11);
+    assert.equal((await iGet(bobKey)).body.rev, SEED_REV, "the seed again");
+    // The other worker's save comes between this one's read of the seed and its write: a trigger puts it in just before.
+    const theirs = [iItem("SAMPLE-OLD", "Sample Old Worker Box", { set: "Sample Set" })];
+    sqlRun(`CREATE TRIGGER ilist_test_old BEFORE INSERT ON interest_list WHEN NOT EXISTS (SELECT 1 FROM interest_list WHERE id = 1)
+      BEGIN INSERT INTO interest_list (id, rev, items, updated_at) VALUES (1, ${SEED_REV}, ${iSql(theirs)}, 0); END`);
+    let r;
+    try { r = await iPut(bobKey, { rev: SEED_REV, items: [iItem("SAMPLE-NEW", "Sample New Worker Box")] }); }
+    finally { sqlRun("DROP TRIGGER IF EXISTS ilist_test_old"); }
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.deepEqual(r.body, { error: "changed", rev: SEED_REV + 1 }, "the owner's FAFO reloads the list that was saved, with the additions");
+    assert.deepEqual((await iGet(ginaKey)).body, { rev: SEED_REV + 1, owner: false, items: [...theirs.map(iShown), ...ADDED.map(iSeedShown)] });
+    assert.equal(iRev(), SEED_REV + 1);
+    assert.deepEqual(iAdded(), ADD_IDS);
+  });
+  await test("interests: a list the worker from before saved at the seed's rev, with every added product already, gets a new rev, so a FAFO with the seed's fetches it", async () => {
+    const list = [iItem("SAMPLE-OLD", "Sample Old Worker Box", { set: "Sample Set" }), ...ADDED.map((it, i) => iMine(it, i + 1))];
+    sqlRun(`UPDATE interest_list SET rev = ${SEED_REV}, items = ${iSql(list)}`); sqlRun("DELETE FROM interest_adds");
+    await iFresh(APPROVAL_PORT + 12);
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + SEED_REV)).body, { rev: SEED_REV + 1, owner: false, items: list.map(iShown) }, "not the seed's rev: the list as saved");
+    assert.equal(iRev(), SEED_REV + 1, "only the rev written");
+    assert.deepEqual(iAdded(), ADD_IDS, "noted as applied with it");
+    assert.deepEqual((await iGet(bobKey, "?rev=" + (SEED_REV + 1))).body, { rev: SEED_REV + 1, owner: true, same: true });
+  });
+  await test("interests: a call that read the list just before another applied an addition answers the list saved since, not the one it read", async () => {
+    // Requests to the local runtime can't time this race, so the worker's interests code runs here in Node: isolates on one
+    // SQLite database made from schema.sql, with the other call let in right after this one's read of the list, from
+    // another isolate or the same one.
+    const { DatabaseSync } = await import("node:sqlite");
+    const { pathToFileURL } = await import("node:url");
+    const src = readFileSync(join(root, "src", "index.js"), "utf8");
+    const code = src.slice(src.indexOf("// ---- interests"), src.indexOf("// The picture an item shows"));
+    let n = 0;
+    const isolate = async () => {
+      const file = join(tmp, `interests-${++n}.mjs`);
+      writeFileSync(file, `import { INTEREST_SEED, INTEREST_ADDS } from ${JSON.stringify(pathToFileURL(join(root, "src", "interest-seed.js")).href)};\n${code}\nexport { interestList };\n`);
+      return import(pathToFileURL(file).href);
+    };
+    const db = new DatabaseSync(":memory:");
+    db.exec(readFileSync(join(root, "schema.sql"), "utf8"));
+    let then = null;   // run once, right after the next read of the list
+    const stmt = (sql, args = []) => ({ sql, args, bind: (...a) => stmt(sql, a),
+      first: async () => { const r = db.prepare(sql).get(...args) ?? null; if (then && sql.startsWith("SELECT rev, items")) { const f = then; then = null; await f(); } return r; },
+      all: async () => ({ results: db.prepare(sql).all(...args) }) });
+    const env = { DB: { prepare: (sql) => stmt(sql), batch: async (list) => {
+      db.exec("BEGIN");
+      try { const out = list.map((s) => ({ meta: { changes: Number(db.prepare(s.sql).run(...s.args).changes) } })); db.exec("COMMIT"); return out; }
+      catch (e) { db.exec("ROLLBACK"); throw e; }
+    } } };
+    for (const same of [false, true]) {
+      db.exec("DELETE FROM interest_adds; DELETE FROM interest_list");
+      db.prepare("INSERT INTO interest_list (id, rev, items, updated_at) VALUES (1, 7, ?, 0)").run(JSON.stringify([iItem("SAMPLE-1", "Sample Elite Trainer Box")]));
+      const A = await isolate(), B = same ? A : await isolate();
+      let a;
+      then = async () => { a = await A.interestList(env); };
+      const b = await B.interestList(env);
+      const row = db.prepare("SELECT rev, items FROM interest_list").get(), now = { rev: 8, items: JSON.parse(row.items) };
+      const where = same ? "in the same isolate" : "in another isolate";
+      assert.equal(row.rev, 8, "the other call applied the addition, " + where);
+      assert.deepEqual(a, now);
+      assert.deepEqual(b, now, "the list as saved now, " + where);
+    }
+  });
 
   console.log("\nPayments: off until the Stripe keys are set (2026-10-18)");
   // Bob's FAFO sends order alerts (above), so it's the owner's here.

@@ -5972,14 +5972,18 @@ const markAdd = (env, id, now) => env.DB.prepare("INSERT OR IGNORE INTO interest
 // The list as it is now: what the owner last saved, or the seed until then, with any addition not applied yet put on it
 // first. Throws when D1 does.
 async function interestList(env, again = false) {
+  // The additions this isolate didn't have as applied before the row was read. One applied after that, by another call here
+  // or in another isolate, may be on a newer row than the one read, which is read again then (the review of 1.9.143).
+  const pending = addsList().filter((a) => !interestAdded.has(a.id));
   const row = await env.DB.prepare("SELECT rev, items FROM interest_list WHERE id = 1").first();
   // The seed has every addition. They're noted as applied with the owner's first save, in its batch (interestsPut), never
   // before: a list saved some other way (by the worker from before, still answering while this one deploys) has none of
   // them, and gets them at its next read.
   if (!row) return { rev: seedRev(), items: seedItems(), seed: true };
   const list = { rev: row.rev, items: JSON.parse(row.items) };
-  let due = addsList().filter((a) => !interestAdded.has(a.id));
-  if (!due.length) return list;
+  const reread = () => again ? list : interestList(env, true);
+  let due = pending.filter((a) => !interestAdded.has(a.id));
+  if (!due.length) return pending.length ? await reread() : list;
   // An addition that can't be read or written just now waits for the next call, and the list is answered as it is, so it
   // never stops buyers' FAFOs, batches or pictures reading the list.
   try {
@@ -5987,13 +5991,25 @@ async function interestList(env, again = false) {
     const { results } = await env.DB.prepare("SELECT id FROM interest_adds WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(due.map((a) => a.id))).all();
     for (const r of results) interestAdded.add(r.id);
     due = due.filter((a) => !interestAdded.has(a.id));
-    if (!due.length) return list;
+    if (!due.length) return await reread();
     const items = interestMerge(list.items, due.flatMap((a) => a.items)), now = Date.now();
     if (items.length === list.items.length) {
-      // Every product is on the list already (or it's full): only noted as applied.
-      await env.DB.batch(due.map((a) => markAdd(env, a.id, now)));
-      due.forEach((a) => interestAdded.add(a.id));
-      return list;
+      // Every product is on the list already (or it's full): nothing to add, only noted as applied.
+      if (list.rev > seedRev()) {
+        await env.DB.batch(due.map((a) => markAdd(env, a.id, now)));
+        due.forEach((a) => interestAdded.add(a.id));
+        return list;
+      }
+      // A row at the seed's rev or below gets a new rev too: the worker from before saved it while this one deployed (its
+      // first save has the seed's rev), and a FAFO may have that rev for the seed (the review of 1.9.143). Noted as applied
+      // only with the new rev, so a call that loses the race never notes it on a row that kept the seed's.
+      const res = await env.DB.batch([
+        env.DB.prepare("UPDATE interest_list SET rev = rev + 1, updated_at = ? WHERE id = 1 AND rev = ?").bind(now, list.rev),
+        ...due.map((a) => env.DB.prepare(`INSERT OR IGNORE INTO interest_adds (id, at) SELECT ?, ? WHERE (SELECT rev FROM interest_list WHERE id = 1) = ?
+          AND (SELECT items FROM interest_list WHERE id = 1) = ?`).bind(a.id, now, list.rev + 1, row.items)),
+      ]);
+      if (res[0].meta && res[0].meta.changes) { due.forEach((a) => interestAdded.add(a.id)); return { rev: list.rev + 1, items: list.items }; }
+      return await reread();
     }
     // Written only over the rev read, and noted as applied only once this list is the one saved (as the save's picture
     // cleanup), so a call that loses the race never notes it without its products.
@@ -6004,7 +6020,7 @@ async function interestList(env, again = false) {
     ]);
     if (res[0].meta && res[0].meta.changes) { due.forEach((a) => interestAdded.add(a.id)); return { rev: list.rev + 1, items }; }
     // Another call, or the owner's save, wrote first: read it again and try once more, else leave it for the next call.
-    return again ? list : await interestList(env, true);
+    return await reread();
   } catch (e) { console.error("interests: addition", e); return list; }
 }
 // The picture an item shows: its upload, else its TCGplayer product's, else none.
@@ -6063,21 +6079,26 @@ async function interestsPut(request, env) {
   const rev = b.rev, now = Date.now(), body = JSON.stringify(items);
   const cur = await interestList(env);
   if (!Number.isInteger(rev) || rev !== cur.rev) return json({ error: "changed", rev: cur.rev }, 409, NO_STORE);
-  // Written only over the rev it was made from (the first save makes the row, from the seed's rev). The pictures no item
-  // shows any more go in the same batch, only once this list is the one saved: a "t" one is fetched again if an item shows it
-  // later, and an upload is left a day, as the owner's other device may be about to save a list that shows it. A first save
-  // was made from the seed, which has every addition: they're noted as applied with it.
+  // Written only over the rev it was made from. A first save, made from the seed, makes the row, and is a 409 if one is
+  // there by then: it was saved after the seed was read (by the worker from before while this one deploys, say, whose first
+  // save has the seed's rev too: the review of 1.9.143). The pictures no item shows any more go in the same batch, only
+  // once this list is the one saved: a "t" one is fetched again if an item shows it later, and an upload is left a day, as
+  // the owner's other device may be about to save a list that shows it. A first save was made from the seed, which has
+  // every addition: they're noted as applied with it.
   const keep = JSON.stringify([...new Set(items.map(interestRef).filter(Boolean))]);
   const res = await env.DB.batch([
-    env.DB.prepare(`INSERT INTO interest_list (id, rev, items, updated_at) VALUES (1, ?, ?, ?)
-      ON CONFLICT (id) DO UPDATE SET rev = excluded.rev, items = excluded.items, updated_at = excluded.updated_at WHERE interest_list.rev = ?`)
+    cur.seed ? env.DB.prepare("INSERT INTO interest_list (id, rev, items, updated_at) VALUES (1, ?, ?, ?) ON CONFLICT (id) DO NOTHING RETURNING rev").bind(rev + 1, body, now)
+      : env.DB.prepare(`INSERT INTO interest_list (id, rev, items, updated_at) VALUES (1, ?, ?, ?)
+      ON CONFLICT (id) DO UPDATE SET rev = excluded.rev, items = excluded.items, updated_at = excluded.updated_at WHERE interest_list.rev = ? RETURNING rev`)
       .bind(rev + 1, body, now, rev),
     env.DB.prepare(`DELETE FROM interest_pics WHERE ref NOT IN (SELECT value FROM json_each(?)) AND (substr(ref, 1, 1) = 't' OR at < ?)
       AND (SELECT items FROM interest_list WHERE id = 1) = ?`).bind(keep, now - 86400000, body),
     ...(cur.seed && INTEREST_ADDS.length ? [env.DB.prepare(`INSERT OR IGNORE INTO interest_adds (id, at) SELECT value, ? FROM json_each(?)
       WHERE (SELECT items FROM interest_list WHERE id = 1) = ?`).bind(now, JSON.stringify(INTEREST_ADDS.map((a) => a.id)), body)] : []),
   ]);
-  if (!res[0].meta || !res[0].meta.changes) return json({ error: "changed", rev: (await interestList(env)).rev }, 409, NO_STORE);
+  // Saved only if that write returned the row it wrote: D1's count of changes takes in a trigger's writes too (the test puts
+  // the save of the worker from before in with one).
+  if (!res[0].results || !res[0].results.length) return json({ error: "changed", rev: (await interestList(env)).rev }, 409, NO_STORE);
   if (cur.seed) for (const a of INTEREST_ADDS) interestAdded.add(a.id);
   return json(interestsOut({ rev: rev + 1, items }, true), 200, NO_STORE);
 }
