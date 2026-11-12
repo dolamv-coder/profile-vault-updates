@@ -335,6 +335,25 @@ alone (every store's rows of one account) from reading the whole table. Only
     That's the 30 SKUs, looked up on 2026-11-12 from search results (target.com couldn't be opened from here), with names,
     descriptions, sets and TCGplayer products for pictures. Three numbers no source tied to a product are named "Target
     item <n>" for the owner to name.
+  - **Additions** (1.9.143; the owner's request, 2026-11-12, with a tracker's list of 24 products "that may be dropping on
+    friday": add the 13 new ones and keep the rest): `INTEREST_ADDS` (`{id, items}`, in `interest-seed.js`), each put on
+    the list once, saved or not (D1 `interest_adds`, new: the ids applied), so a product the owner takes off afterwards
+    stays off.
+    - The seed has every addition. Its rev is `seedRev`, the number of additions, so a FAFO holding 1.9.142's seed (rev
+      0) fetches it again: never take an addition out of `INTEREST_ADDS` once it's out. They're noted as applied with the
+      owner's first save, in its batch.
+    - A saved list without them gets the products it doesn't have (by store and SKU; one already there keeps the owner's
+      version) at its end, with rev + 1 (`interestMerge`, `interestList`), in one batch that notes them as applied only if
+      that list is the one saved. A row at the seed's rev or below that has them all gets a new rev too, since the worker
+      from before may have saved one while this one deployed. A first save made from the seed is a 409 if a row appeared
+      meanwhile (`ON CONFLICT DO NOTHING`), and saves go by the row `RETURNING rev` gives, since local D1 counts a
+      trigger's writes in `meta.changes`. A call that finds an addition applied after it read the row reads it again once.
+    - An addition that can't be read or written waits for the next call, and the list is answered as it is.
+    - The first, `2026-11-13-friday`, is Friday's 13, looked up like the seed's: Unova Heavy Hitters Premium Collection
+      (Black Bolt & White Flare), 30th Celebration's Big Tin 4-Pack, Ditto Premium Collection, Battle Deck: Umbreon ex, the
+      Night and Day Ultra-Premium Collections and the Mew and Mewtwo Figure Collections, Delta Reign's Booster Bundle, Elite
+      Trainer Box, Three-Booster Blister and Booster Display, and the Mega Charizard X ex Ultra-Premium Collection (Mega
+      Evolution).
   - **Items:** `{sku, store, name, about, set, pic, tcg}`, checked by `interestItem`. A SKU is 3 to 24 letters, digits or
     hyphens; the store is Target or Pokémon Center; a name is at most 120 characters, a description 400, a set 60. A list
     holds at most 300.
@@ -1931,6 +1950,37 @@ From 1.9.142 the app has **Interests** (the owner's request, 2026-11-12; the wor
   - With no inbox to clean, a run says so on the Clean page.
   - `clean-rules.test.mjs` covers it.
 - Settings gain `interestPicks`.
+
+From 1.9.143 the owner's Add products on Interests reads a **drop list** pasted from a restock tracker (the owner's
+request, 2026-11-12, with Friday's 24 products; the worker adds the 13 that were new, above).
+- **Blocks:** a name line and `SKU: <number>` (or TCIN, any case, with or without the colon or #: `INTEREST_DROP_SKU`).
+  Retail, QL, Stock and a tracker's other `Key: value` lines (`INTEREST_DROP_KEY`) are read and left out, as the owner
+  chose cards show neither. Links and "SKU name" lines can be mixed in (`interestsFromText`).
+- **A SKU line's name:** the words after its number (`interestSkuName`; not a stock word, `INTEREST_SKU_STATUS`, a store's
+  name or the tracker's next field), else the nearest plain line above it, back to the SKU line before. A tracker that
+  writes the SKU line first is read that way: when more SKU lines have a name right under them than right above, each
+  takes the first line under it. A line that's a product of its own (`interestOwnLine`) is never a name, and a name with
+  tracker lines but no SKU line counts as couldn't be read.
+- **Names** are written as the list writes its own (`interestDropName`): no "Pokémon TCG:"; no "Mega Evolution —" in front
+  of a set's product (kept for the series' own products, `INTEREST_DROP_KIND`); no tracker tag such as "— New Drop"
+  (`INTEREST_DROP_TAG`); "— Styles May Vary" as "(styles may vary)" and any other dash as ": " ("30th Celebration
+  Ultra-Premium Collection: Night").
+- **Sets** ("by set, as now", the owner's choice): each new product goes in the set on the list that its name has
+  (`interestSetFor`: never one inside another, then the one latest in the name, the longest on a tie), else the Set box's.
+  The preview lists up to 50 new products with their sets (`INTEREST_ADD_SHOWN`), and pictures are looked up for 20 at a
+  time, where it was 8 (`INTEREST_FIND_MAX`).
+
+Also from 1.9.143 **Invoice offers only the plans the worker's `plans` names** (`billMonthlyOffered`; an answer without
+`plans`, from an older worker, offers both), so the owner could bring the monthly plan back from the worker alone.
+- With the monthly plan gone (the worker section above), a buyer with no plan sees Pay per checkout alone, at the worker's
+  price ("Your seller charges per checkout. Until you choose it, Submit stays off.").
+- Nothing offers the monthly plan or its extra 15 slots: Invoice, `planLimitDialog`, Submit's slot meter, or
+  `billingBlockDialog` (titled "Choose pay per checkout first").
+- A monthly plan with no subscription counts as none (`billPlan`). A subscriber keeps Cancel plan and Pay now, with no
+  extras or Keep my plan.
+- Buttons drawn before the change say the plan isn't offered any more (`billMonthlyGone`).
+- `orbit-billing` gains `plans` and `sub`. `.github/scripts/billing.test.mjs` runs Invoice against a pretend worker.
+- Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
