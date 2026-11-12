@@ -17739,7 +17739,7 @@ async function askPremiumList(btn){
 // /interests), so one made before another device's save is refused (409) and the list is shown as it is now.
 const INTEREST_STORE = "orbit-interests", INTEREST_EVERY_MS = 10 * 60000, INTEREST_MAX = 300;
 const INTEREST_STORES = [["target", "Target"], ["pokemoncenter", "Pokémon Center"]];
-// saving: a PUT is out (the buttons wait); savingP: a save under way, till its answer is kept (interestSaveWait).
+// saving: a PUT is out (the buttons wait); savingP: the slot a save holds, till its answer is kept (interestSaveSlot).
 const INTEREST = {busy:false, at:0, for:"", failed:false, saving:false, savingP:null};
 const INTEREST_REF = /^(h[0-9a-f]{32}|t\d{1,10})$/;
 let interestMem = null;
@@ -17925,21 +17925,29 @@ async function interestApi(path, method, body){
   try { return await relayFetch(path, {method, headers:{authorization:"Bearer " + sellerLic(), "content-type":"application/json"}, body:JSON.stringify(body), cache:"no-store", signal:ac.signal}); }
   finally { clearTimeout(t); }
 }
-// Saves the whole list, made from revision `rev`: true once saved, "changed" when another device saved first (the list
-// is then shown as it is now), or false (and it says why). One save at a time (a second would go with the revision the
-// first changes): the buttons wait for it, Edit, Add products, Remove and the pictures Add products finds wait for it
-// first (interestSaveWait) and go onto the list it left, and a press that doesn't wait is told (the review of 1.9.142:
-// until then it did nothing, without a word).
-async function interestsSave(items, rev, o){
-  o = o || {};
-  if (INTEREST.savingP){ if (!o.quiet) toast("Another change to the list is still saving. Try again in a moment.", "err"); return false; }
-  let done; INTEREST.savingP = new Promise(res => { done = res; });
-  try { return await interestsPut(items, rev, o); }
-  finally { INTEREST.savingP = null; done(); }
+// One save at a time (a second would go with the revision the first changes): the buttons wait for a PUT out, and Edit,
+// Add products, Remove and the pictures Add products finds take the slot (interestSaveSlot), then read the list, save it
+// (interestsPut) and give the slot back, so each goes onto the list the one before left. The slot is taken as the wait
+// ends, before another waiter runs, so two waiting go one after the other (the second review of 1.9.142: both went on
+// at once and the second was refused, its pictures dropped or its Save turned away). The function it hands back gives
+// it back (once).
+async function interestSaveSlot(){
+  while (INTEREST.savingP) await INTEREST.savingP;
+  let done; const p = INTEREST.savingP = new Promise(res => { done = res; });
+  return () => { if (INTEREST.savingP === p) INTEREST.savingP = null; done(); };
 }
-// Waits for a save under way, so the next one goes onto the list it left.
-async function interestSaveWait(){ while (INTEREST.savingP) await INTEREST.savingP; }
+// A save that doesn't wait: with the slot taken it's refused, and says so unless quiet (the review of 1.9.142: until then
+// it did nothing, without a word).
+async function interestsSave(items, rev, o){
+  if (INTEREST.savingP){ if (!(o && o.quiet)) toast("Another change to the list is still saving. Try again in a moment.", "err"); return false; }
+  const free = await interestSaveSlot();
+  try { return await interestsPut(items, rev, o); }
+  finally { free(); }
+}
+// Saves the whole list, made from revision `rev`, with the slot held: true once saved, "changed" when another device
+// saved first (the list is then shown as it is now), or false (and it says why).
 async function interestsPut(items, rev, o){
+  o = o || {};
   const k = sellerLic(), vault = S;
   INTEREST.saving = true;
   if (UI.view === "interests") renderMain();
@@ -17985,9 +17993,10 @@ async function interestFind(name){
   return {product:String(d.product), name:String(d.name || "").slice(0, 200), image:typeof d.image === "string" && DATA_PIC.test(d.image) ? d.image : ""};
 }
 // After Add products: the first few new products with no picture (INTEREST_FIND_MAX, one at a time: the day's lookups are
-// orders' pictures' too) get their TCGplayer product's, and the list is saved again with them, after a save under way and
-// onto the list it left, only where none was set meanwhile. A 429 or the catalog still being read stops for now. Then it
-// says what it found, and what's left for Edit's Find on TCGplayer (the review of 1.9.142: the rest went without a word).
+// orders' pictures' too) get their TCGplayer product's, and the list is saved again with them, in its turn (the slot, after
+// a save under way) and onto the list it left, only where none was set meanwhile. A 429 or the catalog still being read
+// stops for now. Then it says what it found, and what's left for Edit's Find on TCGplayer (the review of 1.9.142: the rest
+// went without a word).
 const INTEREST_FIND_MAX = 8;
 async function interestFindPics(keys){
   const k = sellerLic(), vault = S, found = {};
@@ -18002,15 +18011,17 @@ async function interestFindPics(keys){
   }
   const want = Object.keys(found).length;
   for (let i = 0; i < 3 && want && !end; i++){
-    await interestSaveWait();
-    if (S !== vault || sellerLic() !== k) return;
-    const L = interestRead(); if (!L || !L.owner) return;
-    let n = 0;
-    const items = L.items.map(it => { const p = found[interestKey(it)]; if (!p || it.pic || it.tcg) return it; n++; return Object.assign({}, it, {tcg:p}); });
-    if (!n){ end = "set"; break; }   // each got a picture meanwhile
-    const r = await interestsSave(items, L.rev, {quiet:true});
-    if (r === true){ saved = n; end = "saved"; }
-    else if (r !== "changed") end = "failed";
+    const free = await interestSaveSlot();
+    try {
+      if (S !== vault || sellerLic() !== k) return;
+      const L = interestRead(); if (!L || !L.owner) return;
+      let n = 0;
+      const items = L.items.map(it => { const p = found[interestKey(it)]; if (!p || it.pic || it.tcg) return it; n++; return Object.assign({}, it, {tcg:p}); });
+      if (!n){ end = "set"; break; }   // each got a picture meanwhile
+      const r = await interestsPut(items, L.rev, {quiet:true});
+      if (r === true){ saved = n; end = "saved"; }
+      else if (r !== "changed") end = "failed";
+    } finally { free(); }
   }
   if (S !== vault || sellerLic() !== k || !all.length) return;
   const left = all.length - asked, lost = want && end !== "saved" && end !== "set";
@@ -18028,30 +18039,37 @@ const interestLineText = (v) => interestText(v, 120);
 // Target writes a character its addresses can't hold as its number between hyphens (the review of 1.9.142, with live
 // links): é as pok-233-mon (or drops it: pok-mon), & as -38-, an apostrophe as -39- or -8217-, a dash as -8211- or -8212-.
 // Those are read back before the name is made, so it reads as the product's and TCGplayer's lookup can find it; another
-// number (151, the 5 of S10 5) stays.
+// number (151, the 5 of S10 5) stays. A number from 192 to 255 is a letter only between two pieces of a word (piece: 1 to
+// 3 letters, as pok-233-mon and na-239-ve, and not a word of its own, one of the table's or a count's), so a count between
+// words stays one (pokemon-200-piece-puzzle, binder-240-pocket, tcg-250-card: the second review of 1.9.142), and é (233)
+// also ends a piece before a whole word (pok-233-ball, Poké Ball). Each piece gets the table's spelling or a capital as
+// it comes (own keys only: a word like "constructor" isn't a name in the table), before anything is joined to it, so
+// pokemon-39-s is Pokémon's.
 const INTEREST_SLUG_WORDS = {tcg:"TCG", etb:"ETB", pokemon:"Pokémon"};
+const interestSlugKnown = (w) => Object.prototype.hasOwnProperty.call(INTEREST_SLUG_WORDS, w.toLowerCase());
+const interestSlugCap = (w) => interestSlugKnown(w) ? INTEREST_SLUG_WORDS[w.toLowerCase()] : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
 function interestSlugWords(s){
   const t = s.split(/[-_\s]+/).filter(Boolean), out = [];
-  const isWord = (w) => /^\p{L}+$/u.test(w || "");
+  const piece = (w) => /^\p{L}{1,3}$/u.test(w || "") && !interestSlugKnown(w) && !/^(of|ct|pk|pc|pcs)$/i.test(w);
   for (let i = 0; i < t.length; i++){
     const w = t[i], next = t[i + 1], last = out.length - 1, n = /^\d{2,4}$/.test(w) ? +w : 0;
     const ch = n >= 192 && n <= 255 ? String.fromCharCode(n) : "";
-    if (/^pok$/i.test(w) && /^mon$/i.test(next || "")){ out.push("pokemon"); i++; }
-    else if (ch && /\p{L}/u.test(ch) && last >= 0 && /\p{L}$/u.test(out[last]) && isWord(next)){ out[last] += ch + next; i++; }   // pok-233-mon
+    if (/^pok$/i.test(w) && /^mon$/i.test(next || "")){ out.push(INTEREST_SLUG_WORDS.pokemon); i++; }
+    else if (ch && /\p{L}/u.test(ch) && piece(out[last]) && piece(next)){ out[last] += (ch + next).toLowerCase(); i++; }   // pok-233-mon
+    else if (n === 233 && piece(out[last]) && /^\p{L}+$/u.test(next || "")) out[last] += "é";   // pok-233-ball: Poké Ball
     else if (n === 38 && last >= 0 && next) out.push("&");
     else if (n === 39 || n === 8217){ if (last >= 0 && /^(s|t|d|m|ll|re|ve)$/i.test(next || "")){ out[last] += "'" + next.toLowerCase(); i++; } }
     else if (n === 8211 || n === 8212){ if (last >= 0 && next && out[last] !== "–") out.push("–"); }
-    else out.push(w);
+    else out.push(interestSlugCap(w));
   }
   return out;
 }
 function interestSlugName(slug){
   let s = String(slug || ""); try { s = decodeURIComponent(s); } catch(e){}
   const words = interestSlugWords(s);
-  if (words.filter(w => /^\p{L}+$/u.test(w)).length < 2) return "";
-  // Own keys only: a word like "constructor" isn't a name in the table.
-  const up = (w) => { const k = w.toLowerCase(); return Object.prototype.hasOwnProperty.call(INTEREST_SLUG_WORDS, k) ? INTEREST_SLUG_WORDS[k] : ""; };
-  return interestLineText(words.map(w => up(w) || w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" "));
+  // Two words of letters at least (one with an apostrophe too: trainer-39-s-toolkit), or the slug is no name.
+  if (words.filter(w => /^\p{L}+(?:'\p{L}+)?$/u.test(w)).length < 2) return "";
+  return interestLineText(words.join(" "));
 }
 function interestFromLine(line, store){
   const s = String(line || "").trim();
@@ -18068,8 +18086,10 @@ function interestFromLine(line, store){
 function openInterestAdd(){
   let L = interestRead(); if (!L || !L.owner || INTEREST.saving) return;
   const sets = interestSets(L.items);
+  // Closed (Cancel, the X, Escape, locking): set as it closes, while its panel is still on the page fading out.
+  let shut = false;
   openLayer({
-    title:"Add products", dismiss:false,
+    title:"Add products", dismiss:false, onClose:() => { shut = true; },
     body:`<div class="field" data-field="ia_lines"><label for="ia-lines">One per line: a Target or Pokémon Center link, or a SKU and its name</label><textarea id="ia-lines" spellcheck="false" autocomplete="off" style="min-height:150px" placeholder="https://www.target.com/p/…/-/A-12345678&#10;12345678 Product name"></textarea><span class="err"></span></div>
       <div class="form-grid" style="margin-top:12px">
         <div class="field c3"><label for="ia-store">Store</label><select id="ia-store">${opt(INTEREST_STORES, "target")}</select><span class="hint">For lines without a link.</span></div>
@@ -18109,20 +18129,24 @@ function openInterestAdd(){
       go.addEventListener("click", async () => {
         if (busy || !plan().add.length) return;
         busy = true; go.disabled = true; go.textContent = "Adding…";
-        // A save under way first (the pictures an earlier Add found, say), then onto the list it left.
-        await interestSaveWait();
-        L = interestRead() || L;
-        const p = plan();
-        if (!p.add.length || L.items.length + p.add.length > INTEREST_MAX){
-          busy = false;
-          if (panel.isConnected){ show(); if (p.add.length) setErr(panel, "ia_lines", `The list holds ${INTEREST_MAX} products at most: ${Math.max(0, INTEREST_MAX - L.items.length)} more fit.`); }
-          return;
-        }
-        const r = await interestsSave(L.items.concat(p.add), L.rev);
-        busy = false;
+        // Its turn first (after a save under way: the pictures an earlier Add found, say), then onto the list it left;
+        // nothing once the window was closed meanwhile (the second review of 1.9.142).
+        const free = await interestSaveSlot();
+        let r = false, p;
+        try {
+          if (shut) return;
+          L = interestRead() || L;
+          p = plan();
+          if (!p.add.length || L.items.length + p.add.length > INTEREST_MAX){
+            busy = false; show();
+            if (p.add.length) setErr(panel, "ia_lines", `The list holds ${INTEREST_MAX} products at most: ${Math.max(0, INTEREST_MAX - L.items.length)} more fit.`);
+            return;
+          }
+          r = await interestsPut(L.items.concat(p.add), L.rev);
+        } finally { free(); busy = false; }
         if (r === true){ close(); UI.interestsEdit = true; toast(`Added ${plural(p.add.length, "product")}`); interestFindPics(p.add.map(interestKey)); return; }
         if (r === "changed") L = interestRead() || L;   // Add again goes onto the list as it is now
-        if (panel.isConnected) show();
+        if (!shut) show();
       });
     }
   });
@@ -18134,9 +18158,9 @@ function openInterestEdit(key){
   let L = interestRead(); if (!L || !L.owner || INTEREST.saving) return;
   const it0 = L.items.find(it => interestKey(it) === key); if (!it0) return;
   const sets = interestSets(L.items);
-  let pic = it0.pic || "", tcg = it0.tcg || "", chosen = "", foundImg = "", say = "", reading = null, unreadable = false, busy = false;
+  let pic = it0.pic || "", tcg = it0.tcg || "", chosen = "", foundImg = "", say = "", reading = null, unreadable = false, busy = false, shut = false;
   openLayer({
-    title:"Edit product", dismiss:false,
+    title:"Edit product", dismiss:false, onClose:() => { shut = true; },
     body:`<div class="form-grid">
         <div class="field c6" data-field="ie_name"><label for="ie-name">Name</label><input id="ie-name" maxlength="120" autocomplete="off" value="${esc(it0.name)}"><span class="err"></span></div>
         <div class="field c6"><label for="ie-about">Description <span class="opt">(optional)</span></label><textarea id="ie-about" maxlength="400" style="min-height:90px">${esc(it0.about)}</textarea></div>
@@ -18194,26 +18218,30 @@ function openInterestEdit(key){
         show();
       });
       show();
+      // Where the product is on the list as it's kept now, or -1 (and it says why).
+      const place = () => {
+        L = interestRead() || L;
+        const at = L.items.findIndex(x => interestKey(x) === key);
+        if (at < 0){ setErr(panel, "ie_name", "This product isn't on the list any more."); return -1; }
+        if (store.value !== it0.store && L.items.some(x => x.store === store.value && x.sku.toLowerCase() === it0.sku.toLowerCase())){ setErr(panel, "ie_store", "That SKU is on the list for that store already."); return -1; }
+        return at;
+      };
       save.addEventListener("click", async () => {
         if (busy) return;
         const n = interestLineText(name.value);
         if (!n){ setErr(panel, "ie_name", "Enter a name."); name.focus(); return; }
-        if (reading){ const ok = await reading.catch(() => false); if (!panel.isConnected || ok === false) return; }
+        if (reading){ const ok = await reading.catch(() => false); if (shut || ok === false) return; }
         if (unreadable){ setErr(panel, "ie_pic", "FAFO couldn't read that picture. Try another."); return; }
         busy = true; save.disabled = true; save.textContent = "Saving…";
+        let free = null;
         try {
-          // A save under way first (the pictures Add products found, say), then onto the list as it is now.
-          await interestSaveWait();
-          if (!panel.isConnected) return;
-          L = interestRead() || L;
-          const at = L.items.findIndex(x => interestKey(x) === key);
-          if (at < 0){ setErr(panel, "ie_name", "This product isn't on the list any more."); return; }
-          if (store.value !== it0.store && L.items.some(x => x.store === store.value && x.sku.toLowerCase() === it0.sku.toLowerCase())){ setErr(panel, "ie_store", "That SKU is on the list for that store already."); return; }
-          // A picture chosen goes up first, kept by the worker under its hash (the same picture twice is one).
+          if (place() < 0) return;
+          // A picture chosen goes up first, kept by the worker under its hash (the same picture twice is one), before the
+          // list's turn, so no other save waits for the upload (the second review of 1.9.142).
           if (chosen){
             let r, d = null;
             try { r = await interestApi("/interests/pic", "POST", {data:chosen}); d = await r.json().catch(() => null); } catch(e){ r = null; }
-            if (!panel.isConnected) return;
+            if (shut) return;
             if (!(r && r.ok && d && /^h[0-9a-f]{32}$/.test(d.ref || ""))){
               setErr(panel, "ie_pic", !r ? "Couldn't reach the license server. Check your connection and try again." : r.status === 413 ? "That picture is too large. Try a smaller one."
                 : r.status === 403 ? "Only your own FAFO, the one that sends order alerts for buyers, can change this list." : "The license server couldn't keep that picture. Try another.");
@@ -18221,6 +18249,10 @@ function openInterestEdit(key){
             }
             pic = d.ref; chosen = "";
           }
+          // Then its turn (after a save under way: the pictures Add products found, say), onto the list as it is now.
+          free = await interestSaveSlot();
+          if (shut) return;
+          const at = place(); if (at < 0) return;
           // Only what was changed in this window (against the product as it opened) goes onto the product as it is now, so a
           // Save after another save (one Add products' pictures made, another device's) never puts back what that one changed.
           const ch = {}, ab = interestText(about.value, 400), st = interestText(set.value, 60);
@@ -18231,22 +18263,24 @@ function openInterestEdit(key){
           if (pic !== (it0.pic || "") || tcg !== (it0.tcg || "")) Object.assign(ch, {pic, tcg});
           const items = L.items.slice();
           items[at] = Object.assign({}, items[at], ch);
-          const r = await interestsSave(items, L.rev);
+          const r = await interestsPut(items, L.rev);
           if (r === true){ close(); toast("Saved"); return; }
           if (r === "changed") L = interestRead() || L;   // Save again goes onto the list as it is now
-        } finally { busy = false; if (panel.isConnected){ save.disabled = false; save.textContent = "Save"; } }
+        } finally { if (free) free(); busy = false; if (!shut){ save.disabled = false; save.textContent = "Save"; } }
       });
     }
   });
 }
 async function removeInterest(key){
-  const L = interestRead(); if (!L || !L.owner || INTEREST.saving) return;
+  const L = interestRead(), vault = S; if (!L || !L.owner || INTEREST.saving) return;
   const it = L.items.find(x => interestKey(x) === key); if (!it) return;
   if (!await confirmDialog({title:"Remove this product?", body:`${it.name} (SKU ${it.sku}) comes off the list. Buyers who ticked it stop sending it with their batches.`, confirm:"Remove", danger:true})) return;
-  // A save under way first, then off the list as it is now.
-  await interestSaveWait();
-  const now = interestRead(); if (!now || !now.owner || !now.items.some(x => interestKey(x) === key)) return;
-  if (await interestsSave(now.items.filter(x => interestKey(x) !== key), now.rev) === true) toast("Removed from the list");
+  // Its turn (after a save under way), then off the list as it is now.
+  const free = await interestSaveSlot();
+  try {
+    const now = S === vault && interestRead(); if (!now || !now.owner || !now.items.some(x => interestKey(x) === key)) return;
+    if (await interestsPut(now.items.filter(x => interestKey(x) !== key), now.rev) === true) toast("Removed from the list");
+  } finally { free(); }
 }
 
 /* ================= INVOICE: PAYING THE SELLER (1.9.130) ================= */

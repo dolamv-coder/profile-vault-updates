@@ -1899,7 +1899,9 @@ From 1.9.142 the app has **Interests** (the owner's request, 2026-11-12; the wor
   - Edit (`openInterestEdit`) changes the name, description, set and store. A picture can be found on TCGplayer, or
     pasted, dropped or chosen, then uploaded through `pictureFromBlob`.
   - Remove takes a product off.
-  - Every save (`interestsSave`) sends the rev it was made from, and a 409 reloads the list.
+  - One save goes at a time: Edit, Add, Remove and the pictures found after Add each wait for the one under way and
+    take the slot as they go (`interestSaveSlot`), then save onto the list as it is (`interestsPut`). Each save sends
+    the rev it was made from, and a 409 reloads the list. A window closed while it waits saves nothing.
 - **Tests:** `interests.test.mjs` runs the page in Chromium against a pretend license server. CI installs Playwright for
   it.
 - **Also in 1.9.142, the auto-clean fix** (the owner's request, 2026-11-09, from CLAUDE.md's "Fix with the next page

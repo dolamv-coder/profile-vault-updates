@@ -5,8 +5,10 @@
 // setting, Tick all, the search, the list kept on this device, what Submit sends, and the seller's own editing (Add products,
 // Edit with a picture, and a save another device beat). Then what the review of 1.9.142 found: names read from Target's
 // links, every tick sent whatever the copy here, one section for Other, Edit's Save over a save it didn't see, a paste from a
-// spreadsheet, one save at a time, a refresh answered after a save, and what the TCGplayer lookups after Add say. Sample
-// names, SKUs and keys only.
+// spreadsheet, one save at a time, a refresh answered after a save, and what the TCGplayer lookups after Add say. And what
+// its second review found: a count in a Target link stays a count, a 401 empties the list here, Add products and Remove
+// wait for a save out, Add products or Edit closed while it waits saves nothing, and two waiting both save. Sample names,
+// SKUs and keys only.
 //   node .github/scripts/interests.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must have Interests; a page named on the command line that doesn't is skipped.
 import { readFileSync, readdirSync } from "node:fs";
@@ -129,7 +131,7 @@ try {
     assert.equal(W.gets.length, 0, "nothing asked without a key");
   });
 
-  await test("Add products names a Target link as its product: Target's numbers for é, &, an apostrophe and a dash read back", async () => {
+  await test("Add products names a Target link as its product: Target's numbers for é, &, an apostrophe and a dash read back, and a count stays", async () => {
     const name = (line) => ev((l) => { const it = window.__t.interestFromLine(l, "target"); return it && [it.sku, it.name]; }, line);
     const T = "https://www.target.com/p/";
     assert.deepEqual(await name(T + "pok-233-mon-scarlet-violet-s10-5-elite-trainer-box-1-trading-cards/-/A-94636860"),
@@ -148,6 +150,21 @@ try {
     // A word the table doesn't have is only a word, "constructor" too (not Object's).
     assert.deepEqual(await name(T + "sample-technic-constructor-set/-/A-12345681"), ["12345681", "Sample Technic Constructor Set"]);
     assert.deepEqual(await name(T + "pokemon-tcg-etb/-/A-12345682"), ["12345682", "Pokémon TCG ETB"]);
+    // A number from 192 to 255 between words is a count, not a letter's (the second review of 1.9.142): only between two
+    // pieces of a word (pok-233-mon, na-239-ve) is it one.
+    assert.deepEqual(await name(T + "pokemon-200-piece-puzzle/-/A-12345683"), ["12345683", "Pokémon 200 Piece Puzzle"]);
+    assert.deepEqual(await name(T + "ultra-pro-pokemon-binder-240-pocket/-/A-12345684"), ["12345684", "Ultra Pro Pokémon Binder 240 Pocket"]);
+    assert.deepEqual(await name(T + "ultra-pro-pok-233-mon-240-card-binder/-/A-12345685"), ["12345685", "Ultra Pro Pokémon 240 Card Binder"]);
+    assert.deepEqual(await name(T + "pokemon-tcg-250-card-binder/-/A-12345686"), ["12345686", "Pokémon TCG 250 Card Binder"]);
+    assert.deepEqual(await name(T + "pokemon-tcg-card-sleeves-200-count/-/A-12345687"), ["12345687", "Pokémon TCG Card Sleeves 200 Count"]);
+    assert.deepEqual(await name(T + "sample-sleeves-pack-of-250-ct/-/A-12345688"), ["12345688", "Sample Sleeves Pack Of 250 Ct"]);
+    // é also ends a piece before a whole word: Poké Ball.
+    assert.deepEqual(await name(T + "pok-233-mon-trading-card-game-pok-233-ball-tin/-/A-12345692"),
+      ["12345692", "Pokémon Trading Card Game Poké Ball Tin"]);
+    // Two words with an apostrophe are a name, and a word of the table keeps its spelling with one.
+    assert.deepEqual(await name(T + "trainer-39-s-toolkit/-/A-12345689"), ["12345689", "Trainer's Toolkit"]);
+    assert.deepEqual(await name(T + "pokemon-39-s-sample-tin/-/A-12345690"), ["12345690", "Pokémon's Sample Tin"]);
+    assert.deepEqual(await name(T + "sample-39-s/-/A-12345691"), ["12345691", "SKU 12345691"]);
   });
 
   await test("with a license key, Interests is between IMAP and Submit in the sidebar, and right before Submit in the phone's tabs", async () => {
@@ -252,6 +269,25 @@ try {
     assert.equal(W.gets.length, asked + 1, "it asked");
     assert.equal(await ev(() => JSON.stringify(window.__t.interestRead())), before);
     assert.equal(JSON.parse(await ev(() => localStorage.getItem("orbit-interests"))).items.length, 4);
+  });
+
+  await test("a 401 (the license turned off) empties the list kept here: Interests shows none and the badge goes, till an answer brings it back", async () => {
+    const asked = W.gets.length;
+    W.status = 401;
+    await ev(() => window.__t.refreshInterests(true));
+    assert.equal(W.gets.length, asked + 1, "it asked");
+    assert.deepEqual(await ev(() => window.__t.interestRead().items), []);
+    const kept = JSON.parse(await ev(() => localStorage.getItem("orbit-interests")));
+    assert.deepEqual([kept.rev, kept.items], [null, []]);
+    assert.equal(await page.$eval("#main .empty h2", (e) => e.textContent), "Nothing here yet");
+    assert.deepEqual(await cards(), []);
+    assert.equal(await badge(), "");
+    // The next answer brings the whole list back (with no revision kept, it asks for the whole list).
+    await ev(() => window.__t.refreshInterests(true));
+    assert.equal(W.gets.at(-1), "");
+    await page.waitForSelector("#main .int-card");
+    assert.equal((await cards()).length, 4);
+    assert.equal(await badge(), "3");
   });
 
   await test("Submit sends every SKU ticked for the stores in the batch only: those on the list first, in its order, then the rest", async () => {
@@ -479,6 +515,136 @@ try {
     assert.equal(W.items.find((it) => it.sku === "66666666").tcg, "555");
     assert.equal(W.items.find((it) => it.sku === "100-10001").about, "A sample Pokémon Center box.");
     await toastSays(/Found a picture on TCGplayer\./);
+  });
+
+  await test("Add products and Remove pressed while a save is out go after it, onto the list it left; Add or Edit closed meanwhile saves nothing", async () => {
+    await reset(BASE(), 80);
+    // Add products open, then a save of this FAFO's own goes out and is slow: Add waits for it, then goes.
+    await page.click('#main [data-act="interests-add"]');
+    await focused("ia-lines");
+    await page.fill("#ia-lines", "73333333");   // a SKU alone: no TCGplayer lookup after
+    let release; W.putHold = new Promise((r) => { release = r; });
+    let n = W.puts.length;
+    await startOwn("33333333", { name: "Sample Tin, Fifth Print" });
+    await waitFor(() => W.puts.length === n + 1, "the first save");
+    await page.click("#ia-go");
+    assert.equal(await page.$eval("#ia-go", (e) => e.textContent), "Adding…");
+    await sleep(400);
+    assert.equal(W.puts.length, n + 1, "Add waits for it");
+    release(); W.putHold = null;
+    await page.waitForFunction(() => !document.querySelector("#ia-lines"));
+    assert.equal(await ev(() => window.__bg), true);
+    assert.deepEqual(W.puts.slice(n).map((b) => b.rev), [80, 81], "with the revision the first left");
+    assert.ok(W.items.some((it) => it.sku === "73333333" && it.name === "SKU 73333333"));
+    assert.equal(W.items.find((it) => it.sku === "33333333").name, "Sample Tin, Fifth Print");
+    await toastSays(/Added 1 product/);
+    // Remove: a save goes out while its question is open, and Remove waits for it.
+    await page.click('#main [data-act="interest-remove"][data-id="target:11111111"]');
+    await page.waitForSelector("#cf-go");
+    W.putHold = new Promise((r) => { release = r; });
+    n = W.puts.length;
+    await startOwn("33333333", { about: "Three sample packs, fifth print." });
+    await waitFor(() => W.puts.length === n + 1, "the save");
+    await page.click("#cf-go");
+    await sleep(400);
+    assert.equal(W.puts.length, n + 1, "Remove waits for it");
+    release(); W.putHold = null;
+    await toastSays(/Removed from the list/);
+    assert.deepEqual(W.puts.slice(n).map((b) => b.rev), [82, 83]);
+    assert.ok(!W.items.some((it) => it.sku === "11111111"));
+    assert.equal(W.items.find((it) => it.sku === "33333333").about, "Three sample packs, fifth print.");
+    assert.doesNotMatch(await lastToast(), /still saving|another device/);
+    // Add products closed while it waits: nothing is added once that save is done.
+    await ev(() => { document.querySelector("#toasts").innerHTML = ""; });
+    await page.click('#main [data-act="interests-add"]');
+    await focused("ia-lines");
+    await page.fill("#ia-lines", "74444444");
+    W.putHold = new Promise((r) => { release = r; });
+    n = W.puts.length;
+    await startOwn("33333333", { name: "Sample Tin, Sixth Print" });
+    await waitFor(() => W.puts.length === n + 1, "the save");
+    await page.click("#ia-go");
+    await page.click("#layers .panel-foot [data-close]");
+    release(); W.putHold = null;
+    assert.equal(await ev(() => window.__bg), true);
+    await sleep(400);
+    assert.equal(W.puts.length, n + 1, "nothing more sent");
+    assert.ok(!W.items.some((it) => it.sku === "74444444"));
+    assert.doesNotMatch(await lastToast(), /still saving|another device|Added/);
+    // Edit closed while its Save waits: nothing is saved once that save is done (its window is still fading out then).
+    await sleep(300);
+    await openEdit("target:22222222");
+    await page.fill("#ie-about", "Not to be saved.");
+    W.putHold = new Promise((r) => { release = r; });
+    n = W.puts.length;
+    await startOwn("33333333", { name: "Sample Tin, Seventh Print" });
+    await waitFor(() => W.puts.length === n + 1, "the save");
+    await page.click("#ie-save");
+    assert.equal(await page.$eval("#ie-save", (e) => e.textContent), "Saving…");
+    await page.click("#layers .panel-foot [data-close]");
+    release(); W.putHold = null;
+    assert.equal(await ev(() => window.__bg), true);
+    await sleep(400);
+    assert.equal(W.puts.length, n + 1, "nothing more sent");
+    assert.equal(W.items.find((it) => it.sku === "22222222").about, "Nine sample packs and sleeves.");
+    assert.doesNotMatch(await lastToast(), /still saving|another device|Saved/);
+  });
+
+  await test("two waiting for a save out both go, one after the other: the pictures Add products found and Edit's Save, either way round", async () => {
+    const MINI = () => BASE().concat([{ sku: "66666666", store: "target", name: "Sample Mini Tin", about: "", set: "Sample Set C", pic: "", tcg: "" }]);
+    await reset(MINI(), 90);
+    // Edit with a picture chosen: the picture goes up while the save is out, then its Save waits, after the pictures found.
+    await openEdit("target:44444444");
+    await page.fill("#ie-about", "Thirty-six sample packs, again.");
+    await page.setInputFiles("#ie-file", { name: "box.png", mimeType: "image/png", buffer: PNG });
+    await page.waitForFunction(() => /ready to save/.test(document.querySelector("#ie-say").textContent));
+    let release; W.putHold = new Promise((r) => { release = r; });
+    let n = W.puts.length, finds = W.finds.length;
+    const posts = W.picPosts.length;
+    await startOwn("100-10001", { about: "A sample Pokémon Center box, again." });
+    await waitFor(() => W.puts.length === n + 1, "the first save");
+    await ev(() => { window.__fp = window.__t.interestFindPics(["target:66666666"]); });
+    await waitFor(() => W.finds.length === finds + 1, "the lookup");
+    await sleep(200);
+    await page.click("#ie-save");
+    await waitFor(() => W.picPosts.length === posts + 1, "the picture, up while the save is out");
+    await sleep(400);
+    assert.equal(W.puts.length, n + 1, "both wait");
+    release(); W.putHold = null;
+    await ev(() => window.__fp);
+    await closed();
+    assert.deepEqual(W.puts.slice(n).map((b) => b.rev), [90, 91, 92]);
+    let it = W.items.find((x) => x.sku === "44444444");
+    assert.deepEqual([it.about, it.pic], ["Thirty-six sample packs, again.", "h" + "b".repeat(32)]);
+    assert.equal(W.items.find((x) => x.sku === "66666666").tcg, "555");
+    assert.equal(W.items.find((x) => x.sku === "100-10001").about, "A sample Pokémon Center box, again.");
+    await toastSays(/Found a picture on TCGplayer\./);
+    await toastSays(/Saved/);
+    assert.doesNotMatch(await lastToast(), /still saving|Couldn't save|another device/);
+    // The other way round: Edit's Save waits first, then the pictures found.
+    await reset(MINI(), 95);
+    await openEdit("target:44444444");
+    await page.fill("#ie-name", "Sample Booster Box, Third Print");
+    W.putHold = new Promise((r) => { release = r; });
+    n = W.puts.length; finds = W.finds.length;
+    await startOwn("100-10001", { about: "A sample Pokémon Center box, once more." });
+    await waitFor(() => W.puts.length === n + 1, "the first save");
+    await page.click("#ie-save");
+    await sleep(200);
+    await ev(() => { window.__fp = window.__t.interestFindPics(["target:66666666"]); });
+    await waitFor(() => W.finds.length === finds + 1, "the lookup");
+    await sleep(400);
+    assert.equal(W.puts.length, n + 1, "both wait");
+    release(); W.putHold = null;
+    await ev(() => window.__fp);
+    await closed();
+    assert.deepEqual(W.puts.slice(n).map((b) => b.rev), [95, 96, 97]);
+    it = W.items.find((x) => x.sku === "44444444");
+    assert.deepEqual([it.name, it.about], ["Sample Booster Box, Third Print", ""]);
+    assert.equal(W.items.find((x) => x.sku === "66666666").tcg, "555");
+    assert.equal(W.items.find((x) => x.sku === "100-10001").about, "A sample Pokémon Center box, once more.");
+    await toastSays(/Found a picture on TCGplayer\./);
+    assert.doesNotMatch(await lastToast(), /still saving|Couldn't save|another device/);
   });
 
   await test("a refresh read before a save but answered after it doesn't put the older list back; none starts while a save is out", async () => {
