@@ -406,7 +406,8 @@ alone (every store's rows of one account) from reading the whole table. Only
   takes **payments through Stripe**, dormant until the owner adds the secrets `STRIPE_SECRET_KEY` and
   `STRIPE_WEBHOOK_SECRET` (`billingOn`; setup in `license-worker/README.md` → Payments). Plans: $5 per checkout (the
   owner's change on 2026-11-12, from $10: `PRICE_CHECKOUT`; a line already on an invoice keeps what it was billed) (one
-  order is one checkout, due 3 days after it, free if the store cancels it before it's paid; no automatic refund after),
+  order is one checkout, due 3 days after it until 1.9.144's Sundays, below, free if the store cancels it before it's
+  paid; no automatic refund after),
   or monthly, $25 for 10 slots switched on at once with nothing per checkout, plus one add-on of 15 slots for another $25.
   Since 2026-11-12 (the owner's requests: "Maybe I want to change it to $10 later", then "Remove $25 plan completely") the
   price per checkout is the owner's to set, and the monthly plan isn't offered (worker and page 1.9.143):
@@ -425,10 +426,45 @@ alone (every store's rows of one account) from reading the whole table. Only
     (coverage, Cancel, paying a failed invoice, its slots, `over-limit`) until it ends, with no extras to add or remove.
     `/slots/limit`'s `canRequest:false` is only for those. The Billing page says how many still have one. The monthly
     code stays, for them and for the tests.
+  Later on 2026-11-12 (the owner's requests: "Change invoice due date to every Sunday", "Change friends and family cost to
+  $5"; they skipped the follow-up questions, so the defaults below were chosen and told to them) checkouts are **due every
+  Sunday** and **Friends and Family pay their own price** (worker and page 1.9.144):
+  - **Due dates:** a checkout is due at the end of the first Sunday strictly after the day it counts from, US Eastern time
+    (`DUE_TZ`, with DST), so it's overdue from Monday 00:00 Eastern; a Sunday's is due the next Sunday. `due_at` stores
+    Monday 00:00 Eastern minus 1 ms, so every `due_at < now` stays as it was. Helpers: `etDay`, `etMidnight` (with
+    `usMidnight`, the US rule, as a fallback), `sundayEndAfter(day)`, `sundayEndOnOrAfter(ms)`, `dueNow(now)`.
+    - A new line counts from the later of its order's day and the Eastern day it's written, so a late alert, a late
+      report or a past date added by hand is never overdue on arrival. A take-over keeps the later due date.
+    - Charge again, dispute Keep, Undo waive and held lines released when a plan ends are due `dueNow` (never earlier
+      than they were), and the Billing page's messages name the date ("It's owed again, due Sunday, Nov 15.").
+    - Unpaid lines from before moved once to the Sunday on or after their due date, never earlier (`dueSundays`, one
+      statement, with the marker `due_sunday` in its batch; for an hour after the marker each isolate re-runs it at most
+      once a minute on lines written meanwhile, for the worker from before still answering during the deploy).
+    - `GET /billing`'s `prices` adds `dueRule: "sunday"` and `dueTz`, and keeps `dueDays: 3` for older pages, which say
+      "due 3 days after it" until they update (their Due by column is right). The Billing page shows due dates in
+      Eastern time ("Sun, Nov 15").
+  - **Friends and Family pay** their own price per checkout: `price:family` in `billing_config` (`PRICE_FAMILY`, $5; $0 to
+    $100, and $0 means they aren't charged, as before), set in the Billing page's second box (`action=price-family`; a
+    change posts "💲 Friends and Family price per checkout: …" to the channel). Only checkouts placed from
+    `family_from:<mode>` are billed to them (stamped beside `on_since` by the first billing request after the deploy, and
+    again when their price goes from $0 to more; before it, `billable` answers `family-before`).
+    - `c.who` gives `family` (the class `exemptOf` gives) and `famPrice`; `exempt` is now "owner", or "family" only at $0,
+      so every `w.exempt` check still means "not charged at all". The owner's own FAFO stays free.
+    - Billed Friends and Family are on pay per checkout with nothing to pick (`plan` "checkout", `plans` ["checkout"];
+      monthly and extras answer 409 "Friends and Family pay per checkout."), keep the slot limits the owner gave them
+      (`planSlots`), and are refused Submit only while a checkout is overdue or a payment is disputed. `prices.checkout`
+      is their own price, and `prices.family` goes to everyone.
+    - Lines take the price of the buyer's kind as they're written (`priceSql(key, …)`; never a $0 line). Unpaid lines a
+      Friends and Family buyer already had keep their amounts and show on their invoice (no automatic waive; the move
+      made them due Sunday at the earliest); at $0 they stay hidden, as before.
+    - Charge on a Friends and Family buyer also sets their plan to pay per checkout, so they never get `no-plan`; orders
+      from before Charge stay `charge`, never billed. A paused subscription never holds lines.
+    - The Billing page's rows say "Friends and Family · $5 per checkout", their status follows the usual chain, and its
+      sums count them; `/admin/billing` adds `prices.family`, `familyFrom` and `dueSunday`.
   The owner's words: "Buyers that I already approved should not be charged for anything", so **Friends and Family**
   (`exemptOf`): everyone issued a license before payments came on (`on_since:<mode>` in `billing_config`, stamped by the
-  first request that sees the keys), every hand-made key, and anyone the owner moves there, is never charged or refused
-  and keeps their slot limits; the owner's own FAFO (`currentAlertSender`) too. Anyone else not covered by a paid month
+  first request that sees the keys), every hand-made key, and anyone the owner moves there, was never charged or refused
+  and keeps their slot limits (from 1.9.144 they pay the Friends and Family price, above, unless it's $0); the owner's own FAFO (`currentAlertSender`) too. Anyone else not covered by a paid month
   pays per checkout on the slots they sent, plan picked or not (the owner's choice); a plan only decides whether they
   can submit. Checkouts (`billing_lines`, unique per buyer, mode, store and order number): orders on accounts the owner
   gave out, from POST /alerts (placed from the day given out, not after the buyer pulled that slot, `billing_pulled`;
@@ -1982,6 +2018,22 @@ Also from 1.9.143 **Invoice offers only the plans the worker's `plans` names** (
 - Buttons drawn before the change say the plan isn't offered any more (`billMonthlyGone`).
 - `orbit-billing` gains `plans` and `sub`. `.github/scripts/billing.test.mjs` runs Invoice against a pretend worker.
 - Nothing gains a field.
+
+From 1.9.144 Invoice says checkouts are **due every Sunday** and shows **Friends and Family's invoice** (the owner's requests,
+2026-11-12; the worker section above).
+- **Due dates:** with the worker's `prices.dueRule === "sunday"` (`billSundays`), due dates show in Eastern time ("Sun,
+  Nov 15": `billDueDay`, 1 ms back so the stored Monday 00:00 reads as Sunday; `billDueAt` picks it or `billDay`), in the
+  Due by column (titled "Due by the end of Sun, Nov 15, Eastern time"), the new-checkout notice, Submit's note and the
+  day's reminder (`billDueWhen`: "Sun, Nov 15, 11:59 PM EST"), and the plan card and footer say "due by the end of the
+  Sunday after it (Eastern time). From Monday it's overdue and Submit turns off until it's paid." (`billDueRule`). An
+  older worker's answer, with no `dueRule`, gets 1.9.143's dates and "due 3 days after it".
+- **Friends and Family who pay** (`family` and not `exempt`): the pay per checkout view headed "Friends and Family · $5 per
+  checkout", with no plan cards or monthly plan; `billPlan` reads them as pay per checkout whatever `plan` says. A live
+  subscription shows "Monthly plan · paused while you're Friends and Family" with Cancel plan (`then:"checkout"`). At $0
+  (`exempt: "family"`) it's "Nothing to pay", as before.
+- The owner's Settings → Billing names the Friends and Family price and says their own FAFO is never charged.
+- `orbit-billing` gains `family`. `billing.test.mjs` covers the Sunday wording and dates (in Tokyo's time zone too), billed
+  and $0 Friends and Family, and an older worker's answer. Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

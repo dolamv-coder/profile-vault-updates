@@ -1,0 +1,1 @@
+Checkouts on your invoice are now due each Sunday, by 11:59 PM Eastern time, and Invoice shows the price your seller charges you per checkout.
