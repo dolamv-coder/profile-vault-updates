@@ -18000,8 +18000,9 @@ async function interestFind(name){
   return {product:String(d.product), name:String(d.name || "").slice(0, 200), image:typeof d.image === "string" && DATA_PIC.test(d.image) ? d.image : ""};
 }
 // After Add products: the first few new products with no picture (INTEREST_FIND_MAX, one at a time: the day's lookups are
-// orders' pictures' too; 20 from 1.9.143, so a pasted drop list, the owner's 2026-11-12 had 13 new, is looked up whole) get their TCGplayer product's, and the list is saved again with them, in its turn (the slot, after
-// a save under way) and onto the list it left, only where none was set meanwhile. A 429 or the catalog still being read
+// orders' pictures' too; 20 from 1.9.143, where it was 8, so a pasted drop list, the owner's of 2026-11-12 had 13 new, is
+// looked up whole) get their TCGplayer product's, and the list is saved again with them, in its turn (the slot, after a
+// save under way) and onto the list it left, only where none was set meanwhile. A 429 or the catalog still being read
 // stops for now. Then it says what it found, and what's left for Edit's Find on TCGplayer (the review of 1.9.142: the rest
 // went without a word).
 const INTEREST_FIND_MAX = 20;
