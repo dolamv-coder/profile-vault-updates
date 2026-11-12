@@ -1886,8 +1886,12 @@ From 1.9.142 the app has **Interests** (the owner's request, 2026-11-12; the wor
 - **Ticks** are the synced setting `interestPicks`: `{"<store>:<sku>": {on, at}}`, with an untick kept as `on:false`.
   - `syncMerge` merges it per entry, as it does `buyerEmails`. 1.9.112 syncs it as it is.
   - The sidebar's badge counts the ticked products that are on the list.
-- **Submit** sends `interests` with the batch (`interestsFor`): the ticked SKUs on the list for the batch's stores, in
-  the list's order, or every tick when no list is known. Its panel says how many go (`interestSubmitLine`).
+- **Submit** sends `interests` with the batch (`interestsFor`): every SKU ticked for the batch's stores, the cached list's
+  first and in its order. The worker keeps only those on its current list, so a cached list that's out of date or empty
+  loses nothing. A buyer's ticks reach the owner only with a batch that has new slots for that store, and Submit's panel
+  says so (`interestSubmitLine`: "…go to your seller with the next Target slots you submit").
+- **Interests answer 503, not 401,** for a key made by hand while the worker can't read GitHub's list, as /premium does.
+  The page then keeps its last list.
 - **The owner's FAFO** (`owner`) has Edit list:
   - Add products (`openInterestAdd`, `interestFromLine`) reads a Target link's SKU and the name its address gives, a
     Pokémon Center link, "SKU name", or a SKU alone. Then `interestFindPics` asks `/pictures/find` for each new product's
@@ -1900,8 +1904,10 @@ From 1.9.142 the app has **Interests** (the owner's request, 2026-11-12; the wor
   it.
 - **Also in 1.9.142, the auto-clean fix** (the owner's request, 2026-11-09, from CLAUDE.md's "Fix with the next page
   release"):
-  - Auto-clean set to one inbox that's gone or has no password cleans all of them and saves All inboxes. Before, it did
-    nothing and said nothing.
+  - Auto-clean set to one inbox that's been deleted cleans all of them and saves All inboxes. Before, it did nothing and
+    said nothing.
+  - One that's still there but has no password doesn't switch: the Clean page says it can't sign in to it, and the
+    Inboxes menu shows it, so the inboxes the user chose to leave alone aren't cleaned.
   - Delete inbox puts auto-clean back on All inboxes when it named that inbox.
   - With no inbox to clean, a run says so on the Clean page.
   - `clean-rules.test.mjs` covers it.
