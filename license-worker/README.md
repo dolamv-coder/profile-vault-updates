@@ -686,6 +686,8 @@ at that moment.
   is refused, and FAFO shows you the list as it is now to make it again.
 - The list is the `interest_list` table (one row) and its pictures `interest_pics`, which `npm run db:init` (and the
   deploy Action) adds. A buyer's ticks are in their own vault; this worker only sees the SKUs a batch sends.
+- If this worker can't read the list of keys made by hand on GitHub just then, a buyer with such a key keeps the list
+  FAFO last had (the answer is 503, not "not a license"), as for Premium buyers.
 
 FAFO uses `GET /interests` (any license; `?rev=` answers `same` when nothing changed), and your FAFO `PUT
 /interests` (the whole list, with the revision it was made from; 409 when another computer saved since) and `POST

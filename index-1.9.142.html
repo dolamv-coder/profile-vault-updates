@@ -13265,6 +13265,14 @@ function pictureFinds(o){
 const twoLinks = (v, was) => /\.(png|jpe?g|webp|gif|avif|bmp)(\?\S*?)?https?:\/\//i.test(v) || !!(was && v.length > was.length && v.startsWith(was) && /^https?:\/\//i.test(v.slice(was.length)));
 const goodPicLink = (v, was) => /^https:\/\/\S+$/i.test(v) && !twoLinks(v, was);
 const DATA_PIC = /^data:image\/[a-z+.-]+;base64,/i;
+// The picture a paste carries (its clipboard item), when it's a copied picture: an image, maybe with its address as text
+// and an <img> as HTML (Firefox adds both). A spreadsheet cell comes as its text, a table and a picture of the cell, and
+// pastes as text (null). The order Picture window's test (1.9.103), shared with Interests' Edit (1.9.142).
+function pastedPicture(cd){
+  const text = ((cd && cd.getData("text/plain")) || "").trim(), html = (cd && cd.getData("text/html")) || "";
+  const it = [...((cd && cd.items) || [])].find(i => i.kind === "file" && /^image\//.test(i.type));
+  return it && !/<table\b/i.test(html) && (!text || /^(https?:|blob:|data:)\S*$/i.test(text) || /<img\b/i.test(html)) ? it : null;
+}
 const pictureFindsHTML = (o) => pictureFinds(o).map(([t, u]) => `<a class="btn btn-sm" href="${esc(u)}" target="_blank" rel="noopener">${ic("search")}${esc(t)}</a>`).join("");
 // Picture for the orders picked (1.9.103, the owner's request: "find and update products pictures"): a picture pasted,
 // dropped or chosen as a file (kept in itemPics), or a link to the product's photo, which goes on them and, ticked to
@@ -13333,15 +13341,12 @@ function openOrderPicture(ids){
         show();
       });
       url.addEventListener("focus", () => url.select(), {once:true});   // selected, so a link pasted replaces the one there
-      // A picture pasted while this window is open (Ctrl+V), wherever the focus is. A copied picture comes as an image, maybe
-      // with its address as text and an <img> as HTML (Firefox adds both); a spreadsheet cell comes as its text, a table and a
-      // picture of the cell, and pastes as text. A link pasted outside the box goes in it.
+      // A picture pasted while this window is open (Ctrl+V), wherever the focus is (pastedPicture: a spreadsheet cell pastes
+      // as text). A link pasted outside the box goes in it.
       const onPaste = (e) => {
         if (!panel.isConnected) return document.removeEventListener("paste", onPaste, true);
-        const cd = e.clipboardData, text = ((cd && cd.getData("text/plain")) || "").trim(), html = (cd && cd.getData("text/html")) || "";
-        const it = [...((cd && cd.items) || [])].find(i => i.kind === "file" && /^image\//.test(i.type));
-        const copiedPicture = it && !/<table\b/i.test(html) && (!text || /^(https?:|blob:|data:)\S*$/i.test(text) || /<img\b/i.test(html));
-        if (copiedPicture){ e.preventDefault(); e.stopPropagation(); usePicture(it.getAsFile()); return; }
+        const cd = e.clipboardData, text = ((cd && cd.getData("text/plain")) || "").trim(), it = pastedPicture(cd);
+        if (it){ e.preventDefault(); e.stopPropagation(); usePicture(it.getAsFile()); return; }
         if (!text) return;
         if (DATA_PIC.test(text)){ e.preventDefault(); e.stopPropagation(); url.value = ""; chosen = ""; dataPicture(text); return; }
         if (e.target === url || /^(input|textarea)$/i.test(e.target && e.target.tagName || "") || !/^https:\/\/\S+$/i.test(text)) return;
@@ -16908,14 +16913,16 @@ async function runAutoClean(phone){
   if (!CAN_CLEAN) return {moved:0, error:"Clean emails needs the newest FAFO download on your computer."};
   // Earlier versions cleaned one inbox only; cover them all unless one was picked since.
   if (!cfg.v2){ cfg.inboxId = "all"; cfg.v2 = true; }
-  // The one inbox picked is gone (deleted, or by a sync) or has no password: all of them, saved so with the run, so the
-  // Clean page's Inboxes menu (which reads All inboxes then) and what runs agree (1.9.142, the owner's request of
-  // 2026-11-09: until then the run found nothing, stopped before noting it, and its Last run line just stopped changing).
-  if (cfg.inboxId && cfg.inboxId !== "all" && !autoCleanTargets(cfg).length) cfg = Object.assign({}, cfg, {inboxId:"all"});
+  // The one inbox picked is gone (deleted, or by a sync): all of them, saved so with the run, so the Clean page's Inboxes
+  // menu (which reads All inboxes then) and what runs agree (1.9.142, the owner's request of 2026-11-09: until then the run
+  // found nothing, stopped before noting it, and its Last run line just stopped changing). One that's there without its
+  // password stays picked, and the run says so: the others were left alone on purpose (the review of 1.9.142).
+  if (cfg.inboxId && cfg.inboxId !== "all" && !inboxById(cfg.inboxId)) cfg = Object.assign({}, cfg, {inboxId:"all"});
   const targets = autoCleanTargets(cfg);
   if (!targets.length){
-    // No inbox with a password at all: a timed run says so on the Clean page (Last run failed), once.
-    const error = "There's no inbox to clean. Add one in FAFO's settings.", was = autoCleanCfg();
+    // No inbox to sign in to: a timed run says why on the Clean page (Last run failed), once.
+    const one = cfg.inboxId && cfg.inboxId !== "all" ? inboxById(cfg.inboxId) : null, was = autoCleanCfg();
+    const error = one ? `${one.email} has no password, so auto-clean can't sign in to it. Add its password, or pick another inbox.` : "There's no inbox to clean. Add one in FAFO's settings.";
     if (!phone && (was.lastError !== error || was.inboxId !== cfg.inboxId)){
       S.settings.autoClean = Object.assign({}, was, {inboxId:cfg.inboxId, v2:true, lastRun:Date.now(), lastMoved:0, lastError:error, lastNote:""});
       persist();
@@ -16978,11 +16985,12 @@ function autoCleanHTML(){
     : c.lastRun ? `Last run ${new Date(c.lastRun).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})}: moved ${plural(c.lastMoved || 0, "email")}. ${plural(c.total || 0, "email")} cleared so far.${c.lastNote && spamBlind() ? ` ${esc(c.lastNote)}` : ""}`
     : "First run starts in a few seconds.";
   const scope = !c.v2 || !c.inboxId || c.inboxId === "all" ? "all" : c.inboxId, folder = autoCleanFolder(c);
-  const inboxes = (S.inboxes || []).filter(i => i.password);
+  // The inbox picked shows picked without its password too (1.9.142), so the menu says what auto-clean is set to.
+  const picked = scope !== "all" ? inboxById(scope) : null, inboxes = (S.inboxes || []).filter(i => i.password || i === picked);
   return `<div class="auto-clean">
     <label class="check check-box" style="margin:0"><input type="checkbox" id="cl-auto" ${c.on ? "checked" : ""}><span><strong>Auto-clean every 10 minutes</strong><br><span class="item-sub">The first run on each inbox looks back 30 days. Runs while the app is open and unlocked. ${last}</span></span></label>
     <div class="auto-scopes">${CAN_CLEAN_SPAM ? `<label class="auto-scope"><span class="item-sub">Folders</span><select id="cl-auto-folder">${AUTO_FOLDERS.map(([v, l]) => `<option value="${v}" ${folder === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : ""}
-    ${inboxes.length > 1 ? `<label class="auto-scope"><span class="item-sub">Inboxes</span><select id="cl-auto-inbox">${[["all", "All inboxes"]].concat(inboxes.map(i => [i.id, i.email])).map(([v, l]) => `<option value="${esc(v)}" ${scope === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : ""}</div>
+    ${inboxes.length > 1 ? `<label class="auto-scope"><span class="item-sub">Inboxes</span><select id="cl-auto-inbox">${[["all", "All inboxes"]].concat(inboxes.map(i => [i.id, i.email + (i.password ? "" : " (no password)")])).map(([v, l]) => `<option value="${esc(v)}" ${scope === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>` : ""}</div>
   </div>
   <label class="check check-box" style="margin:0 0 14px"><input type="checkbox" id="cl-spamall" ${cleanSpamAll() ? "checked" : ""}><span><strong>Clear all of Spam</strong><br><span class="item-sub">In Spam, everything is removed except order, shipping and sign-in-code emails (but for the Riot Games, Best Buy and Target ones above). Spam is deleted after 30 days anyway; Trash keeps it restorable for 30 days.</span></span></label>`;
 }
@@ -17731,7 +17739,8 @@ async function askPremiumList(btn){
 // /interests), so one made before another device's save is refused (409) and the list is shown as it is now.
 const INTEREST_STORE = "orbit-interests", INTEREST_EVERY_MS = 10 * 60000, INTEREST_MAX = 300;
 const INTEREST_STORES = [["target", "Target"], ["pokemoncenter", "Pokémon Center"]];
-const INTEREST = {busy:false, at:0, for:"", failed:false, saving:false};
+// saving: a PUT is out (the buttons wait); savingP: a save under way, till its answer is kept (interestSaveWait).
+const INTEREST = {busy:false, at:0, for:"", failed:false, saving:false, savingP:null};
 const INTEREST_REF = /^(h[0-9a-f]{32}|t\d{1,10})$/;
 let interestMem = null;
 const interestsShown = () => !!S && MODE === "vault" && !!sellerLic();
@@ -17749,6 +17758,8 @@ const interestPicked = (key) => { const x = S && (S.settings.interestPicks || {}
 const interestBadge = () => interestItems().filter(it => interestPicked(interestKey(it))).length;
 const interestStoreLabel = (k) => (INTEREST_STORES.find(s => s[0] === k) || [k, k])[1];
 const interestSets = (items) => [...new Set(items.map(it => it.set).filter(Boolean))];
+// The section a product shows under: no set is "Other", one section with a set named Other (the review of 1.9.142).
+const interestSetOf = (it) => it.set || "Other";
 // Off Interests when there's no seller to ask any more (the key gone, a stale click): to Orders, where FAFO opens.
 function leaveInterests(){
   if (UI.view !== "interests" || interestsShown()) return false;
@@ -17784,7 +17795,8 @@ window.addEventListener("storage", (e) => {
 // `full`: the whole list, not just whether its revision is still the one here.
 async function refreshInterests(force, full){
   const k = sellerLic();
-  if (!S || MODE !== "vault" || !k || INTEREST.busy) return;
+  // Not while a save is out: its answer is the list then (a refresh read before it could land after it).
+  if (!S || MODE !== "vault" || !k || INTEREST.busy || INTEREST.saving) return;
   const h = premiumHash(k), had = interestRead();
   if (!force && h === INTEREST.for && Date.now() - INTEREST.at < INTEREST_EVERY_MS) return;
   INTEREST.busy = true; INTEREST.for = h;
@@ -17802,6 +17814,9 @@ async function refreshInterests(force, full){
   } catch(e){ d = null; }
   finally { INTEREST.busy = false; }
   if (!S || sellerLic() !== k) return;   // locked, or another key meanwhile
+  // A save, or another tab, kept a newer list meanwhile: this answer is older than it (the review of 1.9.142). The next ask,
+  // a minute on at the soonest, goes with that list's revision.
+  if (interestSig(interestRead()) !== was) return;
   if (status === 401) d = {rev:null, owner:false, items:[]};   // not a license (any more): no list
   const same = !!(d && d.same === true && had && d.rev === had.rev);
   // The same revision, but this FAFO became the seller's own (or stopped being it): the whole list, for its pictures' fields.
@@ -17865,12 +17880,12 @@ function renderInterests(){
   const kpi = (color, label, n) => `<span class="p-kpi"><span class="p-kpi-dot" style="background:${color}"></span>${label} <strong>${n}</strong></span>`;
   // A section per set, in the order sets first come on the list ("Other" for none); Tick all ticks the ones shown.
   const bySet = new Map();
-  shown.forEach(it => { const s = it.set || ""; if (!bySet.has(s)) bySet.set(s, []); bySet.get(s).push(it); });
-  const body = [...new Set(items.map(it => it.set || ""))].filter(s => bySet.has(s)).map(s => {
-    const list = bySet.get(s), all = items.filter(it => (it.set || "") === s), n = all.filter(it => interestPicked(interestKey(it))).length;
+  shown.forEach(it => { const s = interestSetOf(it); if (!bySet.has(s)) bySet.set(s, []); bySet.get(s).push(it); });
+  const body = [...new Set(items.map(interestSetOf))].filter(s => bySet.has(s)).map(s => {
+    const list = bySet.get(s), all = items.filter(it => interestSetOf(it) === s), n = all.filter(it => interestPicked(interestKey(it))).length;
     const allOn = list.every(it => interestPicked(interestKey(it)));
-    return `<section class="int-set"><div class="int-set-head"><h2 class="sub-title">${esc(s || "Other")}</h2><span class="int-set-n">${n} of ${all.length} ticked</span>
-      <label class="selall"><input type="checkbox" data-act="interest-set" data-id="${esc(s)}" ${allOn ? "checked" : ""} aria-label="Tick all in ${esc(s || "Other")}" style="width:17px;height:17px;accent-color:var(--accent);margin:0">Tick all</label></div>
+    return `<section class="int-set"><div class="int-set-head"><h2 class="sub-title">${esc(s)}</h2><span class="int-set-n">${n} of ${all.length} ticked</span>
+      <label class="selall"><input type="checkbox" data-act="interest-set" data-id="${esc(s)}" ${allOn ? "checked" : ""} aria-label="Tick all in ${esc(s)}" style="width:17px;height:17px;accent-color:var(--accent);margin:0">Tick all</label></div>
       <div class="int-grid">${list.map(it => interestCardHTML(it, editing)).join("")}</div></section>`;
   }).join("");
   return head + `<div class="p-kpis">${kpi("var(--info)", "Products", items.length)}${kpi("var(--ok)", "Ticked", ticked)}</div>`
@@ -17885,16 +17900,19 @@ function interestSubmitLine(groups){
   const on = listed.filter(it => interestPicked(interestKey(it)));
   const link = (t) => `<button class="link" data-act="view" data-id="interests" style="font-size:calc(13px*var(--fs))">${t}</button>`;
   if (!on.length) return `<p class="item-sub sub-int">Tick products on ${link("Interests")} for your seller to run them.</p>`;
-  return `<p class="item-sub sub-int">${plural(on.length, "interest")} ticked: their SKUs go with your ${esc([...new Set(on.map(it => interestStoreLabel(it.store)))].join(" and "))} files. ${link("See Interests")}</p>`;
+  // They go with a batch that has new slots on their store, so "the next … slots", true with none switched on yet too.
+  return `<p class="item-sub sub-int">${plural(on.length, "interest")} ticked: ${on.length === 1 ? "its SKU goes" : "their SKUs go"} to your seller with the next ${esc([...new Set(on.map(it => interestStoreLabel(it.store)))].join(" and "))} slots you submit. ${link("See Interests")}</p>`;
 }
-// What a batch sends (`interests`, {storeKey: [sku]}): for each store it sends profiles for, the SKUs ticked there; with the
-// list known, only those still on it, in its order. The worker keeps only listed ones anyway.
+// What a batch sends (`interests`, {storeKey: [sku]}): for each store it sends profiles for, every SKU ticked there: those on
+// the list kept here first, in its order, then the rest, at most INTEREST_MAX. The worker keeps only the ones on its list
+// now, in its order, so a copy here that's behind (a product added since, ticked on another device; an empty one after a
+// 401) never leaves a tick out (the review of 1.9.142), and old ticks come last, so the cap never drops a listed one.
 function interestsFor(files){
   const picks = S.settings.interestPicks || {}, L = interestRead(), out = {};
   for (const k of new Set(files.filter(f => f.kind === "profiles").map(f => f.storeKey))){
-    const skus = L ? L.items.filter(it => it.store === k && interestPicked(interestKey(it))).map(it => it.sku)
-      : Object.keys(picks).filter(x => x.startsWith(k + ":") && interestPicked(x)).map(x => x.slice(k.length + 1));
-    const list = [...new Set(skus)].slice(0, INTEREST_MAX);
+    const listed = L ? L.items.filter(it => it.store === k && interestPicked(interestKey(it))).map(it => it.sku) : [];
+    const rest = Object.keys(picks).filter(x => x.startsWith(k + ":") && interestPicked(x)).map(x => x.slice(k.length + 1));
+    const list = [...new Set(listed.concat(rest))].slice(0, INTEREST_MAX);
     if (list.length) out[k] = list;
   }
   return out;
@@ -17908,10 +17926,20 @@ async function interestApi(path, method, body){
   finally { clearTimeout(t); }
 }
 // Saves the whole list, made from revision `rev`: true once saved, "changed" when another device saved first (the list
-// is then shown as it is now), or false (and it says why). One save at a time; the buttons wait for it.
+// is then shown as it is now), or false (and it says why). One save at a time (a second would go with the revision the
+// first changes): the buttons wait for it, Edit, Add products, Remove and the pictures Add products finds wait for it
+// first (interestSaveWait) and go onto the list it left, and a press that doesn't wait is told (the review of 1.9.142:
+// until then it did nothing, without a word).
 async function interestsSave(items, rev, o){
   o = o || {};
-  if (INTEREST.saving) return false;
+  if (INTEREST.savingP){ if (!o.quiet) toast("Another change to the list is still saving. Try again in a moment.", "err"); return false; }
+  let done; INTEREST.savingP = new Promise(res => { done = res; });
+  try { return await interestsPut(items, rev, o); }
+  finally { INTEREST.savingP = null; done(); }
+}
+// Waits for a save under way, so the next one goes onto the list it left.
+async function interestSaveWait(){ while (INTEREST.savingP) await INTEREST.savingP; }
+async function interestsPut(items, rev, o){
   const k = sellerLic(), vault = S;
   INTEREST.saving = true;
   if (UI.view === "interests") renderMain();
@@ -17956,39 +17984,74 @@ async function interestFind(name){
   if (!d.found || !/^\d{1,10}$/.test(String(d.product || ""))) return {};
   return {product:String(d.product), name:String(d.name || "").slice(0, 200), image:typeof d.image === "string" && DATA_PIC.test(d.image) ? d.image : ""};
 }
-// After Add products: each new product with no picture gets its TCGplayer product's (a few, one at a time), and the list
-// is saved again with them, onto the list as it is then and only where none was set meanwhile. A 429 or the catalog still
-// being read stops for now: Edit has Find on TCGplayer for later.
+// After Add products: the first few new products with no picture (INTEREST_FIND_MAX, one at a time: the day's lookups are
+// orders' pictures' too) get their TCGplayer product's, and the list is saved again with them, after a save under way and
+// onto the list it left, only where none was set meanwhile. A 429 or the catalog still being read stops for now. Then it
+// says what it found, and what's left for Edit's Find on TCGplayer (the review of 1.9.142: the rest went without a word).
+const INTEREST_FIND_MAX = 8;
 async function interestFindPics(keys){
   const k = sellerLic(), vault = S, found = {};
-  const todo = interestItems().filter(it => keys.includes(interestKey(it)) && !it.pic && !it.tcg && !/^SKU /.test(it.name)).slice(0, 8);
-  for (const it of todo){
+  const all = interestItems().filter(it => keys.includes(interestKey(it)) && !it.pic && !it.tcg && !/^SKU /.test(it.name));
+  let asked = 0, stop = "", saved = 0, end = "";
+  for (const it of all.slice(0, INTEREST_FIND_MAX)){
     const f = await interestFind(it.name);
     if (S !== vault || sellerLic() !== k) return;
-    if (f.stop) break;
+    if (f.stop){ stop = f.stop; break; }
+    asked++;
     if (f.product) found[interestKey(it)] = f.product;
   }
-  if (!Object.keys(found).length) return;
-  for (let i = 0; i < 2; i++){
+  const want = Object.keys(found).length;
+  for (let i = 0; i < 3 && want && !end; i++){
+    await interestSaveWait();
+    if (S !== vault || sellerLic() !== k) return;
     const L = interestRead(); if (!L || !L.owner) return;
     let n = 0;
     const items = L.items.map(it => { const p = found[interestKey(it)]; if (!p || it.pic || it.tcg) return it; n++; return Object.assign({}, it, {tcg:p}); });
-    if (!n) return;
+    if (!n){ end = "set"; break; }   // each got a picture meanwhile
     const r = await interestsSave(items, L.rev, {quiet:true});
-    if (r === true){ toast(`Found ${n === 1 ? "a picture" : n + " pictures"} on TCGplayer`); return; }
-    if (r !== "changed") return;
+    if (r === true){ saved = n; end = "saved"; }
+    else if (r !== "changed") end = "failed";
   }
+  if (S !== vault || sellerLic() !== k || !all.length) return;
+  const left = all.length - asked, lost = want && end !== "saved" && end !== "set";
+  const said = [saved ? `Found ${saved === 1 ? "a picture" : saved + " pictures"} on TCGplayer.` : lost ? "Couldn't save the pictures found on TCGplayer." : asked && !want ? "Found no pictures on TCGplayer." : "",
+    stop === "more" ? "TCGplayer's catalog is still loading: try Find on TCGplayer in a minute."
+      : stop === "limit" ? "That's all the lookups for today: use Edit → Find on TCGplayer for the rest tomorrow."
+      : left ? `${asked ? left + " more" : plural(left, "product")} ${left === 1 ? "wasn't" : "weren't"} looked up: use Edit → Find on TCGplayer.`
+      : lost ? "Use Edit → Find on TCGplayer." : ""].filter(Boolean).join(" ");
+  if (said) toast(said, left || lost ? "err" : "");
 }
 // One line of Add products: a Target link (its A-number, and the name its address spells out), a Pokémon Center link
 // (/product/<sku>/<name>), or a SKU (with a digit) and its name; a SKU alone is "SKU <sku>" until it's edited.
 const interestText = (v, n) => String(v || "").replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
 const interestLineText = (v) => interestText(v, 120);
+// Target writes a character its addresses can't hold as its number between hyphens (the review of 1.9.142, with live
+// links): é as pok-233-mon (or drops it: pok-mon), & as -38-, an apostrophe as -39- or -8217-, a dash as -8211- or -8212-.
+// Those are read back before the name is made, so it reads as the product's and TCGplayer's lookup can find it; another
+// number (151, the 5 of S10 5) stays.
+const INTEREST_SLUG_WORDS = {tcg:"TCG", etb:"ETB", pokemon:"Pokémon"};
+function interestSlugWords(s){
+  const t = s.split(/[-_\s]+/).filter(Boolean), out = [];
+  const isWord = (w) => /^\p{L}+$/u.test(w || "");
+  for (let i = 0; i < t.length; i++){
+    const w = t[i], next = t[i + 1], last = out.length - 1, n = /^\d{2,4}$/.test(w) ? +w : 0;
+    const ch = n >= 192 && n <= 255 ? String.fromCharCode(n) : "";
+    if (/^pok$/i.test(w) && /^mon$/i.test(next || "")){ out.push("pokemon"); i++; }
+    else if (ch && /\p{L}/u.test(ch) && last >= 0 && /\p{L}$/u.test(out[last]) && isWord(next)){ out[last] += ch + next; i++; }   // pok-233-mon
+    else if (n === 38 && last >= 0 && next) out.push("&");
+    else if (n === 39 || n === 8217){ if (last >= 0 && /^(s|t|d|m|ll|re|ve)$/i.test(next || "")){ out[last] += "'" + next.toLowerCase(); i++; } }
+    else if (n === 8211 || n === 8212){ if (last >= 0 && next && out[last] !== "–") out.push("–"); }
+    else out.push(w);
+  }
+  return out;
+}
 function interestSlugName(slug){
   let s = String(slug || ""); try { s = decodeURIComponent(s); } catch(e){}
-  const words = s.split(/[-_\s]+/).filter(Boolean);
-  if (words.filter(w => /^[a-z]+$/i.test(w)).length < 2) return "";
-  const up = {tcg:"TCG", etb:"ETB", pokemon:"Pokémon"};
-  return interestLineText(words.map(w => up[w.toLowerCase()] || w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" "));
+  const words = interestSlugWords(s);
+  if (words.filter(w => /^\p{L}+$/u.test(w)).length < 2) return "";
+  // Own keys only: a word like "constructor" isn't a name in the table.
+  const up = (w) => { const k = w.toLowerCase(); return Object.prototype.hasOwnProperty.call(INTEREST_SLUG_WORDS, k) ? INTEREST_SLUG_WORDS[k] : ""; };
+  return interestLineText(words.map(w => up(w) || w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" "));
 }
 function interestFromLine(line, store){
   const s = String(line || "").trim();
@@ -18013,7 +18076,7 @@ function openInterestAdd(){
         <div class="field c3"><label for="ia-set">Set <span class="opt">(optional)</span></label><input id="ia-set" list="ia-sets" maxlength="60" autocomplete="off"><datalist id="ia-sets">${sets.map(s => `<option value="${esc(s)}">`).join("")}</datalist><span class="hint">The section buyers see it under.</span></div>
       </div>
       <p class="note" id="ia-prev" role="status" style="margin:12px 0 0">Paste links or SKUs above.</p>
-      <p class="item-sub" style="margin:10px 0 0">FAFO then looks each one up on TCGplayer for its picture.</p>`,
+      <p class="item-sub" style="margin:10px 0 0">FAFO then looks up the first ${INTEREST_FIND_MAX} on TCGplayer for their pictures; each one's Edit has Find on TCGplayer for the rest.</p>`,
     foot:`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="ia-go" disabled>Add</button>`,
     mount:(panel, close) => {
       const ta = $("#ia-lines", panel), store = $("#ia-store", panel), set = $("#ia-set", panel), prev = $("#ia-prev", panel), go = $("#ia-go", panel);
@@ -18044,10 +18107,17 @@ function openInterestAdd(){
       [ta, set].forEach(x => x.addEventListener("input", show));
       store.addEventListener("change", show);
       go.addEventListener("click", async () => {
-        const p = plan();
-        if (busy || !p.add.length) return;
-        if (L.items.length + p.add.length > INTEREST_MAX){ setErr(panel, "ia_lines", `The list holds ${INTEREST_MAX} products at most: ${Math.max(0, INTEREST_MAX - L.items.length)} more fit.`); return; }
+        if (busy || !plan().add.length) return;
         busy = true; go.disabled = true; go.textContent = "Adding…";
+        // A save under way first (the pictures an earlier Add found, say), then onto the list it left.
+        await interestSaveWait();
+        L = interestRead() || L;
+        const p = plan();
+        if (!p.add.length || L.items.length + p.add.length > INTEREST_MAX){
+          busy = false;
+          if (panel.isConnected){ show(); if (p.add.length) setErr(panel, "ia_lines", `The list holds ${INTEREST_MAX} products at most: ${Math.max(0, INTEREST_MAX - L.items.length)} more fit.`); }
+          return;
+        }
         const r = await interestsSave(L.items.concat(p.add), L.rev);
         busy = false;
         if (r === true){ close(); UI.interestsEdit = true; toast(`Added ${plural(p.add.length, "product")}`); interestFindPics(p.add.map(interestKey)); return; }
@@ -18095,10 +18165,11 @@ function openInterestEdit(key){
           () => { if (reading === r){ unreadable = true; say = ""; setErr(panel, "ie_pic", "FAFO couldn't read that picture. Try another."); show(); } return false; })
           .finally(() => { if (reading === r) reading = null; });
       };
-      // A picture pasted while this window is open, wherever the focus is (text pastes as text).
+      // A picture pasted while this window is open, wherever the focus is. Text pastes as text, a spreadsheet cell too, which
+      // comes with a picture of itself (pastedPicture, as the order Picture window: the review of 1.9.142).
       const onPaste = (e) => {
         if (!panel.isConnected) return document.removeEventListener("paste", onPaste, true);
-        const it = [...((e.clipboardData && e.clipboardData.items) || [])].find(i => i.kind === "file" && /^image\//.test(i.type));
+        const it = pastedPicture(e.clipboardData);
         if (it){ e.preventDefault(); e.stopPropagation(); usePicture(it.getAsFile()); }
       };
       document.addEventListener("paste", onPaste, true);
@@ -18129,11 +18200,15 @@ function openInterestEdit(key){
         if (!n){ setErr(panel, "ie_name", "Enter a name."); name.focus(); return; }
         if (reading){ const ok = await reading.catch(() => false); if (!panel.isConnected || ok === false) return; }
         if (unreadable){ setErr(panel, "ie_pic", "FAFO couldn't read that picture. Try another."); return; }
-        const at = L.items.findIndex(x => interestKey(x) === key);
-        if (at < 0){ setErr(panel, "ie_name", "This product isn't on the list any more."); return; }
-        if (store.value !== it0.store && L.items.some(x => x.store === store.value && x.sku.toLowerCase() === it0.sku.toLowerCase())){ setErr(panel, "ie_store", "That SKU is on the list for that store already."); return; }
         busy = true; save.disabled = true; save.textContent = "Saving…";
         try {
+          // A save under way first (the pictures Add products found, say), then onto the list as it is now.
+          await interestSaveWait();
+          if (!panel.isConnected) return;
+          L = interestRead() || L;
+          const at = L.items.findIndex(x => interestKey(x) === key);
+          if (at < 0){ setErr(panel, "ie_name", "This product isn't on the list any more."); return; }
+          if (store.value !== it0.store && L.items.some(x => x.store === store.value && x.sku.toLowerCase() === it0.sku.toLowerCase())){ setErr(panel, "ie_store", "That SKU is on the list for that store already."); return; }
           // A picture chosen goes up first, kept by the worker under its hash (the same picture twice is one).
           if (chosen){
             let r, d = null;
@@ -18146,8 +18221,16 @@ function openInterestEdit(key){
             }
             pic = d.ref; chosen = "";
           }
+          // Only what was changed in this window (against the product as it opened) goes onto the product as it is now, so a
+          // Save after another save (one Add products' pictures made, another device's) never puts back what that one changed.
+          const ch = {}, ab = interestText(about.value, 400), st = interestText(set.value, 60);
+          if (n !== interestLineText(it0.name)) ch.name = n;
+          if (ab !== interestText(it0.about, 400)) ch.about = ab;
+          if (st !== interestText(it0.set, 60)) ch.set = st;
+          if (store.value !== it0.store) ch.store = store.value;
+          if (pic !== (it0.pic || "") || tcg !== (it0.tcg || "")) Object.assign(ch, {pic, tcg});
           const items = L.items.slice();
-          items[at] = Object.assign({}, items[at], {name:n, about:interestText(about.value, 400), set:interestText(set.value, 60), store:store.value, pic, tcg});
+          items[at] = Object.assign({}, items[at], ch);
           const r = await interestsSave(items, L.rev);
           if (r === true){ close(); toast("Saved"); return; }
           if (r === "changed") L = interestRead() || L;   // Save again goes onto the list as it is now
@@ -18160,7 +18243,10 @@ async function removeInterest(key){
   const L = interestRead(); if (!L || !L.owner || INTEREST.saving) return;
   const it = L.items.find(x => interestKey(x) === key); if (!it) return;
   if (!await confirmDialog({title:"Remove this product?", body:`${it.name} (SKU ${it.sku}) comes off the list. Buyers who ticked it stop sending it with their batches.`, confirm:"Remove", danger:true})) return;
-  if (await interestsSave(L.items.filter(x => x !== it), L.rev) === true) toast("Removed from the list");
+  // A save under way first, then off the list as it is now.
+  await interestSaveWait();
+  const now = interestRead(); if (!now || !now.owner || !now.items.some(x => interestKey(x) === key)) return;
+  if (await interestsSave(now.items.filter(x => interestKey(x) !== key), now.rev) === true) toast("Removed from the list");
 }
 
 /* ================= INVOICE: PAYING THE SELLER (1.9.130) ================= */
@@ -19541,7 +19627,7 @@ document.addEventListener("click", async (e) => {
     case "clear-q": { UI.q = ""; const q = $("#q"); if (q){ q.value = ""; q.focus(); } renderMain(); break; }
     // Interests (1.9.142): a product's tick, a set's Tick all (the ones the search shows), and the seller's own editing.
     case "interest-pick": case "interest-set": {
-      const keys = act === "interest-pick" ? [id] : interestsInView().filter(it => (it.set || "") === id).map(interestKey);
+      const keys = act === "interest-pick" ? [id] : interestsInView().filter(it => interestSetOf(it) === id).map(interestKey);
       setInterestPicks(keys, t.checked); renderSide(); renderMain();
       const f = $$(`#main input[data-act="${act}"]`).find(x => x.dataset.id === id); if (f) f.focus();
       break; }

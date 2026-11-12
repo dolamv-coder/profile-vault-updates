@@ -463,8 +463,9 @@ if (html.includes(':buyerAddrs"')) test("addresses sent to buyers remembered on 
 });
 
 // 1.9.142+: the products a buyer ticked on Interests (settings.interestPicks, {"<store>:<sku>": {on, at}}, an untick kept as
-// on:false): two devices that each tick one before they agree keep both, and one unticked on one side stays unticked.
-if (html.includes(':interestPicks"')) test("Interests ticked on two devices keep both; one unticked on one side stays unticked", () => {
+// on:false): two devices that each tick one before they agree keep both, and one unticked on one side stays unticked. Run
+// whenever the page has Interests, so one that loses the per-entry merge fails here rather than skipping it.
+if (/function renderInterests\(/.test(html)) test("Interests ticked on two devices keep both; one unticked on one side stays unticked", () => {
   const p = (on, at) => ({ on, at });
   for (const base of [blank(), null]) {
     const a = blank(), b = blank();

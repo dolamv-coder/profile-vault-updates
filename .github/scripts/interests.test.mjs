@@ -3,7 +3,10 @@
 // (Playwright), as the web version at app.fafoaco.com, against a pretend license worker: a vault made with Use this browser
 // only, then a license key kept as Submit keeps one typed there. It checks where the tab is, the cards, ticks and their sync
 // setting, Tick all, the search, the list kept on this device, what Submit sends, and the seller's own editing (Add products,
-// Edit with a picture, and a save another device beat). Sample names, SKUs and keys only.
+// Edit with a picture, and a save another device beat). Then what the review of 1.9.142 found: names read from Target's
+// links, every tick sent whatever the copy here, one section for Other, Edit's Save over a save it didn't see, a paste from a
+// spreadsheet, one save at a time, a refresh answered after a save, and what the TCGplayer lookups after Add say. Sample
+// names, SKUs and keys only.
 //   node .github/scripts/interests.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must have Interests; a page named on the command line that doesn't is skipped.
 import { readFileSync, readdirSync } from "node:fs";
@@ -25,7 +28,8 @@ if (!/function renderInterests\(/.test(HTML)) {
 // page's other tests take its code out of the file.
 const END = "\ntry { if (window.pvDesktop && window.pvDesktop.appReady) window.pvDesktop.appReady(); } catch(e){}\n})();";
 assert.equal(HTML.split(END).length, 2, "couldn't find the end of the app's code");
-const PAGE = HTML.replace(END, "\nwindow.__t = {get S(){ return S; }, keepTypedLic, persist, render, refreshInterests, interestRead, interestsFor, premiumHash, slotKey};" + END);
+const PAGE = HTML.replace(END, "\nwindow.__t = {get S(){ return S; }, keepTypedLic, persist, render, refreshInterests, interestRead, interestsFor, premiumHash, slotKey,"
+  + " INTEREST, interestKeep, interestsSave, interestFindPics, interestFromLine};" + END);
 let chromium;
 try { ({ chromium } = createRequire(import.meta.url)("playwright")); }
 catch (e) { console.error("This test needs Playwright: npm install --no-save playwright, then npx playwright install chromium"); process.exit(1); }
@@ -59,13 +63,17 @@ async function worker(route, req, u) {
   if (auth !== "Bearer " + LIC) return json(route, 401, { error: "license not recognized" });
   if (p === "/interests" && m === "GET") {
     W.gets.push(u.search);
-    if (W.hold) await W.hold;   // an answer that's slow to come
-    if (u.searchParams.get("rev") === String(W.rev)) return json(route, 200, { rev: W.rev, owner: W.owner, same: true });
-    return json(route, 200, out());
+    // An error once (status): the worker's 503 for a key made by hand while it can't read GitHub's list.
+    if (W.status) { const s = W.status; W.status = 0; return json(route, s, { error: "the list of keys made by hand can't be read just now" }); }
+    // Read as it is when asked, then (hold) slow to come: an answer a save can overtake.
+    const body = u.searchParams.get("rev") === String(W.rev) ? { rev: W.rev, owner: W.owner, same: true } : out();
+    if (W.hold) await W.hold;
+    return json(route, 200, body);
   }
   if (p === "/interests" && m === "PUT") {
     if (!W.owner) return json(route, 403, { error: "only your seller's FAFO can change this" });
     const b = JSON.parse(req.postData()); W.puts.push(b);
+    if (W.putHold) await W.putHold;   // a save that's slow to go through
     if (b.rev !== W.rev) return json(route, 409, { error: "changed", rev: W.rev });
     W.rev++; W.items = b.items;
     return json(route, 200, out());
@@ -73,6 +81,8 @@ async function worker(route, req, u) {
   if (p === "/interests/pic" && m === "POST") { W.picPosts.push(JSON.parse(req.postData())); return json(route, 200, { ref: "h" + "b".repeat(32) }); }
   if (p === "/pictures/find") {
     const q = u.searchParams.get("q"); W.finds.push(q);
+    if (q === "Sample Loading Box") return json(route, 200, { found: false, more: true });   // the catalog still being read
+    if (q === "Sample Broken Box") return json(route, 502, { error: "the catalog didn't answer" });
     return json(route, 200, q === "Sample Mini Tin" ? { found: true, name: "Sample Mini Tin", product: 555, source: "TCGplayer", image: "data:image/png;base64," + PNG.toString("base64") } : { found: false });
   }
   if (p === "/submissions" && m === "POST") { W.subs.push(JSON.parse(req.postData())); return json(route, 200, { ok: true, id: "batch1", review: "pending" }); }
@@ -117,6 +127,27 @@ try {
     assert.ok(!(await navIds("#side [data-act=view]")).includes("interests"));
     assert.ok(!(await navIds("#mnav [data-act=view]")).includes("interests"));
     assert.equal(W.gets.length, 0, "nothing asked without a key");
+  });
+
+  await test("Add products names a Target link as its product: Target's numbers for é, &, an apostrophe and a dash read back", async () => {
+    const name = (line) => ev((l) => { const it = window.__t.interestFromLine(l, "target"); return it && [it.sku, it.name]; }, line);
+    const T = "https://www.target.com/p/";
+    assert.deepEqual(await name(T + "pok-233-mon-scarlet-violet-s10-5-elite-trainer-box-1-trading-cards/-/A-94636860"),
+      ["94636860", "Pokémon Scarlet Violet S10 5 Elite Trainer Box 1 Trading Cards"]);
+    assert.deepEqual(await name(T + "pokemon-trading-card-game-scarlet-38-violet-151-ultra-premium-collection/-/A-88897906"),
+      ["88897906", "Pokémon Trading Card Game Scarlet & Violet 151 Ultra Premium Collection"]);
+    assert.deepEqual(await name(T + "pokemon-trading-card-game--scarlet---38--violet---surging-sparks-booster-bundle/-/A-91619929#lnk=sametab"),
+      ["91619929", "Pokémon Trading Card Game Scarlet & Violet Surging Sparks Booster Bundle"]);
+    assert.deepEqual(await name(T + "pok-mon-tcg-mega-evolution-perfect-order-elite-trainer-box/-/A-1010873274"),
+      ["1010873274", "Pokémon TCG Mega Evolution Perfect Order Elite Trainer Box"]);
+    assert.deepEqual(await name(T + "pokemon-trading-card-game-sword-38-shield-8212-brilliant-stars-elite-trainer-box/-/A-84713762"),
+      ["84713762", "Pokémon Trading Card Game Sword & Shield – Brilliant Stars Elite Trainer Box"]);
+    assert.deepEqual(await name(T + "sample-trainer-39-s-toolkit-8211-sample-edition/-/A-12345678"), ["12345678", "Sample Trainer's Toolkit – Sample Edition"]);
+    assert.deepEqual(await name(T + "sample-collector-8217-s-chest-38/-/A-12345679"), ["12345679", "Sample Collector's Chest 38"]);
+    assert.deepEqual(await name(T + "sample-na-239-ve-tin/-/A-12345680"), ["12345680", "Sample Naïve Tin"]);
+    // A word the table doesn't have is only a word, "constructor" too (not Object's).
+    assert.deepEqual(await name(T + "sample-technic-constructor-set/-/A-12345681"), ["12345681", "Sample Technic Constructor Set"]);
+    assert.deepEqual(await name(T + "pokemon-tcg-etb/-/A-12345682"), ["12345682", "Pokémon TCG ETB"]);
   });
 
   await test("with a license key, Interests is between IMAP and Submit in the sidebar, and right before Submit in the phone's tabs", async () => {
@@ -213,32 +244,49 @@ try {
     release(); W.hold = null;
   });
 
-  await test("Submit sends the ticked SKUs for the stores in the batch only, only those on the list, in the list's order", async () => {
+  await test("a 503 (the worker can't check a key made by hand just now) keeps the list here, as it was", async () => {
+    await page.waitForFunction(() => !window.__t.INTEREST.busy);   // the ask at unlock, answered
+    const before = await ev(() => JSON.stringify(window.__t.interestRead())), asked = W.gets.length;
+    W.status = 503;
+    await ev(() => window.__t.refreshInterests(true));
+    assert.equal(W.gets.length, asked + 1, "it asked");
+    assert.equal(await ev(() => JSON.stringify(window.__t.interestRead())), before);
+    assert.equal(JSON.parse(await ev(() => localStorage.getItem("orbit-interests"))).items.length, 4);
+  });
+
+  await test("Submit sends every SKU ticked for the stores in the batch only: those on the list first, in its order, then the rest", async () => {
     await ev(() => {
       const { S, slotKey, persist, render } = window.__t;
       S.addresses.push({ id: "a1", first: "Sam", last: "Sample", line1: "1 Sample St", city: "Austin", state: "TX", zip: "78701", country: "US" });
       S.cards.push({ id: "c1", nick: "Sample", number: "4111111111111111", expM: "7", expY: "31", cvv: "123", holder: "Sam Sample" });
       S.profiles.push({ id: "p1", name: "Sam T", shipId: "a1", billSame: true, cardId: "c1", phone: "5125550100", stores: [{ store: "target", mode: "seller" }] });
       S.slots = [slotKey("p1", "target")];
-      // Ticked, but not on the list: never sent.
+      // Ticked, but not on the list kept here (a product added since, ticked on another device): sent after the listed ones,
+      // as the worker keeps only the ones on its list now.
       S.settings.interestPicks = Object.assign({}, S.settings.interestPicks, { "target:99999999": { on: true, at: Date.now() } });
       persist(); render();
     });
     await page.click('#side [data-id="submit"]');
     await page.waitForSelector("#main .sub-act");
-    assert.match(await page.$eval("#main .sub-act", (e) => e.textContent), /2 interests ticked: their SKUs go with your Target files\./);
+    assert.match(await page.$eval("#main .sub-act", (e) => e.textContent), /2 interests ticked: their SKUs go to your seller with the next Target slots you submit\./);
     await page.click('#main [data-act="submit-slots"]');
     await page.fill("#ss-from", "Sam");
     await page.click("#ss-go");
     await page.waitForFunction(() => document.querySelector("#ss-sent") && !document.querySelector("#ss-sent").hidden);
     assert.equal(W.subs.length, 1);
-    assert.deepEqual(W.subs[0].interests, { target: ["11111111", "33333333"] }, "Pokémon Center's tick stays out: no Pokémon Center slots in this batch");
+    assert.deepEqual(W.subs[0].interests, { target: ["11111111", "33333333", "99999999"] }, "Pokémon Center's tick stays out: no Pokémon Center slots in this batch");
+    // A copy here that's empty (as a 401 leaves it) still sends every tick.
+    assert.deepEqual(await ev((lic) => { const T = window.__t, was = T.interestRead(); T.interestKeep(lic, { rev: null, owner: false, items: [] });
+      const r = T.interestsFor([{ kind: "profiles", storeKey: "target" }]); T.interestKeep(lic, was); return r.target.slice().sort(); }, LIC), ["11111111", "33333333", "99999999"]);
     assert.deepEqual([...new Set(W.subs[0].files.map((f) => f.storeKey).filter(Boolean))], ["target"]);
     await page.click("#layers [data-close]");
     // Nothing ticked for the store: a hint to tick, and nothing sent for it.
     await ev(() => { const T = window.__t; T.S.settings.interestPicks = {}; T.persist(); T.render(); });
     assert.match(await page.$eval("#main .sub-act", (e) => e.textContent), /Tick products on Interests for your seller to run them\./);
     assert.equal(await ev(() => JSON.stringify(window.__t.interestsFor([{ kind: "profiles", storeKey: "target" }]))), "{}");
+    // One ticked: its SKU.
+    await ev(() => { const T = window.__t; T.S.settings.interestPicks = { "target:33333333": { on: true, at: Date.now() } }; T.persist(); T.render(); });
+    assert.match(await page.$eval("#main .sub-act", (e) => e.textContent), /1 interest ticked: its SKU goes to your seller with the next Target slots you submit\./);
   });
 
   await test("the seller's own FAFO: Edit list, Add products saves with the list's revision, then finds TCGplayer pictures", async () => {
@@ -307,6 +355,183 @@ try {
     await page.click("#cf-go");
     await page.waitForFunction(() => window.__t.interestRead().rev === 10);
     assert.ok(!(await cards()).includes("Sample Booster Bundle"));
+  });
+
+  // ---- What the review of 1.9.142 found. Each starts from a list of its own, on the seller's FAFO with Edit list on. ----
+  const BASE = () => LIST().concat([{ sku: "44444444", store: "target", name: "Sample Booster Box", about: "", set: "Sample Set C", pic: "", tcg: "" }]);
+  const reset = async (items, rev) => {
+    W.items = items; W.rev = rev;
+    await ev(() => { document.querySelector("#toasts").innerHTML = ""; });
+    await page.waitForFunction((r) => { const T = window.__t; if (T.interestRead().rev !== r) T.refreshInterests(true, true); return T.interestRead().rev === r; }, rev, { polling: 100 });
+    await page.waitForSelector('#main [data-act="interest-edit"][data-id="target:44444444"]');
+  };
+  const toastSays = (re) => page.waitForFunction((src) => new RegExp(src).test(document.querySelector("#toasts").textContent), re.source);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // A save of this FAFO's own (as the pictures Add products finds), of the list as it's kept here with one product changed.
+  const saveOwn = (sku, change, quiet = true) => ev(({ sku, change, quiet }) => { const T = window.__t, L = T.interestRead();
+    return T.interestsSave(L.items.map((it) => (it.sku === sku ? Object.assign({}, it, change) : it)), L.rev, quiet ? { quiet: true } : {}); }, { sku, change, quiet });
+  const startOwn = (sku, change) => ev(({ sku, change }) => { const T = window.__t, L = T.interestRead();
+    window.__bg = T.interestsSave(L.items.map((it) => (it.sku === sku ? Object.assign({}, it, change) : it)), L.rev, { quiet: true }); }, { sku, change });
+  const openEdit = async (key) => { await page.click(`#main [data-act="interest-edit"][data-id="${key}"]`); await focused("ie-name"); };
+  const closed = () => page.waitForFunction(() => !document.querySelector("#ie-name"));
+
+  await test("products with no set and ones in a set named Other are one section, Other, with one Tick all", async () => {
+    await reset(BASE().concat([{ sku: "77777777", store: "target", name: "Sample Sleeves", about: "", set: "", pic: "", tcg: "" },
+      { sku: "88888888", store: "target", name: "Sample Binder", about: "", set: "Other", pic: "", tcg: "" }]), 20);
+    const titles = await page.$$eval("#main .int-set .sub-title", (els) => els.map((e) => e.textContent));
+    assert.deepEqual(titles, ["Sample Set A", "Sample Set B", "Sample Set C", "Other"]);
+    const other = () => page.$$eval("#main .int-set", (els) => els.find((e) => e.querySelector(".sub-title").textContent === "Other").textContent);
+    assert.match(await other(), /0 of 2 ticked/);
+    await page.check('#main input[data-act="interest-set"][data-id="Other"]');
+    const p = await picks();
+    assert.deepEqual([p["target:77777777"].on, p["target:88888888"].on], [true, true]);
+    assert.match(await other(), /2 of 2 ticked/);
+  });
+
+  await test("Edit's Save puts only what was changed in the window onto the product as it is now: a save it didn't see stays", async () => {
+    await reset(BASE(), 30);
+    await openEdit("target:44444444");
+    await page.fill("#ie-about", "Thirty-six sample packs in a box.");
+    // This FAFO saves a picture for it meanwhile, as the pictures Add products finds do.
+    assert.equal(await saveOwn("44444444", { tcg: "777" }), true);
+    let n = W.puts.length;
+    await page.click("#ie-save");
+    await closed();
+    assert.equal(W.puts.length, n + 1);
+    let it = W.puts[n].items.find((x) => x.sku === "44444444");
+    assert.equal(W.puts[n].rev, 31, "onto the list as it's kept now: no 409");
+    assert.deepEqual([it.about, it.tcg, it.name, it.set], ["Thirty-six sample packs in a box.", "777", "Sample Booster Box", "Sample Set C"]);
+    // Another device changes its set meanwhile: the first Save is refused (409), and Save again keeps that set and the picture.
+    await openEdit("target:44444444");
+    await page.fill("#ie-name", "Sample Booster Box, Second Print");
+    W.items = W.items.map((x) => (x.sku === "44444444" ? Object.assign({}, x, { set: "Sample Set D" }) : x)); W.rev++;
+    n = W.puts.length;
+    await page.click("#ie-save");
+    await toastSays(/The list changed on another device\. Here it is now; make your change again\./);
+    await page.waitForFunction(() => { const b = document.querySelector("#ie-save"); return b && !b.disabled && b.textContent === "Save"; });
+    assert.equal(W.puts[n].rev, 32);
+    await page.click("#ie-save");
+    await closed();
+    assert.equal(W.puts[n + 1].rev, 33);
+    it = W.items.find((x) => x.sku === "44444444");
+    assert.deepEqual([it.name, it.set, it.tcg, it.about], ["Sample Booster Box, Second Print", "Sample Set D", "777", "Thirty-six sample packs in a box."]);
+  });
+
+  await test("Edit takes a copied picture pasted anywhere in it, but a cell copied from a spreadsheet pastes as its text", async () => {
+    await openEdit("target:33333333");
+    // As Excel copies a cell: its text, a table and a picture of the cell; then a copied picture alone.
+    const paste = (cell) => ev(({ b64, cell }) => {
+      const dt = new DataTransfer();
+      if (cell) { dt.items.add("Sample Tin From A Sheet", "text/plain"); dt.items.add("<table><tr><td>Sample Tin From A Sheet</td></tr></table>", "text/html"); }
+      dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], "copied.png", { type: "image/png" }));
+      const e = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+      document.querySelector("#ie-name").dispatchEvent(e);
+      return e.defaultPrevented;
+    }, { b64: PNG.toString("base64"), cell });
+    const say = () => page.$eval("#ie-say", (e) => e.textContent);
+    const was = await say();
+    assert.equal(await paste(true), false, "left to paste as text");
+    await sleep(300);
+    assert.equal(await say(), was, "no picture taken from it");
+    assert.equal(await paste(false), true, "a copied picture is taken");
+    await page.waitForFunction(() => /ready to save/.test(document.querySelector("#ie-say").textContent));
+    await page.click("#layers [data-close]");
+    await closed();
+  });
+
+  await test("one save at a time: Edit's Save waits for one under way and goes onto the list it left; a press that can't wait is told", async () => {
+    await reset(BASE(), 40);
+    await openEdit("target:44444444");
+    await page.fill("#ie-about", "Thirty-six sample packs.");
+    let release; W.putHold = new Promise((r) => { release = r; });
+    const n = W.puts.length;
+    await startOwn("33333333", { name: "Sample Tin, Third Print" });
+    await waitFor(() => W.puts.length === n + 1, "the first save");
+    // A save that doesn't wait for it says so, where it said nothing.
+    assert.equal(await saveOwn("33333333", { about: "Not saved." }, false), false);
+    await toastSays(/Another change to the list is still saving\. Try again in a moment\./);
+    await page.click("#ie-save");
+    assert.equal(await page.$eval("#ie-save", (e) => e.textContent), "Saving…");
+    await sleep(400);
+    assert.equal(W.puts.length, n + 1, "nothing else sent while the first is out");
+    release(); W.putHold = null;
+    await closed();
+    assert.equal(await ev(() => window.__bg), true);
+    assert.deepEqual(W.puts.slice(n).map((b) => b.rev), [40, 41], "the second went with the revision the first left");
+    assert.equal(W.items.find((it) => it.sku === "33333333").name, "Sample Tin, Third Print");
+    assert.equal(W.items.find((it) => it.sku === "33333333").about, "Three sample packs in a tin.");
+    assert.equal(W.items.find((it) => it.sku === "44444444").about, "Thirty-six sample packs.");
+  });
+
+  await test("the pictures Add products finds wait for a save under way, then go onto the list it left", async () => {
+    await reset(BASE().concat([{ sku: "66666666", store: "target", name: "Sample Mini Tin", about: "", set: "Sample Set C", pic: "", tcg: "" }]), 50);
+    let release; W.putHold = new Promise((r) => { release = r; });
+    const n = W.puts.length, finds = W.finds.length;
+    await startOwn("100-10001", { about: "A sample Pokémon Center box." });
+    await waitFor(() => W.puts.length === n + 1, "the first save");
+    await ev(() => { window.__fp = window.__t.interestFindPics(["target:66666666"]); });
+    await waitFor(() => W.finds.length === finds + 1, "the lookup");
+    await sleep(400);
+    assert.equal(W.puts.length, n + 1, "its save waits");
+    release(); W.putHold = null;
+    await ev(() => window.__fp);
+    assert.deepEqual(W.puts.slice(n).map((b) => b.rev), [50, 51]);
+    assert.equal(W.items.find((it) => it.sku === "66666666").tcg, "555");
+    assert.equal(W.items.find((it) => it.sku === "100-10001").about, "A sample Pokémon Center box.");
+    await toastSays(/Found a picture on TCGplayer\./);
+  });
+
+  await test("a refresh read before a save but answered after it doesn't put the older list back; none starts while a save is out", async () => {
+    await reset(BASE(), 60);
+    let release; W.hold = new Promise((r) => { release = r; });
+    const asked = W.gets.length;
+    await ev(() => { window.__r = window.__t.refreshInterests(true); });
+    await waitFor(() => W.gets.length === asked + 1, "the ask");   // read as revision 60, its answer held
+    assert.equal(W.gets[asked], "?rev=60");
+    assert.equal(await saveOwn("33333333", { name: "Sample Tin, Fourth Print" }), true);
+    release(); W.hold = null;
+    await ev(() => window.__r);
+    const L = await ev(() => window.__t.interestRead());
+    assert.equal(L.rev, 61, "the list the save left");
+    assert.ok(L.items.some((it) => it.name === "Sample Tin, Fourth Print"));
+    assert.ok((await cards()).includes("Sample Tin, Fourth Print"));
+    // While a save is out, a refresh doesn't start.
+    let free; W.putHold = new Promise((r) => { free = r; });
+    const n = W.puts.length, gets = W.gets.length;
+    await startOwn("33333333", { about: "Three sample packs." });
+    await waitFor(() => W.puts.length === n + 1, "the save");
+    await ev(() => window.__t.refreshInterests(true));
+    assert.equal(W.gets.length, gets, "no ask while the save is out");
+    free(); W.putHold = null;
+    assert.equal(await ev(() => window.__bg), true);
+    assert.equal(await ev(() => window.__t.interestRead().rev), 62);
+  });
+
+  await test("after Add products it looks up the first 8, then says what it found and what's left for Edit's Find on TCGplayer", async () => {
+    await reset(BASE(), 70);
+    const finds = W.finds.length;
+    await page.click('#main [data-act="interests-add"]');
+    await focused("ia-lines");
+    assert.match(await page.$eval("#layers", (e) => e.textContent), /looks up the first 8 on TCGplayer for their pictures; each one's Edit has Find on TCGplayer for the rest\./);
+    await page.fill("#ia-lines", Array.from({ length: 10 }, (_, i) => `7000000${i} Sample Pack ${i + 1}`).join("\n"));
+    await page.click("#ia-go");
+    await toastSays(/Found no pictures on TCGplayer\. 2 more weren't looked up: use Edit → Find on TCGplayer\./);
+    assert.equal(W.finds.length - finds, 8, "a few, to keep the day's lookups");
+    // The catalog still being read stops them for now, and it says to try again in a minute.
+    await page.click('#main [data-act="interests-add"]');
+    await focused("ia-lines");
+    await page.fill("#ia-lines", "71111111 Sample Loading Box\n71111112 Sample Mini Tin");
+    await page.click("#ia-go");
+    await toastSays(/TCGplayer's catalog is still loading: try Find on TCGplayer in a minute\./);
+    assert.equal(W.finds.length - finds, 9, "stopped at the first");
+    assert.equal(W.items.find((it) => it.sku === "71111112").tcg, "", "not looked up");
+    // The first lookup failing: none was looked up, and it says so (not "2 more").
+    await page.click('#main [data-act="interests-add"]');
+    await focused("ia-lines");
+    await page.fill("#ia-lines", "72222221 Sample Broken Box\n72222222 Sample Mini Tin");
+    await page.click("#ia-go");
+    await toastSays(/2 products weren't looked up: use Edit → Find on TCGplayer\./);
+    assert.equal(W.finds.length - finds, 10, "stopped at the first");
   });
 
   await test("the page threw nothing", () => assert.deepEqual(errors, []));

@@ -193,6 +193,7 @@ const sxSubscribe = (id) => {
 const webhookPosts = [], webhookEdits = [], webhookFail = [];
 const buyerHookPosts = [];   // posts to buyers' own webhooks (order alerts)
 let webhookHang = null;   // {ms, code}: the next webhook post waits ms, then fails with code (if given)
+let ghDown = false;   // /gh-flaky.json can't be read
 const discord = createServer(async (req, res) => {
   const chunks = []; for await (const c of req) chunks.push(c);
   const raw = Buffer.concat(chunks), body = raw.toString();
@@ -207,6 +208,11 @@ const discord = createServer(async (req, res) => {
   if (req.url === "/users/@me/guilds" && USERS[who]) return send(200, USERS[who].guilds.map((id) => ({ id })));
   const u = new URL(req.url, "http://x");
   if (req.method === "GET" && u.pathname === "/gh.json") return send(200, ghList);
+  // The same list for one worker, which can be made unreadable (GitHub rate-limiting: a 429 that isn't JSON).
+  if (req.method === "GET" && u.pathname === "/gh-flaky.json") {
+    if (ghDown) { res.writeHead(429, { "content-type": "text/plain" }); return res.end("Too Many Requests"); }
+    return send(200, ghList);
+  }
   // GitHub's raw files, for the copy at /mirror (app 1.9.83+).
   if (u.pathname.startsWith("/mirror-src/")) {
     mirrorHits.push(req.url);
@@ -3855,6 +3861,19 @@ try {
     assert.deepEqual(s.files.filter((f) => f.name.endsWith("-skus.txt")).map((f) => f.text), ["100-10001\r\n100-10002", "88897898"]);
     assert.deepEqual(s.d.skus, { pokemoncenter: 2, target: 1 });
   });
+  await test("interests: beside a store typed as Target (before 1.9.94), Target's SKUs follow Target's own files, by its key", async () => {
+    // Both groups are named Target. The page sends a logins file with no store key: it's the group of the profiles before it.
+    const typed = (names) => ({ ...iFile("Target", "target", names), storeKey: "other:target" });
+    const logins = (names) => ({ ...iFile("Target", "target", names, "logins"), storeKey: undefined });
+    const typedFirst = await iSubmit([typed(["Gina O1"]), iFile("Target", "target", ["Gina T2"]), logins(["Gina T2"])], { interests: { target: ["88897899"] } });
+    assert.deepEqual(typedFirst.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv",
+      "Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-skus.txt"], "the typed store's group first: still sent");
+    assert.equal(typedFirst.files.at(-1).text, "88897899");
+    assert.deepEqual(typedFirst.d.skus, { target: 1 });
+    const targetFirst = await iSubmit([iFile("Target", "target", ["Gina T3"]), logins(["Gina T3"]), typed(["Gina O2"])], { interests: { target: ["88897899"] } });
+    assert.deepEqual(targetFirst.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-skus.txt",
+      "Gina-target-aycd.json", "Gina-target-shikari.csv"], "right after Target's logins, not after the typed store's files");
+  });
 
   console.log("\nPayments: off until the Stripe keys are set (2026-10-18)");
   // Bob's FAFO sends order alerts (above), so it's the owner's here.
@@ -4938,6 +4957,35 @@ try {
     const again = await (await vault("/vault?base=0", V2, { method: "PUT", auth: tok(), record: sealed(b64(16)) })).json();
     assert.equal(again.rev, 1); assert.ok(again.created > 0);
     assert.equal(before, created1, "the other license's vault keeps its id");
+  });
+
+  console.log("\nInterests while the list of keys made by hand can't be read (1.9.142)");
+  // A worker that hasn't read GitHub's list yet can't tell a key made by hand from none. GET /interests (and the owner's
+  // routes) answer 503 then, as GET /premium does, so the page keeps the list it has: a 401 reads as no list there, and a
+  // batch sent meanwhile went without the buyer's ticks (the 1.9.142 review).
+  ghDown = true;
+  await startWorker("gh-down", APPROVAL_PORT + 5, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", `GH_LICENSE_URL=http://127.0.0.1:${DISCORD_PORT}/gh-flaky.json`]);
+  await test("interests: a key made by hand gets 503 while that list can't be read, a Discord key gets the list, and 401 still means none", async () => {
+    const ask = async (key, init = {}) => {
+      const r = await fetch(BASE + "/interests", { ...init, headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" }, cache: "no-store" });
+      return { status: r.status, cc: r.headers.get("cache-control"), body: await r.json() };
+    };
+    const down = await ask(GH_KEY);
+    assert.deepEqual([down.status, down.body, down.cc], [503, { error: "the list of keys made by hand can't be read just now" }, "no-store"]);
+    assert.equal((await ask(GH_KEY, { method: "PUT", body: JSON.stringify({ rev: 0, items: [] }) })).status, 503, "the owner's routes too");
+    assert.equal((await ask("PVLT-NOPE-NOPE-NOPE-NOPE")).status, 503, "a key on neither list can't be told from one made by hand yet");
+    assert.equal((await getAuth("/premium", GH_KEY)).status, 503, "as GET /premium");
+    assert.equal((await ask(null)).status, 401);
+    assert.equal((await ask("not a key")).status, 401);
+    const key = await newKey("gina");
+    const g = await ask(key);
+    assert.deepEqual([g.status, g.body.rev, g.body.owner, g.body.items.length], [200, 0, false, 30], "a key from Continue with Discord is in this database");
+    await admin("/admin/revoke", { key });
+    assert.deepEqual([(await ask(key)).status, (await getAuth("/premium", key)).status], [401, 401], "turned off");
+    ghDown = false;
+    const up = await ask(GH_KEY);
+    assert.deepEqual([up.status, up.body.items.length], [200, 30], "once the list can be read");
+    assert.equal((await ask("PVLT-NOPE-NOPE-NOPE-NOPE")).status, 401, "and a key that isn't on it is refused");
   });
   console.log(`\n${passed} passed`);
 } finally {

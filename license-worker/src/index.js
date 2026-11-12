@@ -645,15 +645,25 @@ async function ghListHas(env, hash) {
   return !exp || new Date(exp) > new Date();
 }
 
-// The license key the app sent, if it's a valid one from either list.
-async function slotLicense(request, env) {
+// The license key the app sent, if it's a valid one from either list; "unknown" for one that isn't in this database while
+// the list of keys made by hand can't be read (GET /premium and /interests answer 503 for it, so the app keeps its last
+// answer rather than taking it for no license).
+async function readLicense(request, env) {
   const m = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") || "");
   const norm = m ? m[1].toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
   if (!/^PVLT[A-Z0-9]{16}$/.test(norm)) return null;
   const hash = await keyHash(norm);
   const row = await env.DB.prepare("SELECT discord_id, username, revoked_at FROM licenses WHERE key_hash = ?").bind(hash).first();
   if (row) return row.revoked_at ? null : { hash, last4: norm.slice(-4), discordId: row.discord_id, username: row.username };
-  return (await ghListHas(env, hash)) ? { hash, last4: norm.slice(-4), discordId: null, username: null } : null;
+  const on = await ghListHas(env, hash);
+  return on === null ? "unknown" : on ? { hash, last4: norm.slice(-4), discordId: null, username: null } : null;
+}
+const GH_LIST_DOWN = "the list of keys made by hand can't be read just now";
+
+// The license key the app sent, if it's a valid one from either list (an unknown one is refused).
+async function slotLicense(request, env) {
+  const lic = await readLicense(request, env);
+  return lic === "unknown" ? null : lic;
 }
 
 async function currentSlotLimit(env, hash) {
@@ -1082,14 +1092,18 @@ async function submission(request, env, url, ctx) {
       return used.get(store);
     };
     // A store's ticked SKUs, one per line, go right after its last file (Kim-target-skus.txt), so its files stay together
-    // however many messages the batch takes.
+    // however many messages the batch takes. A file's store is its group's key, as batchSkus has them, not its name, which
+    // two groups can share (a store typed as "Target" before 1.9.94, beside Target); a logins file carries no key, and is
+    // the group of the profiles file before it.
     const skusSent = new Set();
+    let cur = "";
+    const keys = posted.map((f) => (f.kind === "logins" ? cur : (cur = f.storeKey)));
     attach = posted.flatMap((f, i) => {
       const one = f.kind === "aycd"
         ? { name: `${buyer}-${label(f.store)}-aycd.json`, text: aycdText(f.list), type: "application/json" }
         : f.kind === "profiles" ? { name: `${buyer}-${label(f.store)}-shikari.csv`, text: shikariCsv(f.text), type: "text/csv" }
         : { name: `${buyer}-${label(f.store)}-logins.txt`, text: f.text };
-      const key = !posted.slice(i + 1).some((x) => x.store === f.store) && (posted.find((x) => x.kind === "profiles" && x.store === f.store) || {}).storeKey;
+      const key = !keys.slice(i + 1).includes(keys[i]) && keys[i];
       if (!key || !skus.has(key) || skusSent.has(key)) return [one];
       skusSent.add(key);
       return [one, { name: `${buyer}-${label(f.store)}-skus.txt`, text: skus.get(key).join("\r\n"), type: "text/plain" }];
@@ -3880,20 +3894,14 @@ async function isPremium(env, hash) {
 }
 
 async function premiumGet(request, env) {
-  // The license as slotLicense reads it, but from one look at each list: a key that isn't in this database while the
-  // list of keys made by hand can't be read is unknown, not refused (503, so the app keeps its last answer; a 401 takes
-  // Generate away).
-  const m = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") || "");
-  const norm = m ? m[1].toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
-  if (!/^PVLT[A-Z0-9]{16}$/.test(norm)) return json({ error: "license not recognized" }, 401);
-  const hash = await keyHash(norm);
-  const row = await env.DB.prepare("SELECT revoked_at FROM licenses WHERE key_hash = ?").bind(hash).first();
-  const on = row ? !row.revoked_at : await ghListHas(env, hash);
-  if (on === null) return json({ error: "the list of keys made by hand can't be read just now" }, 503);
-  if (!on) return json({ error: "license not recognized" }, 401);
+  // A key that isn't in this database while the list of keys made by hand can't be read is unknown, not refused (503, so
+  // the app keeps its last answer; a 401 takes Generate away).
+  const lic = await readLicense(request, env);
+  if (lic === "unknown") return json({ error: GH_LIST_DOWN }, 503);
+  if (!lic) return json({ error: "license not recognized" }, 401);
   // owner: this license sends order alerts, so it's the seller's own FAFO, which offers Settings → Premium buyers.
-  const s = await currentAlertSender(env), owner = !!(s && s.key_hash === hash);
-  return json({ premium: owner || await isPremium(env, hash), owner }, 200, { "cache-control": "no-store" });
+  const s = await currentAlertSender(env), owner = !!(s && s.key_hash === lic.hash);
+  return json({ premium: owner || await isPremium(env, lic.hash), owner }, 200, { "cache-control": "no-store" });
 }
 
 async function premiumListAsk(request, env, ctx, url) {
@@ -5852,7 +5860,10 @@ const interestsOut = (list, owner) => ({ rev: list.rev, owner, items: list.items
   about: it.about, set: it.set, ref: interestRef(it), ...(owner ? { pic: it.pic, tcg: it.tcg } : {}) })) });
 // The license, and whether it's the owner's FAFO (the one that sends order alerts), or the answer to send instead.
 async function interestLicense(request, env, ownerOnly) {
-  const lic = await slotLicense(request, env);
+  // As GET /premium: a key made by hand that can't be checked just now gets a 503, so the page keeps the list it has (a 401
+  // reads as no list there, and a batch sent meanwhile would go without the buyer's ticks).
+  const lic = await readLicense(request, env);
+  if (lic === "unknown") return { error: json({ error: GH_LIST_DOWN }, 503, NO_STORE) };
   if (!lic) return { error: json({ error: "license not recognized" }, 401, NO_STORE) };
   let owner;
   try { owner = lic.hash === await ownerHash(env); } catch (e) { console.error("interests", e); return { error: json({ error: "try again in a minute" }, 503, NO_STORE) }; }
