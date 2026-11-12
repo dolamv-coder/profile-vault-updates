@@ -1,10 +1,10 @@
 {
-  "version": "1.9.142",
-  "url": "index-1.9.142.html",
-  "sha256": "5c5845858af058bbf349fd23be7732e4ad80a904162023db4d3557b18b206273",
-  "signature": "DUzawZwITwHVzwYvbFhQ8t7fypX9Sp8ec+/JR6lI8rqm2FTkrWRnEMtWeG1rq+pNh9XEjXAoWfpgWpuJ4xJnCg==",
+  "version": "1.9.143",
+  "url": "index-1.9.143.html",
+  "sha256": "52ddcf4efc586a95bff41b67df24a25fc04e6f9e2f5e6b6ab8b004a327c9d4bb",
+  "signature": "YsEo811tbbz6L1e21N6oGm+zHTLdh5I+U9i9FI6tkhqIx5v6V4Gsly421BQXZ2/OqQvWhMeAFlwwbMpsLP1aDg==",
   "minAppVersion": "0",
-  "notes": "New: Interests, between IMAP and Submit. See the products your seller runs and tick the ones you'd like on your profiles. Each batch you submit sends your seller the ones ticked then. Auto-clean set to an inbox you've since deleted now cleans all your inboxes instead of stopping, and one set to an inbox without its password says so on the Clean page.",
+  "notes": "Interests now lists more products from your seller, including the latest drops. Your seller can also add a whole drop list at once. If your seller charges for checkouts, Invoice now offers pay per checkout only (a monthly plan you already have carries on until it ends).",
   "installerUrl": "",
-  "publishedAt": "2026-11-12T07:37:43.687Z"
+  "publishedAt": "2026-11-12T11:38:18.212Z"
 }
