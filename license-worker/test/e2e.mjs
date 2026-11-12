@@ -4063,6 +4063,22 @@ try {
   console.log("\nPayments: off until the Stripe keys are set (2026-10-18)");
   // Bob's FAFO sends order alerts (above), so it's the owner's here.
   const acctOf = (e) => createHash("sha256").update("acct:" + String(e).trim().toLowerCase()).digest("hex");
+  // Due dates (2026-11-12): the end of the Sunday after the order, US Eastern. The worker's own helpers, cut from its source,
+  // so the dates expected are worked out as it works them out, from the line's own createdAt (never this computer's clock,
+  // which could pass Eastern midnight between the two). The DST weeks below are checked against fixed instants too.
+  const DUE = (() => {
+    const src = readFileSync(join(root, "src", "index.js"), "utf8"), a = src.indexOf("const dayStart = "), b = src.indexOf("\n", src.indexOf("const dueWords = "));
+    return new Function(src.slice(a, b) + "\nreturn { etDay, addDays, sundayEndAfter, sundayEndOnOrAfter, dueNow, dueText, dueWords };")();
+  })();
+  const DAY = 86400000;
+  // A line's due date as the worker writes it: the Sunday after its order's day, or after the day it was written if later.
+  const dueFor = (orderAt, createdAt) => { const t = DUE.etDay(createdAt); return DUE.sundayEndAfter(orderAt > t ? orderAt : t); };
+  // A due date in the past that's already a Sunday's end, so the move onto the Sunday rule (which only runs again for an hour
+  // after it began, and the tests end that hour at once) could never move it.
+  const pastDue = () => DUE.sundayEndOnOrAfter(Date.now() - 8 * DAY);
+  // Something owed from now (Charge again, Keep, Undo waive, held lines released): due by the end of the Sunday after today,
+  // as of some moment of the request between t0 and t1.
+  const dueNowIn = (t0, t1, got) => [DUE.dueNow(t0), DUE.dueNow(t1)].includes(got);
   const billOf = async (key) => { const r = await fetchOnce(BASE + "/billing", { headers: { authorization: "Bearer " + key }, cache: "no-store" }); assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store"); return r.json(); };
   const ownFile = (rows, assigned = 0) => ({ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv(rows.map(([n, e]) => slotRow(n, e || ""))), assigned });
   const loginsFile = (emails) => ({ store: "Target", storeKey: "target", kind: "logins", text: emails.map((e) => `${e}:Sample-Pw-1`).join("\r\n") });
@@ -4158,30 +4174,45 @@ try {
   let tessKey, umaKey, tessAcct, tessHash, umaHash, tessCus;
   const billEv = (o) => ({ account: tessAcct, store: "target", storeName: "Target", orderNo: "TB-1", item: "Sample Booster Bundle", qty: "2", total: "$59.98", stage: "placed", at: today, ...o });
   const alerts = async (events) => { const r = await api("/alerts", bobKey, { events }); assert.equal(r.status, 200); return r.json(); };
-  await test("payments on: the first request notes when; buyers approved before are Friends and Family, keys made by hand too, and the FAFO that sends order alerts is the owner's", async () => {
+  await test("payments on: the first request notes when; buyers approved before are Friends and Family (who pay their own price, $5, with no plan to pick), keys made by hand too, and the FAFO that sends order alerts is the owner's", async () => {
     const g = await billOf(ginaKey);
-    assert.deepEqual({ ...g, now: 0 }, { on: true, mode: "live", exempt: "family", plan: null, nextPlan: null, block: null, now: 0, plans: ["checkout", "monthly"],
-      prices: { checkout: 500, monthly: 2500, extra: 2500, monthlySlots: 10, extraSlots: 15, extraMax: 1, dueDays: 3 }, sub: null, lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null });
-    assert.equal((await billOf(bobKey)).exempt, "owner");
-    assert.equal((await billOf(GH_KEY)).exempt, "family", "a key made by hand");
+    const { report, ...rest } = g;
+    assert.deepEqual({ ...rest, now: 0 }, { on: true, mode: "live", exempt: null, family: true, plan: "checkout", nextPlan: null, block: null, now: 0, plans: ["checkout"],
+      prices: { checkout: 500, family: 500, monthly: 2500, extra: 2500, monthlySlots: 10, extraSlots: 15, extraMax: 1, dueDays: 3, dueRule: "sunday", dueTz: "America/New_York" },
+      sub: null, lines: [], owed: 0, overdue: 0, paid30: 0, payments: [] }, "with the monthly plan offered, still none for Friends and Family");
+    const famFrom = Number(dbRows("SELECT v FROM billing_config WHERE k = 'family_from:live'")[0].v);
+    assert.ok(report === null || report.from === new Date(famFrom + 14 * 3600000).toISOString().slice(0, 10), "their FAFO reports checkouts from when Friends and Family were charged");
+    const bob = await billOf(bobKey);
+    assert.deepEqual([bob.exempt, bob.family, bob.prices.checkout, bob.prices.family], ["owner", false, 500, 500], "the owner's own FAFO is never charged");
+    const gh = await billOf(GH_KEY);
+    assert.deepEqual([gh.exempt, gh.family, gh.plan], [null, true, "checkout"], "a key made by hand");
     const since = Number(dbRows("SELECT v FROM billing_config WHERE k = 'on_since:live'")[0].v);
     assert.ok(Math.abs(since - Date.now()) < 300000, "noted when payments came on");
-    assert.equal((await (await adminGet("/admin/billing")).json()).onSince.live, since);
-    // Two days back, with the licenses issued before it, so the orders below (dated today) are from after payments began.
-    sqlRun(`UPDATE billing_config SET v = '${since - 2 * 86400000}' WHERE k = 'on_since:live'`);
+    assert.ok(Math.abs(famFrom - since) < 300000, "and when Friends and Family were charged, the first time a request saw payments on");
+    const moved = Number(dbRows("SELECT v FROM billing_config WHERE k = 'due_sunday'")[0].v);
+    assert.ok(Math.abs(moved - Date.now()) < 300000, "and when lines from before were moved onto the Sunday rule (there were none)");
+    const adm = await (await adminGet("/admin/billing")).json();
+    assert.deepEqual([adm.onSince.live, adm.familyFrom.live, adm.dueSunday, adm.prices.family], [since, famFrom, moved, 500]);
+    // Two days back, with the licenses issued before it, so the orders below (dated today) are from after payments began and
+    // after Friends and Family were charged. And the hour after the move, while a worker from before could still write 3-day
+    // due dates, ended: the tests' own due dates aren't moved.
+    sqlRun(`UPDATE billing_config SET v = '${since - 2 * 86400000}' WHERE k IN ('on_since:live', 'family_from:live')`);
+    sqlRun(`UPDATE billing_config SET v = '${moved - 2 * 3600000}' WHERE k = 'due_sunday'`);
     sqlRun(`UPDATE licenses SET issued_at = issued_at - ${2 * 86400000} WHERE issued_at <= ${since}`);
-    assert.equal((await billOf(ginaKey)).exempt, "family", "still Friends and Family");
+    assert.equal((await billOf(ginaKey)).family, true, "still Friends and Family");
   });
-  await test("Friends and Family are never refused, and orders on accounts given to them are never billed", async () => {
+  await test("Friends and Family are never refused for want of a plan; an order on an account given to them is billed at their price, due by the end of the Sunday after it", async () => {
     sqlRun(`INSERT OR IGNORE INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES ${Array.from({ length: 8 }, (_, i) => `('*', 'bill.pool${i + 1}@example.com', 'bill.pool${i + 1}@example.com', 'Sample-Pw-${i + 1}', ${Date.now()}, 'test')`).join(", ")}`);
     const r = await submit(vicKey, [ownFile([["Vic Fam", ""]], 1)], { name: "Vic", on: 30 });
     assert.equal(r.status, 200, await r.clone().text());
     const acct = dbRows(`SELECT email FROM accounts WHERE key_hash = '${hashOf(vicKey)}' AND store = 'target' AND profile = 'Vic Fam'`)[0].email;
     const a = await alerts([billEv({ account: acct, orderNo: "VF-1" })]);
     assert.equal(a.sent, 1, "the alert still reaches them");
-    assert.equal((await billOf(vicKey)).exempt, "family");
-    assert.deepEqual((await billOf(vicKey)).lines, []);
-    assert.equal(dbRows("SELECT COUNT(*) AS n FROM billing_lines")[0].n, 0);
+    const st = await billOf(vicKey), l = st.lines[0];
+    assert.deepEqual([st.exempt, st.family, st.plan, st.block, st.lines.length], [null, true, "checkout", null, 1]);
+    assert.deepEqual([l.orderNo, l.amount, l.state, l.source, l.profile], ["VF-1", 500, "due", "alert", "Vic Fam"]);
+    assert.equal(l.dueAt, dueFor(today, l.createdAt));
+    assert.equal(new Date(l.dueAt).getUTCDay(), 1, "a Sunday's end in Eastern time is Monday in UTC");
     const lim = await (await api("/slots/limit", vicKey)).json();
     assert.deepEqual([lim.limit, lim.canRequest, lim.plan], [20, true, undefined], "their limit is as approved");
   });
@@ -4212,14 +4243,15 @@ try {
     tessAcct = dbRows(`SELECT email FROM accounts WHERE key_hash = '${tessHash}' AND store = 'target' AND profile = 'Tess Given'`)[0].email;
     assert.deepEqual(windowsOf(tessBatch).map((x) => [x.profile, x.acct_hash]), [["Tess Own", acctOf("tess.own@example.com")], ["Tess Both", acctOf("both.own@example.com")]]);
   });
-  await test("an order on an account given to them goes on their invoice: $5, due 3 days after it", async () => {
+  await test("an order on an account given to them goes on their invoice: $5, due by the end of the Sunday after it (Eastern time)", async () => {
     assert.equal((await alerts([billEv({ orderNo: "tb-1001" })])).sent, 1);
     const st = await billOf(tessKey), l = st.lines[0];
     assert.equal(st.lines.length, 1);
     const { id, createdAt, dueAt, ...rest } = l;
     assert.deepEqual(rest, { store: "target", storeName: "Target", orderNo: "TB-1001", item: "Sample Booster Bundle", qty: "2", orderAt: today, source: "alert", amount: 500,
       state: "due", paidAt: null, acctHash: acctOf(tessAcct), profile: "Tess Given", disputable: false });
-    assert.equal(dueAt, Math.max(Date.parse(today) + 86400000, createdAt) + 3 * 86400000);
+    assert.equal(dueAt, dueFor(today, createdAt));
+    assert.ok(dueAt > createdAt && dueAt - createdAt <= 8 * DAY + 3600000, "this week's Sunday, or next week's on a Sunday");
     assert.deepEqual([st.owed, st.overdue, st.block], [500, 0, null]);
     await alerts([billEv({ orderNo: "TB-1001", stage: "shipped" }), billEv({ orderNo: "TB-1001" })]);
     assert.equal((await billOf(tessKey)).lines.length, 1, "one line per order");
@@ -4244,8 +4276,14 @@ try {
     assert.equal(st.lines.find((l) => l.orderNo === "TB-1002").state, "canceled");
     assert.equal(st.owed, 500);
   });
-  await test("an overdue checkout turns Submit off (402)", async () => {
-    sqlRun(`UPDATE billing_lines SET due_at = due_at - ${4 * 86400000} WHERE order_no = 'TB-1001'`);
+  await test("an overdue checkout turns Submit off (402): overdue from the moment its due date has passed (Monday 00:00 Eastern), not before", async () => {
+    sqlRun(`UPDATE billing_lines SET due_at = ${Date.now() + 60000} WHERE order_no = 'TB-1001'`);
+    const soon = await billOf(tessKey);
+    assert.deepEqual([soon.lines.find((l) => l.orderNo === "TB-1001").state, soon.block], ["due", null], "a minute before it's due");
+    sqlRun(`UPDATE billing_lines SET due_at = ${Date.now() - 1} WHERE order_no = 'TB-1001'`);
+    const gone = await billOf(tessKey);
+    assert.deepEqual([gone.lines.find((l) => l.orderNo === "TB-1001").state, gone.block && gone.block.reason], ["overdue", "overdue"], "a millisecond after");
+    sqlRun(`UPDATE billing_lines SET due_at = ${pastDue()} WHERE order_no = 'TB-1001'`);
     const st = await billOf(tessKey);
     assert.equal(st.lines.find((l) => l.orderNo === "TB-1001").state, "overdue");
     assert.deepEqual([st.overdue, st.block], [500, { reason: "overdue", text: "1 checkout overdue: $5." }]);
@@ -4461,9 +4499,18 @@ try {
     assert.deepEqual([back.body.nextPlan, back.body.sub.cancelAtEnd], [null, false]);
     await checkout(tessKey, { kind: "cancel", then: "checkout" });
     assert.ok(posts(before).every((m) => m.startsWith("🗓️ **Tess**'s monthly plan will end <t:")), JSON.stringify(posts(before)));
+    // Two checkouts waiting on its payment when it ends: owed then, due by the end of the Sunday after the day it ended, or
+    // later if one was due later already (never earlier).
+    const late = DUE.sundayEndAfter("2027-03-13"), held = (no, due) => `('h${rid().slice(0, 10)}', '${tessHash}', 'live', 'target', '${no}', '${today}', 'alert', 500, ${Date.now()}, ${due}, '${sub1.id}')`;
+    sqlRun(`INSERT INTO billing_lines (id, key_hash, mode, store, order_no, order_at, source, amount, created_at, due_at, held_sub) VALUES ${held("TB-HELD-1", Date.now() - 2 * DAY)}, ${held("TB-HELD-2", late)}`);
     Object.assign(sub1, { status: "canceled", ended_at: sxNow() });
-    const n = webhookPosts.length;
+    const n = webhookPosts.length, t0 = Date.now();
     assert.equal(await hook("customer.subscription.deleted", sub1), 200);
+    const t1 = Date.now(), released = dbRows("SELECT order_no, held_sub, due_at FROM billing_lines WHERE order_no LIKE 'TB-HELD-%' ORDER BY order_no");
+    assert.deepEqual(released.map((x) => [x.order_no, x.held_sub]), [["TB-HELD-1", null], ["TB-HELD-2", null]]);
+    assert.ok(dueNowIn(t0, t1, released[0].due_at), `${released[0].due_at}: the Sunday after the day the plan ended`);
+    assert.equal(released[1].due_at, late, "one due later keeps its date");
+    sqlRun("DELETE FROM billing_lines WHERE order_no LIKE 'TB-HELD-%'");
     const st = await billOf(tessKey);
     assert.deepEqual([st.plan, st.nextPlan, st.sub, st.block], ["checkout", null, null, null]);
     assert.deepEqual(posts(n), ["🗓️ **Tess**'s monthly plan ended · pay per checkout · about 2 slots out"]);
@@ -4528,7 +4575,7 @@ try {
     assert.match(m[0], new RegExp(`^❓ \\*\\*Uma\\*\\* says Target #UO-1 \\(${today}\\) wasn't your checkout: "Not a slot I sent from FAFO" · \\[Answer\\]\\(${BASE}/billing/list/[A-Za-z0-9_-]+\\?t=[A-Za-z0-9_-]+&b=${umaHash.slice(0, 16)}\\)$`));
     assert.equal((await api("/billing/dispute", umaKey, { id: l.id, note: "again" })).status, 409, "once");
     assert.equal((await api("/billing/dispute", tessKey, { id: (await lineOf(tessKey, "TB-4001")).id })).status, 409, "only a line their FAFO reported");
-    sqlRun(`UPDATE billing_lines SET due_at = due_at - ${5 * 86400000} WHERE order_no = 'UO-1'`);
+    sqlRun(`UPDATE billing_lines SET due_at = ${pastDue()} WHERE order_no = 'UO-1'`);
     const late = await billOf(umaKey);
     assert.deepEqual([late.lines.find((x) => x.orderNo === "UO-1").state, late.overdue, late.block], ["disputed", 0, null]);
   });
@@ -4640,11 +4687,15 @@ try {
     assert.ok(html.includes("Payments are on") && /Owed \$\d+ · Overdue \$\d+ · Paid in the last 30 days \$\d+ · \d+ monthly plans? · \d+ Friends and Family/.test(html), html.slice(0, 2000));
     assert.ok(/Order alerts: last from your FAFO (just now|\d+ min ago)\./.test(html), "the owner's FAFO sends order alerts");
     assert.ok(/<td class="em">@tess · Tess<br>/.test(html) && /<td class="em">@uma · Uma<br>/.test(html), "the buyers");
-    assert.ok(/@gina[^<]*<br><span[^>]*>License …\w{4}<\/span><\/td>\s*<td>Friends and Family<\/td>/.test(html), "approved before: Friends and Family");
-    assert.ok(/@bob[^<]*<br><span[^>]*>License …\w{4}<\/span><\/td>\s*<td>Your FAFO<\/td>/.test(html));
+    assert.ok(/@gina[^<]*<br><span[^>]*>License …\w{4}<\/span><\/td>\s*<td>Friends and Family · \$5 per checkout<\/td>\s*<td class="st">(Paid up|Older FAFO)<\/td>/.test(html), "approved before: Friends and Family, at their price, and charged like anyone");
+    assert.ok(/@bob[^<]*<br><span[^>]*>License …\w{4}<\/span><\/td>\s*<td>Your FAFO<\/td>\s*<td class="st">Not charged<\/td>/.test(html));
+    assert.ok(/@vic[^<]*<br><span[^>]*>License …\w{4}<\/span><\/td>\s*<td>Friends and Family · \$5 per checkout<\/td>\s*<td class="st"[^>]*>\$5 owed<\/td>/.test(html), "what they owe counts");
     assert.ok(/<td>Monthly · 10 slots · renews \d{4}-\d\d-\d\d<\/td>/.test(html), "Tess's plan");
-    assert.ok(html.includes('<p class="small">$5 per checkout, due 3 days after it (free if the store cancels it first), or $25 a month for 10 slots ($50 for 25). Buyers you approved'), "the prices, the monthly plan's while it's offered");
+    assert.ok(html.includes('<p class="small">$5 per checkout, due by the end of the Sunday after it (Eastern time; free if the store cancels it first), or $25 a month for 10 slots ($50 for 25). Friends and Family pay $5 per checkout, due the same way. Buyers you approved before payments began are Friends and Family; Details moves anyone either way.'),
+      "the prices, the monthly plan's while it's offered, and Friends and Family's");
+    assert.ok(!html.includes("never charged"));
     assert.ok(/<input id="price" name="price" value="5\.00"/.test(html), "the price per checkout's box");
+    assert.ok(/<label for="price-family">Friends and Family price per checkout<\/label>[\s\S]*?<input id="price-family" name="price" value="5\.00"[^>]*>[\s\S]*?value="price-family">Save<\/button><\/div>\s*<p class="hint">Applies to their checkouts from now on\. \$0 means they aren't charged\.<\/p>/.test(html), "and Friends and Family's, under it");
     assert.ok(html.includes("sessionStorage.setItem(KEY, f.value)"), "the search is kept for the tab");
     for (const k of [tessKey, umaKey, ginaKey, bobKey]) assert.ok(!html.includes(k), "never a whole key");
     assert.equal((await fetchOnce(billLink.replace(/t=[^&]+/, "t=wrong"))).status, 404);
@@ -4662,23 +4713,44 @@ try {
     const b = tessHash.slice(0, 16);
     const view = unescape(await (await fetchOnce(`${billLink}&b=${b}`)).text());
     assert.ok(view.includes("Their invoice") && view.includes("Target #TB-4001") && view.includes('value="family">Friends and Family<'), view.slice(0, 1500));
+    assert.ok(new RegExp(`Target #TB-4001[\\s\\S]*?<span style="font-size:12px">due ${DUE.dueText((await lineOf(tessKey, "TB-4001")).dueAt)}</span>`).test(view) && /due Sun, [A-Z][a-z]{2} \d{1,2}</.test(view),
+      "a due date says its Sunday, as in Eastern time (in UTC it's Monday)");
+    assert.ok(view.includes("Friends and Family pay $5 per checkout (the Friends and Family price), with no plan to pick; Submit is off for them only while a checkout is overdue or a payment is disputed with their bank. Charge makes them pay the regular price ($5 per checkout)"));
     const fam = await billPost(billLink, { action: "family", key: tessHash, b });
     assert.equal(fam.status, 303);
     assert.match(fam.location, new RegExp(`^/billing/list/[^?]+\\?t=[^&]+&b=${b}&done=`));
-    assert.match(doneOf(fam.location), /Friends and Family now.*Stripe stopped charging their monthly plan\./);
+    assert.equal(doneOf(fam.location), "They're Friends and Family now: $5 per checkout (the Friends and Family price) from now on, with no plan to pick. Stripe stopped charging their monthly plan.");
     assert.deepEqual(sub2.pause_collection, { behavior: "void" });
+    // Their checkouts from before stay on their invoice (now that Friends and Family pay too), at what they were billed.
     const st = await billOf(tessKey);
-    assert.deepEqual([st.exempt, st.block, st.sub.paused, st.lines], ["family", null, true, []]);
+    assert.deepEqual([st.exempt, st.family, st.plan, st.nextPlan, st.plans, st.block, st.sub.paused, st.prices.checkout], [null, true, "checkout", null, ["checkout"], null, true, 500]);
+    assert.deepEqual([st.lines.find((l) => l.orderNo === "TB-4001").state, st.owed], ["due", 500]);
+    for (const body of [{ kind: "monthly", extras: 0, on: 2 }, { kind: "extras", extras: 1, on: 2 }])
+      assert.deepEqual(await checkout(tessKey, body), { status: 409, body: { error: "Friends and Family pay per checkout." } }, JSON.stringify(body));
+    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [20, true, undefined], "the limit you approved, not the paused plan's");
+    // A paused plan never holds their checkouts, even with its month run out and a renewal not charged (Stripe voids those).
+    // (An order three days ahead: today is still covered by the plan that ended today, as they paid for it.)
+    const was = dbRows(`SELECT paid_through, invoice_status FROM billing_subs WHERE sub_id = '${sub2.id}'`)[0];
+    sqlRun(`UPDATE billing_subs SET paid_through = ${Date.now() - 3 * DAY}, invoice_status = 'draft', synced_at = ${Date.now()} WHERE sub_id = '${sub2.id}'`);
+    try {
+      await alerts([billEv({ orderNo: "TB-FAM-1", at: new Date(Date.now() + 3 * DAY).toISOString().slice(0, 10) })]);
+      const l = await lineOf(tessKey, "TB-FAM-1");
+      assert.deepEqual([l.state, l.amount], ["due", 500], "due at their price, not on hold");
+    } finally {
+      sqlRun(`UPDATE billing_subs SET paid_through = ${was.paid_through}, invoice_status = '${was.invoice_status}' WHERE sub_id = '${sub2.id}'`);
+      sqlRun("DELETE FROM billing_lines WHERE order_no = 'TB-FAM-1'");
+    }
     const charge = await billPost(billLink, { action: "charge", key: tessHash, b });
-    assert.match(doneOf(charge.location), /for checkouts from now on\. Stripe charges their monthly plan again\./);
+    assert.equal(doneOf(charge.location), "They're charged now, like any buyer approved after payments began: $5 per checkout (the regular price), for checkouts from now on. Stripe charges their monthly plan again.");
     assert.equal(sub2.pause_collection, null);
-    assert.equal((await billOf(tessKey)).exempt, null);
+    const charged = await billOf(tessKey);
+    assert.deepEqual([charged.exempt, charged.family, charged.plan, charged.plans], [null, false, "monthly", ["checkout", "monthly"]], "their monthly plan again");
     // As if that was two days ago, so the checkouts below (dated today) are from after it.
     sqlRun(`UPDATE billing_people SET charge_from = charge_from - ${2 * 86400000} WHERE key_hash = '${tessHash}'`);
     stripeFails.push({ path: new RegExp(`^/v1/subscriptions/${sub2.id}$`), method: "POST", status: 400, error: { type: "invalid_request_error", message: "Sample refusal." } });
     const refused = await billPost(billLink, { action: "family", key: tessHash, b });
     assert.equal(errOf(refused.location), "Stripe said no: Sample refusal.");
-    assert.equal((await billOf(tessKey)).exempt, null, "unchanged");
+    assert.equal((await billOf(tessKey)).family, false, "unchanged");
     assert.equal((await billPost(billLink.replace(/t=[^&]+/, "t=wrong"), { action: "family", key: tessHash })).status, 404, "a wrong token changes nothing");
   });
   await test("moved from Friends and Family to Charge: billed for checkouts from then on, never for ones from while they weren't charged", async () => {
@@ -4687,16 +4759,21 @@ try {
     // Their slots went out five days ago (an account given them, and one of their own), while they were Friends and Family.
     sqlRun(`UPDATE accounts SET assigned_at = assigned_at - ${5 * 86400000}, sent_at = sent_at - ${5 * 86400000} WHERE key_hash = '${vicHash}'`);
     sqlRun(`UPDATE billing_accounts SET sent_at = sent_at - ${5 * 86400000} WHERE key_hash = '${vicHash}'`);
-    assert.equal((await billOf(vicKey)).exempt, "family");
-    assert.match(doneOf((await billPost(billLink, { action: "charge", key: vicHash, b })).location), /^They're charged now, like any buyer approved after payments began, for checkouts from now on\.$/);
+    const fam = await billOf(vicKey);
+    assert.deepEqual([fam.family, fam.plan], [true, "checkout"]);
+    assert.deepEqual(dbRows(`SELECT plan FROM billing WHERE key_hash = '${vicHash}' AND mode = 'live'`), [], "they never picked a plan: they had none to pick");
+    assert.equal(doneOf((await billPost(billLink, { action: "charge", key: vicHash, b })).location), "They're charged now, like any buyer approved after payments began: $5 per checkout (the regular price), for checkouts from now on.");
     const charged = dbRows(`SELECT charge_from FROM billing_people WHERE key_hash = '${vicHash}'`)[0].charge_from;
     assert.ok(Math.abs(charged - Date.now()) < 120000);
+    assert.deepEqual(dbRows(`SELECT plan FROM billing WHERE key_hash = '${vicHash}' AND mode = 'live'`), [{ plan: "checkout" }], "charged, they're on pay per checkout, as they were");
+    const now = await billOf(vicKey);
+    assert.deepEqual([now.exempt, now.family, now.plan, now.block], [null, false, "checkout", null], "never left with no plan, which would turn Submit off");
     await billPost(billLink, { action: "charge", key: vicHash, b });
     assert.equal(dbRows(`SELECT charge_from FROM billing_people WHERE key_hash = '${vicHash}'`)[0].charge_from, charged, "charging again keeps when");
     const before = dayOf(Date.now() - 2 * 86400000), after = dayOf(Date.now() + 2 * 86400000);
     await alerts([billEv({ account: acct, orderNo: "VC-OLD", at: before, stage: "shipped" }), billEv({ account: acct, orderNo: "VC-NEW", at: after })]);
     const st = await billOf(vicKey);
-    assert.deepEqual([st.exempt, st.lines.map((l) => l.orderNo)], [null, ["VC-NEW"]], "a later step of an order from before isn't billed");
+    assert.deepEqual([st.exempt, st.lines.map((l) => l.orderNo)], [null, ["VC-NEW", "VF-1"]], "a later step of an order from before isn't billed (one billed while they were Friends and Family stays)");
     assert.equal(st.report.from, dayOf(charged + 14 * 3600000), "their FAFO reports orders from when they were charged on, not the five days before");
     const r = await (await api("/billing/checkouts", vicKey, { orders: [{ account: "vic.own@example.com", store: "target", orderNo: "VC-OWN-OLD", at: before, stage: "placed" }] })).json();
     assert.deepEqual([r.added, r.ignored], [0, 1]);
@@ -4704,21 +4781,35 @@ try {
     assert.equal(errOf((await billPost(billLink, { action: "add", key: vicHash, b, store: "target", order: "VC-ADD-OLD", date: dayOf(Date.now() - 86400000) })).location),
       "Not added: from before you charged them (friends and family then).");
     await billPost(billLink, { action: "family", key: vicHash, b });
-    assert.equal((await billOf(vicKey)).exempt, "family");
+    const back = await billOf(vicKey);
+    assert.deepEqual([back.exempt, back.family, back.plan], [null, true, "checkout"]);
   });
-  await test("Billing page: waive and undo, mark paid, charge again, and answer disputes", async () => {
+  await test("Billing page: waive and undo, mark paid, charge again, and answer disputes; what's owed again is due by the end of the Sunday after today, never earlier than it was", async () => {
     const b = tessHash.slice(0, 16), id = async (key, no) => (await lineOf(key, no)).id;
     const act = async (action, key, no) => billPost(billLink, { action, line: await id(key, no), b });
     assert.equal(doneOf((await act("waive", tessKey, "TB-4001")).location), "Waived.");
     assert.deepEqual([(await lineOf(tessKey, "TB-4001")).state, (await billOf(tessKey)).owed], ["waived", 0]);
-    assert.match(doneOf((await act("unwaive", tessKey, "TB-4001")).location), /owed again/);
-    assert.equal((await lineOf(tessKey, "TB-4001")).state, "due");
+    // Waived while it was overdue: undone, it's due again, not overdue at once.
+    sqlRun(`UPDATE billing_lines SET due_at = ${pastDue()} WHERE order_no = 'TB-4001'`);
+    let t0 = Date.now();
+    const undone = doneOf((await act("unwaive", tessKey, "TB-4001")).location);
+    let t1 = Date.now(), l = await lineOf(tessKey, "TB-4001");
+    assert.deepEqual([l.state, dueNowIn(t0, t1, l.dueAt), undone], ["due", true, `Waive undone: it's owed again, due ${DUE.dueWords(l.dueAt)}.`]);
+    assert.match(undone, /^Waive undone: it's owed again, due Sunday, [A-Z][a-z]{2} \d{1,2}\.$/);
     assert.equal(doneOf((await act("mark-paid", tessKey, "TB-4001")).location), "Marked paid.");
     assert.equal((await lineOf(tessKey, "TB-4001")).state, "paid");
     assert.equal(dbRows("SELECT pay_id FROM billing_lines WHERE order_no = 'TB-4001'")[0].pay_id, "manual");
     assert.equal(errOf((await act("waive", tessKey, "TB-4001")).location), "That checkout changed meanwhile, so nothing was done.");
-    assert.match(doneOf((await act("charge-again", tessKey, "TB-1002")).location), /owed again/);
-    assert.equal((await lineOf(tessKey, "TB-1002")).state, "due");
+    t0 = Date.now();
+    const again = doneOf((await act("charge-again", tessKey, "TB-1002")).location);
+    t1 = Date.now(); l = await lineOf(tessKey, "TB-1002");
+    assert.deepEqual([l.state, dueNowIn(t0, t1, l.dueAt), again], ["due", true, `It's owed again, due ${DUE.dueWords(l.dueAt)}.`]);
+    await act("waive", tessKey, "TB-1002");
+    // One due later than that already keeps its date when the waive is undone.
+    const later = DUE.sundayEndAfter("2027-03-13");
+    sqlRun(`UPDATE billing_lines SET due_at = ${later} WHERE order_no = 'TB-1002'`);
+    assert.equal(doneOf((await act("unwaive", tessKey, "TB-1002")).location), "Waive undone: it's owed again, due Sunday, Mar 14.");
+    assert.equal((await lineOf(tessKey, "TB-1002")).dueAt, later);
     await act("waive", tessKey, "TB-1002");
     // One their monthly plan covered once its payment went through was never owed: no Charge again.
     const view = unescape(await (await fetchOnce(`${billLink}&b=${b}`)).text()), covered = await id(tessKey, "TB-6001");
@@ -4727,10 +4818,12 @@ try {
     assert.equal(errOf((await act("charge-again", tessKey, "TB-6001")).location), "That checkout changed meanwhile, so nothing was done.");
     assert.equal((await lineOf(tessKey, "TB-6001")).state, "canceled");
     const ub = umaHash.slice(0, 16);
+    t0 = Date.now();
     const keep = await billPost(billLink, { action: "dispute-keep", line: await id(umaKey, "UO-1"), b: ub });
-    assert.match(doneOf(keep.location), /^Kept/);
+    t1 = Date.now();
     const kept = await lineOf(umaKey, "UO-1");
-    assert.equal(kept.state, "due"); assert.ok(kept.dueAt >= Date.now() + 3 * 86400000 - 120000, "3 days from now at the earliest");
+    assert.equal(kept.state, "due"); assert.ok(dueNowIn(t0, t1, kept.dueAt), "due by the end of the Sunday after today, as it was overdue");
+    assert.equal(doneOf(keep.location), `Kept: it's owed, due ${DUE.dueWords(kept.dueAt)}.`);
     const report = await api("/billing/checkouts", umaKey, { orders: [{ account: "both.own@example.com", store: "target", orderNo: "UO-5", at: today, stage: "placed" }] });
     assert.equal((await report.json()).added, 1);
     await api("/billing/dispute", umaKey, { id: await id(umaKey, "UO-5"), note: "" });
@@ -4741,7 +4834,8 @@ try {
     assert.equal(doneOf((await billPost(billLink, { action: "clear-hold", key: umaHash, b: ub })).location), "Hold cleared: they can submit again.");
     assert.equal((await billOf(umaKey)).block, null);
   });
-  await test("Billing page: Add a checkout puts one on a buyer's invoice (not a Friends and Family one's), with its note", async () => {
+  let wesKey;
+  await test("Billing page: Add a checkout puts one on a buyer's invoice, a Friends and Family one's at their price, never the owner's own FAFO's, with its note", async () => {
     const ub = umaHash.slice(0, 16);
     const add = await billPost(billLink, { action: "add", key: umaHash, b: ub, store: "target", order: "own-9001", date: today, item: "Sample ETB", note: "from the log" });
     assert.equal(doneOf(add.location), "Added Target #OWN-9001 to their invoice.");
@@ -4749,14 +4843,57 @@ try {
     assert.deepEqual([l.source, l.item, l.state, l.orderAt], ["owner", "Sample ETB · from the log", "due", today]);
     assert.equal(errOf((await billPost(billLink, { action: "add", key: umaHash, b: ub, store: "target", order: "OWN-9001", date: today })).location), "Not added: already on the invoice.");
     assert.equal(errOf((await billPost(billLink, { action: "add", key: tessHash, store: "target", order: "OWN-9003", date: today })).location), "Not added: monthly plan, not billed.");
-    const wesKey = await newBuyer("wes");
+    wesKey = await newBuyer("wes");
     await api("/billing/plan", wesKey, { plan: "checkout" });
     assert.equal(errOf((await billPost(billLink, { action: "add", key: hashOf(wesKey), store: "target", order: "OWN-9001", date: today })).location), "Not added: on another buyer's invoice.", "one order, one buyer");
     // Another buyer's own report of an order number is only their word: it doesn't keep it off this buyer's invoice.
     assert.equal((await (await api("/billing/checkouts", umaKey, { orders: [{ account: "both.own@example.com", store: "target", orderNo: "UO-SHARED-1", at: today, stage: "placed" }] })).json()).added, 1);
     assert.equal(doneOf((await billPost(billLink, { action: "add", key: hashOf(wesKey), store: "target", order: "UO-SHARED-1", date: today })).location), "Added Target #UO-SHARED-1 to their invoice.");
-    assert.equal(errOf((await billPost(billLink, { action: "add", key: hashOf(ginaKey), store: "target", order: "OWN-9002", date: today })).location), "Not added: friends and family.");
+    assert.equal(doneOf((await billPost(billLink, { action: "add", key: hashOf(ginaKey), store: "target", order: "OWN-9002", date: today })).location), "Added Target #OWN-9002 to their invoice.");
+    assert.deepEqual(await lineOf(ginaKey, "OWN-9002").then((x) => [x.amount, x.state, x.source]), [500, "due", "owner"], "Friends and Family, at their price");
+    assert.equal(errOf((await billPost(billLink, { action: "add", key: hashOf(bobKey), store: "target", order: "OWN-9004", date: today })).location), "Not added: your FAFO.");
+    const bob = await billOf(bobKey);
+    assert.deepEqual([bob.exempt, bob.lines, bob.owed], ["owner", [], 0], "the owner's own FAFO is never billed");
     assert.equal(errOf((await billPost(billLink, { action: "add", key: umaHash, store: "target", order: "", date: today })).location), "Fill in the order number and its date.");
+  });
+  await test("Friends and Family with a checkout overdue: Submit is off (402 overdue), never for want of a plan", async () => {
+    const ginaHash = hashOf(ginaKey), gb = ginaHash.slice(0, 16);
+    sqlRun(`UPDATE billing_lines SET due_at = ${pastDue()} WHERE order_no = 'OWN-9002'`);
+    const st = await billOf(ginaKey);
+    assert.deepEqual([st.family, st.plan, st.block], [true, "checkout", { reason: "overdue", text: "1 checkout overdue: $5." }]);
+    const r = await submit(ginaKey, [ownFile([["Gina Late", "gina.late@example.com"]]), loginsFile(["gina.late@example.com"])], { name: "Gina", on: 3 });
+    assert.equal(r.status, 402);
+    assert.deepEqual(await r.json(), { error: "1 checkout overdue: $5.", billing: { reason: "overdue", due: 500, overdue: 500, n: 1 } });
+    assert.equal(doneOf((await billPost(billLink, { action: "mark-paid", line: (await lineOf(ginaKey, "OWN-9002")).id, b: gb })).location), "Marked paid.");
+    assert.equal((await billOf(ginaKey)).block, null);
+  });
+  await test("due dates: the end of the Sunday after the order, in Eastern time across daylight saving time; a Sunday's is the next one; a late one's is the Sunday after the day it's written, never overdue as it arrives", async () => {
+    const wb = hashOf(wesKey).slice(0, 16);
+    const add = async (order, date) => { assert.equal(doneOf((await billPost(billLink, { action: "add", key: hashOf(wesKey), b: wb, store: "target", order, date })).location), `Added Target #${order} to their invoice.`); return lineOf(wesKey, order); };
+    // The week clocks go forward (Sunday, March 14, 2027) and the week they go back (Sunday, November 7, 2027).
+    const cases = [["DST-SPRING", "2027-03-13", "2027-03-15T03:59:59.999Z"], ["DST-SUNDAY", "2027-03-14", "2027-03-22T03:59:59.999Z"],
+      ["DST-EDT", "2027-10-30", "2027-11-01T03:59:59.999Z"], ["DST-FALL", "2027-11-06", "2027-11-08T04:59:59.999Z"], ["DST-FALL-SUN", "2027-11-07", "2027-11-15T04:59:59.999Z"]];
+    for (const [order, date, due] of cases) {
+      const l = await add(order, date);
+      assert.equal(new Date(l.dueAt).toISOString(), due, `${date}: its Sunday's end, Eastern`);
+      assert.equal(l.dueAt, DUE.sundayEndAfter(date));
+    }
+    // A late one: placed ten days ago (its own Sunday has passed), added today.
+    const since = dbRows("SELECT v FROM billing_config WHERE k = 'on_since:live'")[0].v, tenDays = new Date(Date.now() - 10 * DAY).toISOString().slice(0, 10);
+    sqlRun(`UPDATE billing_config SET v = '${Date.now() - 20 * DAY}' WHERE k = 'on_since:live'`);
+    try {
+      const l = await add("LATE-1", tenDays);
+      assert.equal(l.dueAt, DUE.dueNow(l.createdAt), "the Sunday after the day it was written");
+      assert.deepEqual([l.state, l.dueAt > l.createdAt], ["due", true], "never overdue as it arrives");
+    } finally { sqlRun(`UPDATE billing_config SET v = '${since}' WHERE k = 'on_since:live'`); }
+    // And a late order alert (yesterday's, today) for Friends and Family.
+    const vicAcct = dbRows(`SELECT email FROM accounts WHERE key_hash = '${hashOf(vicKey)}' AND store = 'target' AND profile = 'Vic Fam'`)[0].email, yesterday = new Date(Date.now() - DAY).toISOString().slice(0, 10);
+    await alerts([billEv({ account: vicAcct, orderNo: "VF-LATE", at: yesterday })]);
+    const v = await lineOf(vicKey, "VF-LATE");
+    assert.deepEqual([v.amount, v.state, v.dueAt], [500, "due", dueFor(yesterday, v.createdAt)]);
+    assert.ok(v.dueAt > v.createdAt);
+    const html = unescape(await (await fetchOnce(`${billLink}&b=${wb}`)).text());
+    assert.ok(html.includes("Target #DST-SPRING") && /#DST-SPRING[\s\S]*?due Sun, Mar 14</.test(html) && /#DST-FALL<[\s\S]*?due Sun, Nov 7</.test(html), "the Billing page names each one's Sunday");
   });
   await test("payments back on after the keys were gone: orders from before then aren't billed late", async () => {
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10), ub = umaHash.slice(0, 16);
@@ -4802,7 +4939,8 @@ try {
   });
   await test("Billing page: the link lasts 24 hours, and 10 are asked a day; the admin summary", async () => {
     const d = await (await adminGet("/admin/billing")).json();
-    assert.deepEqual([d.on, d.mode, d.alertsSeen.last4, typeof d.prices.live.base, d.plans.monthly, d.prices.checkout, d.offered], [true, "live", bobKey.slice(-4), "string", 1, 500, ["checkout", "monthly"]]);
+    assert.deepEqual([d.on, d.mode, d.alertsSeen.last4, typeof d.prices.live.base, d.plans.monthly, d.prices.checkout, d.prices.family, d.offered], [true, "live", bobKey.slice(-4), "string", 1, 500, 500, ["checkout", "monthly"]]);
+    assert.deepEqual([typeof d.familyFrom.live, typeof d.dueSunday], ["number", "number"]);
     assert.ok(d.owed.owed > 0 && d.people.n >= 2);
     assert.equal((await fetch(BASE + "/admin/billing")).status, 401);
     const id = billLink.match(/\/billing\/list\/([^?]+)/)[1];
@@ -4861,6 +4999,7 @@ try {
     assert.deepEqual(await billOf(umaKey), { on: false });
     assert.equal((await billOf(bobKey)).exempt, "owner", "the owner can still open billing");
     assert.ok(dbRows("SELECT v FROM billing_config WHERE k = 'on_since:test'").length, "test mode's own start");
+    assert.ok(dbRows("SELECT v FROM billing_config WHERE k = 'family_from:test'").length, "and when it charged Friends and Family");
     assert.equal((await submit(umaKey, [ownFile([["Uma One", "uma.one@example.com"]])], { on: 3, name: "Uma" })).status, 200, "not a tester: never refused");
     assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.plan]), [20, undefined], "no monthly plan in test mode");
     const r = await api("/billing/list", bobKey, { name: "Owner" });
@@ -4896,6 +5035,45 @@ try {
   await startWorker("billing-off", APPROVAL_PORT + 10, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "BILLING_MONTHLY=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_live_key_not_real"], "approval");
   const NO_MONTHLY = { error: "The monthly plan isn't offered any more." }, NO_PLAN = { reason: "no-plan", text: "Pick a plan to submit." };
   const basePrice = () => [...sx.prices.values()].find((x) => x.lookup_key === "fafo_monthly_base").id;
+  // A worker just deployed (a fresh isolate here) less than an hour after the move onto the Sunday rule began: its first
+  // request moves the lines written since 10 minutes before then (as a worker from before could still have written 3-day due
+  // dates meanwhile); the admin summary moves every unpaid line. These lines are no buyer's.
+  await test("the Sunday rule for lines from before: each unpaid one (waived too) goes to the end of the Sunday on or after its due date, never earlier; paid ones stay; doing it again changes nothing", async () => {
+    const now = Date.now(), marker = now - 5 * 60000, ghost = "f".repeat(64);
+    const row = (no, created, due, extra = {}) => `('m${rid().slice(0, 10)}', '${ghost}', 'live', 'target', '${no}', '${today}', 'owner', 500, ${created}, ${due}, ${extra.paid || "NULL"}, ${extra.waived || "NULL"})`;
+    const old = { "MV-NEW": now + 2 * DAY + 12345, "MV-WAIVED": now - 20 * DAY + 777, "MV-OLD": now - 3 * DAY + 4242, "MV-PAID": now + 2 * DAY + 99, "MV-SUNDAY": DUE.sundayEndAfter(today) };
+    sqlRun(`INSERT INTO billing_lines (id, key_hash, mode, store, order_no, order_at, source, amount, created_at, due_at, paid_at, waived_at) VALUES
+      ${row("MV-NEW", now, old["MV-NEW"])}, ${row("MV-WAIVED", now, old["MV-WAIVED"], { waived: now })}, ${row("MV-OLD", marker - 20 * 60000, old["MV-OLD"])},
+      ${row("MV-PAID", now, old["MV-PAID"], { paid: now })}, ${row("MV-SUNDAY", now, old["MV-SUNDAY"])}`);
+    sqlRun(`INSERT INTO billing_config (k, v, updated_at) VALUES ('due_sunday', '${marker}', ${marker}) ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at`);
+    const lines = () => Object.fromEntries(dbRows("SELECT id, order_no, due_at FROM billing_lines").map((x) => [x.order_no + "|" + x.id, x.due_at]));
+    const changed = (a, b) => Object.keys(b).filter((k) => a[k] !== b[k]).map((k) => k.split("|")[0]).sort();
+    const due = (no) => dbRows(`SELECT due_at FROM billing_lines WHERE order_no = '${no}' AND key_hash = '${ghost}'`)[0].due_at;
+    const s0 = lines();
+    assert.equal((await billOf(umaKey)).on, true);
+    const s1 = lines();
+    assert.deepEqual(changed(s0, s1), ["MV-NEW", "MV-WAIVED"], "only lines from since 10 minutes before it began, and not one already on a Sunday's end");
+    for (const no of ["MV-NEW", "MV-WAIVED"]) {
+      assert.equal(due(no), DUE.sundayEndOnOrAfter(old[no]), no);
+      assert.ok(due(no) >= old[no] && due(no) - old[no] < 8 * DAY, `${no}: never earlier, and within a week`);
+      assert.equal(due(no) % 1000, 999, `${no}: the last millisecond of the Sunday`);
+    }
+    // The admin summary does it for every unpaid line, and notes it (as a deploy's first request would with no marker yet).
+    sqlRun("DELETE FROM billing_config WHERE k = 'due_sunday'");
+    const d = await (await adminGet("/admin/billing")).json();
+    const s2 = lines();
+    assert.deepEqual(changed(s1, s2), ["MV-OLD"], "the rest of the unpaid lines are on Sundays' ends already");
+    assert.equal(due("MV-OLD"), DUE.sundayEndOnOrAfter(old["MV-OLD"]));
+    assert.ok(due("MV-OLD") >= old["MV-OLD"]);
+    assert.deepEqual([due("MV-PAID"), due("MV-SUNDAY")], [old["MV-PAID"], old["MV-SUNDAY"]], "a paid line is left as it was; a Sunday's end is its own");
+    assert.ok(Math.abs(d.dueSunday - Date.now()) < 120000, "noted when");
+    await (await adminGet("/admin/billing")).json();
+    assert.deepEqual(changed(s2, lines()), [], "again: nothing changes");
+    const off = dbRows("SELECT order_no, due_at FROM billing_lines WHERE paid_at IS NULL").filter((x) => DUE.sundayEndOnOrAfter(x.due_at) !== x.due_at);
+    assert.deepEqual(off, [], "every unpaid line is due at a Sunday's end");
+    sqlRun(`UPDATE billing_config SET v = '${Date.now() - 2 * 3600000}' WHERE k = 'due_sunday'`);
+    sqlRun(`DELETE FROM billing_lines WHERE key_hash = '${ghost}'`);
+  });
   let xiaKey, xiaHash, xiaCus;
   await test("no monthly plan: GET /billing offers pay per checkout only; the monthly plan, its extra 15 slots and Resume are refused (409), with no call to Stripe", async () => {
     xiaKey = await newBuyer("xia"); xiaHash = hashOf(xiaKey);
@@ -4984,7 +5162,7 @@ try {
     assert.equal((await api("/billing/list", bobKey, { name: "Owner" })).status, 200);
     offLink = webhookPosts.at(-1).content.match(/\((http[^)]+)\)/)[1];
     const html = unescape(await (await fetchOnce(offLink)).text());
-    assert.ok(html.includes('<p class="small">$5 per checkout, due 3 days after it (free if the store cancels it first). Buyers you approved'), html.slice(0, 3000));
+    assert.ok(html.includes('<p class="small">$5 per checkout, due by the end of the Sunday after it (Eastern time; free if the store cancels it first). Friends and Family pay $5 per checkout, due the same way. Buyers you approved'), html.slice(0, 3000));
     assert.ok(!/a month|monthly plan isn't offered/.test(html), "no monthly plan offered, and no one on one");
     assert.ok(/<label for="price">Price per checkout<\/label>[\s\S]*?<input id="price" name="price" value="5\.00"[^>]*>[\s\S]*?value="price">Save<\/button><\/div>\s*<p class="hint">Applies to checkouts from now on\. Ones already on an invoice keep their price\.<\/p>/.test(html), html.slice(0, 4000));
     const before = webhookPosts.length;
@@ -5025,7 +5203,83 @@ try {
     const last = await billOf(umaKey);
     assert.deepEqual([last.prices.checkout, last.lines.find((l) => l.orderNo === "UG-P750").amount, last.lines.find((l) => l.orderNo === "UG-P10").amount], [750, 750, 1000]);
     const html = unescape(await (await fetchOnce(offLink)).text());
-    assert.ok(html.includes("$7.50 per checkout, due 3 days after it") && /<input id="price" name="price" value="7\.50"/.test(html), html.slice(0, 3000));
+    assert.ok(html.includes("$7.50 per checkout, due by the end of the Sunday after it") && /<input id="price" name="price" value="7\.50"/.test(html), html.slice(0, 3000));
+  });
+  const famRow = () => dbRows("SELECT v FROM billing_config WHERE k = 'price:family'");
+  const vicLines = (no) => dbRows(`SELECT amount FROM billing_lines WHERE key_hash = '${hashOf(vicKey)}' AND order_no = '${no}'`).map((x) => x.amount);
+  const vicAcct = () => dbRows(`SELECT email FROM accounts WHERE key_hash = '${hashOf(vicKey)}' AND store = 'target' AND profile = 'Vic Fam'`)[0].email;
+  await test("Friends and Family pay their own price ($5) on every path: an order alert, their FAFO's report, Add a checkout and pasted lines; everyone else the regular price ($7.50 now)", async () => {
+    const vicHash = hashOf(vicKey), vb = vicHash.slice(0, 16);
+    await alerts([billEv({ account: vicAcct(), orderNo: "VF-A1" })]);
+    assert.equal((await (await api("/billing/checkouts", vicKey, { orders: [{ account: "vic.own@example.com", store: "target", orderNo: "VF-A2", at: today, stage: "placed" }] })).json()).added, 1);
+    assert.equal(doneOf((await billPost(offLink, { action: "add", key: vicHash, b: vb, store: "target", order: "VF-A3", date: today })).location), "Added Target #VF-A3 to their invoice.");
+    const paste = [`Target VF-PASTE-4 vic.own@example.com ${today}`, `Target UO-PASTE-5 uma.one@example.com ${today}`].join("\n");
+    const pasted = await billPost(offLink, { action: "paste-add", paste, store: "target", date: today });
+    assert.deepEqual([doneOf(pasted.location), errOf(pasted.location)], ["Added 2 checkouts.", null]);
+    const vic = await billOf(vicKey), amt = (st, no) => st.lines.find((l) => l.orderNo === no).amount;
+    assert.deepEqual(["VF-A1", "VF-A2", "VF-A3", "VF-PASTE-4"].map((no) => amt(vic, no)), [500, 500, 500, 500], "the Friends and Family price");
+    assert.deepEqual([vic.exempt, vic.family, vic.prices.checkout, vic.prices.family, vic.plans], [null, true, 500, 500, ["checkout"]]);
+    const uma = await billOf(umaKey);
+    assert.deepEqual([amt(uma, "UO-PASTE-5"), uma.family, uma.prices.checkout, uma.prices.family], [750, false, 750, 500], "the regular price");
+    for (const body of [{ kind: "monthly", extras: 0, on: 2 }, { kind: "extras", extras: 1, on: 2 }])
+      assert.deepEqual(await checkout(vicKey, body), { status: 409, body: { error: "Friends and Family pay per checkout." } }, JSON.stringify(body));
+  });
+  const BAD_FAM = "Not saved: type $0, or a price from $1 to $100, in dollars, like 5 or 7.50.";
+  await test("the Billing page's Friends and Family price: $0 to $100, the channel hears of a change once, new checkouts take it and ones on an invoice keep theirs; $0 bills nothing; from $0 to more they're charged from then", async () => {
+    const vicHash = hashOf(vicKey), vb = vicHash.slice(0, 16);
+    let html = unescape(await (await fetchOnce(offLink)).text());
+    assert.ok(html.includes("$7.50 per checkout, due by the end of the Sunday after it (Eastern time; free if the store cancels it first). Friends and Family pay $5 per checkout, due the same way."), html.slice(0, 3000));
+    assert.ok(/<input id="price-family" name="price" value="5\.00"/.test(html));
+    const before = webhookPosts.length, famFrom0 = dbRows("SELECT v FROM billing_config WHERE k = 'family_from:live'")[0].v;
+    for (const price of ["abc", "", "0.99", "0.5", "100.01", "101", "-5", "5.555", "1e3", "$", "1000"]) {
+      const r = await billPost(offLink, { action: "price-family", price });
+      assert.deepEqual([r.status, errOf(r.location)], [303, BAD_FAM], JSON.stringify(price));
+    }
+    for (const price of ["5", "5.00", "$5"]) assert.equal(doneOf((await billPost(offLink, { action: "price-family", price })).location), "The Friends and Family price per checkout is already $5.", price);
+    assert.equal((await billPost(offLink.replace(/t=[^&]+/, "t=wrong"), { action: "price-family", price: "3" })).status, 404, "only the owner's link");
+    assert.deepEqual([famRow(), webhookPosts.length], [[], before], "nothing written, nothing posted");
+    // $3: for their checkouts from now on; the regular price stays.
+    assert.equal(doneOf((await billPost(offLink, { action: "price-family", price: "3" })).location), "The Friends and Family price per checkout is $3 now, for their checkouts from now on.");
+    assert.deepEqual(posts(before), ["💲 Friends and Family price per checkout: $5 → $3 (from now on; checkouts already on an invoice keep their price)"]);
+    assert.deepEqual([famRow(), dbRows("SELECT v FROM billing_config WHERE k = 'family_from:live'")[0].v], [[{ v: "300" }], famFrom0], "still charged from when they were");
+    await alerts([billEv({ account: vicAcct(), orderNo: "VF-B1" })]);
+    const v3 = await billOf(vicKey);
+    assert.deepEqual([v3.prices.checkout, v3.prices.family, v3.lines.find((l) => l.orderNo === "VF-B1").amount, v3.lines.find((l) => l.orderNo === "VF-A1").amount], [300, 300, 300, 500]);
+    assert.deepEqual(await billOf(umaKey).then((x) => [x.prices.checkout, x.prices.family]), [750, 300]);
+    html = unescape(await (await fetchOnce(offLink)).text());
+    assert.ok(/@vic[^<]*<br><span[^>]*>License …\w{4}<\/span><\/td>\s*<td>Friends and Family · \$3 per checkout<\/td>/.test(html) && html.includes("Friends and Family pay $3 per checkout, due the same way."));
+    // $0: not charged at all, as before 1.9.144: no line is written, and their invoice is empty.
+    const n0 = webhookPosts.length;
+    assert.equal(doneOf((await billPost(offLink, { action: "price-family", price: "0" })).location), "The Friends and Family price per checkout is $0 now: they aren't charged from now on.");
+    assert.deepEqual(posts(n0), ["💲 Friends and Family price per checkout: $3 → $0 (from now on; checkouts already on an invoice keep their price)"]);
+    const free = await billOf(vicKey);
+    assert.deepEqual([free.exempt, free.family, free.lines, free.block, free.prices.checkout], ["family", true, [], null, 0]);
+    assert.equal((await billOf(ginaKey)).exempt, "family");
+    assert.equal((await alerts([billEv({ account: vicAcct(), orderNo: "VF-B2" })])).sent, 1, "the alert still reaches them");
+    assert.deepEqual(vicLines("VF-B2"), [], "no line");
+    assert.equal(errOf((await billPost(offLink, { action: "add", key: vicHash, b: vb, store: "target", order: "VF-B2", date: today })).location), "Not added: friends and family (free).");
+    html = unescape(await (await fetchOnce(offLink)).text());
+    assert.ok(html.includes("Friends and Family aren't charged (their price is $0).") && /<td>Friends and Family<\/td>\s*<td class="st">Not charged<\/td>/.test(html) && /<input id="price-family" name="price" value="0\.00"/.test(html));
+    assert.equal((await billOf(bobKey)).exempt, "owner");
+    // Back to $5: charged from now (both modes), so an order from before then isn't billed late.
+    const n5 = webhookPosts.length;
+    assert.equal(doneOf((await billPost(offLink, { action: "price-family", price: "5" })).location), "The Friends and Family price per checkout is $5 now, for their checkouts from now on.");
+    assert.deepEqual(posts(n5), ["💲 Friends and Family price per checkout: $0 → $5 (from now on; checkouts already on an invoice keep their price)"]);
+    const restamped = ["live", "test"].map((m) => Number(dbRows(`SELECT v FROM billing_config WHERE k = 'family_from:${m}'`)[0].v));
+    assert.ok(restamped.every((x) => Math.abs(x - Date.now()) < 120000), "family_from again, in both modes");
+    const yesterday = new Date(Date.now() - DAY).toISOString().slice(0, 10);
+    await alerts([billEv({ account: vicAcct(), orderNo: "VF-B3", at: yesterday })]);
+    assert.deepEqual(vicLines("VF-B3"), [], "from before they were charged again");
+    assert.equal(errOf((await billPost(offLink, { action: "add", key: vicHash, b: vb, store: "target", order: "VF-B4", date: yesterday })).location), "Not added: from before friends and family were charged.");
+    const back = await billOf(vicKey);
+    assert.deepEqual([back.exempt, back.family, back.prices.checkout], [null, true, 500]);
+    assert.ok(back.lines.some((l) => l.orderNo === "VF-A1"), "their invoice again");
+    assert.equal(back.report.from, new Date(restamped[0] + 14 * 3600000).toISOString().slice(0, 10), "their FAFO reports checkouts from then");
+    assert.deepEqual(await (await adminGet("/admin/billing")).json().then((x) => [x.prices.family, x.familyFrom.live]), [500, restamped[0]]);
+    // As if that was two days ago again, so today's orders count.
+    sqlRun(`UPDATE billing_config SET v = '${famFrom0}' WHERE k = 'family_from:live'`);
+    await alerts([billEv({ account: vicAcct(), orderNo: "VF-B5" })]);
+    assert.deepEqual(vicLines("VF-B5"), [500]);
   });
 
   console.log("\nProduct pictures (app 1.9.113)");
