@@ -1162,6 +1162,13 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .int-pic-acts{display:flex;flex-wrap:wrap;gap:8px}
 .int-pic-acts [hidden]{display:none}
 .sub-act-txt .sub-int{margin-top:6px}
+/* Add products' preview (1.9.143): each new product's name, then its section, store and SKU, a short list that scrolls. */
+.ia-list{list-style:none;margin:8px 0 0;padding:0;max-height:240px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.ia-list[hidden]{display:none}
+.ia-list li{display:flex;flex-direction:column;gap:2px;padding:7px 12px;border-top:1px solid var(--line);font-size:calc(13px*var(--fs))}
+.ia-list li:first-child{border-top:0}
+.ia-n{color:var(--ink);font-weight:600;overflow-wrap:anywhere}
+.ia-s,.ia-more{color:var(--ink-2);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 @media (max-width:560px){.int-card .int-pic{width:72px;height:72px}.int-set-head .selall{margin-left:0}}
 .upd-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 16px;padding:12px 14px;border-radius:8px;background:var(--sheet);border:1px solid var(--line);box-shadow:inset 4px 0 0 var(--accent)}
 .upd-banner > div{padding-left:6px}
@@ -17993,11 +18000,11 @@ async function interestFind(name){
   return {product:String(d.product), name:String(d.name || "").slice(0, 200), image:typeof d.image === "string" && DATA_PIC.test(d.image) ? d.image : ""};
 }
 // After Add products: the first few new products with no picture (INTEREST_FIND_MAX, one at a time: the day's lookups are
-// orders' pictures' too) get their TCGplayer product's, and the list is saved again with them, in its turn (the slot, after
+// orders' pictures' too; 20 from 1.9.143, so a pasted drop list, the owner's 2026-11-12 had 13 new, is looked up whole) get their TCGplayer product's, and the list is saved again with them, in its turn (the slot, after
 // a save under way) and onto the list it left, only where none was set meanwhile. A 429 or the catalog still being read
 // stops for now. Then it says what it found, and what's left for Edit's Find on TCGplayer (the review of 1.9.142: the rest
 // went without a word).
-const INTEREST_FIND_MAX = 8;
+const INTEREST_FIND_MAX = 20;
 async function interestFindPics(keys){
   const k = sellerLic(), vault = S, found = {};
   const all = interestItems().filter(it => keys.includes(interestKey(it)) && !it.pic && !it.tcg && !/^SKU /.test(it.name));
@@ -18080,9 +18087,84 @@ function interestFromLine(line, store){
   if (m) return {sku:m[1], store:"pokemoncenter", name:interestSlugName(m[2]) || "SKU " + m[1]};
   if (/^https?:\/\//i.test(s)) return false;
   m = /^([A-Za-z0-9-]{3,24})(?=$|[\s,;:|])[\s,;:|]*(?:[-–—]\s*)?(.*)$/.exec(s);
-  if (!m || !/\d/.test(m[1])) return false;
+  // "30th Celebration …" is a product's name, not SKU 30th (1.9.143: a drop list's name left without its SKU line).
+  if (!m || !/\d/.test(m[1]) || /^\d+(?:st|nd|rd|th)$/i.test(m[1])) return false;
   return {sku:m[1], store, name:interestLineText(m[2]) || "SKU " + m[1]};
 }
+// A drop list, as a restock tracker writes one (1.9.143, the owner's request, 2026-11-12: "here are the product that may be
+// dropping on friday", pasted from one, and Add products should read that as it is): a block per product, its name on a
+// line, then "SKU: <number>" (or TCIN, any case, with or without the colon or a #), and the tracker's Retail, QL, Stock and
+// the like, read and left out (the owner chose that cards show neither). Blocks, links and "SKU name" lines can be mixed.
+// A SKU line's number: digits (Target's), or digits and hyphens (Pokémon Center's 100-10001); words after it are left.
+const INTEREST_DROP_SKU = /^(?:sku|tcin)\s*(?:#\s*)?:?\s*#?\s*(\d[\d-]{1,22}\d)(?=$|[\s|,;(/])/i;
+const INTEREST_DROP_KEY = /^(?:retail|msrp|price|cost|ql|qty|quantity|(?:qty |quantity |purchase )?limit|max|stock|inventory|sku|tcin|dpci|upc|release(?: date)?|date|drop(?: date| time)?|launch(?: date)?|time|status|store|retailer|category)\s*(?:#\s*)?:/i;
+// A line that's a product of its own, never a block's name: a link, or a SKU (6 digits or more, or Pokémon Center's
+// 100-10001) and its name. A name like "151 Ultra-Premium Collection" or "30th Celebration …" can be one.
+function interestOwnLine(l){
+  if (/^https?:\/\/|(?:target|pokemoncenter)\.com\//i.test(l)) return true;
+  const it = interestFromLine(l, "target");
+  return !!(it && /^(?:\d{6,}|\d+-\d+)/.test(it.sku));
+}
+// A tracker's tag after a dash at the end of the name ("— New Drop"), taken off.
+const INTEREST_DROP_TAG = /\s+[-–—]\s+(?:new drop|restock(?:ed)?|back in stock|live(?: now)?|recently updated|pre-?order)\s*$/i;
+// After "Mega Evolution", a product's own words: that's the set's own product (Mega Evolution Elite Trainer Box), which
+// keeps the set's name, where "Mega Evolution — Delta Reign …" is the series and then the set.
+const INTEREST_DROP_KIND = /^(?:elite|etb|booster|build|three|two|\d-(?:pack|booster)|blister|tin|mini|collection|premium|ultra|binder|poster|pin|sticker|tech|deck|battle|bundle|box|display|pack|figure|special|enhanced|sleeved|checklane|trainer|league)\b/i;
+// A drop list's name as the list writes its own: no "Pokémon TCG:" or "Mega Evolution —" in front, no tracker's tag, a
+// style that may vary in brackets and any other part after a dash after a colon ("30th Celebration Ultra-Premium
+// Collection: Night", "Ascended Heroes Tech Sticker Collection: Gastly"), at most 120 characters, as the worker keeps.
+function interestDropName(v){
+  let s = interestText(String(v || "").normalize("NFC"), 400);
+  while (INTEREST_DROP_TAG.test(s)) s = s.replace(INTEREST_DROP_TAG, "");
+  s = s.replace(/^pok[eé]mon\s+(?:tcg|trading\s+card\s+game)\s*(?::|\s[-–—])\s*/i, "");
+  const m = /^mega\s+evolution(?:\s*[:–—-]\s*|\s+)(\S.*)$/i.exec(s);
+  if (m && !INTEREST_DROP_KIND.test(m[1])) s = m[1];
+  s = s.replace(/\s+[-–—]\s+styles?\s+may\s+vary\b/gi, " (styles may vary)").replace(/\s+[-–—]\s+/g, ": ");
+  return interestLineText(s);
+}
+// Every product a paste gives, in its order: an item, or false for a line that couldn't be read (blank lines and the
+// tracker's Retail, QL, Stock lines give none). A SKU line's name is the nearest line above it, past blank and tracker's
+// lines, back to the SKU line before (so never another product's name), unless that's a product of its own.
+function interestsFromText(text, store){
+  const lines = String(text || "").split(/\r?\n/).map(l => l.trim());
+  const kind = lines.map(l => !l ? "" : INTEREST_DROP_SKU.test(l) ? "sku" : INTEREST_DROP_KEY.test(l) ? "key" : "line");
+  // What the next line with something on it is, for each line (one pass: this runs as the box is typed in).
+  const next = []; for (let i = lines.length - 1, k = ""; i >= 0; i--){ next[i] = k; if (kind[i]) k = kind[i]; }
+  const nameAt = new Map(), named = new Set();
+  kind.forEach((k, i) => {
+    if (k !== "sku") return;
+    for (let j = i - 1; j >= 0 && kind[j] !== "sku"; j--){
+      if (kind[j] !== "line") continue;
+      if (!named.has(j) && !interestOwnLine(lines[j])){ named.add(j); nameAt.set(i, j); }
+      break;
+    }
+  });
+  const out = [];
+  lines.forEach((l, i) => {
+    const k = kind[i];
+    if (!k || k === "key" || named.has(i)) return;
+    if (k === "sku"){
+      const sku = INTEREST_DROP_SKU.exec(l)[1], j = nameAt.get(i);
+      out.push({sku, store, name:(j !== undefined && interestDropName(lines[j])) || "SKU " + sku});
+      return;
+    }
+    // A name with the tracker's lines under it but no SKU line: nothing to add, and it's counted as not read.
+    if (next[i] === "key" && !interestOwnLine(l)){ out.push(false); return; }
+    const it = interestFromLine(l, store);
+    if (it !== null) out.push(it);
+  });
+  return out;
+}
+// The set already on the list that the product's name has in it, word for word without case or accents, the longest
+// first (as "Scarlet & Violet 151" before a set named "Scarlet & Violet"); "" for none. The owner chose "by set, as now",
+// so a drop list's products go into the sections they belong to, whatever the window's Set box says.
+const interestSetWords = (s) => " " + interestPlain(s).replace(/[^\p{L}\p{N}]+/gu, " ").trim() + " ";
+function interestSetFor(name, sets){
+  const n = interestSetWords(name);
+  return sets.filter(s => !/^\s*other\s*$/i.test(s) && interestSetWords(s).trim() && n.includes(interestSetWords(s))).sort((a, b) => b.length - a.length)[0] || "";
+}
+// The new products the preview lists by name and set (from 1.9.143, for a drop list's), at most this many.
+const INTEREST_ADD_SHOWN = 50;
 function openInterestAdd(){
   let L = interestRead(); if (!L || !L.owner || INTEREST.saving) return;
   const sets = interestSets(L.items);
@@ -18090,36 +18172,40 @@ function openInterestAdd(){
   let shut = false;
   openLayer({
     title:"Add products", dismiss:false, onClose:() => { shut = true; },
-    body:`<div class="field" data-field="ia_lines"><label for="ia-lines">One per line: a Target or Pokémon Center link, or a SKU and its name</label><textarea id="ia-lines" spellcheck="false" autocomplete="off" style="min-height:150px" placeholder="https://www.target.com/p/…/-/A-12345678&#10;12345678 Product name"></textarea><span class="err"></span></div>
+    body:`<div class="field" data-field="ia_lines"><label for="ia-lines">One per line: a Target or Pokémon Center link, or a SKU and its name</label><textarea id="ia-lines" spellcheck="false" autocomplete="off" style="min-height:150px" placeholder="https://www.target.com/p/…/-/A-12345678&#10;12345678 Product name&#10;&#10;Product name&#10;SKU: 12345678"></textarea><span class="hint">Or a drop list as a tracker writes it: each product's name with its SKU line under it. Retail, QL and Stock are left out.</span><span class="err"></span></div>
       <div class="form-grid" style="margin-top:12px">
         <div class="field c3"><label for="ia-store">Store</label><select id="ia-store">${opt(INTEREST_STORES, "target")}</select><span class="hint">For lines without a link.</span></div>
-        <div class="field c3"><label for="ia-set">Set <span class="opt">(optional)</span></label><input id="ia-set" list="ia-sets" maxlength="60" autocomplete="off"><datalist id="ia-sets">${sets.map(s => `<option value="${esc(s)}">`).join("")}</datalist><span class="hint">The section buyers see it under.</span></div>
+        <div class="field c3"><label for="ia-set">Set <span class="opt">(optional)</span></label><input id="ia-set" list="ia-sets" maxlength="60" autocomplete="off"><datalist id="ia-sets">${sets.map(s => `<option value="${esc(s)}">`).join("")}</datalist><span class="hint">The section buyers see it under, unless its name has a set already on the list.</span></div>
       </div>
-      <p class="note" id="ia-prev" role="status" style="margin:12px 0 0">Paste links or SKUs above.</p>
+      <p class="note" id="ia-prev" role="status" style="margin:12px 0 0">Paste links, SKUs or a drop list above.</p>
+      <ul class="ia-list" id="ia-list" aria-label="Products to add" hidden></ul>
       <p class="item-sub" style="margin:10px 0 0">FAFO then looks up the first ${INTEREST_FIND_MAX} on TCGplayer for their pictures; each one's Edit has Find on TCGplayer for the rest.</p>`,
     foot:`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="ia-go" disabled>Add</button>`,
     mount:(panel, close) => {
-      const ta = $("#ia-lines", panel), store = $("#ia-store", panel), set = $("#ia-set", panel), prev = $("#ia-prev", panel), go = $("#ia-go", panel);
+      const ta = $("#ia-lines", panel), store = $("#ia-store", panel), set = $("#ia-set", panel), prev = $("#ia-prev", panel), list = $("#ia-list", panel), go = $("#ia-go", panel);
       let busy = false;
-      // What Add would do: the new products, and how many lines are on the list already or couldn't be read.
+      // What Add would do: the new products, and how many are on the list already or couldn't be read. Each goes in the
+      // set on the list its name has (interestSetFor), else the Set box's (1.9.143).
       const plan = () => {
-        const have = new Set(L.items.map(it => it.store + ":" + it.sku.toLowerCase())), add = [];
+        const have = new Set(L.items.map(it => it.store + ":" + it.sku.toLowerCase())), add = [], onList = interestSets(L.items);
         let dup = 0, bad = 0;
-        ta.value.split(/\r?\n/).forEach(line => {
-          const it = interestFromLine(line, store.value);
-          if (it === null) return;
+        interestsFromText(ta.value, store.value).forEach(it => {
           if (!it){ bad++; return; }
           const k = it.store + ":" + it.sku.toLowerCase();
           if (have.has(k)){ dup++; return; }
           have.add(k);
-          add.push(Object.assign(it, {about:"", set:interestText(set.value, 60), pic:"", tcg:""}));
+          add.push(Object.assign(it, {about:"", set:interestSetFor(it.name, onList) || interestText(set.value, 60), pic:"", tcg:""}));
         });
         return {add, dup, bad};
       };
       const show = () => {
         setErr(panel, "ia_lines", "");
         const p = plan();
-        prev.textContent = !p.add.length && !p.dup && !p.bad ? "Paste links or SKUs above."
+        // Each new product's name and the section it goes in, so a drop list's names and sets can be checked before Add.
+        list.innerHTML = p.add.slice(0, INTEREST_ADD_SHOWN).map(it => `<li><span class="ia-n">${esc(it.name)}</span><span class="ia-s">${esc(interestSetOf(it))} · ${esc(interestStoreLabel(it.store))} SKU ${esc(it.sku)}</span></li>`).join("")
+          + (p.add.length > INTEREST_ADD_SHOWN ? `<li class="ia-more">and ${p.add.length - INTEREST_ADD_SHOWN} more</li>` : "");
+        list.hidden = !p.add.length;
+        prev.textContent = !p.add.length && !p.dup && !p.bad ? "Paste links, SKUs or a drop list above."
           : [p.add.length ? `${plural(p.add.length, "product")} to add` : "Nothing new to add", p.dup ? `${p.dup} already on the list` : "", p.bad ? `${p.bad} ${p.bad === 1 ? "line" : "lines"} couldn't be read` : ""].filter(Boolean).join(" · ");
         go.disabled = busy || !p.add.length;
         go.textContent = p.add.length ? `Add ${plural(p.add.length, "product")}` : "Add";

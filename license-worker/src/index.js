@@ -25,7 +25,8 @@
 //                              are read (ask again in a minute)
 // Interests (page 1.9.142; the owner's request, 2026-11-12: products the owner lists for buyers to tick):
 //   GET  /interests?rev=N      {rev, owner, items:[{sku, store, name, about, set, ref}]} (license Bearer); the owner's FAFO
-//                              also gets each item's pic and tcg; {rev, owner, same:true} when N is the current rev
+//                              also gets each item's pic and tcg; {rev, owner, same:true} when N is the current rev.
+//                              INTEREST_ADDS (2026-11-12: Friday's drop list) go onto the list once, saved or not
 //   PUT  /interests            the owner's FAFO only: {rev, items:[{sku, store, name, about, set, pic, tcg}]}, the whole
 //                              list, answered as GET; 409 {error:"changed", rev} when another device saved since rev
 //   POST /interests/pic        the owner's FAFO only: {data:"data:image/(webp|jpeg|png);base64,..."}, 150 KB at most: {ref}
@@ -163,7 +164,7 @@
 //   POST /admin/accounts/free  {email, store?}: give an account back to the list
 //   POST /admin/accounts/remove {email, store?}: take it off the list
 
-import { INTEREST_SEED } from "./interest-seed.js";
+import { INTEREST_SEED, INTEREST_ADDS } from "./interest-seed.js";
 
 const DISCORD_AUTHORIZE = "https://discord.com/oauth2/authorize";
 const REQUEST_TTL_MS = 15 * 60 * 1000;          // matches how long the app waits for a sign-in
@@ -5847,12 +5848,75 @@ function interestItem(x) {
   if (tcg !== "" && !(typeof tcg === "string" && /^\d{1,10}$/.test(tcg))) return { error: "a TCGplayer product is its number" };
   return { item: { sku, store: x.store, name, about, set, pic, tcg } };
 }
+// Products added to the list once, after the seed (INTEREST_ADDS; the owner's request, 2026-11-12: "here are the product
+// that may be dropping on friday", to add the new ones and keep everything else). The owner may have saved the list since
+// 1.9.142 or not, so each addition goes onto whichever list there is, once (interest_adds): in the seed while nothing is
+// saved, and at the end of a saved list, the products it doesn't have, with a new rev so every FAFO fetches it. Applied
+// once, so a product the owner takes off afterwards stays off. Each goes through interestItem, as the seed does.
+let interestAdds = null;
+const addsList = () => interestAdds ??= INTEREST_ADDS.map((a) => ({ id: a.id, items: a.items.map((x, i) => {
+  const r = interestItem(x);
+  if (r.error) console.error("interests: addition", a.id, "item", i, "skipped:", r.error);
+  return r.item;
+}).filter(Boolean) }));
+const interestAdded = new Set();   // this isolate's: the additions D1 has as applied, so later calls cost nothing
+const interestKey = (it) => it.store + ":" + it.sku.toLowerCase();
+// `items`, then the products of `more` it doesn't have (by store and SKU), in their order, up to INTEREST_MAX. A product
+// already there keeps what the owner wrote for it.
+function interestMerge(items, more) {
+  const out = [...items], have = new Set(items.map(interestKey));
+  for (const it of more) {
+    const k = interestKey(it);
+    if (have.has(k)) continue;
+    if (out.length >= INTEREST_MAX) { console.error("interests: the list is full, so", it.store, it.sku, "wasn't added"); continue; }
+    have.add(k); out.push(it);
+  }
+  return out;
+}
 let interestSeed = null;
-const seedItems = () => interestSeed ??= INTEREST_SEED.map((x) => interestItem(x).item).filter(Boolean);
-// The list as it is now: what the owner last saved, or the seed (rev 0) until then. Throws when D1 does.
-async function interestList(env) {
+const seedItems = () => interestSeed ??= interestMerge([], [...INTEREST_SEED.map((x) => interestItem(x).item).filter(Boolean), ...addsList().flatMap((a) => a.items)]);
+// The seed's rev counts the additions in it (1.9.142's seed alone was rev 0), so a FAFO that has the seed from before one
+// fetches it again rather than hearing it's the same; an addition stays in INTEREST_ADDS once it's out, for that.
+const seedRev = () => INTEREST_ADDS.length;
+const markAdd = (env, id, now) => env.DB.prepare("INSERT OR IGNORE INTO interest_adds (id, at) VALUES (?, ?)").bind(id, now);
+// The list as it is now: what the owner last saved, or the seed until then, with any addition not applied yet put on it
+// first. Throws when D1 does.
+async function interestList(env, again = false) {
   const row = await env.DB.prepare("SELECT rev, items FROM interest_list WHERE id = 1").first();
-  return row ? { rev: row.rev, items: JSON.parse(row.items) } : { rev: 0, items: seedItems() };
+  let due = addsList().filter((a) => !interestAdded.has(a.id));
+  if (!row) {
+    // The seed has them all. Noted as applied, so once the owner first saves, one they took off doesn't come back (the save
+    // notes them too, in case this didn't go through).
+    if (due.length) {
+      const now = Date.now();
+      await env.DB.batch(due.map((a) => markAdd(env, a.id, now))).then(() => due.forEach((a) => interestAdded.add(a.id)), (e) => console.error("interests", e));
+    }
+    return { rev: seedRev(), items: seedItems(), seed: true };
+  }
+  const list = { rev: row.rev, items: JSON.parse(row.items) };
+  if (!due.length) return list;
+  // Applied already by another isolate, or by this one's worker before it restarted.
+  const { results } = await env.DB.prepare("SELECT id FROM interest_adds WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(due.map((a) => a.id))).all();
+  for (const r of results) interestAdded.add(r.id);
+  due = due.filter((a) => !interestAdded.has(a.id));
+  if (!due.length) return list;
+  const items = interestMerge(list.items, due.flatMap((a) => a.items)), now = Date.now();
+  if (items.length === list.items.length) {
+    // Every product is on the list already (or it's full): only noted as applied.
+    await env.DB.batch(due.map((a) => markAdd(env, a.id, now)));
+    due.forEach((a) => interestAdded.add(a.id));
+    return list;
+  }
+  // Written only over the rev read, and noted as applied only once this list is the one saved (as the save's picture
+  // cleanup), so a call that loses the race never notes it without its products.
+  const body = JSON.stringify(items);
+  const res = await env.DB.batch([
+    env.DB.prepare("UPDATE interest_list SET rev = rev + 1, items = ?, updated_at = ? WHERE id = 1 AND rev = ?").bind(body, now, list.rev),
+    ...due.map((a) => env.DB.prepare("INSERT OR IGNORE INTO interest_adds (id, at) SELECT ?, ? WHERE (SELECT items FROM interest_list WHERE id = 1) = ?").bind(a.id, now, body)),
+  ]);
+  if (res[0].meta && res[0].meta.changes) { due.forEach((a) => interestAdded.add(a.id)); return { rev: list.rev + 1, items }; }
+  // Another call, or the owner's save, wrote first: read it again and try once more, else leave it for the next call.
+  return again ? list : interestList(env, true);
 }
 // The picture an item shows: its upload, else its TCGplayer product's, else none.
 const interestRef = (it) => it.pic || (it.tcg ? "t" + it.tcg : "");
@@ -5910,9 +5974,10 @@ async function interestsPut(request, env) {
   const rev = b.rev, now = Date.now(), body = JSON.stringify(items);
   const cur = await interestList(env);
   if (!Number.isInteger(rev) || rev !== cur.rev) return json({ error: "changed", rev: cur.rev }, 409, NO_STORE);
-  // Written only over the rev it was made from (the first save makes the row: rev 0 is the seed). The pictures no item shows
-  // any more go in the same batch, only once this list is the one saved: a "t" one is fetched again if an item shows it
-  // later, and an upload is left a day, as the owner's other device may be about to save a list that shows it.
+  // Written only over the rev it was made from (the first save makes the row, from the seed's rev). The pictures no item
+  // shows any more go in the same batch, only once this list is the one saved: a "t" one is fetched again if an item shows it
+  // later, and an upload is left a day, as the owner's other device may be about to save a list that shows it. A first save
+  // was made from the seed, which has every addition: they're noted as applied with it.
   const keep = JSON.stringify([...new Set(items.map(interestRef).filter(Boolean))]);
   const res = await env.DB.batch([
     env.DB.prepare(`INSERT INTO interest_list (id, rev, items, updated_at) VALUES (1, ?, ?, ?)
@@ -5920,8 +5985,11 @@ async function interestsPut(request, env) {
       .bind(rev + 1, body, now, rev),
     env.DB.prepare(`DELETE FROM interest_pics WHERE ref NOT IN (SELECT value FROM json_each(?)) AND (substr(ref, 1, 1) = 't' OR at < ?)
       AND (SELECT items FROM interest_list WHERE id = 1) = ?`).bind(keep, now - 86400000, body),
+    ...(cur.seed && INTEREST_ADDS.length ? [env.DB.prepare(`INSERT OR IGNORE INTO interest_adds (id, at) SELECT value, ? FROM json_each(?)
+      WHERE (SELECT items FROM interest_list WHERE id = 1) = ?`).bind(now, JSON.stringify(INTEREST_ADDS.map((a) => a.id)), body)] : []),
   ]);
   if (!res[0].meta || !res[0].meta.changes) return json({ error: "changed", rev: (await interestList(env)).rev }, 409, NO_STORE);
+  if (cur.seed) for (const a of INTEREST_ADDS) interestAdded.add(a.id);
   return json(interestsOut({ rev: rev + 1, items }, true), 200, NO_STORE);
 }
 

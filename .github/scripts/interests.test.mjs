@@ -7,10 +7,14 @@
 // links, every tick sent whatever the copy here, one section for Other, Edit's Save over a save it didn't see, a paste from a
 // spreadsheet, one save at a time, a refresh answered after a save, and what the TCGplayer lookups after Add say. And what
 // its second review found: a count in a Target link stays a count, a 401 empties the list here, Add products and Remove
-// wait for a save out, Add products or Edit closed while it waits saves nothing, and two waiting both save. Sample names,
-// SKUs and keys only.
+// wait for a save out, Add products or Edit closed while it waits saves nothing, and two waiting both save. From 1.9.143,
+// Add products reads a drop list as a restock tracker writes it (the owner's request, 2026-11-12, with the list of 24 they
+// pasted, used here as they sent it): each name over its SKU line, the tracker's tags and Retail, QL and Stock left out,
+// each product in the set on the list its name has, and the TCGplayer lookups after Add for the first 20. Sample names,
+// SKUs and keys only, but for the owner's drop list (public products, as on the worker's seed list).
 //   node .github/scripts/interests.test.mjs [path/to/index-X.Y.Z.html]
-// The newest page must have Interests; a page named on the command line that doesn't is skipped.
+// The newest page must have Interests, and drop lists (interestsFromText); a page named on the command line that doesn't
+// is skipped, or tested without drop lists.
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,12 +30,17 @@ if (!/function renderInterests\(/.test(HTML)) {
   if (!process.argv[2]) { console.error(`${file} has no Interests (renderInterests): update this test if that's on purpose`); process.exit(1); }
   console.log(`${file}: no Interests, skipped`); process.exit(0);
 }
+const HAS_DROP = /function interestsFromText\(/.test(HTML);
+if (!HAS_DROP && !process.argv[2]) { console.error(`${file} has no drop lists in Add products (interestsFromText): update this test if that's on purpose`); process.exit(1); }
+// How many new products Add products looks up on TCGplayer (8 in 1.9.142, 20 from 1.9.143).
+const FIND_MAX = Number((/\bconst INTEREST_FIND_MAX = (\d+);/.exec(HTML) || [])[1]);
+assert.ok(FIND_MAX > 0, "couldn't find INTEREST_FIND_MAX");
 // The app runs inside one function, so the copy served here hands the test a few of its own names (window.__t), as the
 // page's other tests take its code out of the file.
 const END = "\ntry { if (window.pvDesktop && window.pvDesktop.appReady) window.pvDesktop.appReady(); } catch(e){}\n})();";
 assert.equal(HTML.split(END).length, 2, "couldn't find the end of the app's code");
 const PAGE = HTML.replace(END, "\nwindow.__t = {get S(){ return S; }, keepTypedLic, persist, render, refreshInterests, interestRead, interestsFor, premiumHash, slotKey,"
-  + " INTEREST, interestKeep, interestsSave, interestFindPics, interestFromLine};" + END);
+  + " INTEREST, interestKeep, interestsSave, interestFindPics, interestFromLine" + (HAS_DROP ? ", interestsFromText, interestDropName, interestSetFor" : "") + "};" + END);
 let chromium;
 try { ({ chromium } = createRequire(import.meta.url)("playwright")); }
 catch (e) { console.error("This test needs Playwright: npm install --no-save playwright, then npx playwright install chromium"); process.exit(1); }
@@ -673,23 +682,23 @@ try {
     assert.equal(await ev(() => window.__t.interestRead().rev), 62);
   });
 
-  await test("after Add products it looks up the first 8, then says what it found and what's left for Edit's Find on TCGplayer", async () => {
+  await test(`after Add products it looks up the first ${FIND_MAX}, then says what it found and what's left for Edit's Find on TCGplayer`, async () => {
     await reset(BASE(), 70);
     const finds = W.finds.length;
     await page.click('#main [data-act="interests-add"]');
     await focused("ia-lines");
-    assert.match(await page.$eval("#layers", (e) => e.textContent), /looks up the first 8 on TCGplayer for their pictures; each one's Edit has Find on TCGplayer for the rest\./);
-    await page.fill("#ia-lines", Array.from({ length: 10 }, (_, i) => `7000000${i} Sample Pack ${i + 1}`).join("\n"));
+    assert.match(await page.$eval("#layers", (e) => e.textContent), new RegExp(`looks up the first ${FIND_MAX} on TCGplayer for their pictures; each one's Edit has Find on TCGplayer for the rest\\.`));
+    await page.fill("#ia-lines", Array.from({ length: FIND_MAX + 2 }, (_, i) => `${70000000 + i} Sample Pack ${i + 1}`).join("\n"));
     await page.click("#ia-go");
     await toastSays(/Found no pictures on TCGplayer\. 2 more weren't looked up: use Edit → Find on TCGplayer\./);
-    assert.equal(W.finds.length - finds, 8, "a few, to keep the day's lookups");
+    assert.equal(W.finds.length - finds, FIND_MAX, "a few, to keep the day's lookups");
     // The catalog still being read stops them for now, and it says to try again in a minute.
     await page.click('#main [data-act="interests-add"]');
     await focused("ia-lines");
     await page.fill("#ia-lines", "71111111 Sample Loading Box\n71111112 Sample Mini Tin");
     await page.click("#ia-go");
     await toastSays(/TCGplayer's catalog is still loading: try Find on TCGplayer in a minute\./);
-    assert.equal(W.finds.length - finds, 9, "stopped at the first");
+    assert.equal(W.finds.length - finds, FIND_MAX + 1, "stopped at the first");
     assert.equal(W.items.find((it) => it.sku === "71111112").tcg, "", "not looked up");
     // The first lookup failing: none was looked up, and it says so (not "2 more").
     await page.click('#main [data-act="interests-add"]');
@@ -697,8 +706,279 @@ try {
     await page.fill("#ia-lines", "72222221 Sample Broken Box\n72222222 Sample Mini Tin");
     await page.click("#ia-go");
     await toastSays(/2 products weren't looked up: use Edit → Find on TCGplayer\./);
-    assert.equal(W.finds.length - finds, 10, "stopped at the first");
+    assert.equal(W.finds.length - finds, FIND_MAX + 2, "stopped at the first");
   });
+
+  // ---- Drop lists (1.9.143): the owner's list of 2026-11-12, as they pasted it from a restock tracker. ----
+  if (HAS_DROP) {
+    const DROP = `Pokémon TCG: Unova Heavy Hitters Premium Collection — New Drop
+SKU: 1013645543
+Retail: $79.99
+QL: 2
+Stock: New Launch
+
+Pokémon TCG: 30th Celebration Binder Collection — New Drop
+SKU: 1010892074
+Retail: $39.99
+QL: 2
+Stock: New Launch
+
+Pokémon TCG: 30th Celebration Big Tin 4-Pack — Styles May Vary — New Drop
+SKU: 1012470483
+Retail: $24.99
+QL: 2
+Stock: New Launch
+
+Pokémon TCG: Mega Evolution — Delta Reign Booster Bundle
+SKU: 1013166578
+Retail: $31.99
+Stock: 50k+
+
+Pokémon TCG: Mega Evolution — Delta Reign Elite Trainer Box
+SKU: 1012793604
+Retail: $59.99
+Stock: 50k+
+
+Pokémon TCG: 30th Celebration Ultra-Premium Collection — Night
+SKU: 1012850572
+Retail: $249.99
+QL: 1
+Stock: 40k+
+
+Pokémon TCG: 30th Celebration Ultra-Premium Collection — Day
+SKU: 1012850570
+Retail: $249.99
+QL: 1
+Stock: 40k+
+
+Pokémon TCG: 30th Celebration Figure Collection — Mew
+SKU: 1012793603
+Stock: 31k+
+
+Pokémon TCG: 30th Celebration Figure Collection — Mewtwo
+SKU: 1012850573
+Stock: 30k+
+
+Pokémon TCG: Mega Evolution — Delta Reign Three-Booster Blister
+SKU: 1013166573
+Retail: $14.99
+Stock: 10k+
+
+Pokémon TCG: 30th Celebration Ditto Premium Collection
+SKU: 1012663804
+QL: 1
+Stock: 5k+
+
+Pokémon TCG: Mega Evolution Ascended Heroes Tech Sticker Collection — Gastly
+SKU: 95120822
+Stock: 2k+
+
+Pokémon TCG: Mega Evolution — Delta Reign Booster Display
+SKU: 1013166576
+Retail: $179.99
+Stock: 1k+
+
+Pokémon TCG: 30th Celebration Battle Deck — Umbreon ex
+SKU: 1010892071
+Stock: 1k+
+
+Pokémon TCG: Mega Evolution Ascended Heroes Poster Collection — Mega Gardevoir
+SKU: 95093982
+Stock: 1k+
+
+Pokémon TCG: Mega Evolution Ascended Heroes Poster Collection — Mega Lucario
+SKU: 95093981
+Stock: 1k+
+
+Pokémon TCG: First Partner Illustration Collection Series 1
+SKU: 95225595
+Stock: 1k+
+
+Pokémon TCG: 30th Celebration Elite Trainer Box
+SKU: 1010892076
+Retail: $69.99
+Stock: Recently Updated
+
+Pokémon TCG: 30th Celebration — Greninja ex Box
+SKU: 1010892065
+Retail: $29.99
+Stock: Recently Updated
+
+Pokémon TCG: 30th Celebration — Sylveon ex Box
+SKU: 1010892068
+Retail: $29.99
+Stock: Recently Updated
+
+Pokémon TCG: 30th Celebration Poster Collection
+SKU: 1010892067
+Retail: $19.99
+Stock: Recently Updated
+
+Pokémon TCG: 30th Celebration Tin — Styles May Vary
+SKU: 1010892069
+Stock: Recently Updated
+
+Pokémon TCG: Mega Evolution Ascended Heroes First Partners Deluxe Pin Collection
+SKU: 95093989
+Stock: <1000
+
+Pokémon TCG: Charizard X ex Ultra-Premium Collection
+SKU: 94681790
+Stock: <1000`;
+    // The 11 of them already on the list (as the worker's seed names them), in three sets.
+    const KNOWN = () => [
+      ["95225595", "First Partner Illustration Collection Series 1", "First Partner Collection"],
+      ["1010892076", "30th Celebration Elite Trainer Box", "30th Celebration"], ["1010892074", "30th Celebration Binder Collection", "30th Celebration"],
+      ["1010892068", "30th Celebration Sylveon ex Box", "30th Celebration"], ["1010892065", "30th Celebration Greninja ex Box", "30th Celebration"],
+      ["1010892069", "30th Celebration ex Tin (Sylveon ex or Greninja ex)", "30th Celebration"], ["1010892067", "30th Celebration Poster Collection", "30th Celebration"],
+      ["95093989", "Ascended Heroes First Partners Deluxe Pin Collection", "Ascended Heroes"], ["95120822", "Ascended Heroes Tech Sticker Collection: Gastly", "Ascended Heroes"],
+      ["95093981", "Ascended Heroes Premium Poster Collection: Mega Lucario", "Ascended Heroes"], ["95093982", "Ascended Heroes Premium Poster Collection: Mega Gardevoir", "Ascended Heroes"],
+    ].map(([sku, name, set]) => ({ sku, store: "target", name, about: "", set, pic: "", tcg: "" }));
+    // The 13 new ones, in the list's order, as Add products names them, and the set on the list each name has.
+    const NEW = [
+      ["1013645543", "Unova Heavy Hitters Premium Collection", ""],
+      ["1012470483", "30th Celebration Big Tin 4-Pack (styles may vary)", "30th Celebration"],
+      ["1013166578", "Delta Reign Booster Bundle", ""],
+      ["1012793604", "Delta Reign Elite Trainer Box", ""],
+      ["1012850572", "30th Celebration Ultra-Premium Collection: Night", "30th Celebration"],
+      ["1012850570", "30th Celebration Ultra-Premium Collection: Day", "30th Celebration"],
+      ["1012793603", "30th Celebration Figure Collection: Mew", "30th Celebration"],
+      ["1012850573", "30th Celebration Figure Collection: Mewtwo", "30th Celebration"],
+      ["1013166573", "Delta Reign Three-Booster Blister", ""],
+      ["1012663804", "30th Celebration Ditto Premium Collection", "30th Celebration"],
+      ["1013166576", "Delta Reign Booster Display", ""],
+      ["1010892071", "30th Celebration Battle Deck: Umbreon ex", "30th Celebration"],
+      ["94681790", "Charizard X ex Ultra-Premium Collection", ""],
+    ];
+    const read = (text, store = "target") => ev(({ text, store }) => window.__t.interestsFromText(text, store).map((it) => (it ? [it.sku, it.store, it.name] : false)), { text, store });
+    const nameOf = (v) => ev((v) => window.__t.interestDropName(v), v);
+
+    await test("a drop list's blocks: each name over its SKU line, with or without Retail, QL and Stock, and the tracker's tags off", async () => {
+      const all = await read(DROP);
+      assert.equal(all.length, 24, "a product per block, and nothing for the Retail, QL and Stock lines");
+      assert.ok(all.every(Boolean), "every block read");
+      assert.deepEqual(all.slice(0, 4), [
+        ["1013645543", "target", "Unova Heavy Hitters Premium Collection"],   // "— New Drop" off, with QL
+        ["1010892074", "target", "30th Celebration Binder Collection"],
+        ["1012470483", "target", "30th Celebration Big Tin 4-Pack (styles may vary)"],
+        ["1013166578", "target", "Delta Reign Booster Bundle"]]);   // "Mega Evolution —" off, no QL line
+      assert.deepEqual(all.slice(5, 7).map((x) => x[2]), ["30th Celebration Ultra-Premium Collection: Night", "30th Celebration Ultra-Premium Collection: Day"]);
+      assert.deepEqual(all.slice(7, 9).map((x) => x[2]), ["30th Celebration Figure Collection: Mew", "30th Celebration Figure Collection: Mewtwo"]);   // Stock only
+      // "Mega Evolution " with no dash goes too, and a name comes out as the list has it.
+      assert.deepEqual(all[11], ["95120822", "target", "Ascended Heroes Tech Sticker Collection: Gastly"]);
+      assert.equal(all[15][2], "Ascended Heroes Poster Collection: Mega Lucario");
+      assert.equal(all[18][2], "30th Celebration: Greninja ex Box");
+      assert.equal(all[21][2], "30th Celebration Tin (styles may vary)");
+      assert.equal(all[22][2], "Ascended Heroes First Partners Deluxe Pin Collection");   // Stock: <1000
+      assert.deepEqual(all[23], ["94681790", "target", "Charizard X ex Ultra-Premium Collection"]);
+      assert.deepEqual(all.map((x) => x[0]), DROP.split("\n").filter((l) => l.startsWith("SKU: ")).map((l) => l.slice(5)));
+      // Windows line endings, the Store picked, and blocks with no blank line between them.
+      assert.deepEqual(await read(DROP.split("\n").slice(0, 10).filter(Boolean).join("\r\n"), "pokemoncenter"), [
+        ["1013645543", "pokemoncenter", "Unova Heavy Hitters Premium Collection"], ["1010892074", "pokemoncenter", "30th Celebration Binder Collection"]]);
+    });
+
+    await test("a drop list's SKU lines, names and tags as other trackers write them", async () => {
+      assert.deepEqual(await read("Sample Tin One\nTCIN: 12345678\nSample Tin Two\nsku#12345679\nSample Tin Three\nSKU 12345680\nSample Tin Four\nSku #: 12345681 (Target)\nPrice: $9.99\nLimit: 2\nRelease Date: Friday"), [
+        ["12345678", "target", "Sample Tin One"], ["12345679", "target", "Sample Tin Two"], ["12345680", "target", "Sample Tin Three"], ["12345681", "target", "Sample Tin Four"]]);
+      assert.deepEqual(await read("Pokémon Center Sample Box\nSKU: 100-10003", "pokemoncenter"), [["100-10003", "pokemoncenter", "Pokémon Center Sample Box"]]);
+      assert.equal(await nameOf("Pokemon TCG: Sample Bundle - Restock"), "Sample Bundle");
+      assert.equal(await nameOf("Pokémon Trading Card Game: Sample Bundle – Back in Stock"), "Sample Bundle");
+      assert.equal(await nameOf("Pokémon TCG: Sample Box — Pre-order"), "Sample Box");
+      assert.equal(await nameOf("Pokémon TCG: Sample Box — Night — Live Now"), "Sample Box: Night");
+      assert.equal(await nameOf("Pokémon TCG: Mega Evolution: Sample Heroes Booster Bundle — Restocked"), "Sample Heroes Booster Bundle");
+      assert.equal(await nameOf("Pokémon TCG: Sample Mini Tin — Style May Vary"), "Sample Mini Tin (styles may vary)");
+      // "Mega Evolution" with only the set's own product after it is that set's product, and keeps its name.
+      assert.equal(await nameOf("Pokémon TCG: Mega Evolution Elite Trainer Box — Mega Lucario"), "Mega Evolution Elite Trainer Box: Mega Lucario");
+      assert.equal(await nameOf("Pokémon TCG: Mega Evolution"), "Mega Evolution");
+      // A dash inside a word stays, and a long name is cut at the worker's 120.
+      assert.equal(await nameOf("Pokémon TCG: Scarlet & Violet—151 Ultra-Premium Collection"), "Scarlet & Violet—151 Ultra-Premium Collection");
+      assert.equal((await nameOf("Pokémon TCG: " + "Sample ".repeat(30))).length, 120);
+    });
+
+    await test("a drop list's name is never another product's: a block with no SKU line isn't read, nor a link or a SKU's own line", async () => {
+      // A block with no SKU line counts as a line that couldn't be read, and its Retail and Stock lines as nothing.
+      assert.deepEqual(await read("Pokémon TCG: 30th Celebration Sample Box — New Drop\nRetail: $9.99\nStock: New Launch\n\nPokémon TCG: Sample Bundle\nSKU: 12345682\nStock: 1k+"),
+        [false, ["12345682", "target", "Sample Bundle"]]);
+      // A name on its own, "30th …" too (no SKU 30th), and a SKU line with no name above it, back to the one before.
+      assert.deepEqual(await read("30th Celebration Sample Tin"), [false]);
+      assert.deepEqual(await read("Sample Bundle\nSKU: 12345683\nRetail: $5\nSKU: 12345684"), [["12345683", "target", "Sample Bundle"], ["12345684", "target", "SKU 12345684"]]);
+      // "151 …" can be a name (151 is no SKU of 6 digits); a link or a "SKU name" line above a SKU line stays a product of its own.
+      assert.deepEqual(await read("151 Ultra-Premium Collection\nSKU: 12345685"), [["12345685", "target", "151 Ultra-Premium Collection"]]);
+      assert.deepEqual(await read("https://www.target.com/p/sample-trading-card-game-booster-box/-/A-44444445\nSKU: 12345686"),
+        [["44444445", "target", "Sample Trading Card Game Booster Box"], ["12345686", "target", "SKU 12345686"]]);
+      assert.deepEqual(await read("55555556 Sample Mini Tin\n\nSKU: 12345687"), [["55555556", "target", "Sample Mini Tin"], ["12345687", "target", "SKU 12345687"]]);
+      // A SKU line whose number isn't one ("SKU: TBD") is the tracker's: its name isn't read.
+      assert.deepEqual(await read("Sample Bundle\nSKU: TBD\nStock: Soon"), [false]);
+    });
+
+    await test("links and \"SKU name\" lines in the same paste as a drop list's blocks still read, in the paste's order", async () => {
+      assert.deepEqual(await read(["https://www.target.com/p/sample-trading-card-game-booster-box/-/A-44444446#lnk=sametab", "55555557 Sample Mini Tin", "",
+        "Pokémon TCG: Mega Evolution — Sample Reign Booster Bundle — New Drop", "SKU: 12345688", "Retail: $31.99", "Stock: 50k+", "",
+        "https://www.pokemoncenter.com/product/100-10004/sample-center-tin", "12345689", "not a sku"].join("\n")), [
+        ["44444446", "target", "Sample Trading Card Game Booster Box"], ["55555557", "target", "Sample Mini Tin"],
+        ["12345688", "target", "Sample Reign Booster Bundle"], ["100-10004", "pokemoncenter", "Sample Center Tin"], ["12345689", "target", "SKU 12345689"], false]);
+    });
+
+    await test("each product goes in the set on the list its name has, the longest first, without case or accents; else the Set box's", async () => {
+      const setFor = (name, sets) => ev(({ name, sets }) => window.__t.interestSetFor(name, sets), { name, sets });
+      const sets = ["Scarlet & Violet", "Scarlet & Violet 151", "30th Celebration", "Pokémon Day", "Other"];
+      assert.equal(await setFor("Scarlet & Violet 151 Mini Tin", sets), "Scarlet & Violet 151");
+      assert.equal(await setFor("scarlet and violet booster", sets), "");
+      assert.equal(await setFor("SCARLET & VIOLET Booster Bundle", sets), "Scarlet & Violet");
+      assert.equal(await setFor("Pokemon Day Collection", sets), "Pokémon Day");
+      assert.equal(await setFor("30th Celebrations Tin", sets), "", "word for word");
+      assert.equal(await setFor("Sample Other Tin", sets), "", "Other is the section for none");
+    });
+
+    await test("Add products with the owner's drop list: the 11 on the list skipped, the 13 new listed with their sets, saved in one PUT, then looked up", async () => {
+      await reset(BASE().concat(KNOWN()), 200);
+      const n = W.puts.length, finds = W.finds.length;
+      await page.click('#main [data-act="interests-add"]');
+      await focused("ia-lines");
+      assert.match(await page.$eval("#layers", (e) => e.textContent), /a drop list as a tracker writes it/);
+      // As the owner sent it, with their line after the list.
+      await page.fill("#ia-lines", DROP + "\n\nhere are the product that may be dropping on friday");
+      assert.equal(await page.$eval("#ia-prev", (e) => e.textContent), "13 products to add · 11 already on the list · 1 line couldn't be read");
+      assert.equal(await page.$eval("#ia-go", (e) => e.textContent), "Add 13 products");
+      const shown = () => page.$$eval("#ia-list li", (els) => els.map((e) => [e.querySelector(".ia-n").textContent, e.querySelector(".ia-s").textContent]));
+      assert.deepEqual(await shown(), NEW.map(([sku, name, set]) => [name, `${set || "Other"} · Target SKU ${sku}`]));
+      await page.fill("#ia-lines", DROP);
+      assert.equal(await page.$eval("#ia-prev", (e) => e.textContent), "13 products to add · 11 already on the list");
+      // The Set box goes on those whose name has no set on the list; the others keep theirs.
+      await page.fill("#ia-set", "Friday Drop");
+      assert.deepEqual((await shown()).map((x) => x[1].split(" · ")[0]), NEW.map((x) => x[2] || "Friday Drop"));
+      await page.click("#ia-go");
+      await page.waitForFunction(() => !document.querySelector("#ia-lines"));
+      assert.equal(W.puts.length, n + 1, "one save");
+      assert.equal(W.puts[n].rev, 200);
+      assert.deepEqual(W.puts[n].items.slice(0, BASE().length + 11), BASE().concat(KNOWN()), "the list as it was, first");
+      assert.deepEqual(W.puts[n].items.slice(BASE().length + 11), NEW.map(([sku, name, set]) => ({ sku, store: "target", name, about: "", set: set || "Friday Drop", pic: "", tcg: "" })));
+      await toastSays(/Added 13 products/);
+      await toastSays(/Found no pictures on TCGplayer\./);
+      assert.deepEqual(W.finds.slice(finds), NEW.map((x) => x[1]), FIND_MAX >= 13 ? "all 13 looked up" : "the first few");
+      assert.doesNotMatch(await lastToast(), /weren't looked up/);
+      // On Interests, the 30th Celebration ones join that set's section, and the rest are a section of their own.
+      const titles = await page.$$eval("#main .int-set .sub-title", (els) => els.map((e) => e.textContent));
+      assert.deepEqual(titles, ["Sample Set A", "Sample Set B", "Sample Set C", "First Partner Collection", "30th Celebration", "Ascended Heroes", "Friday Drop"]);
+      const sec = await page.$$eval("#main .int-set", (els) => els.find((e) => e.querySelector(".sub-title").textContent === "30th Celebration").textContent);
+      assert.match(sec, /0 of 13 ticked/);
+      assert.match(sec, /30th Celebration Ultra-Premium Collection: Night/);
+    });
+
+    await test("pasted again, a drop list adds nothing: every product on the list now, and a set of the paste's own found next time", async () => {
+      await page.click('#main [data-act="interests-add"]');
+      await focused("ia-lines");
+      await page.fill("#ia-lines", DROP);
+      assert.equal(await page.$eval("#ia-prev", (e) => e.textContent), "Nothing new to add · 24 already on the list");
+      assert.equal(await page.$eval("#ia-go", (e) => e.disabled), true);
+      assert.equal(await page.$eval("#ia-list", (e) => e.hidden), true);
+      // A set the list has now goes on the next paste's products of it.
+      await page.fill("#ia-lines", "Pokémon TCG: Friday Drop Sample Tin — New Drop\nSKU: 12345690\nStock: 1k+");
+      assert.deepEqual(await page.$$eval("#ia-list .ia-s", (els) => els.map((e) => e.textContent)), ["Friday Drop · Target SKU 12345690"]);
+      await page.click("#layers .panel-foot [data-close]");
+      await page.waitForFunction(() => !document.querySelector("#ia-lines"));
+    });
+  }
 
   await test("the page threw nothing", () => assert.deepEqual(errors, []));
 } finally {

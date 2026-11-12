@@ -628,3 +628,12 @@ CREATE TABLE IF NOT EXISTS interest_pics (
   data TEXT NOT NULL,                           -- base64
   at   INTEGER NOT NULL
 );
+
+-- The one-time additions to the Interests list already applied (INTEREST_ADDS in src/interest-seed.js; 2026-11-12, the
+-- owner's request: Friday's drop list, added while keeping everything else): each goes onto the saved list once, or is in
+-- the seed while nothing is saved, so a product the owner takes off afterwards doesn't come back. A table of its own, as
+-- db:init can't add columns.
+CREATE TABLE IF NOT EXISTS interest_adds (
+  id TEXT PRIMARY KEY,                          -- the addition's id, as "2026-11-13-friday"
+  at INTEGER NOT NULL
+);

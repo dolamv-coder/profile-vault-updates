@@ -676,7 +676,14 @@ at that moment.
 - **Your FAFO edits the list** (the one that sends order alerts, as for Premium buyers): **Edit list** on Interests
   adds products (a Target or Pokémon Center link, or a SKU and its name), changes a product's name, description,
   set, store and picture, and removes one. Every buyer's FAFO shows the change within 10 minutes.
-- Until you first save the list, it's the 30 Target SKUs you gave (`INTEREST_SEED` in `src/interest-seed.js`).
+- Until you first save the list, it's the 30 Target SKUs you gave (`INTEREST_SEED` in `src/interest-seed.js`), with
+  the products added since.
+- **Products added to your list once** (`INTEREST_ADDS` in `src/interest-seed.js`; the first, on 2026-11-12 at your
+  request, is the new products from Friday's drop list): each addition goes onto your list once, whether you've saved
+  it or not. On a saved list, the products it doesn't have yet go at the end (one you have already keeps what you
+  wrote for it), with a new revision, so every buyer's FAFO shows them within 10 minutes; a change your FAFO made from
+  the list as it was before is refused once, and FAFO shows you the list with them to make it again. A product you
+  take off after that stays off. Which additions went on is the `interest_adds` table.
 - **Pictures**: a product's picture is one you paste or choose (kept here, 150 KB at most, by a hash of it), or else
   its TCGplayer product's, which this worker fetches from TCGplayer's image servers the first time a FAFO shows it
   and keeps. Only the pictures your list shows are served (`GET /interests/pic/…`, which needs no license key, as a
@@ -684,8 +691,9 @@ at that moment.
   added that it doesn't show once they're a day old.
 - Two of your computers changing it at once can't overwrite each other: a change made from an older copy of the list
   is refused, and FAFO shows you the list as it is now to make it again.
-- The list is the `interest_list` table (one row) and its pictures `interest_pics`, which `npm run db:init` (and the
-  deploy Action) adds. A buyer's ticks are in their own vault; this worker only sees the SKUs a batch sends.
+- The list is the `interest_list` table (one row), its pictures `interest_pics` and the additions applied
+  `interest_adds`, which `npm run db:init` (and the deploy Action) adds. A buyer's ticks are in their own vault;
+  this worker only sees the SKUs a batch sends.
 - If this worker can't read the list of keys made by hand on GitHub just then, a buyer with such a key keeps the list
   FAFO last had (the answer is 503, not "not a license"), as for Premium buyers.
 
@@ -941,8 +949,8 @@ Runs the worker in Wrangler's local runtime with a local database and a mock Dis
 once handing out keys straight away and once with approval on. It goes through sign-in,
 key pickup, repeat sign-in, cancelled and refused sign-ins, the account-age and server
 checks, revoke and restore, the rate limit, requests being posted, approved, denied
-and changed, slot limits, submissions and collecting keys, pulled slots, the Interests list (its pictures, and the
-SKUs a batch carries), product pictures
+and changed, slot limits, submissions and collecting keys, pulled slots, the Interests list (its pictures, the
+products added to it once, and the SKUs a batch carries), product pictures
 (against a stand-in catalog: exact names only, never a case, another edition or two that fit),
 synced vaults (revisions, two devices saving at once, large vaults, a new password, and the lock
 after wrong passwords), and payments against a stand-in Stripe (plans, invoices, Submit refused and allowed, sessions,

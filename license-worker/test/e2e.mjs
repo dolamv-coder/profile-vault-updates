@@ -9,8 +9,18 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
+import { INTEREST_SEED, INTEREST_ADDS } from "../src/interest-seed.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// The Interests seed and the products added to the list once (INTEREST_ADDS, 2026-11-12), as the worker reads them. Their
+// names, sets and pictures come from a product lookup, so the tests go by their SKUs and shape, never their names.
+const iKey = (it) => it.store + ":" + String(it.sku).trim().toLowerCase();
+const SEED_KEYS = [...new Set(INTEREST_SEED.map(iKey))];
+const ADDED = INTEREST_ADDS.flatMap((a) => a.items).filter((it, i, all) => all.findIndex((x) => iKey(x) === iKey(it)) === i);
+const SEED_NEW = ADDED.filter((it) => !SEED_KEYS.includes(iKey(it)));   // the additions' products the seed doesn't have
+const SEED_ALL = [...SEED_KEYS, ...SEED_NEW.map(iKey)];                 // the list until the owner saves one, in its order
+const SEED_REV = INTEREST_ADDS.length;                                  // the seed's rev counts the additions in it
+const ADD_IDS = INTEREST_ADDS.map((a) => a.id).sort();
 const WORKER_PORT = 8791, APPROVAL_PORT = 8795, DISCORD_PORT = 8792, GUILD = "999000111";
 let BASE = `http://127.0.0.1:${WORKER_PORT}`;
 const tmp = mkdtempSync(join(tmpdir(), "orbit-license-test-"));
@@ -3639,13 +3649,18 @@ try {
 
   console.log("\nInterests (page 1.9.142, 2026-11-12)");
   // Bob's FAFO sends order alerts (above), so it's the owner's here, and the only one that changes the list; Gina is a buyer.
-  // The seed (INTEREST_SEED) is filled in from the product lookup separately, so only its shape is checked here.
+  // The seed (INTEREST_SEED) and the additions (INTEREST_ADDS) are filled in from the product lookup separately, so only
+  // their SKUs and shape are checked here.
   const iGet = async (key, q = "") => { const r = await fetchOnce(BASE + "/interests" + q, { headers: key ? { authorization: "Bearer " + key } : {}, cache: "no-store" }); return { status: r.status, cc: r.headers.get("cache-control"), body: await r.json() }; };
   const iPut = async (key, body) => { const r = await fetchOnce(BASE + "/interests", { method: "PUT", headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, cc: r.headers.get("cache-control"), body: await r.json() }; };
   const iPicUp = async (key, data) => { const r = await fetchOnce(BASE + "/interests/pic", { method: "POST", headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" }, body: JSON.stringify({ data }) }); return { status: r.status, body: await r.json() }; };
   const iPicGet = async (ref) => { const r = await fetchOnce(BASE + "/interests/pic/" + ref, { cache: "no-store" }); return { status: r.status, h: (n) => r.headers.get(n), bytes: Buffer.from(await r.arrayBuffer()) }; };
   const iItem = (sku, name, extra = {}) => ({ sku, store: "target", name, about: "", set: "", pic: "", tcg: "", ...extra });
   const iShown = (it) => ({ sku: it.sku, store: it.store, name: it.name, about: it.about, set: it.set, ref: it.pic || (it.tcg ? "t" + it.tcg : "") });
+  // A product from interest-seed.js as the list keeps it: one line, without control characters (interestItem's cleaning).
+  const iNorm = (v) => v == null ? "" : String(v).replace(/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/g, "").replace(/\s+/g, " ").trim();
+  const iSeedShown = (it) => iShown({ sku: iNorm(it.sku), store: it.store, name: iNorm(it.name), about: iNorm(it.about), set: iNorm(it.set), pic: "", tcg: iNorm(it.tcg) });
+  const iAdded = () => dbRows("SELECT id FROM interest_adds ORDER BY id").map((x) => x.id);
   const iPng = "data:image/png;base64," + PIXEL.toString("base64");
   const iFile = (store, storeKey, names, kind = "profiles") => kind === "logins"
     ? { store, storeKey, kind, text: names.map((n) => `${n.split(" ")[0].toLowerCase()}.${storeKey}@example.com:Sample-Pw-1`).join("\r\n") }
@@ -3659,29 +3674,34 @@ try {
     return { d: await r.json(), posts, files: posts.flatMap((m) => m.files) };
   };
   let irev = 0, iUp;
-  await test("interests: a license is needed; a buyer gets the seed, the owner gets it with each item's pic and tcg", async () => {
+  await test("interests: a license is needed; a buyer gets the seed with the additions' new products, the owner gets it with each item's pic and tcg", async () => {
     assert.equal((await iGet(null)).status, 401);
     assert.equal((await iGet("PVLT-NOPE-NOPE-NOPE-NOPE")).status, 401);
     const g = await iGet(ginaKey);
     assert.equal(g.status, 200); assert.equal(g.cc, "no-store");
-    assert.equal(g.body.rev, 0, "the seed, until the owner saves a list");
+    assert.equal(g.body.rev, SEED_REV, "the seed, until the owner saves a list: its rev counts the additions in it");
     assert.equal(g.body.owner, false);
-    assert.equal(g.body.items.length, 30, "the 30 SKUs the owner gave");
+    assert.equal(SEED_KEYS.length, 30, "the 30 SKUs the owner gave");
+    assert.deepEqual(g.body.items.map(iKey), SEED_ALL, "the seed's SKUs in order, then each addition's that the seed doesn't have, once each");
+    assert.equal(g.body.items.length, INTEREST_SEED.length + SEED_NEW.length, "the seed plus the new SKUs");
+    assert.deepEqual(g.body.items.slice(INTEREST_SEED.length), SEED_NEW.map(iSeedShown), "the added products as interest-seed.js has them");
     for (const it of g.body.items) {
       assert.deepEqual(Object.keys(it), ["sku", "store", "name", "about", "set", "ref"], "a buyer gets no pic or tcg");
       assert.ok(/^[A-Za-z0-9-]{3,24}$/.test(it.sku) && ["target", "pokemoncenter"].includes(it.store) && typeof it.name === "string" && it.name.trim() === it.name && it.name.length >= 1 && it.name.length <= 120, JSON.stringify(it));
       assert.ok(typeof it.about === "string" && it.about.length <= 400 && typeof it.set === "string" && it.set.length <= 60, JSON.stringify(it));
       assert.match(it.ref, /^(t\d{1,10})?$/, "a TCGplayer product's picture, or none");
     }
-    assert.equal(new Set(g.body.items.map((it) => it.store + ":" + it.sku)).size, 30, "each once");
+    assert.equal(new Set(g.body.items.map(iKey)).size, SEED_ALL.length, "each once");
     const o = await iGet(bobKey);
-    assert.equal(o.status, 200); assert.equal(o.body.owner, true); assert.equal(o.body.rev, 0);
+    assert.equal(o.status, 200); assert.equal(o.body.owner, true); assert.equal(o.body.rev, SEED_REV);
     assert.deepEqual(o.body.items.map((it) => iShown(it)), g.body.items, "the same list");
     assert.ok(o.body.items.every((it) => it.pic === "" && /^(\d{1,10})?$/.test(it.tcg) && it.ref === (it.tcg ? "t" + it.tcg : "")), "with what the owner edits");
-    assert.deepEqual((await iGet(ginaKey, "?rev=0")).body, { rev: 0, owner: false, same: true }, "nothing new");
-    assert.equal((await iGet(ginaKey, "?rev=3")).body.items.length, 30, "another rev gets the list");
-    assert.equal((await iGet(ginaKey, "?rev=")).body.items.length, 30, "and so does none");
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + SEED_REV)).body, { rev: SEED_REV, owner: false, same: true }, "nothing new");
+    if (SEED_REV) assert.equal((await iGet(ginaKey, "?rev=0")).body.items.length, SEED_ALL.length, "a FAFO with 1.9.142's seed (rev 0) gets the list again");
+    assert.equal((await iGet(ginaKey, "?rev=" + (SEED_REV + 3))).body.items.length, SEED_ALL.length, "another rev gets the list");
+    assert.equal((await iGet(ginaKey, "?rev=")).body.items.length, SEED_ALL.length, "and so does none");
     assert.equal((await fetch(BASE + "/interests", { method: "OPTIONS" })).status, 204);
+    assert.deepEqual(iAdded(), ADD_IDS, "the additions noted as applied: once the owner saves, one they take off stays off");
   });
   await test("interests: only the owner's FAFO changes the list, and only from the rev it has", async () => {
     const list = [iItem("88897899", "Sample Elite Trainer Box")];
@@ -3689,12 +3709,13 @@ try {
     const g = await iPut(ginaKey, { rev: 0, items: list });
     assert.equal(g.status, 403); assert.deepEqual(g.body, { error: "only your seller's FAFO can change this" });
     assert.equal(g.cc, "no-store");
-    for (const rev of [5, undefined, "0", -1]) {
+    // 0 is 1.9.142's seed, before the additions: a FAFO that had it sees them first.
+    for (const rev of [5, undefined, String(SEED_REV), -1, ...(SEED_REV ? [0] : [])]) {
       const r = await iPut(bobKey, { rev, items: list });
-      assert.equal(r.status, 409, String(rev)); assert.deepEqual(r.body, { error: "changed", rev: 0 });
+      assert.equal(r.status, 409, String(rev)); assert.deepEqual(r.body, { error: "changed", rev: SEED_REV });
     }
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM interest_list")[0].n, 0, "nothing written");
-    assert.equal((await iGet(ginaKey)).body.rev, 0);
+    assert.equal((await iGet(ginaKey)).body.rev, SEED_REV);
   });
   await test("interests: a list with a bad product is refused, saying which", async () => {
     const good = iItem("88897899", "Sample Elite Trainer Box");
@@ -3708,12 +3729,12 @@ try {
       [{ sku: "88897899", name: "The same SKU again" }, /already/],
     ];
     for (const [change, err] of bad) {
-      const r = await iPut(bobKey, { rev: 0, items: [good, iItem("88897898", "Sample Booster Box", change)] });
+      const r = await iPut(bobKey, { rev: SEED_REV, items: [good, iItem("88897898", "Sample Booster Box", change)] });
       assert.equal(r.status, 400, JSON.stringify(change)); assert.match(r.body.error, err); assert.equal(r.body.at, 1, JSON.stringify(change));
     }
-    assert.deepEqual((await iPut(bobKey, { rev: 0, items: [good, "nope"] })).body, { error: "that isn't a product", at: 1 });
-    assert.equal((await iPut(bobKey, { rev: 0, items: "nope" })).status, 400);
-    const many = await iPut(bobKey, { rev: 0, items: Array.from({ length: 301 }, (_, i) => iItem(String(10000000 + i), "Sample " + i)) });
+    assert.deepEqual((await iPut(bobKey, { rev: SEED_REV, items: [good, "nope"] })).body, { error: "that isn't a product", at: 1 });
+    assert.equal((await iPut(bobKey, { rev: SEED_REV, items: "nope" })).status, 400);
+    const many = await iPut(bobKey, { rev: SEED_REV, items: Array.from({ length: 301 }, (_, i) => iItem(String(10000000 + i), "Sample " + i)) });
     assert.equal(many.status, 400); assert.equal(many.body.at, 300);
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM interest_list")[0].n, 0, "nothing written");
   });
@@ -3723,21 +3744,25 @@ try {
       iItem("100-10001", "Sample Booster Bundle", { store: "pokemoncenter", set: "Sample Set", tcg: 712103 }),
       iItem("88897899", "The same SKU at the other store", { store: "pokemoncenter" }),
     ];
-    const r = await iPut(bobKey, { rev: 0, items: list });
+    // As if the seed's answers hadn't noted the additions as applied: the first save, made from the seed, notes them itself.
+    sqlRun("DELETE FROM interest_adds");
+    const r = await iPut(bobKey, { rev: SEED_REV, items: list });
     assert.equal(r.status, 200, JSON.stringify(r.body)); assert.equal(r.cc, "no-store");
     const saved = [
       iItem("88897899", "Sample Elite Trainer Box", { about: "Nine packs, sleeves and dice.", set: "Sample Set" }),
       iItem("100-10001", "Sample Booster Bundle", { store: "pokemoncenter", set: "Sample Set", tcg: "712103" }),
       iItem("88897899", "The same SKU at the other store", { store: "pokemoncenter" }),
     ];
-    assert.deepEqual(r.body, { rev: 1, owner: true, items: saved.map((it) => ({ ...iShown(it), pic: it.pic, tcg: it.tcg })) }, "answered as GET, for the owner");
-    assert.deepEqual((await iGet(ginaKey)).body, { rev: 1, owner: false, items: saved.map(iShown) }, "a buyer gets it");
-    assert.deepEqual((await iGet(ginaKey, "?rev=1")).body, { rev: 1, owner: false, same: true });
-    assert.deepEqual((await iGet(bobKey, "?rev=1")).body, { rev: 1, owner: true, same: true });
-    const stale = await iPut(bobKey, { rev: 0, items: list });
-    assert.equal(stale.status, 409); assert.deepEqual(stale.body, { error: "changed", rev: 1 }, "made from the seed: another device saved since");
-    assert.deepEqual(dbRows("SELECT rev FROM interest_list"), [{ rev: 1 }]);
-    irev = 1;
+    const rev = SEED_REV + 1;
+    assert.deepEqual(r.body, { rev, owner: true, items: saved.map((it) => ({ ...iShown(it), pic: it.pic, tcg: it.tcg })) }, "answered as GET, for the owner");
+    assert.deepEqual((await iGet(ginaKey)).body, { rev, owner: false, items: saved.map(iShown) }, "a buyer gets it, without the additions it doesn't keep");
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + rev)).body, { rev, owner: false, same: true });
+    assert.deepEqual((await iGet(bobKey, "?rev=" + rev)).body, { rev, owner: true, same: true });
+    const stale = await iPut(bobKey, { rev: SEED_REV, items: list });
+    assert.equal(stale.status, 409); assert.deepEqual(stale.body, { error: "changed", rev }, "made from the seed: another device saved since");
+    assert.deepEqual(dbRows("SELECT rev FROM interest_list"), [{ rev }]);
+    assert.deepEqual(iAdded(), ADD_IDS, "the save noted the additions as applied");
+    irev = rev;
   });
   await test("interests: the owner uploads a picture; it's served once the list shows it, with its type and headers", async () => {
     assert.equal((await iPicUp(null, iPng)).status, 401);
@@ -3873,6 +3898,77 @@ try {
     const targetFirst = await iSubmit([iFile("Target", "target", ["Gina T3"]), logins(["Gina T3"]), typed(["Gina O2"])], { interests: { target: ["88897899"] } });
     assert.deepEqual(targetFirst.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-skus.txt",
       "Gina-target-aycd.json", "Gina-target-shikari.csv"], "right after Target's logins, not after the typed store's files");
+  });
+
+  console.log("\nInterests: products added once (INTEREST_ADDS; the owner's request, 2026-11-12)");
+  // An addition goes onto a list the owner saved before it existed, once. Each case starts a worker on the same database with
+  // nothing in memory, as a deploy does, so what's applied is read from D1 (interest_adds), not only the isolate's memory.
+  // The owner's lists here use sample SKUs, so they never meet the added ones but where a case puts one in.
+  const iRev = () => dbRows("SELECT rev FROM interest_list")[0].rev;
+  const iFresh = async (port) => {
+    stopWorker(workers.pop());
+    await new Promise((r) => setTimeout(r, 1500));
+    await startWorker("approval-off", port, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0"], "approval");
+  };
+  const iMine = (it, n) => iItem(iNorm(it.sku), `Owner's name ${n}`, { store: it.store, set: "Owner's set" });   // the owner's version of an added product
+  let iBefore;
+  await test("interests: an addition whose products a saved list has already is only noted as applied; the owner's versions stay", async () => {
+    assert.ok(ADDED.length >= 2, "an addition to test with");
+    const list = [iItem("SAMPLE-1", "Sample Elite Trainer Box", { set: "Sample Set" }), ...ADDED.map((it, i) => iMine(it, i + 1))];
+    const r = await iPut(bobKey, { rev: irev, items: list });
+    assert.equal(r.status, 200, JSON.stringify(r.body)); irev = r.body.rev;
+    sqlRun("DELETE FROM interest_adds");   // as if saved before the addition existed
+    await iFresh(APPROVAL_PORT + 6);
+    const g = await iGet(ginaKey);
+    assert.equal(g.status, 200);
+    assert.deepEqual(g.body, { rev: irev, owner: false, items: list.map(iShown) }, "the same list and rev: nothing to add");
+    assert.deepEqual(iAdded(), ADD_IDS, "noted as applied");
+    assert.equal(iRev(), irev, "nothing written");
+  });
+  await test("interests: a list saved before an addition gets the products it doesn't have at the end, once, with one new rev, even asked three times at once", async () => {
+    // The owner keeps one added product (their version) and takes the rest off; then it's as if the addition were new.
+    const list = [iItem("SAMPLE-1", "Sample Elite Trainer Box", { set: "Sample Set" }), iMine(ADDED[0], 1), iItem("SAMPLE-2", "Sample Booster Box", { set: "Sample Set" })];
+    const r = await iPut(bobKey, { rev: irev, items: list });
+    assert.equal(r.status, 200, JSON.stringify(r.body)); irev = r.body.rev;
+    assert.deepEqual((await iGet(ginaKey)).body.items, list.map(iShown), "applied already: the ones taken off stay off");
+    sqlRun("DELETE FROM interest_adds");
+    await iFresh(APPROVAL_PORT + 7);
+    const missing = ADDED.filter((it) => !list.some((x) => iKey(x) === iKey(it)));
+    assert.equal(missing.length, ADDED.length - 1);
+    const want = [...list.map(iShown), ...missing.map(iSeedShown)];
+    const answers = await Promise.all([iGet(ginaKey), iGet(bobKey), iGet(ginaKey)]);
+    for (const a of answers) {
+      assert.equal(a.status, 200);
+      assert.equal(a.body.rev, irev + 1, "one new rev, so every FAFO fetches it");
+      assert.deepEqual(a.body.owner ? a.body.items.map(iShown) : a.body.items, want, "the list as it was, then the missing ones in the addition's order, each once; the owner's version kept");
+    }
+    assert.equal(iRev(), irev + 1, "written once");
+    assert.deepEqual(iAdded(), ADD_IDS, "noted as applied");
+    irev += 1; iBefore = list;
+    // An added product's TCGplayer picture is served, as the list shows it (650002 and 600001 are the stand-in's failures).
+    const pic = missing.find((it) => it.tcg && !["650002", "600001"].includes(iNorm(it.tcg)));
+    if (pic) assert.equal((await iPicGet("t" + iNorm(pic.tcg))).status, 200, "its picture");
+  });
+  await test("interests: asked again, nothing changes; a change made from the list before the addition is refused once", async () => {
+    const g = await iGet(ginaKey);
+    assert.equal(g.body.rev, irev);
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + irev)).body, { rev: irev, owner: false, same: true });
+    const stale = await iPut(bobKey, { rev: irev - 1, items: iBefore });
+    assert.equal(stale.status, 409); assert.deepEqual(stale.body, { error: "changed", rev: irev }, "the owner's FAFO reloads the list, with the added products");
+    assert.equal(iRev(), irev, "nothing written");
+  });
+  await test("interests: an added product the owner takes off stays off, also in a worker that starts from nothing", async () => {
+    const cur = (await iGet(bobKey)).body;
+    const gone = cur.items.at(-1);
+    assert.ok(ADDED.some((it) => iKey(it) === iKey(gone)), "an added one");
+    const r = await iPut(bobKey, { rev: irev, items: cur.items.slice(0, -1) });
+    assert.equal(r.status, 200, JSON.stringify(r.body)); irev = r.body.rev;
+    const after = (await iGet(ginaKey)).body;
+    assert.equal(after.rev, irev);
+    assert.deepEqual(after.items.map(iKey), cur.items.slice(0, -1).map(iKey), "not added again");
+    await iFresh(APPROVAL_PORT + 8);
+    assert.deepEqual((await iGet(ginaKey)).body, after, "the same list and rev in a worker that reads what was applied from the database");
+    assert.equal(iRev(), irev, "nothing written");
   });
 
   console.log("\nPayments: off until the Stripe keys are set (2026-10-18)");
@@ -4979,12 +5075,12 @@ try {
     assert.equal((await ask("not a key")).status, 401);
     const key = await newKey("gina");
     const g = await ask(key);
-    assert.deepEqual([g.status, g.body.rev, g.body.owner, g.body.items.length], [200, 0, false, 30], "a key from Continue with Discord is in this database");
+    assert.deepEqual([g.status, g.body.rev, g.body.owner, g.body.items.length], [200, SEED_REV, false, SEED_ALL.length], "a key from Continue with Discord is in this database");
     await admin("/admin/revoke", { key });
     assert.deepEqual([(await ask(key)).status, (await getAuth("/premium", key)).status], [401, 401], "turned off");
     ghDown = false;
     const up = await ask(GH_KEY);
-    assert.deepEqual([up.status, up.body.items.length], [200, 30], "once the list can be read");
+    assert.deepEqual([up.status, up.body.items.length], [200, SEED_ALL.length], "once the list can be read");
     assert.equal((await ask("PVLT-NOPE-NOPE-NOPE-NOPE")).status, 401, "and a key that isn't on it is refused");
   });
   console.log(`\n${passed} passed`);
