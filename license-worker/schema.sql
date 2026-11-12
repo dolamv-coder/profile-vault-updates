@@ -610,3 +610,21 @@ CREATE TABLE IF NOT EXISTS billing_lists (
   created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS billing_lists_key ON billing_lists (key_hash, created_at);
+
+-- Interests (2026-11-12, the owner's request: products they list for buyers to tick, whose SKUs then go with each batch the
+-- buyer sends): the list as the owner's FAFO last saved it (one row, the items as JSON, with its revision; until the first
+-- save the list is the worker's INTEREST_SEED), and the pictures it shows: the owner's uploads by the start of their SHA-256
+-- ("h" + 32 hex), and TCGplayer products' pictures kept once fetched ("t" + productId). A save drops the "t" ones no item
+-- shows any more, and the uploads no item shows that are over a day old.
+CREATE TABLE IF NOT EXISTS interest_list (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  rev        INTEGER NOT NULL,
+  items      TEXT NOT NULL,                     -- JSON [{sku, store, name, about, set, pic, tcg}]
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS interest_pics (
+  ref  TEXT PRIMARY KEY,                        -- "h" + 32 hex for an upload, "t" + TCGplayer productId
+  type TEXT NOT NULL,                           -- image/webp, image/jpeg or image/png
+  data TEXT NOT NULL,                           -- base64
+  at   INTEGER NOT NULL
+);

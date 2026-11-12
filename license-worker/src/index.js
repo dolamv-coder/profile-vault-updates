@@ -23,6 +23,15 @@
 //                              catalog (tcgcsv.com) whose name is the order's, word for word, with its picture as a
 //                              data: address; {found:false}; or {found:false, more:true} while the catalog's lists
 //                              are read (ask again in a minute)
+// Interests (page 1.9.142; the owner's request, 2026-11-12: products the owner lists for buyers to tick):
+//   GET  /interests?rev=N      {rev, owner, items:[{sku, store, name, about, set, ref}]} (license Bearer); the owner's FAFO
+//                              also gets each item's pic and tcg; {rev, owner, same:true} when N is the current rev
+//   PUT  /interests            the owner's FAFO only: {rev, items:[{sku, store, name, about, set, pic, tcg}]}, the whole
+//                              list, answered as GET; 409 {error:"changed", rev} when another device saved since rev
+//   POST /interests/pic        the owner's FAFO only: {data:"data:image/(webp|jpeg|png);base64,..."}, 150 KB at most: {ref}
+//   GET  /interests/pic/REF    a picture the list shows, with no license (an <img> can't send one)
+//   POST /submissions takes `interests` too: {storeKey: [sku]}, the products ticked; each store's go with the batch as
+//                              <buyer>-<store>-skus.txt, after that store's other files
 // Slots (app sends "Authorization: Bearer <license key>"):
 //   GET  /slots/limit          {limit, request}: how many slots this license can have on at once
 //   POST /slots/request        {requested, name, note}: ask for more; posted to DISCORD_WEBHOOK_URL
@@ -154,6 +163,8 @@
 //   POST /admin/accounts/free  {email, store?}: give an account back to the list
 //   POST /admin/accounts/remove {email, store?}: take it off the list
 
+import { INTEREST_SEED } from "./interest-seed.js";
+
 const DISCORD_AUTHORIZE = "https://discord.com/oauth2/authorize";
 const REQUEST_TTL_MS = 15 * 60 * 1000;          // matches how long the app waits for a sign-in
 const REVIEW_TTL_MS = 7 * 24 * 3600 * 1000;     // how long an app can wait for the owner's decision
@@ -191,7 +202,11 @@ export default {
         }
         if (path.startsWith("/mirror/")) return await mirror(env, path.slice("/mirror/".length));
         if (path === "/pictures/find") return await pictureFind(request, env, ctx, url);
+        if (path === "/interests") return await interestsGet(request, env, url);
+        if (path.startsWith("/interests/pic/")) return await interestPic(env, path.slice("/interests/pic/".length));
       }
+      if (path === "/interests" && request.method === "PUT") return await interestsPut(request, env);
+      if (path === "/interests/pic" && request.method === "POST") return await interestPicPost(request, env);
       if (path.startsWith("/review/")) return await review(request, env, ctx, url, path.slice("/review/".length));
       if (path === "/slots/limit" && request.method === "GET") return await slotLimit(request, env);
       if (path === "/slots/request" && request.method === "POST") return await slotRequest(request, env, ctx, url);
@@ -630,15 +645,25 @@ async function ghListHas(env, hash) {
   return !exp || new Date(exp) > new Date();
 }
 
-// The license key the app sent, if it's a valid one from either list.
-async function slotLicense(request, env) {
+// The license key the app sent, if it's a valid one from either list; "unknown" for one that isn't in this database while
+// the list of keys made by hand can't be read (GET /premium and /interests answer 503 for it, so the app keeps its last
+// answer rather than taking it for no license).
+async function readLicense(request, env) {
   const m = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") || "");
   const norm = m ? m[1].toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
   if (!/^PVLT[A-Z0-9]{16}$/.test(norm)) return null;
   const hash = await keyHash(norm);
   const row = await env.DB.prepare("SELECT discord_id, username, revoked_at FROM licenses WHERE key_hash = ?").bind(hash).first();
   if (row) return row.revoked_at ? null : { hash, last4: norm.slice(-4), discordId: row.discord_id, username: row.username };
-  return (await ghListHas(env, hash)) ? { hash, last4: norm.slice(-4), discordId: null, username: null } : null;
+  const on = await ghListHas(env, hash);
+  return on === null ? "unknown" : on ? { hash, last4: norm.slice(-4), discordId: null, username: null } : null;
+}
+const GH_LIST_DOWN = "the list of keys made by hand can't be read just now";
+
+// The license key the app sent, if it's a valid one from either list (an unknown one is refused).
+async function slotLicense(request, env) {
+  const lic = await readLicense(request, env);
+  return lic === "unknown" ? null : lic;
 }
 
 async function currentSlotLimit(env, hash) {
@@ -1048,6 +1073,10 @@ async function submission(request, env, url, ctx) {
     : csv !== null ? "-# CSV attached." : `-# Encrypted for key ${keyId}. To open: download the file, then in FAFO choose **Import** and drop it in.`;
   const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n${tail}`;
   const base = `orbit-slots-${stamp}${slug ? "-" + slug : ""}`;
+  // Interests (page 1.9.142, the owner's request, 2026-11-12: "During submission, a new list of skus will be generated and
+  // send to my discord for review"): the products the buyer has ticked now, per store, as a file beside that store's
+  // others. The owner chose "A file only", so the message stays as it was; they approve or decline it with the batch.
+  const skus = files !== null ? await batchSkus(env, files, b.interests).catch((e) => { console.error("interests", e); return new Map(); }) : new Map();
   let attach;
   if (files !== null) {
     // Each file is labeled with the buyer and the store (the owner's request, 2026-10-09): Kim-target-aycd.json,
@@ -1062,10 +1091,23 @@ async function submission(request, env, url, ctx) {
       if (!used.has(store)) { let y = x, i = 2; while ([...used.values()].includes(y)) y = `${x}-${i++}`; used.set(store, y); }
       return used.get(store);
     };
-    attach = posted.map((f) => f.kind === "aycd"
-      ? { name: `${buyer}-${label(f.store)}-aycd.json`, text: aycdText(f.list), type: "application/json" }
-      : f.kind === "profiles" ? { name: `${buyer}-${label(f.store)}-shikari.csv`, text: shikariCsv(f.text), type: "text/csv" }
-      : { name: `${buyer}-${label(f.store)}-logins.txt`, text: f.text });
+    // A store's ticked SKUs, one per line, go right after its last file (Kim-target-skus.txt), so its files stay together
+    // however many messages the batch takes. A file's store is its group's key, as batchSkus has them, not its name, which
+    // two groups can share (a store typed as "Target" before 1.9.94, beside Target); a logins file carries no key, and is
+    // the group of the profiles file before it.
+    const skusSent = new Set();
+    let cur = "";
+    const keys = posted.map((f) => (f.kind === "logins" ? cur : (cur = f.storeKey)));
+    attach = posted.flatMap((f, i) => {
+      const one = f.kind === "aycd"
+        ? { name: `${buyer}-${label(f.store)}-aycd.json`, text: aycdText(f.list), type: "application/json" }
+        : f.kind === "profiles" ? { name: `${buyer}-${label(f.store)}-shikari.csv`, text: shikariCsv(f.text), type: "text/csv" }
+        : { name: `${buyer}-${label(f.store)}-logins.txt`, text: f.text };
+      const key = !keys.slice(i + 1).includes(keys[i]) && keys[i];
+      if (!key || !skus.has(key) || skusSent.has(key)) return [one];
+      skusSent.add(key);
+      return [one, { name: `${buyer}-${label(f.store)}-skus.txt`, text: skus.get(key).join("\r\n"), type: "text/plain" }];
+    });
   } else attach = [csv !== null ? { name: base + ".csv", text: excelSafe(csv), type: "text/csv" } : { name: base + ".txt", text: code }];
   // The owner approves the batch from its message (submissionReview), and the app shows the buyer whether they have.
   // If that can't be recorded, the batch still goes out, without an Approve link.
@@ -1105,7 +1147,8 @@ async function submission(request, env, url, ctx) {
   for (const [st, name] of lists) await stockCheck(env, st, name, true).catch((e) => console.error("stock", e));
   // How many slots got an account per store; buyers never see which. `review`: the batch waits for the owner's approval.
   return json({ ok: true, id: s.id, ...(reviewed ? { review: "pending" } : {}),
-    ...(picks.size ? { accounts: Object.fromEntries([...picks].map(([k, p]) => [k, { asked: p.asked, got: p.got, ...(p.reused ? { reused: p.reused } : {}) }])) } : {}) });
+    ...(picks.size ? { accounts: Object.fromEntries([...picks].map(([k, p]) => [k, { asked: p.asked, got: p.got, ...(p.reused ? { reused: p.reused } : {}) }])) } : {}),
+    ...(skus.size ? { skus: Object.fromEntries([...skus].map(([k, v]) => [k, v.length])) } : {}) });
 }
 
 // The owner approves or declines each batch from its message (the owner's requests, 2026-10-06): app 1.9.91+ shows the
@@ -3851,20 +3894,14 @@ async function isPremium(env, hash) {
 }
 
 async function premiumGet(request, env) {
-  // The license as slotLicense reads it, but from one look at each list: a key that isn't in this database while the
-  // list of keys made by hand can't be read is unknown, not refused (503, so the app keeps its last answer; a 401 takes
-  // Generate away).
-  const m = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") || "");
-  const norm = m ? m[1].toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
-  if (!/^PVLT[A-Z0-9]{16}$/.test(norm)) return json({ error: "license not recognized" }, 401);
-  const hash = await keyHash(norm);
-  const row = await env.DB.prepare("SELECT revoked_at FROM licenses WHERE key_hash = ?").bind(hash).first();
-  const on = row ? !row.revoked_at : await ghListHas(env, hash);
-  if (on === null) return json({ error: "the list of keys made by hand can't be read just now" }, 503);
-  if (!on) return json({ error: "license not recognized" }, 401);
+  // A key that isn't in this database while the list of keys made by hand can't be read is unknown, not refused (503, so
+  // the app keeps its last answer; a 401 takes Generate away).
+  const lic = await readLicense(request, env);
+  if (lic === "unknown") return json({ error: GH_LIST_DOWN }, 503);
+  if (!lic) return json({ error: "license not recognized" }, 401);
   // owner: this license sends order alerts, so it's the seller's own FAFO, which offers Settings → Premium buyers.
-  const s = await currentAlertSender(env), owner = !!(s && s.key_hash === hash);
-  return json({ premium: owner || await isPremium(env, hash), owner }, 200, { "cache-control": "no-store" });
+  const s = await currentAlertSender(env), owner = !!(s && s.key_hash === lic.hash);
+  return json({ premium: owner || await isPremium(env, lic.hash), owner }, 200, { "cache-control": "no-store" });
 }
 
 async function premiumListAsk(request, env, ctx, url) {
@@ -5776,6 +5813,191 @@ async function pictureFind(request, env, ctx, url) {
   await env.DB.prepare("INSERT INTO picture_finds (q, product_id, name, image, until, at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(q) DO UPDATE SET product_id = excluded.product_id, name = excluded.name, image = excluded.image, until = excluded.until, at = excluded.at")
     .bind(out.q, out.product_id, out.name, out.image, out.until, out.at).run();
   return json(pictureOut(out), 200, NO_STORE);
+}
+
+// ---- interests (page 1.9.142) ---------------------------------------------------------------
+// The owner's request (2026-11-12): "Create an 'Interests' tab between IMAP and Submit. Interests include sets of Skus that
+// I input for buyers to see if they want me to run that on their profiles or not... look them up and give a description
+// with picture. Create checkbox for buyer to tick. These skus will be imported along with buyer's submission of profiles."
+// The owner's FAFO (the one allowed to send order alerts, ownerHash) keeps one list here, which every buyer's FAFO shows;
+// the ticks stay in each buyer's vault, and Submit sends the ones ticked then with each batch (the owner chose "A file
+// only": a <buyer>-<store>-skus.txt beside the store's other files, and no change to the message). Until the owner first
+// saves the list, it's INTEREST_SEED, the SKUs they gave. Each item's picture is the owner's upload (pic, kept here by
+// its hash) or, with none, its TCGplayer product's (tcg), fetched from TCGplayer's image servers the first time a page
+// asks and kept. Pictures are served without a license, as an <img> can't send one, and only those the list shows.
+const INTEREST_MAX = 300;
+const INTEREST_STORES = new Set(["target", "pokemoncenter"]);   // the page's store keys, as the batch files' storeKey
+const INTEREST_SKU = /^[A-Za-z0-9-]{3,24}$/;                   // Target's TCINs are 8 to 10 digits; Pokémon Center's have hyphens
+const INTEREST_PIC_MAX = 150 * 1024;                          // an upload, decoded (the page's copies are far smaller)
+const INTEREST_BODY_MAX = 1_000_000;
+// Text as the list keeps it: one line, without control characters.
+const interestText = (v) => typeof v === "string" ? v.replace(/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/g, "").replace(/\s+/g, " ").trim() : v == null ? "" : null;
+// One item as the owner's FAFO sent it, checked and with only the fields the list keeps, or {error}.
+function interestItem(x) {
+  if (!x || typeof x !== "object" || Array.isArray(x)) return { error: "that isn't a product" };
+  const sku = typeof x.sku === "number" && Number.isSafeInteger(x.sku) ? String(x.sku) : interestText(x.sku);
+  if (!sku || !INTEREST_SKU.test(sku)) return { error: "a SKU is 3 to 24 letters, digits or hyphens" };
+  if (!INTEREST_STORES.has(x.store)) return { error: "the store is Target or Pokémon Center" };
+  const name = interestText(x.name), about = interestText(x.about), set = interestText(x.set);
+  if (!name || name.length > 120) return { error: "a name is 1 to 120 characters" };
+  if (about === null || about.length > 400) return { error: "a description is 400 characters at most" };
+  if (set === null || set.length > 60) return { error: "a set's name is 60 characters at most" };
+  const pic = x.pic == null ? "" : x.pic, tcg = x.tcg == null ? "" : typeof x.tcg === "number" && Number.isSafeInteger(x.tcg) ? String(x.tcg) : x.tcg;
+  if (pic !== "" && !(typeof pic === "string" && /^h[0-9a-f]{32}$/.test(pic))) return { error: "that picture isn't one uploaded here" };
+  if (tcg !== "" && !(typeof tcg === "string" && /^\d{1,10}$/.test(tcg))) return { error: "a TCGplayer product is its number" };
+  return { item: { sku, store: x.store, name, about, set, pic, tcg } };
+}
+let interestSeed = null;
+const seedItems = () => interestSeed ??= INTEREST_SEED.map((x) => interestItem(x).item).filter(Boolean);
+// The list as it is now: what the owner last saved, or the seed (rev 0) until then. Throws when D1 does.
+async function interestList(env) {
+  const row = await env.DB.prepare("SELECT rev, items FROM interest_list WHERE id = 1").first();
+  return row ? { rev: row.rev, items: JSON.parse(row.items) } : { rev: 0, items: seedItems() };
+}
+// The picture an item shows: its upload, else its TCGplayer product's, else none.
+const interestRef = (it) => it.pic || (it.tcg ? "t" + it.tcg : "");
+const interestsOut = (list, owner) => ({ rev: list.rev, owner, items: list.items.map((it) => ({ sku: it.sku, store: it.store, name: it.name,
+  about: it.about, set: it.set, ref: interestRef(it), ...(owner ? { pic: it.pic, tcg: it.tcg } : {}) })) });
+// The license, and whether it's the owner's FAFO (the one that sends order alerts), or the answer to send instead.
+async function interestLicense(request, env, ownerOnly) {
+  // As GET /premium: a key made by hand that can't be checked just now gets a 503, so the page keeps the list it has (a 401
+  // reads as no list there, and a batch sent meanwhile would go without the buyer's ticks).
+  const lic = await readLicense(request, env);
+  if (lic === "unknown") return { error: json({ error: GH_LIST_DOWN }, 503, NO_STORE) };
+  if (!lic) return { error: json({ error: "license not recognized" }, 401, NO_STORE) };
+  let owner;
+  try { owner = lic.hash === await ownerHash(env); } catch (e) { console.error("interests", e); return { error: json({ error: "try again in a minute" }, 503, NO_STORE) }; }
+  if (ownerOnly && !owner) return { error: json({ error: "only your seller's FAFO can change this" }, 403, NO_STORE) };
+  return { lic, owner };
+}
+
+// GET /interests?rev=N (license Bearer): the list, or {same:true} when the page has its rev already.
+async function interestsGet(request, env, url) {
+  const w = await interestLicense(request, env, false);
+  if (w.error) return w.error;
+  let list;
+  try { list = await interestList(env); } catch (e) { console.error("interests", e); return json({ error: "try again in a minute" }, 503, NO_STORE); }
+  const have = url.searchParams.get("rev");
+  if (/^\d+$/.test(have || "") && Number(have) === list.rev) return json({ rev: list.rev, owner: w.owner, same: true }, 200, NO_STORE);
+  return json(interestsOut(list, w.owner), 200, NO_STORE);
+}
+
+// PUT /interests (the owner's FAFO): the whole list, made from rev. A save from another device since then is a 409, and the
+// page reloads the list for the owner to make their change again.
+async function interestsPut(request, env) {
+  const w = await interestLicense(request, env, true);
+  if (w.error) return w.error;
+  const text = await request.text();
+  if (text.length > INTEREST_BODY_MAX) return json({ error: "too large" }, 413, NO_STORE);
+  let b; try { b = JSON.parse(text); } catch { b = null; }
+  if (!b || typeof b !== "object" || !Array.isArray(b.items)) return json({ error: "items" }, 400, NO_STORE);
+  if (b.items.length > INTEREST_MAX) return json({ error: `the list holds ${INTEREST_MAX} products at most`, at: INTEREST_MAX }, 400, NO_STORE);
+  const items = [], seen = new Set();
+  for (let i = 0; i < b.items.length; i++) {
+    const r = interestItem(b.items[i]);
+    if (r.error) return json({ error: r.error, at: i }, 400, NO_STORE);
+    const k = r.item.store + ":" + r.item.sku.toLowerCase();
+    if (seen.has(k)) return json({ error: "that SKU is on the list already", at: i }, 400, NO_STORE);
+    seen.add(k); items.push(r.item);
+  }
+  // An upload has to be here already (POST /interests/pic). Read with json_each: D1 binds at most 100 values a query.
+  const pics = [...new Set(items.map((it) => it.pic).filter(Boolean))];
+  if (pics.length) {
+    const { results } = await env.DB.prepare("SELECT ref FROM interest_pics WHERE ref IN (SELECT value FROM json_each(?))").bind(JSON.stringify(pics)).all();
+    const have = new Set(results.map((r) => r.ref)), at = items.findIndex((it) => it.pic && !have.has(it.pic));
+    if (at >= 0) return json({ error: "that picture wasn't uploaded", at }, 400, NO_STORE);
+  }
+  const rev = b.rev, now = Date.now(), body = JSON.stringify(items);
+  const cur = await interestList(env);
+  if (!Number.isInteger(rev) || rev !== cur.rev) return json({ error: "changed", rev: cur.rev }, 409, NO_STORE);
+  // Written only over the rev it was made from (the first save makes the row: rev 0 is the seed). The pictures no item shows
+  // any more go in the same batch, only once this list is the one saved: a "t" one is fetched again if an item shows it
+  // later, and an upload is left a day, as the owner's other device may be about to save a list that shows it.
+  const keep = JSON.stringify([...new Set(items.map(interestRef).filter(Boolean))]);
+  const res = await env.DB.batch([
+    env.DB.prepare(`INSERT INTO interest_list (id, rev, items, updated_at) VALUES (1, ?, ?, ?)
+      ON CONFLICT (id) DO UPDATE SET rev = excluded.rev, items = excluded.items, updated_at = excluded.updated_at WHERE interest_list.rev = ?`)
+      .bind(rev + 1, body, now, rev),
+    env.DB.prepare(`DELETE FROM interest_pics WHERE ref NOT IN (SELECT value FROM json_each(?)) AND (substr(ref, 1, 1) = 't' OR at < ?)
+      AND (SELECT items FROM interest_list WHERE id = 1) = ?`).bind(keep, now - 86400000, body),
+  ]);
+  if (!res[0].meta || !res[0].meta.changes) return json({ error: "changed", rev: (await interestList(env)).rev }, 409, NO_STORE);
+  return json(interestsOut({ rev: rev + 1, items }, true), 200, NO_STORE);
+}
+
+// What a picture's bytes are, by their first bytes (whatever the data: address said).
+const imageType = (b) => b.length > 3 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 ? "image/png"
+  : b.length > 2 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff ? "image/jpeg"
+  : b.length > 11 && String.fromCharCode(...b.subarray(0, 4)) === "RIFF" && String.fromCharCode(...b.subarray(8, 12)) === "WEBP" ? "image/webp" : "";
+
+// POST /interests/pic (the owner's FAFO): a picture pasted or chosen in the item's editor, kept by its hash, so the same
+// picture twice is one row. Its time is set again, so a save elsewhere doesn't drop it as an old upload nothing shows.
+async function interestPicPost(request, env) {
+  const w = await interestLicense(request, env, true);
+  if (w.error) return w.error;
+  const text = await request.text();
+  if (text.length > Math.ceil(INTEREST_PIC_MAX / 3) * 4 + 200) return json({ error: "that picture is too large" }, 413, NO_STORE);
+  let b; try { b = JSON.parse(text); } catch { b = null; }
+  const m = /^data:image\/(?:webp|jpeg|png);base64,([A-Za-z0-9+/]+={0,2})$/.exec(b && typeof b.data === "string" ? b.data : "");
+  let bytes = null;
+  if (m) { try { bytes = Uint8Array.from(atob(m[1]), (c) => c.charCodeAt(0)); } catch { bytes = null; } }
+  if (bytes && bytes.length > INTEREST_PIC_MAX) return json({ error: "that picture is too large" }, 413, NO_STORE);
+  const type = bytes ? imageType(bytes) : "";
+  if (!type) return json({ error: "that isn't a WebP, JPEG or PNG picture" }, 400, NO_STORE);
+  const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (x) => x.toString(16).padStart(2, "0")).join("");
+  const ref = "h" + hash.slice(0, 32);
+  await env.DB.prepare("INSERT INTO interest_pics (ref, type, data, at) VALUES (?, ?, ?, ?) ON CONFLICT (ref) DO UPDATE SET at = excluded.at")
+    .bind(ref, type, m[1], Date.now()).run();
+  return json({ ref }, 200, NO_STORE);
+}
+
+// GET /interests/pic/REF: only a picture the list shows. An upload never changes (its name is its hash); a TCGplayer
+// product's is fetched the first time and kept. Anything missing is a 404 the browser doesn't keep, so it's asked again.
+async function interestPic(env, ref) {
+  const head = { "access-control-allow-origin": "*", "cross-origin-resource-policy": "cross-origin", "x-content-type-options": "nosniff" };
+  const none = (status = 404) => new Response(status === 404 ? "not found" : "try again later", { status, headers: { ...head, "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+  if (!/^(h[0-9a-f]{32}|t\d{1,10})$/.test(ref)) return none();
+  let row;
+  try {
+    if (!(await interestList(env)).items.some((it) => interestRef(it) === ref)) return none();
+    row = await env.DB.prepare("SELECT type, data FROM interest_pics WHERE ref = ?").bind(ref).first();
+  } catch (e) { console.error("interests", e); return none(503); }
+  if (!row && ref[0] === "t") {
+    const m = /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(await pictureImage(env, ref.slice(1)) || "");
+    if (!m) return none();
+    row = { type: m[1], data: m[2] };
+    await env.DB.prepare("INSERT OR IGNORE INTO interest_pics (ref, type, data, at) VALUES (?, ?, ?, ?)").bind(ref, row.type, row.data, Date.now()).run()
+      .catch((e) => console.error("interests", e));
+  }
+  if (!row) return none();
+  const bytes = Uint8Array.from(atob(row.data), (c) => c.charCodeAt(0));
+  return new Response(bytes, { headers: { ...head, "content-type": row.type,
+    "cache-control": ref[0] === "h" ? "public, max-age=31536000, immutable" : "public, max-age=604800" } });
+}
+
+// The products a batch's buyer ticked, per store (`interests` from page 1.9.142: {storeKey: [sku]}, at most 10 stores and
+// 300 SKUs each), as the list has them now: for each store the batch sends profiles for, the list's items at that store
+// that were ticked, in the list's order, once each. Anything malformed is left out, and a list that can't be read sends
+// none: the batch goes on either way. Older apps send no `interests`, and nothing changes for them.
+async function batchSkus(env, files, sent) {
+  const out = new Map(), want = new Map();
+  if (!sent || typeof sent !== "object" || Array.isArray(sent)) return out;
+  for (const [k, v] of Object.entries(sent).slice(0, 10)) {
+    if (!INTEREST_STORES.has(k) || !Array.isArray(v)) continue;
+    const skus = v.slice(0, INTEREST_MAX).map((x) => typeof x === "number" && Number.isSafeInteger(x) ? String(x) : x)
+      .filter((x) => typeof x === "string" && INTEREST_SKU.test(x)).map((x) => x.toLowerCase());
+    if (skus.length) want.set(k, new Set(skus));
+  }
+  if (!files.some((f) => f.kind === "profiles" && want.has(f.storeKey))) return out;
+  let list;
+  try { list = await interestList(env); } catch (e) { console.error("interests", e); return out; }
+  for (const f of files) {
+    if (f.kind !== "profiles" || !want.has(f.storeKey) || out.has(f.storeKey)) continue;
+    const w = want.get(f.storeKey);
+    const skus = [...new Set(list.items.filter((it) => it.store === f.storeKey && w.has(it.sku.toLowerCase())).map((it) => it.sku))];
+    if (skus.length) out.set(f.storeKey, skus);
+  }
+  return out;
 }
 
 // ---- responses -----------------------------------------------------------------------

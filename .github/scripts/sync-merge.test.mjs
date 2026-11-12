@@ -462,4 +462,37 @@ if (html.includes(':buyerAddrs"')) test("addresses sent to buyers remembered on 
   }
 });
 
+// 1.9.142+: the products a buyer ticked on Interests (settings.interestPicks, {"<store>:<sku>": {on, at}}, an untick kept as
+// on:false): two devices that each tick one before they agree keep both, and one unticked on one side stays unticked. Run
+// whenever the page has Interests, so one that loses the per-entry merge fails here rather than skipping it.
+if (/function renderInterests\(/.test(html)) test("Interests ticked on two devices keep both; one unticked on one side stays unticked", () => {
+  const p = (on, at) => ({ on, at });
+  for (const base of [blank(), null]) {
+    const a = blank(), b = blank();
+    a.settings.interestPicks = { "target:12345678": p(true, 1) }; b.settings.interestPicks = { "pokemoncenter:100-10001": p(true, 2) };
+    const k = [...syncUnits(a).map.keys()].find((x) => x.endsWith(":interestPicks"));
+    for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+      const r = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, {});
+      assert.deepEqual(Object.keys(r.state.settings.interestPicks).sort(), ["pokemoncenter:100-10001", "target:12345678"]);
+    }
+  }
+  const base = blank(); base.settings.interestPicks = { "target:12345678": p(true, 1) };
+  const k = [...syncUnits(base).map.keys()].find((x) => x.endsWith(":interestPicks"));
+  // Unticked here, and nothing changed there: unticked.
+  const a = clone(base), b = clone(base);
+  a.settings.interestPicks = { "target:12345678": p(false, 5) };
+  for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+    for (const [l, r] of [[a, b], [b, a]]) {
+      const m = merge(l, r, base, { [k]: lmt }, { [k]: rmt }, l === a ? origOf(base, [k]) : {});
+      assert.deepEqual(m.state.settings.interestPicks, { "target:12345678": p(false, 5) });
+    }
+  }
+  // Unticked here while the other device ticked another: both kept, the untick too, whichever changed last.
+  b.settings.interestPicks = { "target:12345678": p(true, 1), "target:87654321": p(true, 6) };
+  for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+    const m = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, origOf(base, [k]));
+    assert.deepEqual(m.state.settings.interestPicks, { "target:12345678": p(false, 5), "target:87654321": p(true, 6) });
+  }
+});
+
 console.log(`\n${passed} passed`);

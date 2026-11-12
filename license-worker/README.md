@@ -267,6 +267,10 @@ request; before, `orbit-slots-<date>-<time>-Kim-target-aycd.json`):
   order as the first profiles of the AYCD list and the Shikari CSV. AYCD's profile format has no place
   for them. Pokémon Center gets none (since 2026-10-07, at your request): it checks out with just an
   email, which is on each of its profiles, so a Pokémon Center batch is its AYCD list and Shikari CSV.
+- `Kim-target-skus.txt` (FAFO 1.9.142 and later, since 2026-11-12, at your request): the products on your
+  Interests list (below) the buyer had ticked for that store when they sent the batch, one SKU per line, in
+  your list's order. It comes right after the store's other files, and only when they ticked any there. The
+  message itself doesn't mention it (you chose "A file only"); you approve or decline it with the batch.
 
 The app sends each store's slots as that CSV: this worker reads it to give out accounts and, for apps
 before 1.9.87, to make the AYCD list, and posts it as the Shikari CSV. From 2026-10-06 to 2026-10-09 it
@@ -661,6 +665,35 @@ kept and come back if you make them premium.
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/premium
 ```
 
+## Interests
+
+From FAFO 1.9.142 (2026-11-12, at your request), every buyer's FAFO has an **Interests** tab, between IMAP and
+Submit, listing the products you'd run on their profiles: each with its picture, its name, what's in it and its SKU,
+under its set, and a box to tick. Each batch they send then carries the SKUs they've ticked for each of its stores,
+as `Kim-target-skus.txt` beside that store's other files (above): a new list with every batch, from the ticks
+at that moment.
+
+- **Your FAFO edits the list** (the one that sends order alerts, as for Premium buyers): **Edit list** on Interests
+  adds products (a Target or Pokémon Center link, or a SKU and its name), changes a product's name, description,
+  set, store and picture, and removes one. Every buyer's FAFO shows the change within 10 minutes.
+- Until you first save the list, it's the 30 Target SKUs you gave (`INTEREST_SEED` in `src/interest-seed.js`).
+- **Pictures**: a product's picture is one you paste or choose (kept here, 150 KB at most, by a hash of it), or else
+  its TCGplayer product's, which this worker fetches from TCGplayer's image servers the first time a FAFO shows it
+  and keeps. Only the pictures your list shows are served (`GET /interests/pic/…`, which needs no license key, as a
+  picture on a page can't send one); a saved list drops the TCGplayer ones it no longer shows, and pictures you
+  added that it doesn't show once they're a day old.
+- Two of your computers changing it at once can't overwrite each other: a change made from an older copy of the list
+  is refused, and FAFO shows you the list as it is now to make it again.
+- The list is the `interest_list` table (one row) and its pictures `interest_pics`, which `npm run db:init` (and the
+  deploy Action) adds. A buyer's ticks are in their own vault; this worker only sees the SKUs a batch sends.
+- If this worker can't read the list of keys made by hand on GitHub just then, a buyer with such a key keeps the list
+  FAFO last had (the answer is 503, not "not a license"), as for Premium buyers.
+
+FAFO uses `GET /interests` (any license; `?rev=` answers `same` when nothing changed), and your FAFO `PUT
+/interests` (the whole list, with the revision it was made from; 409 when another computer saved since) and `POST
+/interests/pic`. `POST /submissions` takes `interests`: `{"target": ["88897899", …]}`; SKUs not on the list now, or
+for another store, are left out, and nothing about them can stop a batch.
+
 ## Payments (Stripe)
 
 From FAFO 1.9.130 your buyers can pay you for checkouts through Stripe (the owner's decisions, 2026-10-18): **$10 per
@@ -908,7 +941,8 @@ Runs the worker in Wrangler's local runtime with a local database and a mock Dis
 once handing out keys straight away and once with approval on. It goes through sign-in,
 key pickup, repeat sign-in, cancelled and refused sign-ins, the account-age and server
 checks, revoke and restore, the rate limit, requests being posted, approved, denied
-and changed, slot limits, submissions and collecting keys, pulled slots, product pictures
+and changed, slot limits, submissions and collecting keys, pulled slots, the Interests list (its pictures, and the
+SKUs a batch carries), product pictures
 (against a stand-in catalog: exact names only, never a case, another edition or two that fit),
 synced vaults (revisions, two devices saving at once, large vaults, a new password, and the lock
 after wrong passwords), and payments against a stand-in Stripe (plans, invoices, Submit refused and allowed, sessions,

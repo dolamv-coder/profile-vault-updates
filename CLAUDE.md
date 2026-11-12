@@ -323,6 +323,35 @@ alone (every store's rows of one account) from reading the whole table. Only
   that claim, so two computers on one mailbox send each once; a claim never marked sent can be taken again after 15 minutes
   (`FWD_STALE_MS`). A buyer's FAFO that reports a checkout on an order the owner sent them (`alert_details` or `alert_accounts`
   has it; a page before 1.9.139 takes its forwarded email for an order of its own) isn't billed for it (`billingCheckouts`).
+  Since 2026-11-12 the worker keeps the owner's **Interests** list. The owner's request, with 30 Target SKUs: "Create an
+  'Interests' tab between IMAP and Submit. Interests include sets of Skus that I input for buyers to see if they want me
+  to run that on their profiles or not… give a description with picture. Create checkbox for buyer to tick. These skus
+  will be imported along with buyer's submission of profiles." Their choices: every buyer sees it, and the SKUs reach the
+  owner as "A file only".
+  - **Tables** (new): D1 `interest_list` holds one row, the list as JSON with its `rev`. `interest_pics` holds pictures:
+    an owner's upload, keyed `h` + its hash, or a TCGplayer product's, keyed `t` + its id. A TCGplayer picture is fetched
+    with `pictureImage` the first time it's asked for, then kept.
+  - **Seed:** until the owner's FAFO first saves a list, it's `INTEREST_SEED` (`license-worker/src/interest-seed.js`).
+    That's the 30 SKUs, looked up on 2026-11-12 from search results (target.com couldn't be opened from here), with names,
+    descriptions, sets and TCGplayer products for pictures. Three numbers no source tied to a product are named "Target
+    item <n>" for the owner to name.
+  - **Items:** `{sku, store, name, about, set, pic, tcg}`, checked by `interestItem`. A SKU is 3 to 24 letters, digits or
+    hyphens; the store is Target or Pokémon Center; a name is at most 120 characters, a description 400, a set 60. A list
+    holds at most 300.
+  - **`GET /interests?rev=`** (license Bearer) answers `{rev, owner, items}`, or `same:true` when the rev matches. Each
+    item carries its picture's `ref`; the owner's answer also has `pic` and `tcg`.
+  - **`PUT /interests {rev, items}`** and **`POST /interests/pic {data}`** are for the owner's FAFO only (`ownerHash`;
+    403 otherwise). An upload is a WebP, JPEG or PNG data: address of at most 150 KB, typed by its bytes.
+    - A save only goes through over the rev it was made from; otherwise 409 `{error:"changed", rev}`.
+    - The same D1 batch drops the pictures no item shows any more (an upload only once it's a day old).
+  - **`GET /interests/pic/:ref`** needs no license, since an `<img>` can't send one. It serves only a picture the current
+    list shows.
+  - **`/submissions`** takes `interests` (`{storeKey: [sku]}`, page 1.9.142+). For each store the batch sends profiles
+    for, the list's items at that store that were ticked go, in the list's order (`batchSkus`).
+    - They go as `<buyer>-<store>-skus.txt`, one SKU per line, right after that store's other files. The message doesn't
+      change.
+    - Anything malformed, or a list that can't be read, sends no file rather than failing the batch.
+  - Page 1.9.142 below.
   From 1.9.57 a store waiting for a login is linked to the saved login with the profile's email on
   its own: once per vault at unlock (`settings._linkedByEmail`), on Import profiles and inbox
   submissions, and by ticking the profile in the store login editor (`linkByEmail`).
@@ -430,20 +459,6 @@ the desktop wrapper checks
 the web version reads `web-update.json` beside it, and the publish Action below
 updates both as soon as a new page and its notes reach `main` (only
 `web-update.json` while `channels.json` pauses desktop updates).
-
-## Fix with the next page release
-
-The owner asked on 2026-11-09 ("Fix it next time we need to update something") that this go into the next page
-release, whatever that release is for. Take it out of this list once it's shipped.
-
-- **Auto-clean stops silently when its one inbox is gone.** This happens when auto-clean's Inboxes menu names one inbox
-  (`autoClean.inboxId`, not `"all"`) and that inbox is deleted or has no password.
-  - `autoCleanTargets` then returns nothing, and `runAutoClean` returns before setting `lastRun` or `lastError`.
-  - The timed runs ignore that return, so the Clean page's "Last run" line just stops changing.
-  - The Inboxes menu can still read All inboxes, because it has no option for the missing id.
-  - Fix: fall back to all inboxes, or at least show the error. Also check the Delete inbox handler
-    (`case "delete-inbox"`), which may leave `inboxId` pointing at the deleted id.
-  - Add a test in `clean-rules.test.mjs`.
 
 ## Releases
 
@@ -1854,6 +1869,51 @@ hours old waited another hour, which looked like nothing happening. Target's `CL
 has none), so Riot Games' and Best Buy's keep their hour. `CLEAN_RULES_KEY` doesn't change, so there's no new 30-day look-back.
 `clean-rules.test.mjs` expects Target's codes at once when the newest page's entry has `wait:0` (`TGT_NOW`). Nothing gains a
 field.
+
+From 1.9.142 the app has **Interests** (the owner's request, 2026-11-12; the worker section above).
+
+- **Where it shows:** between IMAP and Submit in the sidebar, and before Submit in the phone's tabs. Every buyer whose
+  vault has a license key sees it (`interestsShown`).
+- **Getting the list:** `refreshInterests` asks `GET /interests` at unlock, when Interests or Submit is drawn and the
+  list is 10 minutes old, and every 10 minutes while Interests shows.
+  - The last list is kept per device in `orbit-interests` (`{h, rev, owner, items, at}`, `h` a hash of the key). Erase
+    vault clears it.
+  - Other tabs follow it, and a failed ask keeps it.
+- **The view** (`renderInterests`): a section per set, in the order sets first appear, with "Other" for products that
+  have none. Each section has Tick all, which acts on the products the search shows.
+  - Each product is a card: its picture (from the license server; the store's mark when there's none or it doesn't
+    load), name, description, store and SKU, and "Run this on my profiles".
+- **Ticks** are the synced setting `interestPicks`: `{"<store>:<sku>": {on, at}}`, with an untick kept as `on:false`.
+  - `syncMerge` merges it per entry, as it does `buyerEmails`. 1.9.112 syncs it as it is.
+  - The sidebar's badge counts the ticked products that are on the list.
+- **Submit** sends `interests` with the batch (`interestsFor`): every SKU ticked for the batch's stores, the cached list's
+  first and in its order. The worker keeps only those on its current list, so a cached list that's out of date or empty
+  loses nothing. A buyer's ticks reach the owner only with a batch that has new slots for that store, and Submit's panel
+  says so (`interestSubmitLine`: "…go to your seller with the next Target slots you submit").
+- **Interests answer 503, not 401,** for a key made by hand while the worker can't read GitHub's list, as /premium does.
+  The page then keeps its last list.
+- **The owner's FAFO** (`owner`) has Edit list:
+  - Add products (`openInterestAdd`, `interestFromLine`) reads a Target link's SKU and the name its address gives, a
+    Pokémon Center link, "SKU name", or a SKU alone. Then `interestFindPics` asks `/pictures/find` for each new product's
+    TCGplayer match.
+  - Edit (`openInterestEdit`) changes the name, description, set and store. A picture can be found on TCGplayer, or
+    pasted, dropped or chosen, then uploaded through `pictureFromBlob`.
+  - Remove takes a product off.
+  - One save goes at a time: Edit, Add, Remove and the pictures found after Add each wait for the one under way and
+    take the slot as they go (`interestSaveSlot`), then save onto the list as it is (`interestsPut`). Each save sends
+    the rev it was made from, and a 409 reloads the list. A window closed while it waits saves nothing.
+- **Tests:** `interests.test.mjs` runs the page in Chromium against a pretend license server. CI installs Playwright for
+  it.
+- **Also in 1.9.142, the auto-clean fix** (the owner's request, 2026-11-09, from CLAUDE.md's "Fix with the next page
+  release"):
+  - Auto-clean set to one inbox that's been deleted cleans all of them and saves All inboxes. Before, it did nothing and
+    said nothing.
+  - One that's still there but has no password doesn't switch: the Clean page says it can't sign in to it, and the
+    Inboxes menu shows it, so the inboxes the user chose to leave alone aren't cleaned.
+  - Delete inbox puts auto-clean back on All inboxes when it named that inbox.
+  - With no inbox to clean, a run says so on the Clean page.
+  - `clean-rules.test.mjs` covers it.
+- Settings gain `interestPicks`.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
