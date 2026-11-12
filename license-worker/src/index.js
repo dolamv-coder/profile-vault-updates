@@ -4167,23 +4167,28 @@ const exemptOf = (hash, p, l, sender, since, mode) => sender && sender.key_hash 
   : !l || l.issued_at < since ? "family" : null;
 
 // When billing first saw itself on in this mode (since): licenses issued before then are Friends and Family. Stamped once
-// (INSERT OR IGNORE). And since when orders are billed (from): then, or when it was on again after a request saw the keys
-// gone (off_seen), since no FAFO reported its checkouts meanwhile and they aren't billed late. And since when Friends and
-// Family are charged (famFrom, family_from): stamped the same way by the first request after the worker that charges them
-// came (2026-11-12), and again when the owner moves their price from $0 to more. {since, from, famFrom}.
-let onSinceStamped = "";
+// (INSERT OR IGNORE), by the first request that finds it missing. And since when orders are billed (from): then, or when it
+// was on again after a request saw the keys gone (off_seen), since no FAFO reported its checkouts meanwhile and they aren't
+// billed late. And since when Friends and Family are charged (famFrom, family_from): stamped the same way by the first
+// request after the worker that charges them came (2026-11-12), and again when the owner moves their price from $0 to more;
+// either way their unpaid lines from before are due the coming Sunday at the earliest (familyRaise), in the same batch.
+// {since, from, famFrom}.
 async function onSince(env, mode, now) {
   await dueSundays(env, now).catch((e) => console.error("billing due dates", e && e.message));
-  if (onSinceStamped !== mode) {
+  const sk = "on_since:" + mode, fk = "family_from:" + mode;
+  const read = async () => Object.fromEntries((await env.DB.prepare("SELECT k, v FROM billing_config WHERE k IN (?, ?, ?, 'off_seen')").bind(sk, "back_on:" + mode, fk).all())
+    .results.map((r) => [r.k, Number(r.v)]));
+  let v = await read();
+  if (v[sk] === undefined || v[fk] === undefined) {
+    const raise = v[fk] === undefined ? await familyRaise(env, mode, v[sk] || now, now, await currentAlertSender(env)) : null;
     await env.DB.batch([
-      env.DB.prepare("INSERT OR IGNORE INTO billing_config (k, v, updated_at) VALUES (?, ?, ?)").bind("on_since:" + mode, String(now), now),
-      env.DB.prepare("INSERT OR IGNORE INTO billing_config (k, v, updated_at) VALUES (?, ?, ?)").bind("family_from:" + mode, String(now), now),
+      env.DB.prepare("INSERT OR IGNORE INTO billing_config (k, v, updated_at) VALUES (?, ?, ?)").bind(sk, String(now), now),
+      env.DB.prepare("INSERT OR IGNORE INTO billing_config (k, v, updated_at) VALUES (?, ?, ?)").bind(fk, String(now), now),
+      ...(raise ? [raise] : []),
     ]);
-    onSinceStamped = mode;
+    v = await read();
   }
-  const { results } = await env.DB.prepare("SELECT k, v FROM billing_config WHERE k IN (?, ?, ?, 'off_seen')").bind("on_since:" + mode, "back_on:" + mode, "family_from:" + mode).all();
-  const v = Object.fromEntries(results.map((r) => [r.k, Number(r.v)]));
-  const since = v["on_since:" + mode] || now;
+  const since = v[sk] || now;
   let from = Math.max(since, v["back_on:" + mode] || 0);
   if (v.off_seen > from) {
     await env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) VALUES (?1, ?2, ?2) ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at
@@ -4192,13 +4197,33 @@ async function onSince(env, mode, now) {
   }
   return { since, from, famFrom: v["family_from:" + mode] || now };
 }
+// When Friends and Family start being charged (family_from stamped: the first billing request in a mode after the worker that
+// charges them came, or the owner moving their price from $0 to more), their unpaid lines from before (from while they were
+// charged, before being moved there, or hidden while their price was $0) come back on their invoice. None may come back
+// overdue, which would turn Submit off at once: each (canceled or waived too, which Charge again and Undo waive bring back)
+// is due by the end of the Sunday after today at the earliest. Who's Friends and Family is worked out as the Billing page
+// works it out (exemptOf), among the buyers with unpaid lines in that mode. The statement goes in the batch that writes
+// family_from, and applies only while family_from holds this call's stamp (`now`), so a request that lost the race to stamp
+// it, or a later one, moves nothing; and only while their price isn't $0. Null when none of them has an unpaid line.
+async function familyRaise(env, mode, since, now, sender) {
+  const [lines, lics, people] = (await env.DB.batch([
+    env.DB.prepare("SELECT DISTINCT key_hash FROM billing_lines WHERE mode = ? AND paid_at IS NULL").bind(mode),
+    env.DB.prepare("SELECT key_hash, issued_at FROM licenses WHERE key_hash IN (SELECT key_hash FROM billing_lines WHERE mode = ? AND paid_at IS NULL)").bind(mode),
+    env.DB.prepare("SELECT * FROM billing_people WHERE key_hash IN (SELECT key_hash FROM billing_lines WHERE mode = ? AND paid_at IS NULL)").bind(mode),
+  ])).map((r) => r.results);
+  const L = new Map(lics.map((l) => [l.key_hash, l])), P = new Map(people.map((p) => [p.key_hash, p]));
+  const hashes = lines.map((x) => x.key_hash).filter((h) => exemptOf(h, P.get(h), L.get(h), sender, since, mode) === "family");
+  if (!hashes.length) return null;
+  return env.DB.prepare(`UPDATE billing_lines SET due_at = MAX(due_at, ?1) WHERE mode = ?2 AND paid_at IS NULL AND key_hash IN (SELECT value FROM json_each(?3))
+    AND (SELECT v FROM billing_config WHERE k = ?4) = ?5 AND ${priceSql("family", PRICE_FAMILY)} > 0`).bind(dueNow(now), mode, JSON.stringify(hashes), "family_from:" + mode, String(now));
+}
 // The Sunday rule for lines written before it (2026-11-12): every unpaid line, in both modes (waived, canceled, held and
 // disputed ones too, which Undo waive and Charge again bring back), goes to the end of the Sunday on or after its due date,
 // never earlier, in one statement, with the marker billing_config due_sunday in the same batch. A Sunday's end goes to
 // itself, so it can run again and again. For an hour after the marker, while a worker from before can still be writing
 // 3-day due dates, each isolate runs it again at most once a minute for lines written since 10 minutes before the marker;
 // `all` (the admin summary) runs it over every unpaid line. Never with payments off (onSince isn't reached then).
-const DUE_MOVE_MS = 3600000, DUE_RERUN_MS = 60000, DUE_SLACK_MS = 10 * 60000;
+const DUE_MOVE_MS = 3600000, DUE_RERUN_MS = 60000, DUE_SLACK_MS = 10 * 60000, DUE_AHEAD_MS = 400 * 86400000;
 let dueDone = false, dueRan = 0;
 async function dueSundays(env, now, all = false) {
   if (!all && (dueDone || now - dueRan < DUE_RERUN_MS)) return;
@@ -4208,9 +4233,19 @@ async function dueSundays(env, now, all = false) {
   if (!all && m && now - at > DUE_MOVE_MS) { dueDone = true; return; }
   const from = all || !m ? 0 : at - DUE_SLACK_MS;
   const r = await env.DB.prepare("SELECT MIN(due_at) AS lo, MAX(due_at) AS hi FROM billing_lines WHERE paid_at IS NULL AND created_at >= ?").bind(from).first();
-  // Every Sunday's end from the first line's to a week past the last's.
+  // Every Sunday's end from the first line's to a week past the last's, but never more than DUE_AHEAD_MS from now: a line due
+  // later than that (an order dated years ahead) keeps its due date (the COALESCE below), and near the year 10000 a Sunday's
+  // end stops moving on (addDays writes a 6-digit year), so the loop also stops when the next one isn't later.
   const ends = [];
-  if (r && r.lo != null) for (let s = sundayEndOnOrAfter(r.lo); s <= r.hi + 8 * 86400000; s = sundayEndAfter(etDay(s))) ends.push(s);
+  const hi = r && r.lo != null ? Math.min(r.hi, now + DUE_AHEAD_MS) + 8 * 86400000 : 0;
+  if (r && r.lo != null && r.lo <= hi) {
+    for (let s = sundayEndOnOrAfter(r.lo); s <= hi;) {
+      ends.push(s);
+      const next = sundayEndAfter(etDay(s));
+      if (!(next > s)) break;
+      s = next;
+    }
+  }
   const stmts = [];
   if (ends.length) stmts.push(env.DB.prepare(`UPDATE billing_lines SET due_at = COALESCE((SELECT MIN(CAST(value AS INTEGER)) FROM json_each(?1) WHERE CAST(value AS INTEGER) >= billing_lines.due_at), due_at)
     WHERE paid_at IS NULL AND created_at >= ?2 AND due_at NOT IN (SELECT CAST(value AS INTEGER) FROM json_each(?1))`).bind(JSON.stringify(ends), from));
@@ -4329,16 +4364,17 @@ const billNote = (env, content) => webhookPost(env, { content }).catch((e) => co
 // from before then were placed while they weren't. 0 when that isn't so.
 const chargeFrom = (c, p) => p && p.charge_from && (p.family === 0 || (c.mode === "test" && p.tester && p.family == null)) ? p.charge_from : 0;
 // Whether an order dated `d` goes on this license's invoice: billing reaches it and it isn't exempt, it's from after billing
-// came on (and after they were charged; for Friends and Family, after they were: family_from), and no monthly plan of theirs
-// covers that day. `held`: their monthly plan is waiting on a payment (one that failed, or a renewal still being paid; never
-// one paused for Friends and Family) and the order is after what they paid for, so it waits for that payment (covered if
-// it's paid, due if the plan ends). `price`: which price per checkout it's at (lineStmt). {ok, held, price} or {why}.
+// came on (and after they were charged; for Friends and Family, after the Eastern day family_from fell on, as due dates go
+// by Eastern days: an order dated that day may be from before it), and no monthly plan of theirs covers that day. `held`:
+// their monthly plan is waiting on a payment (one that failed, or a renewal still being paid; never one paused for Friends
+// and Family) and the order is after what they paid for, so it waits for that payment (covered if it's paid, due if the
+// plan ends). `price`: which price per checkout it's at (lineStmt). {ok, held, price} or {why}.
 async function billable(c, w, d) {
   if (!w.on) return { why: "off" };
   if (w.exempt) return { why: w.exempt };
   const start = dayStart(d), end = start + 86400000, charged = chargeFrom(c, w.person);
   if (await c.from() + TZ_SLACK_MS >= end) return { why: "before" };
-  if (w.family && await c.famFrom() + TZ_SLACK_MS >= end) return { why: "family-before" };
+  if (w.family && d <= etDay(await c.famFrom())) return { why: "family-before" };
   if (charged && charged + TZ_SLACK_MS >= end) return { why: "charge" };
   const subs = await c.subs(w.hash);
   if (subs.some((s) => s.started_at != null && s.paid_through != null && s.started_at - TZ_SLACK_MS < end && s.paid_through + TZ_SLACK_MS >= start)) return { why: "monthly" };
@@ -4817,10 +4853,10 @@ async function billingBody(env, c, lic) {
   });
   Object.assign(out, { owed: st.owed, overdue: st.overdue, paid30: paid.results[0].s, payments: pays.results });
   // Not from before billing came on (or on again), nor from before the owner charged them, nor, for Friends and Family, from
-  // before they were charged (family_from): none of those are billed.
+  // the Eastern day they were charged from or before (family_from, as billable): none of those are billed.
   if (wins.results.length) {
-    const from = Math.max(await c.from(), chargeFrom(c, w.person), w.family ? await c.famFrom() : 0) + TZ_SLACK_MS;
-    out.report = { from: day(Math.max(c.now - 45 * 86400000, Math.min(...wins.results.map((x) => x.first)) - TZ_SLACK_MS, from)), accts: wins.results.map((x) => x.acct_hash) };
+    const from = Math.max(await c.from(), chargeFrom(c, w.person)) + TZ_SLACK_MS, fam = w.family ? dayStart(addDays(etDay(await c.famFrom()), 1)) : 0;
+    out.report = { from: day(Math.max(c.now - 45 * 86400000, Math.min(...wins.results.map((x) => x.first)) - TZ_SLACK_MS, from, fam)), accts: wins.results.map((x) => x.acct_hash) };
   }
   return out;
 }
@@ -5426,7 +5462,7 @@ async function billingListPage(request, env, ctx, url, id) {
         unwaive: [`UPDATE billing_lines SET waived_at = NULL, dispute_answer = CASE WHEN dispute_answer = 'waived' THEN NULL ELSE dispute_answer END, due_at = MAX(due_at, ${due})
           WHERE id = ?2 AND paid_at IS NULL AND waived_at IS NOT NULL AND ?1 > 0`, (d) => `Waive undone: it's owed again, due ${dueWords(d)}.`],
         "mark-paid": ["UPDATE billing_lines SET paid_at = ?1, pay_id = 'manual' WHERE id = ?2 AND paid_at IS NULL AND canceled_at IS NULL", () => "Marked paid."],
-        "charge-again": [`UPDATE billing_lines SET canceled_at = NULL, cancel_src = NULL, held_sub = NULL, due_at = ${due} WHERE id = ?2 AND paid_at IS NULL AND canceled_at IS NOT NULL
+        "charge-again": [`UPDATE billing_lines SET canceled_at = NULL, cancel_src = NULL, held_sub = NULL, due_at = MAX(due_at, ${due}) WHERE id = ?2 AND paid_at IS NULL AND canceled_at IS NOT NULL
           AND COALESCE(cancel_src, '') <> 'covered'`, (d) => `It's owed again, due ${dueWords(d)}.`],
         "dispute-waive": [`UPDATE billing_lines SET dispute_answer = 'waived', waived_at = ?1 WHERE id = ?2 AND ${DISPUTED} AND paid_at IS NULL`, () => "Waived: not their checkout."],
         "dispute-keep": [`UPDATE billing_lines SET dispute_answer = 'kept', due_at = MAX(due_at, ${due}) WHERE id = ?2 AND ${DISPUTED} AND paid_at IS NULL`, (d) => `Kept: it's owed, due ${dueWords(d)}.`],
@@ -5469,16 +5505,25 @@ async function billingListPage(request, env, ctx, url, id) {
     } else if (action === "price-family") {
       // Friends and Family's price per checkout (the owner's request, 2026-11-12: "Change friends and family cost to $5"): $0 to
       // $100, for their checkouts from now on. From $0 to more, they're charged from now (family_from, both modes, so an order
-      // from while they weren't isn't billed late), in the same transaction as the price, which reads the price before.
+      // from while they weren't isn't billed late), in the same transaction as the price, which reads the price before. Their
+      // lines hidden while it was $0 come back due the coming Sunday at the earliest (familyRaise, after the price is written,
+      // and only where this save wrote family_from).
       const want = priceCents(get("price"), true);
       if (want == null) err = `Not saved: type $0, or a price from ${money(PRICE_MIN)} to ${money(PRICE_MAX)}, in dollars, like 5 or 7.50.`;
       else {
         const from = (mode) => env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) SELECT ?1, ?2, ?3 WHERE ${priceSql("family", PRICE_FAMILY)} = 0 AND ?4 > 0
           ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at`).bind("family_from:" + mode, String(now), now, want);
+        let raise = [];
+        if (want > 0) {
+          const { results } = await env.DB.prepare("SELECT k, v FROM billing_config WHERE k IN ('on_since:live', 'on_since:test')").all();
+          const since = Object.fromEntries(results.map((x) => [x.k, Number(x.v)])), sender = await c.sender();
+          raise = (await Promise.all(["live", "test"].map((m) => familyRaise(env, m, since["on_since:" + m] || now, now, sender)))).filter(Boolean);
+        }
         const [was, , , w] = await env.DB.batch([
           env.DB.prepare(`SELECT ${priceSql("family", "?")} AS p`).bind(PRICE_FAMILY), from("live"), from("test"),
           env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) SELECT 'price:family', ?1, ?2 WHERE ${priceSql("family", PRICE_FAMILY)} <> CAST(?1 AS INTEGER)
             ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at`).bind(String(want), now),
+          ...raise,
         ]);
         if (w.meta && w.meta.changes) {
           await billNote(env, `💲 Friends and Family price per checkout: ${money(was.results[0].p)} → ${money(want)} (from now on; checkouts already on an invoice keep their price)`);

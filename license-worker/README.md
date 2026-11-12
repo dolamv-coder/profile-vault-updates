@@ -730,7 +730,8 @@ secrets below; until then nothing changes anywhere.
   the day it was due, never earlier (so one overdue from earlier that week is due again until Sunday). For the hour after
   that, while the worker from before could still be writing 3-day due dates, each copy of the worker does it again for
   checkouts added since. It's noted as `due_sunday` in `billing_config`, and `/admin/billing` does it again for any
-  left over (it changes nothing that's already on a Sunday).
+  left over (it changes nothing that's already on a Sunday). A checkout due more than 400 days ahead (an order dated
+  years ahead) keeps its due date.
 - **No monthly plan.** Buyers can't pick the monthly plan or start one, nor add or remove its extra 15 slots (FAFO
   1.9.143 offers only pay per checkout; an older FAFO that still shows the monthly plan is told "The monthly plan isn't
   offered any more."). A subscription that's already going carries on as it was until it ends: it covers its months once
@@ -746,18 +747,20 @@ secrets below; until then nothing changes anywhere.
   25). A batch refused this way is never posted, and your channel hears about it (at most every 6 hours per buyer).
   FAFOs older than 1.9.130 can't say why; the channel's message says so.
 - **Friends and Family** pay the Friends and Family price per checkout ($5 to start), on pay per checkout with no plan to
-  pick, and only for orders from when that began (the first request after the worker that charges them was deployed
-  notes when, as `family_from` in `billing_config`). Submit is off for them only while a checkout is overdue or a payment
-  is disputed with their bank, and their slot limits stay as you approved them. Checkouts they already had on their
-  invoice from before (from while they were charged, say) keep their amounts and show again; **Waive** any you don't want
-  them to pay. At **$0** they aren't charged at all, as before: nothing goes on their invoice and Submit is never off for
-  them; from $0 to more, they're charged for orders from then on. Everyone you approved before payments came on is
-  Friends and Family (the first request that sees the Stripe keys notes when that was), and so is every key you made by
-  hand. The Billing page moves anyone either way: **Charge** makes a buyer pay the regular price like one approved after
-  payments began, for checkouts from then on (never for ones from while they were Friends and Family), on pay per
-  checkout. If you make a buyer with a monthly plan Friends and Family, Stripe stops charging it (its collection is
-  paused) until you charge them again; they pay their price per checkout meanwhile, and can't start or grow a monthly
-  plan.
+  pick, and only for orders from the day after that began, in US Eastern time (the first request after the worker that
+  charges them was deployed notes when, as `family_from` in `billing_config`; an order dated that day may be from before
+  it, so it isn't billed). Submit is off for them only while a checkout is overdue or a payment is disputed with their
+  bank, and their slot limits stay as you approved them. Checkouts they already had on their invoice from before (from
+  while they were charged, say) keep their amounts and show again, due the coming Sunday at the earliest, so none is
+  overdue as it comes back and Submit isn't off for them at once; **Waive** any you don't want them to pay. At **$0**
+  they aren't charged at all, as before: nothing goes on their invoice and Submit is never off for them; from $0 to
+  more, they're charged for orders from the next day on, and what they owed from before is due the coming Sunday at the
+  earliest, as above. Everyone you approved before payments came on is Friends and Family (the first request that sees
+  the Stripe keys notes when that was), and so is every key you made by hand. The Billing page moves anyone either way:
+  **Charge** makes a buyer pay the regular price like one approved after payments began, for checkouts from then on
+  (never for ones from while they were Friends and Family), on pay per checkout. If you make a buyer with a monthly plan
+  Friends and Family, Stripe stops charging it (its collection is paused) until you charge them again; they pay their
+  price per checkout meanwhile, and can't start or grow a monthly plan.
 - **Your own FAFO** (the license that sends order alerts) is never charged, and is the only one that can open the
   Billing page.
 
@@ -828,17 +831,19 @@ checkout: $5 → $10 …`); saving the same price changes nothing. Buyers' FAFOs
 
 **Friends and Family price per checkout**, under it (the owner's request, 2026-11-12), works the same way for Friends and
 Family's checkouts, from $0 to $100: **$0** means they aren't charged. Its note says `💲 Friends and Family price per
-checkout: $5 → $3 …`. Moving it from $0 to more charges them for orders from then on, never for ones from while it was $0.
-Each buyer's row says their plan with their price ("Friends and Family · $5 per checkout"), and each checkout's due date
-is its Sunday (in Eastern time).
+checkout: $5 → $3 …`. Moving it from $0 to more charges them for orders from the next day (Eastern) on, never for
+ones from while it was $0, and makes what they owed from before due the coming Sunday at the earliest, never overdue at
+once. Each buyer's row says their plan with their price ("Friends and Family · $5 per checkout"), and each checkout's
+due date is its Sunday (in Eastern time).
 
 A buyer's **Details** has:
 
 - **Friends and Family** or **Charge**, **Tester** (in test mode), and **Clear dispute hold** after a bank dispute.
 - Their invoice, with **Waive**, **Undo waive**, **Mark paid** (paid some other way), **Charge again** (one canceled
-  because the store canceled it, if you think it wasn't; not one their monthly plan covered), and **Waive** or **Keep**
-  for a checkout they said wasn't yours ("Not my seller's checkout?" in their Invoice; your channel gets a link to
-  answer it).
+  because the store canceled it, if you think it wasn't; not one their monthly plan covered; like Undo waive and Keep,
+  it's then due by the end of the Sunday after that day, or later if it was due later, never earlier), and **Waive** or
+  **Keep** for a checkout they said wasn't yours ("Not my seller's checkout?" in their Invoice; your channel gets a link
+  to answer it).
 - **Add a checkout**, and their recent batches to match your bot's log against.
 
 **Paste checkouts** takes your bot's success log, one checkout per line: each line needs the account's email and the

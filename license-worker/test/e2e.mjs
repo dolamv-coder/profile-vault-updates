@@ -4065,12 +4065,20 @@ try {
   const acctOf = (e) => createHash("sha256").update("acct:" + String(e).trim().toLowerCase()).digest("hex");
   // Due dates (2026-11-12): the end of the Sunday after the order, US Eastern. The worker's own helpers, cut from its source,
   // so the dates expected are worked out as it works them out, from the line's own createdAt (never this computer's clock,
-  // which could pass Eastern midnight between the two). The DST weeks below are checked against fixed instants too.
+  // which could pass Eastern midnight between the two). The DST weeks below are checked against the instants the US rule
+  // gives, worked out for next year's (so they're always ahead), too.
   const DUE = (() => {
     const src = readFileSync(join(root, "src", "index.js"), "utf8"), a = src.indexOf("const dayStart = "), b = src.indexOf("\n", src.indexOf("const dueWords = "));
-    return new Function(src.slice(a, b) + "\nreturn { etDay, addDays, sundayEndAfter, sundayEndOnOrAfter, dueNow, dueText, dueWords };")();
+    return new Function(src.slice(a, b) + "\nreturn { etDay, addDays, etMidnight, sundayEndAfter, sundayEndOnOrAfter, dueNow, dueText, dueWords };")();
   })();
   const DAY = 86400000;
+  // Next year's daylight saving time Sundays in the US: the second Sunday of March (clocks forward) and the first of November
+  // (back). Days are YYYY-MM-DD.
+  const DST_YEAR = new Date().getUTCFullYear() + 1;
+  const nthSunday = (m, n) => { const f = new Date(Date.UTC(DST_YEAR, m - 1, 1)).getUTCDay(); return `${DST_YEAR}-${String(m).padStart(2, "0")}-${String(1 + (7 - f) % 7 + 7 * (n - 1)).padStart(2, "0")}`; };
+  const DST_SPRING = nthSunday(3, 2), DST_FALL = nthSunday(11, 1);
+  // A due date always ahead of what's owed from now (the Sunday after today): the Sunday after three weeks from today.
+  const dueLater = () => DUE.sundayEndAfter(DUE.addDays(today, 21));
   // A line's due date as the worker writes it: the Sunday after its order's day, or after the day it was written if later.
   const dueFor = (orderAt, createdAt) => { const t = DUE.etDay(createdAt); return DUE.sundayEndAfter(orderAt > t ? orderAt : t); };
   // A due date in the past that's already a Sunday's end, so the move onto the Sunday rule (which only runs again for an hour
@@ -4181,7 +4189,7 @@ try {
       prices: { checkout: 500, family: 500, monthly: 2500, extra: 2500, monthlySlots: 10, extraSlots: 15, extraMax: 1, dueDays: 3, dueRule: "sunday", dueTz: "America/New_York" },
       sub: null, lines: [], owed: 0, overdue: 0, paid30: 0, payments: [] }, "with the monthly plan offered, still none for Friends and Family");
     const famFrom = Number(dbRows("SELECT v FROM billing_config WHERE k = 'family_from:live'")[0].v);
-    assert.ok(report === null || report.from === new Date(famFrom + 14 * 3600000).toISOString().slice(0, 10), "their FAFO reports checkouts from when Friends and Family were charged");
+    assert.ok(report === null || report.from === DUE.addDays(DUE.etDay(famFrom), 1), "their FAFO reports checkouts from the Eastern day after Friends and Family were charged");
     const bob = await billOf(bobKey);
     assert.deepEqual([bob.exempt, bob.family, bob.prices.checkout, bob.prices.family], ["owner", false, 500, 500], "the owner's own FAFO is never charged");
     const gh = await billOf(GH_KEY);
@@ -4251,7 +4259,7 @@ try {
     assert.deepEqual(rest, { store: "target", storeName: "Target", orderNo: "TB-1001", item: "Sample Booster Bundle", qty: "2", orderAt: today, source: "alert", amount: 500,
       state: "due", paidAt: null, acctHash: acctOf(tessAcct), profile: "Tess Given", disputable: false });
     assert.equal(dueAt, dueFor(today, createdAt));
-    assert.ok(dueAt > createdAt && dueAt - createdAt <= 8 * DAY + 3600000, "this week's Sunday, or next week's on a Sunday");
+    assert.ok(dueAt > createdAt && dueAt - createdAt < 9 * DAY, "this week's Sunday, or next week's on a Sunday (in Eastern time: on a Saturday evening there it can be 8 days and some hours)");
     assert.deepEqual([st.owed, st.overdue, st.block], [500, 0, null]);
     await alerts([billEv({ orderNo: "TB-1001", stage: "shipped" }), billEv({ orderNo: "TB-1001" })]);
     assert.equal((await billOf(tessKey)).lines.length, 1, "one line per order");
@@ -4501,7 +4509,7 @@ try {
     assert.ok(posts(before).every((m) => m.startsWith("🗓️ **Tess**'s monthly plan will end <t:")), JSON.stringify(posts(before)));
     // Two checkouts waiting on its payment when it ends: owed then, due by the end of the Sunday after the day it ended, or
     // later if one was due later already (never earlier).
-    const late = DUE.sundayEndAfter("2027-03-13"), held = (no, due) => `('h${rid().slice(0, 10)}', '${tessHash}', 'live', 'target', '${no}', '${today}', 'alert', 500, ${Date.now()}, ${due}, '${sub1.id}')`;
+    const late = dueLater(), held = (no, due) => `('h${rid().slice(0, 10)}', '${tessHash}', 'live', 'target', '${no}', '${today}', 'alert', 500, ${Date.now()}, ${due}, '${sub1.id}')`;
     sqlRun(`INSERT INTO billing_lines (id, key_hash, mode, store, order_no, order_at, source, amount, created_at, due_at, held_sub) VALUES ${held("TB-HELD-1", Date.now() - 2 * DAY)}, ${held("TB-HELD-2", late)}`);
     Object.assign(sub1, { status: "canceled", ended_at: sxNow() });
     const n = webhookPosts.length, t0 = Date.now();
@@ -4806,10 +4814,17 @@ try {
     assert.deepEqual([l.state, dueNowIn(t0, t1, l.dueAt), again], ["due", true, `It's owed again, due ${DUE.dueWords(l.dueAt)}.`]);
     await act("waive", tessKey, "TB-1002");
     // One due later than that already keeps its date when the waive is undone.
-    const later = DUE.sundayEndAfter("2027-03-13");
+    const later = dueLater();
     sqlRun(`UPDATE billing_lines SET due_at = ${later} WHERE order_no = 'TB-1002'`);
-    assert.equal(doneOf((await act("unwaive", tessKey, "TB-1002")).location), "Waive undone: it's owed again, due Sunday, Mar 14.");
+    assert.equal(doneOf((await act("unwaive", tessKey, "TB-1002")).location), `Waive undone: it's owed again, due ${DUE.dueWords(later)}.`);
+    assert.match(DUE.dueWords(later), /^Sunday, [A-Z][a-z]{2} \d{1,2}$/);
     assert.equal((await lineOf(tessKey, "TB-1002")).dueAt, later);
+    // And when it's charged again after the store canceled it (Charge again never makes it due earlier either).
+    sqlRun(`UPDATE billing_lines SET canceled_at = ${Date.now()}, cancel_src = 'alert' WHERE order_no = 'TB-1002'`);
+    assert.equal((await lineOf(tessKey, "TB-1002")).state, "canceled");
+    assert.equal(doneOf((await act("charge-again", tessKey, "TB-1002")).location), `It's owed again, due ${DUE.dueWords(later)}.`);
+    const charged = await lineOf(tessKey, "TB-1002");
+    assert.deepEqual([charged.state, charged.dueAt], ["due", later], "it keeps its later date");
     await act("waive", tessKey, "TB-1002");
     // One their monthly plan covered once its payment went through was never owed: no Charge again.
     const view = unescape(await (await fetchOnce(`${billLink}&b=${b}`)).text()), covered = await id(tessKey, "TB-6001");
@@ -4870,9 +4885,14 @@ try {
   await test("due dates: the end of the Sunday after the order, in Eastern time across daylight saving time; a Sunday's is the next one; a late one's is the Sunday after the day it's written, never overdue as it arrives", async () => {
     const wb = hashOf(wesKey).slice(0, 16);
     const add = async (order, date) => { assert.equal(doneOf((await billPost(billLink, { action: "add", key: hashOf(wesKey), b: wb, store: "target", order, date })).location), `Added Target #${order} to their invoice.`); return lineOf(wesKey, order); };
-    // The week clocks go forward (Sunday, March 14, 2027) and the week they go back (Sunday, November 7, 2027).
-    const cases = [["DST-SPRING", "2027-03-13", "2027-03-15T03:59:59.999Z"], ["DST-SUNDAY", "2027-03-14", "2027-03-22T03:59:59.999Z"],
-      ["DST-EDT", "2027-10-30", "2027-11-01T03:59:59.999Z"], ["DST-FALL", "2027-11-06", "2027-11-08T04:59:59.999Z"], ["DST-FALL-SUN", "2027-11-07", "2027-11-15T04:59:59.999Z"]];
+    // The week clocks go forward (the second Sunday of March) and the week they go back (the first Sunday of November), next
+    // year, so always ahead. A Sunday's end is 03:59:59.999 UTC the next day in daylight saving time (EDT), 04:59:59.999 in EST.
+    const edt = (d) => `${DUE.addDays(d, 1)}T03:59:59.999Z`, est = (d) => `${DUE.addDays(d, 1)}T04:59:59.999Z`;
+    const cases = [["DST-SPRING", DUE.addDays(DST_SPRING, -1), edt(DST_SPRING)], ["DST-SUNDAY", DST_SPRING, edt(DUE.addDays(DST_SPRING, 7))],
+      ["DST-EDT", DUE.addDays(DST_FALL, -8), edt(DUE.addDays(DST_FALL, -7))], ["DST-FALL", DUE.addDays(DST_FALL, -1), est(DST_FALL)],
+      ["DST-FALL-SUN", DST_FALL, est(DUE.addDays(DST_FALL, 7))]];
+    assert.deepEqual([new Date(Date.parse(DST_SPRING)).getUTCDay(), new Date(Date.parse(DST_FALL)).getUTCDay(), DST_SPRING.slice(5, 8), DST_FALL.slice(5, 8)], [0, 0, "03-", "11-"]);
+    assert.ok(DST_SPRING.slice(8) >= "08" && DST_SPRING.slice(8) <= "14" && DST_FALL.slice(8) <= "07", `${DST_SPRING}, ${DST_FALL}`);
     for (const [order, date, due] of cases) {
       const l = await add(order, date);
       assert.equal(new Date(l.dueAt).toISOString(), due, `${date}: its Sunday's end, Eastern`);
@@ -4893,7 +4913,10 @@ try {
     assert.deepEqual([v.amount, v.state, v.dueAt], [500, "due", dueFor(yesterday, v.createdAt)]);
     assert.ok(v.dueAt > v.createdAt);
     const html = unescape(await (await fetchOnce(`${billLink}&b=${wb}`)).text());
-    assert.ok(html.includes("Target #DST-SPRING") && /#DST-SPRING[\s\S]*?due Sun, Mar 14</.test(html) && /#DST-FALL<[\s\S]*?due Sun, Nov 7</.test(html), "the Billing page names each one's Sunday");
+    const springText = DUE.dueText(Date.parse(edt(DST_SPRING))), fallText = DUE.dueText(Date.parse(est(DST_FALL)));
+    assert.deepEqual([springText, fallText], [`Sun, Mar ${Number(DST_SPRING.slice(8))}`, `Sun, Nov ${Number(DST_FALL.slice(8))}`]);
+    assert.ok(html.includes("Target #DST-SPRING") && new RegExp(`#DST-SPRING[\\s\\S]*?due ${springText}<`).test(html) && new RegExp(`#DST-FALL<[\\s\\S]*?due ${fallText}<`).test(html),
+      "the Billing page names each one's Sunday");
   });
   await test("payments back on after the keys were gone: orders from before then aren't billed late", async () => {
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10), ub = umaHash.slice(0, 16);
@@ -5261,12 +5284,27 @@ try {
     html = unescape(await (await fetchOnce(offLink)).text());
     assert.ok(html.includes("Friends and Family aren't charged (their price is $0).") && /<td>Friends and Family<\/td>\s*<td class="st">Not charged<\/td>/.test(html) && /<input id="price-family" name="price" value="0\.00"/.test(html));
     assert.equal((await billOf(bobKey)).exempt, "owner");
-    // Back to $5: charged from now (both modes), so an order from before then isn't billed late.
-    const n5 = webhookPosts.length;
+    // While it's $0, one of their checkouts (hidden now) passes its due date, and so does a charged buyer's.
+    const umaLine = `order_no = 'OWN-9001' AND key_hash = '${umaHash}'`, vicLine = `order_no = 'VF-A1' AND key_hash = '${vicHash}'`;
+    const umaDue0 = dbRows(`SELECT due_at FROM billing_lines WHERE ${umaLine}`)[0].due_at, past = pastDue();
+    sqlRun(`UPDATE billing_lines SET due_at = ${past} WHERE (${umaLine}) OR (${vicLine})`);
+    // Back to $5: charged from now (both modes), so an order from before then isn't billed late; and what they owed from
+    // before is due the coming Sunday, not overdue as it comes back.
+    const n5 = webhookPosts.length, t5 = Date.now();
     assert.equal(doneOf((await billPost(offLink, { action: "price-family", price: "5" })).location), "The Friends and Family price per checkout is $5 now, for their checkouts from now on.");
+    const t6 = Date.now();
     assert.deepEqual(posts(n5), ["💲 Friends and Family price per checkout: $0 → $5 (from now on; checkouts already on an invoice keep their price)"]);
     const restamped = ["live", "test"].map((m) => Number(dbRows(`SELECT v FROM billing_config WHERE k = 'family_from:${m}'`)[0].v));
     assert.ok(restamped.every((x) => Math.abs(x - Date.now()) < 120000), "family_from again, in both modes");
+    const a1 = await lineOf(vicKey, "VF-A1"), vicNow = await billOf(vicKey);
+    assert.deepEqual([a1.state, dueNowIn(t5, t6, a1.dueAt), vicNow.block, vicNow.overdue], ["due", true, null, 0], "due by the end of the Sunday after the save, never overdue on arrival");
+    assert.equal(dbRows(`SELECT due_at FROM billing_lines WHERE ${umaLine}`)[0].due_at, past, "a charged buyer's overdue checkout isn't moved");
+    sqlRun(`UPDATE billing_lines SET due_at = ${umaDue0} WHERE ${umaLine}`);
+    // Saving the same price again moves nothing (family_from isn't written again).
+    sqlRun(`UPDATE billing_lines SET due_at = ${past} WHERE ${vicLine}`);
+    assert.equal(doneOf((await billPost(offLink, { action: "price-family", price: "5" })).location), "The Friends and Family price per checkout is already $5.");
+    assert.equal((await lineOf(vicKey, "VF-A1")).state, "overdue");
+    sqlRun(`UPDATE billing_lines SET due_at = ${a1.dueAt} WHERE ${vicLine}`);
     const yesterday = new Date(Date.now() - DAY).toISOString().slice(0, 10);
     await alerts([billEv({ account: vicAcct(), orderNo: "VF-B3", at: yesterday })]);
     assert.deepEqual(vicLines("VF-B3"), [], "from before they were charged again");
@@ -5274,12 +5312,78 @@ try {
     const back = await billOf(vicKey);
     assert.deepEqual([back.exempt, back.family, back.prices.checkout], [null, true, 500]);
     assert.ok(back.lines.some((l) => l.orderNo === "VF-A1"), "their invoice again");
-    assert.equal(back.report.from, new Date(restamped[0] + 14 * 3600000).toISOString().slice(0, 10), "their FAFO reports checkouts from then");
+    assert.equal(back.report.from, DUE.addDays(DUE.etDay(restamped[0]), 1), "their FAFO reports checkouts from the Eastern day after");
     assert.deepEqual(await (await adminGet("/admin/billing")).json().then((x) => [x.prices.family, x.familyFrom.live]), [500, restamped[0]]);
     // As if that was two days ago again, so today's orders count.
     sqlRun(`UPDATE billing_config SET v = '${famFrom0}' WHERE k = 'family_from:live'`);
     await alerts([billEv({ account: vicAcct(), orderNo: "VF-B5" })]);
     assert.deepEqual(vicLines("VF-B5"), [500]);
+  });
+  // The first billing request after the worker that charges Friends and Family was deployed: family_from isn't there yet.
+  // What they owed from before (from while they were charged, before the owner moved them; hidden while they weren't) comes
+  // back on their invoice, and none of it may be overdue as it does (the 1.9.144 review).
+  await test("Friends and Family charged from the first request that finds no family_from: their unpaid checkouts from before (waived and canceled too, a key made by hand's) are due the coming Sunday, so Submit isn't off at once; a charged buyer's and a paid one stay as they were", async () => {
+    const vicHash = hashOf(vicKey), famFrom0 = dbRows("SELECT v FROM billing_config WHERE k = 'family_from:live'")[0].v;
+    const hand = "e".repeat(64), charged = "d".repeat(64), now = Date.now(), old = DUE.sundayEndOnOrAfter(now - 22 * DAY);
+    const row = (hash, no, x = {}) => `('f${rid().slice(0, 10)}', '${hash}', 'live', 'target', '${no}', '${today}', 'owner', 500, ${now - 30 * DAY}, ${old}, ${x.paid || "NULL"}, ${x.waived || "NULL"}, ${x.canceled || "NULL"})`;
+    const due = (no) => dbRows(`SELECT due_at FROM billing_lines WHERE order_no = '${no}'`)[0].due_at;
+    sqlRun(`INSERT OR REPLACE INTO billing_people (key_hash, family, updated_at) VALUES ('${charged}', 0, ${now})`);
+    sqlRun(`INSERT INTO billing_lines (id, key_hash, mode, store, order_no, order_at, source, amount, created_at, due_at, paid_at, waived_at, canceled_at) VALUES
+      ${row(vicHash, "FF-OLD-1")}, ${row(vicHash, "FF-OLD-2", { waived: now })}, ${row(vicHash, "FF-OLD-3", { canceled: now })}, ${row(vicHash, "FF-OLD-4", { paid: now })},
+      ${row(hand, "FF-OLD-5")}, ${row(charged, "FF-OLD-6")}`);
+    try {
+      assert.equal((await lineOf(vicKey, "FF-OLD-1")).state, "overdue", "weeks overdue to start with");
+      sqlRun("DELETE FROM billing_config WHERE k = 'family_from:live'");
+      const t0 = Date.now(), st = await billOf(vicKey), t1 = Date.now();
+      const stamp = Number((dbRows("SELECT v FROM billing_config WHERE k = 'family_from:live'")[0] || { v: 0 }).v);
+      assert.ok(Math.abs(stamp - t0) < 120000, "family_from written by that request");
+      const l = st.lines.find((x) => x.orderNo === "FF-OLD-1");
+      assert.deepEqual([st.family, st.exempt, l.state, dueNowIn(t0, t1, l.dueAt), st.block], [true, null, "due", true, null]);
+      for (const no of ["FF-OLD-2", "FF-OLD-3", "FF-OLD-5"]) assert.ok(dueNowIn(t0, t1, due(no)), `${no}: waived, canceled, or a key made by hand's, ready for Undo waive and Charge again`);
+      assert.deepEqual([due("FF-OLD-4"), due("FF-OLD-6")], [old, old], "a paid line, and a charged buyer's overdue one, stay as they were");
+      // Only as family_from is written: a request after that moves nothing.
+      sqlRun(`UPDATE billing_lines SET due_at = ${old} WHERE order_no = 'FF-OLD-1'`);
+      const again = await billOf(vicKey);
+      assert.deepEqual([again.lines.find((x) => x.orderNo === "FF-OLD-1").state, again.block && again.block.reason], ["overdue", "overdue"]);
+    } finally {
+      sqlRun(`INSERT INTO billing_config (k, v, updated_at) VALUES ('family_from:live', '${famFrom0}', ${now}) ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at`);
+      sqlRun("DELETE FROM billing_lines WHERE order_no LIKE 'FF-OLD-%'");
+      sqlRun(`DELETE FROM billing_people WHERE key_hash = '${charged}'`);
+    }
+    assert.equal((await billOf(vicKey)).block, null);
+  });
+  await test("Friends and Family: an order dated the Eastern day they started being charged is from before it (family-before), even when that began early that morning; the next day's is billed, and their FAFO reports from then", async () => {
+    const vicHash = hashOf(vicKey), vb = vicHash.slice(0, 16), famFrom0 = dbRows("SELECT v FROM billing_config WHERE k = 'family_from:live'")[0].v;
+    // 1 AM Eastern yesterday: before 10:00 UTC, so going by UTC days with the 14 hours' slack would bill yesterday's orders.
+    const d0 = new Date(Date.now() - DAY).toISOString().slice(0, 10), d1 = DUE.addDays(d0, 1), early = DUE.etMidnight(d0) + 3600000;
+    assert.deepEqual([DUE.etDay(early), early < Date.parse(d0 + "T10:00:00Z")], [d0, true]);
+    sqlRun(`UPDATE billing_config SET v = '${early}' WHERE k = 'family_from:live'`);
+    try {
+      await alerts([billEv({ account: vicAcct(), orderNo: "VF-ET-1", at: d0 })]);
+      assert.deepEqual(vicLines("VF-ET-1"), [], "that day's order isn't billed");
+      assert.equal(errOf((await billPost(offLink, { action: "add", key: vicHash, b: vb, store: "target", order: "VF-ET-2", date: d0 })).location), "Not added: from before friends and family were charged.");
+      await alerts([billEv({ account: vicAcct(), orderNo: "VF-ET-3", at: d1 })]);
+      assert.deepEqual(vicLines("VF-ET-3"), [500], "the next day's is");
+      assert.equal((await billOf(vicKey)).report.from, d1, "their FAFO reports checkouts from the next day");
+    } finally { sqlRun(`UPDATE billing_config SET v = '${famFrom0}' WHERE k = 'family_from:live'`); }
+  });
+  // Last on this worker: before the fix, the move onto the Sunday rule never ended for a line due near the year 10000, and
+  // that left this worker unable to answer anything.
+  await test("a checkout dated years ahead (9999-12-30) keeps its due date, and the move onto the Sunday rule still ends: /admin/billing and GET /billing answer", async () => {
+    const xb = xiaHash.slice(0, 16), soon = () => AbortSignal.timeout(20000);
+    assert.equal(doneOf((await billPost(offLink, { action: "add", key: xiaHash, b: xb, store: "target", order: "FAR-9999", date: "9999-12-30" })).location), "Added Target #FAR-9999 to their invoice.");
+    const far = () => dbRows(`SELECT due_at FROM billing_lines WHERE order_no = 'FAR-9999' AND key_hash = '${xiaHash}'`)[0].due_at, due0 = far();
+    assert.ok(due0 > Date.now() + 400 * DAY, "past the range the move looks at");
+    try {
+      const adm = await fetchOnce(BASE + "/admin/billing", { headers: { authorization: "Bearer test-admin-token" }, signal: soon() });
+      assert.equal(adm.status, 200);
+      assert.equal((await adm.json()).on, true);
+      const r = await fetchOnce(BASE + "/billing", { headers: { authorization: "Bearer " + xiaKey }, cache: "no-store", signal: soon() });
+      assert.equal(r.status, 200);
+      const l = (await r.json()).lines.find((x) => x.orderNo === "FAR-9999");
+      assert.deepEqual([l.state, l.dueAt, l.orderAt], ["due", due0, "9999-12-30"]);
+      assert.equal(far(), due0, "its due date as it was written");
+    } finally { sqlRun(`DELETE FROM billing_lines WHERE order_no = 'FAR-9999' AND key_hash = '${xiaHash}'`); }
   });
 
   console.log("\nProduct pictures (app 1.9.113)");

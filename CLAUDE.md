@@ -435,19 +435,23 @@ alone (every store's rows of one account) from reading the whole table. Only
     `usMidnight`, the US rule, as a fallback), `sundayEndAfter(day)`, `sundayEndOnOrAfter(ms)`, `dueNow(now)`.
     - A new line counts from the later of its order's day and the Eastern day it's written, so a late alert, a late
       report or a past date added by hand is never overdue on arrival. A take-over keeps the later due date.
-    - Charge again, dispute Keep, Undo waive and held lines released when a plan ends are due `dueNow` (never earlier
-      than they were), and the Billing page's messages name the date ("It's owed again, due Sunday, Nov 15.").
+    - Charge again, dispute Keep, Undo waive and held lines released when a plan ends are due `dueNow`, never earlier
+      than they were (`MAX(due_at, …)`, Charge again too), and the Billing page's messages name the date it has then
+      ("It's owed again, due Sunday, Nov 15.").
     - Unpaid lines from before moved once to the Sunday on or after their due date, never earlier (`dueSundays`, one
       statement, with the marker `due_sunday` in its batch; for an hour after the marker each isolate re-runs it at most
-      once a minute on lines written meanwhile, for the worker from before still answering during the deploy).
+      once a minute on lines written meanwhile, for the worker from before still answering during the deploy). Its list
+      of Sundays stops 400 days from now (`DUE_AHEAD_MS`; a line due later, an order dated years ahead, keeps its date),
+      and when a Sunday's end doesn't move on (near the year 10000), so it always ends.
     - `GET /billing`'s `prices` adds `dueRule: "sunday"` and `dueTz`, and keeps `dueDays: 3` for older pages, which say
       "due 3 days after it" until they update (their Due by column is right). The Billing page shows due dates in
       Eastern time ("Sun, Nov 15").
   - **Friends and Family pay** their own price per checkout: `price:family` in `billing_config` (`PRICE_FAMILY`, $5; $0 to
     $100, and $0 means they aren't charged, as before), set in the Billing page's second box (`action=price-family`; a
-    change posts "💲 Friends and Family price per checkout: …" to the channel). Only checkouts placed from
-    `family_from:<mode>` are billed to them (stamped beside `on_since` by the first billing request after the deploy, and
-    again when their price goes from $0 to more; before it, `billable` answers `family-before`).
+    change posts "💲 Friends and Family price per checkout: …" to the channel). Only checkouts placed after the Eastern
+    day of `family_from:<mode>` are billed to them (stamped beside `on_since` by the first billing request that finds it
+    missing, and again when their price goes from $0 to more). An order dated that day or before is `family-before`,
+    since an order's day is local and may be from before the stamp, and their FAFO's `report.from` is the day after.
     - `c.who` gives `family` (the class `exemptOf` gives) and `famPrice`; `exempt` is now "owner", or "family" only at $0,
       so every `w.exempt` check still means "not charged at all". The owner's own FAFO stays free.
     - Billed Friends and Family are on pay per checkout with nothing to pick (`plan` "checkout", `plans` ["checkout"];
@@ -455,8 +459,12 @@ alone (every store's rows of one account) from reading the whole table. Only
       (`planSlots`), and are refused Submit only while a checkout is overdue or a payment is disputed. `prices.checkout`
       is their own price, and `prices.family` goes to everyone.
     - Lines take the price of the buyer's kind as they're written (`priceSql(key, …)`; never a $0 line). Unpaid lines a
-      Friends and Family buyer already had keep their amounts and show on their invoice (no automatic waive; the move
-      made them due Sunday at the earliest); at $0 they stay hidden, as before.
+      Friends and Family buyer already had keep their amounts and show on their invoice (no automatic waive); at $0 they
+      stay hidden, as before. None comes back already overdue, which would turn Submit off at once: when their billing
+      starts (`family_from` first written in `onSince`, or the price going from $0 up), the same D1 batch makes every
+      unpaid line of theirs (canceled and waived too) due the coming Sunday at the earliest, `MAX(due_at, dueNow(now))`
+      (`familyRaise`: who's Friends and Family as `exemptOf` and the Billing page work it out, only while `family_from`
+      holds that call's stamp and their price isn't $0, so a request that lost the race, or a repeat, moves nothing).
     - Charge on a Friends and Family buyer also sets their plan to pay per checkout, so they never get `no-plan`; orders
       from before Charge stay `charge`, never billed. A paused subscription never holds lines.
     - The Billing page's rows say "Friends and Family · $5 per checkout", their status follows the usual chain, and its
