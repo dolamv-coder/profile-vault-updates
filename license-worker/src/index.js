@@ -682,7 +682,8 @@ async function slotLimit(request, env) {
   const lic = await slotLicense(request, env);
   if (!lic) return json({ error: "license not recognized" }, 401);
   const latest = await env.DB.prepare("SELECT * FROM slot_requests WHERE key_hash = ? ORDER BY created_at DESC LIMIT 1").bind(lic.hash).first();
-  // A monthly plan's slots (payments): 10, or 25 with the extra 15, which the buyer adds in Invoice rather than asking.
+  // A monthly plan's slots (payments): 10, or 25 with the extra 15, which the buyer adds in Invoice rather than asking (while
+  // the plan is offered; without it, only a subscription still going has them: planSlots).
   const plan = await planSlots(env, lic.hash).catch((e) => { console.error("billing", e); return null; });
   if (plan) return json({ limit: plan, request: slotRequestOut(latest), canRequest: false, plan: "monthly" }, 200, { "cache-control": "no-store" });
   return json({ limit: await currentSlotLimit(env, lic.hash), request: slotRequestOut(latest), canRequest: !!env.DISCORD_WEBHOOK_URL }, 200, { "cache-control": "no-store" });

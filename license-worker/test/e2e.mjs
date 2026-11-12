@@ -47,6 +47,7 @@ const USERS = {
   tess:  { id: snowflake(Date.parse("2022-01-01")), username: "tess", guilds: [] },
   uma:   { id: snowflake(Date.parse("2022-02-01")), username: "uma", guilds: [] },
   wes:   { id: snowflake(Date.parse("2022-03-01")), username: "wes", guilds: [] },
+  xia:   { id: snowflake(Date.parse("2022-05-01")), username: "xia", guilds: [] },   // with the monthly plan no longer offered
   vic:   { id: snowflake(Date.parse("2022-04-01")), username: "vic", guilds: [] },   // approved before payments began
 };
 const OWNER = snowflake(Date.parse("2017-02-01"));   // NOTIFY_USER_ID in approval mode
@@ -4072,7 +4073,9 @@ try {
   });
   stopWorker(workers.pop());
   await new Promise((r) => setTimeout(r, 1500));
-  await startWorker("billing", APPROVAL_PORT + 4, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_live_key_not_real"], "approval");
+  // With the monthly plan offered (BILLING_MONTHLY=on), as it was until the owner removed it on 2026-11-12: these tests go
+  // through it. Without it, below.
+  await startWorker("billing", APPROVAL_PORT + 4, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_live_key_not_real", "BILLING_MONTHLY=on"], "approval");
   const hookAt = (raw, opts = {}) => {
     const t = opts.t ?? Math.floor(Date.now() / 1000);
     const v1 = createHmac("sha256", opts.secret ?? "fake_webhook_secret_not_real").update(`${t}.${raw}`).digest("hex");
@@ -4089,7 +4092,7 @@ try {
   const alerts = async (events) => { const r = await api("/alerts", bobKey, { events }); assert.equal(r.status, 200); return r.json(); };
   await test("payments on: the first request notes when; buyers approved before are Friends and Family, keys made by hand too, and the FAFO that sends order alerts is the owner's", async () => {
     const g = await billOf(ginaKey);
-    assert.deepEqual({ ...g, now: 0 }, { on: true, mode: "live", exempt: "family", plan: null, nextPlan: null, block: null, now: 0,
+    assert.deepEqual({ ...g, now: 0 }, { on: true, mode: "live", exempt: "family", plan: null, nextPlan: null, block: null, now: 0, plans: ["checkout", "monthly"],
       prices: { checkout: 500, monthly: 2500, extra: 2500, monthlySlots: 10, extraSlots: 15, extraMax: 1, dueDays: 3 }, sub: null, lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null });
     assert.equal((await billOf(bobKey)).exempt, "owner");
     assert.equal((await billOf(GH_KEY)).exempt, "family", "a key made by hand");
@@ -4572,6 +4575,8 @@ try {
     assert.ok(/@gina[^<]*<br><span[^>]*>License …\w{4}<\/span><\/td>\s*<td>Friends and Family<\/td>/.test(html), "approved before: Friends and Family");
     assert.ok(/@bob[^<]*<br><span[^>]*>License …\w{4}<\/span><\/td>\s*<td>Your FAFO<\/td>/.test(html));
     assert.ok(/<td>Monthly · 10 slots · renews \d{4}-\d\d-\d\d<\/td>/.test(html), "Tess's plan");
+    assert.ok(html.includes('<p class="small">$5 per checkout, due 3 days after it (free if the store cancels it first), or $25 a month for 10 slots ($50 for 25). Buyers you approved'), "the prices, the monthly plan's while it's offered");
+    assert.ok(/<input id="price" name="price" value="5\.00"/.test(html), "the price per checkout's box");
     assert.ok(html.includes("sessionStorage.setItem(KEY, f.value)"), "the search is kept for the tab");
     for (const k of [tessKey, umaKey, ginaKey, bobKey]) assert.ok(!html.includes(k), "never a whole key");
     assert.equal((await fetchOnce(billLink.replace(/t=[^&]+/, "t=wrong"))).status, 404);
@@ -4729,7 +4734,7 @@ try {
   });
   await test("Billing page: the link lasts 24 hours, and 10 are asked a day; the admin summary", async () => {
     const d = await (await adminGet("/admin/billing")).json();
-    assert.deepEqual([d.on, d.mode, d.alertsSeen.last4, typeof d.prices.live.base, d.plans.monthly], [true, "live", bobKey.slice(-4), "string", 1]);
+    assert.deepEqual([d.on, d.mode, d.alertsSeen.last4, typeof d.prices.live.base, d.plans.monthly, d.prices.checkout, d.offered], [true, "live", bobKey.slice(-4), "string", 1, 500, ["checkout", "monthly"]]);
     assert.ok(d.owed.owed > 0 && d.people.n >= 2);
     assert.equal((await fetch(BASE + "/admin/billing")).status, 401);
     const id = billLink.match(/\/billing\/list\/([^?]+)/)[1];
@@ -4813,6 +4818,141 @@ try {
     assert.equal(await hook("checkout.session.completed", sx.sessions.values().next().value), 200, "a live event in test mode: nothing");
     await billPost(link, { action: "untester", key: umaHash, b });
     assert.deepEqual(await billOf(umaKey), { on: false });
+  });
+
+  console.log("\nPayments without the monthly plan, and the price per checkout (2026-11-12)");
+  stopWorker(workers.pop());
+  await new Promise((r) => setTimeout(r, 1500));
+  // As the worker runs now: BILLING_MONTHLY isn't "on", since the owner removed the monthly plan ("Remove $25 plan completely").
+  await startWorker("billing-off", APPROVAL_PORT + 10, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_live_key_not_real"], "approval");
+  const NO_MONTHLY = { error: "The monthly plan isn't offered any more." }, NO_PLAN = { reason: "no-plan", text: "Pick a plan to submit." };
+  const basePrice = () => [...sx.prices.values()].find((x) => x.lookup_key === "fafo_monthly_base").id;
+  let xiaKey, xiaHash, xiaCus;
+  await test("no monthly plan: GET /billing offers pay per checkout only; the monthly plan, its extra 15 slots and Resume are refused (409), with no call to Stripe", async () => {
+    xiaKey = await newBuyer("xia"); xiaHash = hashOf(xiaKey);
+    const st = await billOf(xiaKey);
+    assert.deepEqual([st.exempt, st.plans, st.plan, st.block, st.prices.checkout], [null, ["checkout"], null, NO_PLAN, 500]);
+    assert.deepEqual([st.prices.monthly, st.prices.extra], [2500, 2500], "still there for a page showing a plan already going");
+    const n = stripeCalls.length;
+    const plan = await api("/billing/plan", xiaKey, { plan: "monthly" });
+    assert.deepEqual([plan.status, await plan.json()], [409, NO_MONTHLY]);
+    for (const body of [{ kind: "monthly", extras: 0, on: 2 }, { kind: "monthly", extras: 1, on: 2 }, { kind: "extras", extras: 1, on: 2 }, { kind: "extras", extras: 0, on: 2 }, { kind: "resume" }])
+      assert.deepEqual(await checkout(xiaKey, body), { status: 409, body: NO_MONTHLY }, JSON.stringify(body));
+    assert.equal(stripeCalls.length, n, "Stripe never asked");
+    assert.equal((await api("/billing/plan", xiaKey, { plan: "weekly" })).status, 400);
+    assert.deepEqual((await (await adminGet("/admin/billing")).json()).offered, ["checkout"]);
+  });
+  await test("no monthly plan: one picked and never paid for, or with no subscription left, is no plan (never stuck being set up); pay per checkout takes its place", async () => {
+    // Picked on an older FAFO and never paid: Stripe has it as being set up.
+    xiaCus = "cus_" + rid().slice(0, 14);
+    sx.customers.set(xiaCus, { id: xiaCus, object: "customer", name: "xia", metadata: { fafo_license: xiaHash } });
+    const stuck = sxSub(xiaCus, [basePrice()], { fafo_license: xiaHash }, { status: "incomplete" });
+    assert.equal(await hook("customer.subscription.created", stuck), 200);
+    assert.equal(dbRows(`SELECT sub_id FROM billing WHERE key_hash = '${xiaHash}' AND mode = 'live'`)[0].sub_id, stuck.id);
+    const st = await billOf(xiaKey);
+    assert.deepEqual([st.plan, st.block], [null, NO_PLAN], "not setting-up, which they couldn't finish");
+    const r = await submit(xiaKey, [ownFile([["Xia Own", "xia.own@example.com"]]), loginsFile(["xia.own@example.com"])], { name: "Xia", on: 1 });
+    assert.equal(r.status, 402); assert.equal((await r.json()).billing.reason, "no-plan");
+    Object.assign(stuck, { status: "incomplete_expired", ended_at: sxNow() });
+    assert.equal(await hook("customer.subscription.deleted", stuck), 200);
+    // A monthly plan with no subscription at all, set to end into pay per checkout.
+    sqlRun(`UPDATE billing SET plan = 'monthly', next_plan = 'checkout', sub_id = NULL WHERE key_hash = '${xiaHash}' AND mode = 'live'`);
+    const gone = await billOf(xiaKey);
+    assert.deepEqual([gone.plan, gone.nextPlan, gone.sub, gone.block], [null, null, null, NO_PLAN]);
+    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [20, true, undefined], "they ask you for slots as anyone does");
+    const p = await (await api("/billing/plan", xiaKey, { plan: "checkout" })).json();
+    assert.deepEqual([p.plan, p.nextPlan, p.block, p.plans], ["checkout", null, null, ["checkout"]]);
+  });
+  await test("no monthly plan: one already going carries on (covered, its 10 slots, a failed payment paid on Stripe's page, Cancel), with no extra slots or Resume; once it ends they ask for slots as anyone does", async () => {
+    const sub = sxSub(xiaCus, [basePrice()], { fafo_license: xiaHash });
+    assert.equal(await hook("customer.subscription.created", sub), 200);
+    const st = await billOf(xiaKey);
+    assert.deepEqual([st.plan, st.sub.status, st.sub.slots, st.block, st.plans], ["monthly", "active", 10, null, ["checkout"]]);
+    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json(), { limit: 10, request: null, canRequest: false, plan: "monthly" });
+    const req = await api("/slots/request", xiaKey, { requested: 30 });
+    assert.deepEqual([req.status, await req.json()], [409, { error: "Your monthly plan has 10 slots" }]);
+    // Covered: an order on an account given to them isn't billed. More slots on than the plan has are refused.
+    sqlRun(`INSERT OR IGNORE INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES ('*', 'bill.pool9@example.com', 'bill.pool9@example.com', 'Sample-Pw-9', ${Date.now()}, 'test')`);
+    const sent = await submit(xiaKey, [ownFile([["Xia Given", ""]], 1)], { name: "Xia", on: 1 });
+    assert.equal(sent.status, 200, await sent.clone().text());
+    const acct = dbRows(`SELECT email FROM accounts WHERE key_hash = '${xiaHash}' AND store = 'target' AND profile = 'Xia Given'`)[0].email;
+    assert.equal((await alerts([billEv({ account: acct, orderNo: "XM-1" })])).sent, 1);
+    assert.equal(await lineOf(xiaKey, "XM-1"), undefined, "covered by their plan");
+    const over = await submit(xiaKey, [ownFile([["Xia Own", "xia.own@example.com"]]), loginsFile(["xia.own@example.com"])], { name: "Xia", on: 11 });
+    assert.deepEqual([over.status, (await over.json()).billing], [402, { reason: "over-limit", slots: 10, on: 11 }]);
+    for (const body of [{ kind: "extras", extras: 1, on: 2 }, { kind: "resume" }]) assert.deepEqual(await checkout(xiaKey, body), { status: 409, body: NO_MONTHLY }, JSON.stringify(body));
+    // A renewal that fails turns Submit off until it's paid on Stripe's page, as before.
+    const renewal = sxRenew(sub), invEv = { id: renewal.id, object: "invoice", parent: { type: "subscription_details", subscription_details: { subscription: sub.id } } };
+    renewal.status = "open"; sub.status = "past_due";
+    assert.equal(await hook("invoice.payment_failed", invEv), 200);
+    assert.deepEqual((await billOf(xiaKey)).block, { reason: "past-due", text: "Your monthly payment didn't go through." });
+    assert.deepEqual(await checkout(xiaKey, { kind: "invoice" }), { status: 200, body: { url: renewal.hosted_invoice_url } });
+    renewal.status = "paid"; sub.status = "active";
+    assert.equal(await hook("invoice.paid", invEv), 200);
+    assert.equal((await billOf(xiaKey)).block, null);
+    const end = await checkout(xiaKey, { kind: "cancel" });
+    assert.deepEqual([end.status, end.body.plan, end.body.nextPlan, end.body.sub.cancelAtEnd], [200, "monthly", null, true]);
+    assert.equal(lastStripe("POST", `/v1/subscriptions/${sub.id}`).params.cancel_at_period_end, "true");
+    assert.deepEqual(await checkout(xiaKey, { kind: "resume" }), { status: 409, body: NO_MONTHLY }, "one set to end can't be kept going");
+    assert.equal((await alerts([billEv({ account: acct, orderNo: "XM-2" })])).sent, 1);
+    assert.equal(await lineOf(xiaKey, "XM-2"), undefined, "still covered until it ends");
+    // It ends (they didn't pick what comes after): no plan, and the slots you approved again at once, not the plan's for 30 days.
+    Object.assign(sub, { status: "canceled", ended_at: sxNow() });
+    assert.equal(await hook("customer.subscription.deleted", sub), 200);
+    const after = await billOf(xiaKey);
+    assert.deepEqual([after.plan, after.sub, after.block], [null, null, NO_PLAN]);
+    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [20, true, undefined]);
+  });
+  let offLink;
+  const priceRow = () => dbRows("SELECT v FROM billing_config WHERE k = 'price:checkout'");
+  const BAD_PRICE = "Not saved: type a price from $1 to $100 in dollars, like 5 or 7.50.";
+  await test("the Billing page's price per checkout: the box shows $5; anything but $1 to $100 in dollars and cents is refused, the same price changes nothing, and only the owner's link can change it", async () => {
+    assert.equal((await api("/billing/list", tessKey, { name: "Tess" })).status, 403, "only the owner's FAFO gets the page");
+    assert.equal((await api("/billing/list", bobKey, { name: "Owner" })).status, 200);
+    offLink = webhookPosts.at(-1).content.match(/\((http[^)]+)\)/)[1];
+    const html = unescape(await (await fetchOnce(offLink)).text());
+    assert.ok(html.includes('<p class="small">$5 per checkout, due 3 days after it (free if the store cancels it first). Buyers you approved'), html.slice(0, 3000));
+    assert.ok(!/a month|monthly plan isn't offered/.test(html), "no monthly plan offered, and no one on one");
+    assert.ok(/<label for="price">Price per checkout<\/label>[\s\S]*?<input id="price" name="price" value="5\.00"[^>]*>[\s\S]*?value="price">Save<\/button><\/div>\s*<p class="hint">Applies to checkouts from now on\. Ones already on an invoice keep their price\.<\/p>/.test(html), html.slice(0, 4000));
+    const before = webhookPosts.length;
+    for (const price of ["abc", "", "0.99", "0", "100.01", "101", "5.555", "-5", "1e3", "5,00", "$", "10 dollars", "1000"]) {
+      const r = await billPost(offLink, { action: "price", price });
+      assert.deepEqual([r.status, errOf(r.location)], [303, BAD_PRICE], JSON.stringify(price));
+    }
+    for (const price of ["5", "5.00", "$5", " 5.0 "]) assert.equal(doneOf((await billPost(offLink, { action: "price", price })).location), "The price per checkout is already $5.", JSON.stringify(price));
+    assert.deepEqual(priceRow(), [], "nothing written");
+    assert.equal(webhookPosts.length, before, "nothing posted");
+    assert.equal((await billPost(offLink.replace(/t=[^&]+/, "t=wrong"), { action: "price", price: "20" })).status, 404, "the page is the owner's, by its link");
+    assert.deepEqual(priceRow(), []);
+    assert.equal((await billOf(umaKey)).prices.checkout, 500);
+  });
+  await test("changing the price per checkout: the channel hears once, new checkouts take it (an order alert, a buyer's FAFO, Add a checkout), and ones already on an invoice keep theirs", async () => {
+    const ub = umaHash.slice(0, 16);
+    assert.deepEqual(await lineOf(umaKey, "OWN-9001").then((l) => [l.amount, l.state]), [500, "due"]);
+    const before = webhookPosts.length;
+    assert.equal(doneOf((await billPost(offLink, { action: "price", price: "$10" })).location), "The price per checkout is $10 now, for checkouts from now on.");
+    assert.deepEqual(posts(before), ["💲 Price per checkout: $5 → $10 (from now on; checkouts already on an invoice keep their price)"]);
+    assert.deepEqual(priceRow(), [{ v: "1000" }]);
+    assert.equal(doneOf((await billPost(offLink, { action: "price", price: "10.00" })).location), "The price per checkout is already $10.");
+    assert.equal(webhookPosts.length, before + 1, "the same price again posts nothing");
+    const st = await billOf(umaKey);
+    assert.deepEqual([st.prices.checkout, st.lines.find((l) => l.orderNo === "OWN-9001").amount], [1000, 500], "one already on the invoice keeps its price");
+    assert.equal((await (await adminGet("/admin/billing")).json()).prices.checkout, 1000);
+    await alerts([billEv({ account: umaAcct, orderNo: "UG-P10" })]);
+    const rep = await (await api("/billing/checkouts", umaKey, { orders: [{ account: "both.own@example.com", store: "target", orderNo: "UO-P10", at: today, stage: "placed" }] })).json();
+    assert.equal(rep.added, 1);
+    assert.equal(doneOf((await billPost(offLink, { action: "add", key: umaHash, b: ub, store: "target", order: "OWN-P10", date: today })).location), "Added Target #OWN-P10 to their invoice.");
+    const now = await billOf(umaKey), amt = (no) => now.lines.find((l) => l.orderNo === no).amount;
+    assert.deepEqual([amt("UG-P10"), amt("UO-P10"), amt("OWN-P10"), amt("OWN-9001")], [1000, 1000, 1000, 500]);
+    // In cents too; checkouts from before keep theirs.
+    const n = webhookPosts.length;
+    assert.equal(doneOf((await billPost(offLink, { action: "price", price: "7.5" })).location), "The price per checkout is $7.50 now, for checkouts from now on.");
+    assert.deepEqual(posts(n), ["💲 Price per checkout: $10 → $7.50 (from now on; checkouts already on an invoice keep their price)"]);
+    await alerts([billEv({ account: umaAcct, orderNo: "UG-P750" })]);
+    const last = await billOf(umaKey);
+    assert.deepEqual([last.prices.checkout, last.lines.find((l) => l.orderNo === "UG-P750").amount, last.lines.find((l) => l.orderNo === "UG-P10").amount], [750, 750, 1000]);
+    const html = unescape(await (await fetchOnce(offLink)).text());
+    assert.ok(html.includes("$7.50 per checkout, due 3 days after it") && /<input id="price" name="price" value="7\.50"/.test(html), html.slice(0, 3000));
   });
 
   console.log("\nProduct pictures (app 1.9.113)");

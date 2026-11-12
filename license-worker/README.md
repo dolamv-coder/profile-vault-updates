@@ -711,14 +711,14 @@ month plan and its extra 15 slots ("Remove $25 plan completely"); a buyer who's 
 (below). It stays off until you add the two Stripe secrets below; until then nothing changes anywhere.
 
 - **Who pays.** Anyone who isn't Friends and Family and isn't on a paid monthly plan pays the price per checkout for each
-  checkout on the slots they sent: an order on an account you gave them (from your FAFO's order alerts), an order on their own account
-  while it was out as one of their slots (their FAFO finds it in their email and reports it; this worker checks the
-  account was out then), or one you add on the Billing page. One order is one checkout, whatever the quantity. Each is
-  due 3 days after the order, and free if the store cancels it before it's paid. A checkout takes the price as it is when
-  it goes on the invoice, and keeps it: a new price is for checkouts from then on ($10 ones from before 2026-11-12 stay
-  $10). Orders from before payments came on are never billed, and neither
-  are checkouts on a declined batch's slots (add one by hand if you ran it), nor ones after a slot was pulled (once your
-  channel was told of the pull).
+  checkout on the slots they sent: an order on an account you gave them (from your FAFO's order alerts), an order on
+  their own account while it was out as one of their slots (their FAFO finds it in their email and reports it; this
+  worker checks the account was out then), or one you add on the Billing page. One order is one checkout, whatever the
+  quantity. Each is due 3 days after the order, and free if the store cancels it before it's paid. A checkout takes the
+  price as it is when it goes on the invoice, and keeps it: a new price is for checkouts from then on ($10 ones from
+  before 2026-11-12 stay $10). Orders from before payments came on are never billed, and neither are checkouts on a
+  declined batch's slots (add one by hand if you ran it), nor ones after a slot was pulled (once your channel was told
+  of the pull).
 - **No monthly plan.** Buyers can't pick the monthly plan or start one, nor add or remove its extra 15 slots (FAFO
   1.9.143 offers only pay per checkout; an older FAFO that still shows the monthly plan is told "The monthly plan isn't
   offered any more."). A subscription that's already going carries on as it was until it ends: it covers its months once
