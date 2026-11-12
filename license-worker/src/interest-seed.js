@@ -97,3 +97,54 @@ export const INTEREST_SEED = [
     name: "Ascended Heroes Deluxe Pin Collection: Tepig",
     about: "Listed at Target as the Tepig Deluxe Pin Collection." },
 ];
+
+// Products added to the live list once, after the seed (interest_adds records each batch applied): kept on a list the
+// owner already saved, never brought back once the owner takes one off. An entry stays here once it's out: the seed's rev
+// counts them (seedRev in index.js), so a FAFO that has the seed from before an addition fetches it again.
+// "2026-11-13-friday": the 13 new products on the drop list the owner sent on 2026-11-12 ("here are the product that may
+// be dropping on friday"); the other 11 on it were on the list already. Looked up from search results the same way as the
+// seed; the Big Tin 4-Pack is most likely the ex Tin (the line's only tin with 4 packs), so its description says no more
+// than that.
+export const INTEREST_ADDS = [
+  { id: "2026-11-13-friday", items: [
+    { sku: "1013645543", store: "target", set: "Black Bolt & White Flare", tcg: "668632",
+      name: "Unova Heavy Hitters Premium Collection",
+      about: "Foil Zekrom ex, Reshiram ex, Victini and Zoroark promo cards, an oversize foil Kyurem ex card, 6 Black Bolt and 6 White Flare booster packs." },
+    { sku: "1012470483", store: "target", set: "30th Celebration", tcg: "718675",
+      name: "30th Celebration Big Tin 4-Pack (styles may vary)",
+      about: "A 30th Celebration tin in one of two styles, picked at random (Sylveon ex or Greninja ex), with a foil promo card of that Pokémon and booster packs." },
+    { sku: "1012663804", store: "target", set: "30th Celebration", tcg: "704189",
+      name: "30th Celebration Ditto Premium Collection",
+      about: "A Ditto promo card, an acrylic card display and 8 30th Celebration booster packs." },
+    { sku: "1010892071", store: "target", set: "30th Celebration", tcg: "704188",
+      name: "30th Celebration Battle Deck: Umbreon ex",
+      about: "A ready-to-play, all-foil 60-card Umbreon ex deck with a Zeraora promo card, a deck box, a playmat and a coin." },
+    { sku: "1013166578", store: "target", set: "Delta Reign", tcg: "712097",
+      name: "Delta Reign Booster Bundle",
+      about: "6 Mega Evolution—Delta Reign booster packs." },
+    { sku: "1012793604", store: "target", set: "Delta Reign", tcg: "712102",
+      name: "Delta Reign Elite Trainer Box",
+      about: "The regular (not Pokémon Center) Elite Trainer Box: 9 Delta Reign booster packs, a full-art foil Kyogre promo card, 65 card sleeves, Energy cards, a player's guide, dice and a collector's box." },
+    { sku: "1013166573", store: "target", set: "Delta Reign", tcg: "712093",
+      name: "Delta Reign Three-Booster Blister",
+      about: "3 Delta Reign booster packs and a foil promo card." },
+    { sku: "1013166576", store: "target", set: "Delta Reign", tcg: "712094",
+      name: "Delta Reign Booster Display",
+      about: "36 Delta Reign booster packs." },
+    { sku: "1012850572", store: "target", set: "30th Celebration", tcg: "704191",
+      name: "30th Celebration Ultra-Premium Collection: Night",
+      about: "29 30th Celebration booster packs and a Classic Collection pack, foil Pikachu ex and Umbreon ex promo cards, a playmat, card sleeves, a deck box, a metal coin and dice." },
+    { sku: "1012850570", store: "target", set: "30th Celebration", tcg: "704190",
+      name: "30th Celebration Ultra-Premium Collection: Day",
+      about: "29 30th Celebration booster packs and a Classic Collection pack, foil Pikachu ex and Espeon ex promo cards, a playmat, card sleeves, a deck box, a metal coin and dice." },
+    { sku: "94681790", store: "target", set: "Mega Evolution", tcg: "654213",
+      name: "Mega Charizard X ex Ultra-Premium Collection",
+      about: "18 booster packs, foil Mega Charizard X ex and Oricorio ex promo cards, a playmat, card sleeves, a deck box, a metal coin and dice." },
+    { sku: "1012793603", store: "target", set: "30th Celebration", tcg: "704193",
+      name: "30th Celebration Figure Collection: Mew",
+      about: "5 30th Celebration booster packs, a foil Mew promo card, an oversize foil Mew card and a sculpted Mew figure." },
+    { sku: "1012850573", store: "target", set: "30th Celebration", tcg: "704194",
+      name: "30th Celebration Figure Collection: Mewtwo",
+      about: "5 30th Celebration booster packs, a foil Mewtwo promo card, an oversize foil Mewtwo card and a sculpted Mewtwo figure." },
+  ] },
+];

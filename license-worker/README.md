@@ -676,7 +676,14 @@ at that moment.
 - **Your FAFO edits the list** (the one that sends order alerts, as for Premium buyers): **Edit list** on Interests
   adds products (a Target or Pokémon Center link, or a SKU and its name), changes a product's name, description,
   set, store and picture, and removes one. Every buyer's FAFO shows the change within 10 minutes.
-- Until you first save the list, it's the 30 Target SKUs you gave (`INTEREST_SEED` in `src/interest-seed.js`).
+- Until you first save the list, it's the 30 Target SKUs you gave (`INTEREST_SEED` in `src/interest-seed.js`), with
+  the products added since.
+- **Products added to your list once** (`INTEREST_ADDS` in `src/interest-seed.js`; the first, on 2026-11-12 at your
+  request, is the new products from Friday's drop list): each addition goes onto your list once, whether you've saved
+  it or not. On a saved list, the products it doesn't have yet go at the end (one you have already keeps what you
+  wrote for it), with a new revision, so every buyer's FAFO shows them within 10 minutes; a change your FAFO made from
+  the list as it was before is refused once, and FAFO shows you the list with them to make it again. A product you
+  take off after that stays off. Which additions went on is the `interest_adds` table.
 - **Pictures**: a product's picture is one you paste or choose (kept here, 150 KB at most, by a hash of it), or else
   its TCGplayer product's, which this worker fetches from TCGplayer's image servers the first time a FAFO shows it
   and keeps. Only the pictures your list shows are served (`GET /interests/pic/…`, which needs no license key, as a
@@ -684,8 +691,9 @@ at that moment.
   added that it doesn't show once they're a day old.
 - Two of your computers changing it at once can't overwrite each other: a change made from an older copy of the list
   is refused, and FAFO shows you the list as it is now to make it again.
-- The list is the `interest_list` table (one row) and its pictures `interest_pics`, which `npm run db:init` (and the
-  deploy Action) adds. A buyer's ticks are in their own vault; this worker only sees the SKUs a batch sends.
+- The list is the `interest_list` table (one row), its pictures `interest_pics` and the additions applied
+  `interest_adds`, which `npm run db:init` (and the deploy Action) adds. A buyer's ticks are in their own vault;
+  this worker only sees the SKUs a batch sends.
 - If this worker can't read the list of keys made by hand on GitHub just then, a buyer with such a key keeps the list
   FAFO last had (the answer is 503, not "not a license"), as for Premium buyers.
 
@@ -696,26 +704,35 @@ for another store, are left out, and nothing about them can stop a batch.
 
 ## Payments (Stripe)
 
-From FAFO 1.9.130 your buyers can pay you for checkouts through Stripe (the owner's decisions, 2026-10-18): **$10 per
-checkout**, or a **monthly plan, $25 for 10 slots switched on at once** with nothing per checkout, plus **15 more slots
-for another $25** (25 slots, $50 a month). It stays off until you add the two Stripe secrets below; until then nothing
-changes anywhere.
+From FAFO 1.9.130 your buyers can pay you for checkouts through Stripe (the owner's decisions, 2026-10-18): a price
+**per checkout**, **$5** to start ($10 until 2026-11-12, when the owner lowered it), which you change in the **Price per
+checkout** box on the Billing page (below). There's no monthly plan any more: on 2026-11-12 the owner removed the $25 a
+month plan and its extra 15 slots ("Remove $25 plan completely"); a buyer who's already on one keeps it until it ends
+(below). It stays off until you add the two Stripe secrets below; until then nothing changes anywhere.
 
-- **Who pays.** Anyone who isn't Friends and Family and isn't on a paid monthly plan pays $10 for each checkout on the
-  slots they sent: an order on an account you gave them (from your FAFO's order alerts), an order on their own account
-  while it was out as one of their slots (their FAFO finds it in their email and reports it; this worker checks the
-  account was out then), or one you add on the Billing page. One order is one checkout, whatever the quantity. Each is
-  due 3 days after the order, and free if the store cancels it before it's paid. Orders from before payments came on
-  are never billed, and neither are checkouts on a declined batch's slots (add one by hand if you ran it), nor ones
-  after a slot was pulled (once your channel was told of the pull).
-- **The monthly plan** covers a month once Stripe says its invoice is paid (and stops covering when it ends, if you
-  cancel it at once in Stripe). Checkouts while a renewal is being charged, or retried after it failed, wait: free if
-  it's paid, $10 each if the plan ends unpaid.
-- **Who can submit.** A buyer has to pick a plan in FAFO's **Invoice** page first. Submit stays off for them while a
-  checkout is overdue, their monthly payment has failed, or a payment is disputed with their bank, and a monthly buyer
-  can't have more slots on than their plan has (10 or 25; they add the extra 15 in Invoice instead of asking you). A
-  batch refused this way is never posted, and your channel hears about it (at most every 6 hours per buyer). FAFOs older
-  than 1.9.130 can't say why; the channel's message says so.
+- **Who pays.** Anyone who isn't Friends and Family and isn't on a paid monthly plan pays the price per checkout for each
+  checkout on the slots they sent: an order on an account you gave them (from your FAFO's order alerts), an order on
+  their own account while it was out as one of their slots (their FAFO finds it in their email and reports it; this
+  worker checks the account was out then), or one you add on the Billing page. One order is one checkout, whatever the
+  quantity. Each is due 3 days after the order, and free if the store cancels it before it's paid. A checkout takes the
+  price as it is when it goes on the invoice, and keeps it: a new price is for checkouts from then on ($10 ones from
+  before 2026-11-12 stay $10). Orders from before payments came on are never billed, and neither are checkouts on a
+  declined batch's slots (add one by hand if you ran it), nor ones after a slot was pulled (once your channel was told
+  of the pull).
+- **No monthly plan.** Buyers can't pick the monthly plan or start one, nor add or remove its extra 15 slots (FAFO
+  1.9.143 offers only pay per checkout; an older FAFO that still shows the monthly plan is told "The monthly plan isn't
+  offered any more."). A subscription that's already going carries on as it was until it ends: it covers its months once
+  Stripe says each invoice is paid (checkouts while a renewal is being charged, or retried after it failed, wait: free
+  if it's paid, at their price if the plan ends unpaid), its 10 or 25 slots are that buyer's limit, and they can still
+  cancel it or pay a failed payment in Invoice, but not resume one set to end. Once it ends they're on pay per checkout
+  if they chose it, or else pick it in Invoice. A buyer who picked the monthly plan but never finished paying for it
+  counts as having no plan. To offer the plan again, set `BILLING_MONTHLY = "on"` in `wrangler.toml`'s `[vars]` and
+  deploy (the tests start each payments worker with the setting it tests, whatever `wrangler.toml` says).
+- **Who can submit.** A buyer has to pick a plan in FAFO's **Invoice** page first (pay per checkout). Submit stays off
+  for them while a checkout is overdue, their monthly payment has failed, or a payment is disputed with their bank, and a
+  buyer still on a monthly plan can't have more slots on than it has (10 or 25). A batch refused this way is never
+  posted, and your channel hears about it (at most every 6 hours per buyer). FAFOs older than 1.9.130 can't say why; the
+  channel's message says so.
 - **Friends and Family** are never charged, Submit is never off for them, and their slot limits stay as you approved
   them. Everyone you approved before payments came on is Friends and Family (the first request that sees the Stripe
   keys notes when that was), and so is every key you made by hand. The Billing page moves anyone either way: **Charge**
@@ -733,11 +750,11 @@ changes anywhere.
 2. **A restricted key** (Developers → API keys → **Create restricted key**), with only what the worker needs:
    - Checkout Sessions: **Write** (opens the payment page, and closes one that's no longer right)
    - Customers: **Write** (one Stripe customer per buyer)
-   - Subscriptions: **Write** (the monthly plan: end it, add or remove the extra slots, pause it for Friends and Family)
-   - Products and Prices: **Write** (the worker makes "FAFO monthly plan (10 slots)" and "FAFO extra 15 slots" the first
-     time a buyer subscribes)
+   - Subscriptions: **Write** (a monthly plan already going: end it, pause it for Friends and Family)
+   - Products and Prices: **Write** (only while the monthly plan is offered: the worker makes "FAFO monthly plan (10
+     slots)" and "FAFO extra 15 slots" the first time a buyer subscribes)
    - Invoices: **Read** (the page to pay a failed monthly payment)
-   - Refunds: **Write** (when a buyer paid for a checkout the store canceled meanwhile, that $10 goes back by itself)
+   - Refunds: **Write** (when a buyer paid for a checkout the store canceled meanwhile, its price goes back by itself)
    - PaymentIntents: **Read** (to tell whose payment a bank dispute is about)
 
    A live key (its name has `_live_` in it) puts payments in **live mode**; a sandbox's test key, in **test mode**.
@@ -775,7 +792,7 @@ changes anywhere.
 5. **Try test mode first.** Use the sandbox's restricted key and its webhook's secret. In test mode only licenses you
    mark **Tester** see plans and pay, for checkouts from when you marked them (everyone else carries on as if payments
    were off), and nothing counts in live mode later. Take a second license of your own (yours is never charged), open the Billing page (step below), open that
-   buyer's **Details** and choose **Tester**. In that FAFO, pick a plan in Invoice and pay with Stripe's test card
+   buyer's **Details** and choose **Tester**. In that FAFO, pick pay per checkout in Invoice and pay with Stripe's test card
    **4242 4242 4242 4242** (any future date, any CVC and ZIP). When it all works, swap both secrets for the live ones.
 
 ### The Billing page
@@ -783,7 +800,14 @@ changes anywhere.
 In your FAFO, **Settings → Billing → See billing**. Your channel gets a link that works for 24 hours (10 a day). It shows
 what's owed and overdue, what was paid in the last 30 days, whether your FAFO's order alerts are coming in (if they
 stop, checkouts on accounts you give out aren't billed: keep Order alerts for buyers on in your desktop FAFO), and every
-buyer with their plan and status. A buyer's **Details** has:
+buyer with their plan and status.
+
+**Price per checkout** (the owner's request, 2026-11-12) is the price in dollars, from $1 to $100, with up to two
+decimals (5, 7.50). **Save** changes it for checkouts from then on, in test and live mode alike: ones already on an
+invoice keep the price they went on at, and are paid at it. Your channel gets a note each time it changes (`💲 Price per
+checkout: $5 → $10 …`); saving the same price changes nothing. Buyers' FAFOs show the new price in Invoice.
+
+A buyer's **Details** has:
 
 - **Friends and Family** or **Charge**, **Tester** (in test mode), and **Clear dispute hold** after a bank dispute.
 - Their invoice, with **Waive**, **Undo waive**, **Mark paid** (paid some other way), **Charge again** (one canceled
@@ -798,15 +822,16 @@ buyer who had that email out as a slot that day, or a list to pick from when two
 **Add** writes them. Pasted emails are only matched, never kept. If the store cancels one you added on a buyer's own
 account, their FAFO says so and it's free, as for the checkouts it reports itself (you can charge it again).
 
-- **Refunds** are made in your Stripe Dashboard; your channel hears about them. The prices are FAFO's own (the
-  `PRICE_*` numbers in `src/index.js`, also shown in the app), so changing one is a change here, not in Stripe. A new
-  checkout price applies to checkouts from then on: each one owed is paid at what it cost when it was added.
+- **Refunds** are made in your Stripe Dashboard; your channel hears about them. The prices are FAFO's own, not Stripe's:
+  the price per checkout is the Billing page's box (kept in `billing_config` as `price:checkout`, in cents; `PRICE_CHECKOUT`
+  in `src/index.js` until it's first saved), and the monthly plan's are `PRICE_MONTHLY` and `PRICE_EXTRA` there.
 - **Removing either secret turns payments off here, but Stripe keeps charging monthly plans.** Cancel those in Stripe
   first if you're stopping for good. Checkouts from while they were gone aren't billed once you add them back.
 - Payments are in the `billing_*` tables, which `npm run db:init` (and the deploy Action) adds.
 
 ```
-# Payments: on or off, the mode, since when, plans, what's owed, Stripe's price ids, the last order alerts from your FAFO
+# Payments: on or off, the mode, since when, plans, what's owed, the price per checkout (prices.checkout, in cents),
+# which plans buyers can pick (offered), Stripe's price ids, the last order alerts from your FAFO
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/billing
 ```
 
@@ -941,10 +966,11 @@ Runs the worker in Wrangler's local runtime with a local database and a mock Dis
 once handing out keys straight away and once with approval on. It goes through sign-in,
 key pickup, repeat sign-in, cancelled and refused sign-ins, the account-age and server
 checks, revoke and restore, the rate limit, requests being posted, approved, denied
-and changed, slot limits, submissions and collecting keys, pulled slots, the Interests list (its pictures, and the
-SKUs a batch carries), product pictures
+and changed, slot limits, submissions and collecting keys, pulled slots, the Interests list (its pictures, the
+products added to it once, and the SKUs a batch carries), product pictures
 (against a stand-in catalog: exact names only, never a case, another edition or two that fit),
 synced vaults (revisions, two devices saving at once, large vaults, a new password, and the lock
 after wrong passwords), and payments against a stand-in Stripe (plans, invoices, Submit refused and allowed, sessions,
-signed webhooks, refunds, the monthly plan's states, disputes, the Billing page, test mode, and that the tables a
-database from the last release gets are the same as a new one's).
+signed webhooks, refunds, the monthly plan's states with `BILLING_MONTHLY` on and what's left of it with it off,
+disputes, the Billing page and its price per checkout, test mode, and that the tables a database from the last release
+gets are the same as a new one's).

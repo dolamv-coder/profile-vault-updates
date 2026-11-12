@@ -25,7 +25,8 @@
 //                              are read (ask again in a minute)
 // Interests (page 1.9.142; the owner's request, 2026-11-12: products the owner lists for buyers to tick):
 //   GET  /interests?rev=N      {rev, owner, items:[{sku, store, name, about, set, ref}]} (license Bearer); the owner's FAFO
-//                              also gets each item's pic and tcg; {rev, owner, same:true} when N is the current rev
+//                              also gets each item's pic and tcg; {rev, owner, same:true} when N is the current rev.
+//                              INTEREST_ADDS (2026-11-12: Friday's drop list) go onto the list once, saved or not
 //   PUT  /interests            the owner's FAFO only: {rev, items:[{sku, store, name, about, set, pic, tcg}]}, the whole
 //                              list, answered as GET; 409 {error:"changed", rev} when another device saved since rev
 //   POST /interests/pic        the owner's FAFO only: {data:"data:image/(webp|jpeg|png);base64,..."}, 150 KB at most: {ref}
@@ -97,18 +98,21 @@
 //   GET  /alerts/webhook       {set, lastOk, lastError}: this license's Discord webhook for its alerts
 //   PUT  /alerts/webhook       {url}: set it (it gets a test post first), or "" to remove it
 // Payments (Stripe; off until STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set; page 1.9.130+, license Bearer):
-//   GET  /billing              {on:false}, or {on, mode, exempt, plan, nextPlan, block, prices, sub, lines, owed, overdue,
-//                              paid30, payments, report}: this license's plan and invoice ($10 per checkout, or $25 a month)
+//   GET  /billing              {on:false}, or {on, mode, exempt, plan, nextPlan, block, plans, prices, sub, lines, owed,
+//                              overdue, paid30, payments, report}: this license's plan and invoice (prices.checkout is the
+//                              price the owner set on the Billing page, $5 to start; plans is ["checkout"], with "monthly"
+//                              only while BILLING_MONTHLY is "on")
 //   POST /billing/plan         {plan:"checkout"}: pay per checkout (a monthly plan ends first)
 //   POST /billing/checkouts    {orders:[{account, store, orderNo, at, stage}]}: checkouts their FAFO found on their own
 //                              accounts, billed when that account was out as one of their slots then
 //   POST /billing/checkout     {kind: pay | monthly | extras | cancel | resume | invoice, ...}: {url} of a Stripe page to
-//                              open, or GET /billing's answer
+//                              open, or GET /billing's answer (monthly, extras and resume: 409 while the plan isn't offered)
 //   POST /billing/dispute      {id, note}: "not my seller's checkout", for the owner to waive or keep
 //   GET  /billing/done         where Stripe sends the buyer back
 //   POST /stripe/webhook       Stripe's events (signed with STRIPE_WEBHOOK_SECRET)
 //   POST /submissions refuses a buyer who isn't paid up (402 {error, billing:{reason, ...}}); /slots/limit gives a monthly
 //                              plan's 10 or 25.
+//   The owner's Billing page (/billing/list/:id) sets the price per checkout (billing_config price:checkout).
 // Web version and sync (app 1.9.65+). The app seals its vault (AES-GCM, with a key from the vault's
 // password) before it leaves the device, so what's kept here can't be read here. Every call takes the
 // license key (Bearer); reading or saving also takes the vault's access token (x-vault-auth), which
@@ -157,13 +161,15 @@
 //   GET  /admin/accounts       the account list: free and given out per store, who got which, offers
 //   GET  /admin/vaults         synced vaults: whose, how big, from which device, when (never their contents)
 //   GET  /admin/alerts         order alerts: who asked to send them and the decisions, and how many each buyer got
-//   GET  /admin/billing        payments: on or off, the mode, since when, plans, what's owed, prices, the last order alerts
+//   GET  /admin/billing        payments: on or off, the mode, since when, plans, what's owed, prices (the checkout's as
+//                              set now, and Stripe's monthly price ids), whether the monthly plan is offered, the last
+//                              order alerts
 //   GET  /admin/pictures?q=NAME what a name's picture search reads: its words, the groups searched, every product that
 //                              fits and the answer (nothing kept or fetched for the picture)
 //   POST /admin/accounts/free  {email, store?}: give an account back to the list
 //   POST /admin/accounts/remove {email, store?}: take it off the list
 
-import { INTEREST_SEED } from "./interest-seed.js";
+import { INTEREST_SEED, INTEREST_ADDS } from "./interest-seed.js";
 
 const DISCORD_AUTHORIZE = "https://discord.com/oauth2/authorize";
 const REQUEST_TTL_MS = 15 * 60 * 1000;          // matches how long the app waits for a sign-in
@@ -676,7 +682,8 @@ async function slotLimit(request, env) {
   const lic = await slotLicense(request, env);
   if (!lic) return json({ error: "license not recognized" }, 401);
   const latest = await env.DB.prepare("SELECT * FROM slot_requests WHERE key_hash = ? ORDER BY created_at DESC LIMIT 1").bind(lic.hash).first();
-  // A monthly plan's slots (payments): 10, or 25 with the extra 15, which the buyer adds in Invoice rather than asking.
+  // A monthly plan's slots (payments): 10, or 25 with the extra 15, which the buyer adds in Invoice rather than asking (while
+  // the plan is offered; without it, only a subscription still going has them: planSlots).
   const plan = await planSlots(env, lic.hash).catch((e) => { console.error("billing", e); return null; });
   if (plan) return json({ limit: plan, request: slotRequestOut(latest), canRequest: false, plan: "monthly" }, 200, { "cache-control": "no-store" });
   return json({ limit: await currentSlotLimit(env, lic.hash), request: slotRequestOut(latest), canRequest: !!env.DISCORD_WEBHOOK_URL }, 200, { "cache-control": "no-store" });
@@ -685,7 +692,10 @@ async function slotLimit(request, env) {
 async function slotRequest(request, env, ctx, url) {
   const lic = await slotLicense(request, env);
   if (!lic) return json({ error: "license not recognized" }, 401);
-  if (await planSlots(env, lic.hash).catch(() => null)) return json({ error: "Add 15 slots in Invoice" }, 409);
+  // A monthly plan's slots: its extra 15 are added in Invoice, or, with the plan no longer offered (2026-11-12), they're
+  // what that plan has until it ends.
+  const plan = await planSlots(env, lic.hash).catch(() => null);
+  if (plan) return json({ error: monthlyOffered(env) ? "Add 15 slots in Invoice" : `Your monthly plan has ${plan} slots` }, 409);
   if (!env.DISCORD_WEBHOOK_URL) return json({ error: "requests aren't set up" }, 503);
   const b = await request.json().catch(() => ({}));
   const current = await currentSlotLimit(env, lic.hash);
@@ -4040,18 +4050,36 @@ async function premiumListPage(request, env, url, id) {
 // ---- payments (Stripe) --------------------------------------------------------------------------
 // The owner's decisions (2026-10-18): "$10 per checkout or $25 a month plan or 10 slots", paid with Stripe, plus "an
 // additional 15 slots for additional $25"; buyers already approved are Friends and Family and never charged; a buyer who
-// isn't paid up can't submit. Anyone else not on a paid monthly plan pays $10 for each checkout on slots they sent: an order
-// on an account the owner gave them (order alerts), or on their own account while it was out as a slot (their FAFO reports
-// those, checked against when it went out and was pulled: billing_accounts), or one the owner adds. Each is due 3 days
-// after the order and free if the store cancels it before it's paid. The worker keeps the invoice lines and plans, and
-// Stripe takes the money: a Checkout session for what's owed, or a subscription for the monthly plan. Webhooks only make it
-// quicker: each answer is checked with Stripe again (reconcile), so a lost one changes nothing. Off until both
-// STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set; a test key (not _live_) reaches only licenses marked Tester (and the
-// owner's own FAFO, which is never charged). Removing the keys turns it off here, while Stripe goes on billing subscriptions.
+// isn't paid up can't submit. On 2026-11-12 the owner made a checkout $5 ("Can I change it to $5 a checkout?"). Anyone
+// else not on a paid monthly plan pays $5 for each checkout on slots they sent: an order on an account the owner gave them
+// (order alerts), or on their own account while it was out as a slot (their FAFO reports those, checked against when it
+// went out and was pulled: billing_accounts), or one the owner adds. Each is due 3 days after the order and free if the
+// store cancels it before it's paid. The worker keeps the invoice lines and plans, and Stripe takes the money: a Checkout
+// session for what's owed, or a subscription for the monthly plan. Webhooks only make it quicker: each answer is checked
+// with Stripe again (reconcile), so a lost one changes nothing. Off until both STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET
+// are set; a test key (not _live_) reaches only licenses marked Tester (and the owner's own FAFO, which is never charged).
+// Removing the keys turns it off here, while Stripe goes on billing subscriptions.
+// Also on 2026-11-12: "Is there a way to change the pricing structure in the backend? Maybe I want to change it to $10
+// later" (they chose a price box on their Billing page: checkoutPrice), and "Remove $25 plan completely" (monthlyOffered:
+// no one can pick or start the monthly plan, or its extra 15 slots; subscriptions that already exist carry on).
 const STRIPE_VERSION = "2026-09-30.endive";
 const stripeApi = (env) => String(env.STRIPE_API_BASE || "https://api.stripe.com").replace(/\/+$/, "");   // tests set it
-const PRICE_CHECKOUT = 1000, PRICE_MONTHLY = 2500, PRICE_EXTRA = 2500;   // cents, usd
+// cents, usd. The checkout was 1000 ($10) until 2026-11-12. Each billing_lines row keeps its own amount, so a line already
+// on an invoice keeps what it was billed at (lineStmt's upsert never changes it), and paying groups lines by amount.
+const PRICE_CHECKOUT = 500, PRICE_MONTHLY = 2500, PRICE_EXTRA = 2500;
 const MONTHLY_SLOTS = 10, EXTRA_SLOTS = 15, EXTRA_MAX = 1;
+// The price per checkout the owner sets on the Billing page (2026-11-12), in cents, one for both modes: billing_config
+// price:checkout, else PRICE_CHECKOUT. As SQL, so a new line takes the price at the moment it's written (lineStmt), and
+// checkoutPrice reads the same row the same way. $1 to $100; a row outside that (never written here) counts as none.
+const PRICE_MIN = 100, PRICE_MAX = 10000;
+const priceSql = (dflt) => `COALESCE((SELECT CAST(v AS INTEGER) FROM billing_config WHERE k = 'price:checkout' AND CAST(v AS INTEGER) BETWEEN ${PRICE_MIN} AND ${PRICE_MAX}), ${dflt})`;
+const checkoutPrice = async (env) => (await env.DB.prepare(`SELECT ${priceSql("?")} AS p`).bind(PRICE_CHECKOUT).first()).p;
+// The monthly plan is offered only with BILLING_MONTHLY = "on" (the tests, or the owner bringing it back): the owner removed
+// it on 2026-11-12 ("Remove $25 plan completely"). Off, a buyer can't pick it, add or remove its extra 15 slots or resume
+// one set to end; one whose subscription is still going keeps it as it is (its coverage, slots and limit, Cancel, paying a
+// failed invoice), and a monthly plan with no subscription left counts as no plan.
+const monthlyOffered = (env) => env.BILLING_MONTHLY === "on";
+const NO_MONTHLY = "The monthly plan isn't offered any more.";
 const DUE_MS = 3 * 86400000;
 // An order's date is the day where whoever reported it is: windows and plans stretch this much either side, in the buyer's favour.
 const TZ_SLACK_MS = 14 * 3600000;
@@ -4237,16 +4265,18 @@ async function billable(c, w, d) {
   const held = waiting && (cur.paid_through == null || cur.paid_through + TZ_SLACK_MS < start);
   return { ok: true, held: held ? cur.sub_id : null };
 }
-// The statement that puts one order on a buyer's invoice (billable already checked): $10, due 3 days after the order's day
-// (or after now, if that's later). One order belongs to one buyer, so an alert or the owner never adds one that an alert or
-// the owner put on another buyer's invoice (another buyer's own report doesn't count: it's only their word). An alert or the
-// owner takes over a line the buyer's FAFO reported, unless their FAFO said the store canceled it (the owner can charge it
-// again); a buyer's report never touches one from an alert or the owner. Nothing if it's there already.
+// The statement that puts one order on a buyer's invoice (billable already checked): at the price per checkout as it is
+// when the line is written (priceSql: the owner's Billing page, else PRICE_CHECKOUT, $5), due 3 days after the order's day
+// (or after now, if that's later). One order belongs to one buyer, so an alert or the owner never adds one
+// that an alert or the owner put on another buyer's invoice (another buyer's own report doesn't count: it's only their
+// word). An alert or the owner takes over a line the buyer's FAFO reported, unless their FAFO said the store canceled it
+// (the owner can charge it again); a buyer's report never touches one from an alert or the owner. Nothing if it's there
+// already, and a line already there keeps the amount it was billed at (the upsert never changes it: $10 before 2026-11-12).
 function lineStmt(env, c, l) {
   const due = Math.max(dayStart(l.orderAt) + 86400000, c.now) + DUE_MS;
   const solo = l.source === "buyer" ? "1" : "NOT EXISTS (SELECT 1 FROM billing_lines o WHERE o.store = ?3 AND o.order_no = ?4 AND o.mode = ?2 AND o.key_hash <> ?1 AND o.source <> 'buyer')";
   return env.DB.prepare(`INSERT INTO billing_lines (id, key_hash, mode, store, store_name, order_no, item, qty, order_at, acct_hash, profile, source, amount, created_at, due_at, held_sub)
-    SELECT ?5, ?1, ?2, ?3, ?6, ?4, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16 WHERE ${solo}
+    SELECT ?5, ?1, ?2, ?3, ?6, ?4, ?7, ?8, ?9, ?10, ?11, ?12, ${priceSql("?13")}, ?14, ?15, ?16 WHERE ${solo}
     ON CONFLICT (key_hash, mode, store, order_no) DO UPDATE SET source = excluded.source, acct_hash = excluded.acct_hash, due_at = excluded.due_at
     WHERE billing_lines.source = 'buyer' AND excluded.source <> 'buyer' AND billing_lines.paid_at IS NULL AND billing_lines.waived_at IS NULL AND billing_lines.canceled_at IS NULL`)
     .bind(l.hash, c.mode, l.store, l.orderNo, randomId(12), String(l.storeName || "").slice(0, 40), String(l.item || "").slice(0, 120), String(l.qty || "").slice(0, 6),
@@ -4305,28 +4335,37 @@ async function billingState(env, c, hash) {
       s = w.bill && w.bill.sub_id ? (await c.subs(hash)).find((x) => x.sub_id === w.bill.sub_id) : null;
     } catch (e) { console.error("billing resync", e && e.message); }
   }
-  const b = w.bill;
-  Object.assign(out, { exempt: w.exempt, plan: b ? b.plan : null, nextPlan: b ? b.next_plan : null, sub: s && !subEnded(s) ? subOut(s) : null });
+  const b = w.bill, live = !!s && !subEnded(s);
+  // With the monthly plan no longer offered, a monthly plan whose subscription is gone (or never was) is no plan: they pick
+  // pay per checkout, never left waiting on a plan that can't be started.
+  const gone = !!b && b.plan === "monthly" && !live && !monthlyOffered(env);
+  Object.assign(out, { exempt: w.exempt, plan: b && !gone ? b.plan : null, nextPlan: b && !gone ? b.next_plan : null });
+  // Nor is one never paid for (still being set up when the plan went) shown as theirs: an older FAFO (1.9.130 to 1.9.142)
+  // would offer only to finish paying for it in Invoice, which /billing/checkout refuses now.
+  out.sub = live && !(s.status === "incomplete" && out.plan !== "monthly" && !monthlyOffered(env)) ? subOut(s) : null;
   out.monthlyOk = out.plan === "monthly" && !!s && (s.status === "active" || s.status === "trialing");
   if (w.exempt) return out;
   Object.assign(out, await lineTotals(env, c, hash));
   if (b && b.dispute_hold) out.block = { reason: "disputed-payment", text: "A payment is disputed with your bank. Contact your seller." };
   else if (out.late) out.block = { reason: "overdue", text: `${plural(out.late, "checkout")} overdue: ${money(out.overdue)}.` };
   else if (out.plan === "monthly" && s && ["past_due", "unpaid", "incomplete", "paused"].includes(s.status) && !s.paused) out.block = { reason: "past-due", text: "Your monthly payment didn't go through." };
-  else if (!out.plan && s && s.status === "incomplete") out.block = { reason: "setting-up", text: "Your monthly plan is being set up on Stripe." };
+  else if (!out.plan && s && s.status === "incomplete" && monthlyOffered(env)) out.block = { reason: "setting-up", text: "Your monthly plan is being set up on Stripe." };
   else if (!out.plan) out.block = { reason: "no-plan", text: "Pick a plan to submit." };
   return out;
 }
 
 // The slots a monthly plan gives (10, or 25 with the extra 15) to a license billed on one: while its plan is monthly (whatever
 // its subscription's state), and for 30 days after one ended with no plan picked. Null otherwise: Friends and Family and pay
-// per checkout keep the limit the owner approved, or the default.
+// per checkout keep the limit the owner approved, or the default. With the monthly plan no longer offered (2026-11-12), only
+// while its subscription is still going: once it's gone they ask the owner for slots as everyone does, since they can't add
+// the extra 15 any more.
 async function planSlots(env, hash) {
   if (!billingOn(env)) return null;
   const c = billCtx(env), w = await c.who(hash);
   if (!w.on || w.exempt || !w.bill || !w.bill.sub_id) return null;
   const s = (await c.subs(hash)).find((x) => x.sub_id === w.bill.sub_id);
   if (!s) return null;
+  if (!monthlyOffered(env)) return w.bill.plan === "monthly" && !subEnded(s) ? MONTHLY_SLOTS + EXTRA_SLOTS * s.extras : null;
   return w.bill.plan === "monthly" || (!w.bill.plan && s.ended_at && s.ended_at > c.now - 30 * 86400000) ? MONTHLY_SLOTS + EXTRA_SLOTS * s.extras : null;
 }
 
@@ -4658,14 +4697,16 @@ async function billingLicense(request, env) {
   return { lic: { hash, last4: norm.slice(-4), discordId: row ? row.discord_id : null, username: row ? row.username : null } };
 }
 const PRICES = { checkout: PRICE_CHECKOUT, monthly: PRICE_MONTHLY, extra: PRICE_EXTRA, monthlySlots: MONTHLY_SLOTS, extraSlots: EXTRA_SLOTS, extraMax: EXTRA_MAX, dueDays: DUE_MS / 86400000 };
+// The plans a buyer can pick (page 1.9.143+ reads it; an answer without it is read as both, as before).
+const plansOf = (env) => monthlyOffered(env) ? ["checkout", "monthly"] : ["checkout"];
 // GET /billing's answer: the plan, the invoice (lines still owed, held or disputed, and the rest from the last 60 days, newest
 // first), what's owed, the last day's payments, and which of their own accounts their FAFO should report checkouts on (those
 // out as slots in the last 45 days, from the earliest day one was).
 async function billingBody(env, c, lic) {
   const st = await billingState(env, c, lic.hash);
   if (!st.on) return { on: false };
-  const out = { on: true, mode: c.mode, exempt: st.exempt, plan: st.plan, nextPlan: st.nextPlan, block: st.block, now: c.now, prices: PRICES, sub: st.sub,
-    lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null };
+  const out = { on: true, mode: c.mode, exempt: st.exempt, plan: st.plan, nextPlan: st.nextPlan, block: st.block, now: c.now, plans: plansOf(env),
+    prices: { ...PRICES, checkout: await checkoutPrice(env) }, sub: st.sub, lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null };
   if (st.exempt) return out;
   const [lines, paid, pays, wins] = await env.DB.batch([
     env.DB.prepare(`SELECT * FROM billing_lines WHERE key_hash = ? AND mode = ? AND ((paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL) OR created_at > ?)
@@ -4730,13 +4771,19 @@ async function billingPlan(request, env) {
   if (error) return error;
   const b = await readBody(request, 2000);
   if (!b) return json({ error: "too large" }, 413, NO_STORE);
+  // (The monthly plan was only ever started through Stripe: /billing/checkout.)
+  if (b.plan === "monthly" && !monthlyOffered(env)) return json({ error: NO_MONTHLY }, 409, NO_STORE);
   if (b.plan !== "checkout") return json({ error: "plan" }, 400, NO_STORE);
   const g = await billingBuyer(env, lic, false);
   if (g.error) return g.error;
   const { c, w } = g;
   let message = "";
+  // A monthly plan with no subscription left, which billingState reads as none while the plan isn't offered: pay per
+  // checkout takes its place whatever it was set to end into.
+  let gone = false;
   try {
     const s = w.bill && w.bill.plan === "monthly" ? await liveSubOf(env, c, w) : null;
+    gone = !s && !!w.bill && w.bill.plan === "monthly" && !monthlyOffered(env);
     if (s) {
       const sub = await syncSubscription(env, c, s.sub_id);
       const now = await env.DB.prepare("SELECT * FROM billing_subs WHERE sub_id = ?").bind(s.sub_id).first();
@@ -4759,8 +4806,9 @@ async function billingPlan(request, env) {
   // Pay per checkout now, unless a paid-up monthly plan runs to its end first.
   await env.DB.prepare(`INSERT INTO billing (key_hash, mode, plan, plan_at, updated_at) VALUES (?1, ?2, 'checkout', ?3, ?3)
     ON CONFLICT (key_hash, mode) DO UPDATE SET plan = 'checkout', plan_at = CASE WHEN billing.plan = 'checkout' THEN billing.plan_at ELSE excluded.plan_at END, next_plan = NULL, updated_at = excluded.updated_at
-    WHERE billing.plan IS NULL OR billing.plan = 'checkout' OR (billing.next_plan IS NULL AND NOT EXISTS (SELECT 1 FROM billing_subs s WHERE s.sub_id = billing.sub_id AND s.status IN ('active', 'trialing')))`)
-    .bind(lic.hash, c.mode, c.now).run();
+    WHERE billing.plan IS NULL OR billing.plan = 'checkout' OR (billing.next_plan IS NULL AND NOT EXISTS (SELECT 1 FROM billing_subs s WHERE s.sub_id = billing.sub_id AND s.status IN ('active', 'trialing')))
+      OR ?4`)
+    .bind(lic.hash, c.mode, c.now, gone ? 1 : 0).run();
   return json({ ...(await billingBody(env, billCtx(env), lic)), ...(message ? { message } : {}) }, 200, NO_STORE);
 }
 
@@ -4846,6 +4894,9 @@ async function billingCheckout(request, env, ctx, url) {
   if (!["pay", "monthly", "extras", "cancel", "resume", "invoice"].includes(kind)) return json({ error: "kind" }, 400, NO_STORE);
   const g = await billingBuyer(env, lic, kind === "cancel" || kind === "resume");
   if (g.error) return g.error;
+  // The monthly plan no longer offered (2026-11-12): nothing starts or grows one, nor keeps one set to end going. Cancel and
+  // paying a failed invoice still work for a subscription that's still going.
+  if ((kind === "monthly" || kind === "extras" || kind === "resume") && !monthlyOffered(env)) return json({ error: NO_MONTHLY }, 409, NO_STORE);
   const { c } = g;
   const web = WEB_APPS.indexOf(String(b.web || "")), back = web >= 0 ? `&w=${web}` : "";
   const on = typeof b.on === "number" && Number.isFinite(b.on) ? Math.max(0, Math.floor(b.on)) : null;
@@ -4927,6 +4978,8 @@ async function billingCheckout(request, env, ctx, url) {
     }
     const st = await billingState(env, c, lic.hash), s = await liveSubOf(env, c, w);
     if (!s) return body(409, { error: "You don't have a monthly plan." });
+    // Paying the first invoice of one never paid for (being set up when the plan went) would start the plan: refused too.
+    if (kind === "invoice" && s.status === "incomplete" && !monthlyOffered(env)) return body(409, { error: NO_MONTHLY });
     const path = `/v1/subscriptions/${encodeURIComponent(s.sub_id)}`;
     if (kind === "extras") {
       if (!st.monthlyOk) return body(409, { error: "Your monthly plan needs to be paid up for that." });
@@ -5196,6 +5249,13 @@ async function ownerOutcome(env, c, hash, x) {
   return { ok: true, held: ok.held };
 }
 
+// The Billing page's price per checkout as typed: dollars with up to 2 decimals ("5", "$7.50"), from $1 to $100, in cents;
+// null for anything else.
+const priceCents = (v) => {
+  const m = /^\$?\s*(\d{1,3})(?:\.(\d{1,2}))?$/.exec(String(v).trim());
+  const c = m ? Number(m[1]) * 100 + Number((m[2] || "").padEnd(2, "0")) : NaN;
+  return c >= PRICE_MIN && c <= PRICE_MAX ? c : null;
+};
 const SOURCE_TEXT = { alert: "Account you gave", buyer: "Their account", owner: "Added by you" };
 const STATE_TEXT = { paid: "Paid", canceled: "Canceled · no charge", covered: "Covered by their monthly plan", waived: "Waived", held: "On hold", disputed: "Disputed", overdue: "Overdue", due: "Due" };
 const STATE_COLOR = { paid: "#5fd39a", overdue: "#ff8a80", disputed: "#9cc7ff", due: "#ffd27a" };
@@ -5282,6 +5342,23 @@ async function billingListPage(request, env, ctx, url, id) {
           if (r.meta && r.meta.changes) done = `Added ${accountStoreName(x.store)} #${x.orderNo} to their invoice.`; else err = "Not added: already on the invoice.";
         }
       }
+    } else if (action === "price") {
+      // Price per checkout (the owner's request, 2026-11-12: "Maybe I want to change it to $10 later"): for checkouts from now
+      // on (lineStmt reads it as it writes a line); lines already on an invoice keep theirs. The price before and the write
+      // are one transaction, so the channel's note says what it really was, and the same price writes and posts nothing.
+      const want = priceCents(get("price"));
+      if (want == null) err = `Not saved: type a price from ${money(PRICE_MIN)} to ${money(PRICE_MAX)} in dollars, like 5 or 7.50.`;
+      else {
+        const [was, w] = await env.DB.batch([
+          env.DB.prepare(`SELECT ${priceSql("?")} AS p`).bind(PRICE_CHECKOUT),
+          env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) SELECT 'price:checkout', ?1, ?2 WHERE ${priceSql(PRICE_CHECKOUT)} <> CAST(?1 AS INTEGER)
+            ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at`).bind(String(want), now),
+        ]);
+        if (w.meta && w.meta.changes) {
+          await billNote(env, `💲 Price per checkout: ${money(was.results[0].p)} → ${money(want)} (from now on; checkouts already on an invoice keep their price)`);
+          done = `The price per checkout is ${money(want)} now, for checkouts from now on.`;
+        } else done = `The price per checkout is already ${money(want)}.`;
+      }
     } else if (action === "paste-preview" || action === "paste-add") {
       const lines = get("paste").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 300);
       const rows = [];
@@ -5334,11 +5411,13 @@ async function billingListPage(request, env, ctx, url, id) {
     const last4 = l ? last4Of(l.license_key) : n ? n.key_last4 : "";
     const name = [l ? "@" + l.username : "", n && n.name || ""].filter(Boolean).join(" · ") || (last4 ? `License …${last4}` : "A key made by hand");
     const live = s && !subEnded(s);
+    // A monthly plan with no subscription left is no plan while the plan isn't offered, as billingState reads it.
+    const gone = !!b && b.plan === "monthly" && !live && !monthlyOffered(env);
     const plan = exempt === "owner" ? "Your FAFO" : exempt === "family" ? "Friends and Family" + (live ? " · monthly plan paused" : "")
-      : !b || !b.plan ? "No plan" : b.plan === "checkout" ? "Pay per checkout"
+      : !b || !b.plan || gone ? "No plan" : b.plan === "checkout" ? "Pay per checkout"
       : `Monthly · ${s ? MONTHLY_SLOTS + EXTRA_SLOTS * s.extras : MONTHLY_SLOTS} slots${s && s.period_end ? ` · ${s.cancel_at_end ? "ends" : "renews"} ${day(s.period_end)}` : ""}`;
     const status = exempt ? "Not charged" : !reach ? "Not a tester" : b && b.dispute_hold ? "Dispute hold" : tot.overdue ? `${money(tot.overdue)} overdue`
-      : b && b.plan === "monthly" && s && ["past_due", "unpaid", "incomplete", "paused"].includes(s.status) && !s.paused ? "Payment failed"
+      : b && b.plan === "monthly" && !gone && s && ["past_due", "unpaid", "incomplete", "paused"].includes(s.status) && !s.paused ? "Payment failed"
       : tot.owed ? `${money(tot.owed)} owed` : !(p && p.seen_at) ? "Older FAFO" : "Paid up";
     return { h, l, p, b, s, tot, exempt, tester, reach, last4, name, plan, status, off: !!(l && l.revoked_at), monthly: !exempt && b && b.plan === "monthly" && live };
   });
@@ -5395,6 +5474,16 @@ async function billingListPage(request, env, ctx, url, id) {
     : `<p class="small">Order alerts: last from your FAFO ${esc(ago(seen.at))}.</p>`;
   const sum = (f) => buyers.filter((x) => !x.exempt).reduce((n, x) => n + f(x), 0);
   const fam = buyers.filter((x) => x.exempt === "family" && !x.off).length, monthly = buyers.filter((x) => x.monthly).length;
+  // The prices as they are now: the checkout's from the box below, and the monthly plan only while it's offered (the owner
+  // removed it on 2026-11-12; the buyers already on one keep it).
+  const price = await checkoutPrice(env);
+  const prices = `${money(price)} per checkout, due 3 days after it (free if the store cancels it first)${monthlyOffered(env)
+    ? `, or ${money(PRICE_MONTHLY)} a month for ${MONTHLY_SLOTS} slots (${money(PRICE_MONTHLY + PRICE_EXTRA)} for ${MONTHLY_SLOTS + EXTRA_SLOTS})`
+    : monthly ? `. The monthly plan isn't offered any more: ${monthly === 1 ? "1 buyer with one keeps it until it ends" : `${monthly} buyers with one keep theirs until they end`}` : ""}.`;
+  const priceBox = `<form class="edit" method="post" action="${esc(url.pathname)}">${hidden}
+      <label for="price">Price per checkout</label>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span aria-hidden="true" style="color:#e6ecff;font-weight:600">$</span><input id="price" name="price" value="${(price / 100).toFixed(2)}" inputmode="decimal" maxlength="8" required autocomplete="off" spellcheck="false" style="width:9ch;margin:0"><button class="go" style="width:auto;padding:10px 18px" type="submit" name="action" value="price">Save</button></div>
+      <p class="hint">Applies to checkouts from now on. Ones already on an invoice keep their price.</p></form>`;
   let pastePart;
   if (preview) {
     const ok = preview.rows.filter((r) => r.out.ok).length;
@@ -5424,7 +5513,8 @@ async function billingListPage(request, env, ctx, url, id) {
     <p class="who">${c.mode === "test" ? "Test mode: only testers are charged" : "Payments are on"}</p>
     <p class="small">Owed ${money(sum((x) => x.tot.owed))} · Overdue ${money(sum((x) => x.tot.overdue))} · Paid in the last 30 days ${money(paid30.results[0].s)} · ${plural(monthly, "monthly plan")} · ${fam} Friends and Family</p>
     ${alerts}
-    <p class="small">$10 per checkout, due 3 days after it (free if the store cancels it first), or $25 a month for 10 slots ($50 for 25). Buyers you approved before payments began are Friends and Family and never charged; Details moves anyone either way. Refunds are made in your Stripe Dashboard; the prices are set in FAFO (a change to the license worker).</p>
+    <p class="small">${esc(prices)} Buyers you approved before payments began are Friends and Family and never charged; Details moves anyone either way. Refunds are made in your Stripe Dashboard.</p>
+    ${priceBox}
     ${pastePart}
     <h3>Buyers</h3>
     ${body ? `<div class="find"><input type="search" id="find" placeholder="Search by name, last 4, plan or status" aria-label="Search buyers"><span class="shown" id="shown"></span></div>
@@ -5454,8 +5544,9 @@ async function admin(request, env, path) {
     ]);
     const conf = Object.fromEntries(cfg.results.map((x) => [x.k, x.v])), parse = (v) => { try { return JSON.parse(v); } catch { return null; } };
     const num = (k) => conf[k] ? Number(conf[k]) : null;
+    // prices.checkout: the price per checkout as set now (the Billing page's box, 2026-11-12); offered: the plans buyers can pick.
     return json({ on: billingOn(env), mode, onSince: { live: num("on_since:live"), test: num("on_since:test") }, backOn: { live: num("back_on:live"), test: num("back_on:test") }, offSeen: num("off_seen"),
-      alertsSeen: parse(conf.alerts_seen || "null"), prices: { live: parse(conf["prices:live"] || "null"), test: parse(conf["prices:test"] || "null") },
+      alertsSeen: parse(conf.alerts_seen || "null"), prices: { checkout: await checkoutPrice(env), live: parse(conf["prices:live"] || "null"), test: parse(conf["prices:test"] || "null") }, offered: plansOf(env),
       people: people.results[0], plans: Object.fromEntries(plans.results.map((x) => [x.plan, x.n])), owed: owed.results[0] }, 200, NO_STORE);
   }
   if (request.method === "GET" && path === "/admin/premium") {
@@ -5847,12 +5938,90 @@ function interestItem(x) {
   if (tcg !== "" && !(typeof tcg === "string" && /^\d{1,10}$/.test(tcg))) return { error: "a TCGplayer product is its number" };
   return { item: { sku, store: x.store, name, about, set, pic, tcg } };
 }
+// Products added to the list once, after the seed (INTEREST_ADDS; the owner's request, 2026-11-12: "here are the product
+// that may be dropping on friday", to add the new ones and keep everything else). The owner may have saved the list since
+// 1.9.142 or not, so each addition goes onto whichever list there is, once (interest_adds): in the seed while nothing is
+// saved, and at the end of a saved list, the products it doesn't have, with a new rev so every FAFO fetches it. Applied
+// once, so a product the owner takes off afterwards stays off. Each goes through interestItem, as the seed does.
+let interestAdds = null;
+const addsList = () => interestAdds ??= INTEREST_ADDS.map((a) => ({ id: a.id, items: a.items.map((x, i) => {
+  const r = interestItem(x);
+  if (r.error) console.error("interests: addition", a.id, "item", i, "skipped:", r.error);
+  return r.item;
+}).filter(Boolean) }));
+const interestAdded = new Set();   // this isolate's: the additions D1 has as applied, so later calls cost nothing
+const interestKey = (it) => it.store + ":" + it.sku.toLowerCase();
+// `items`, then the products of `more` it doesn't have (by store and SKU), in their order, up to INTEREST_MAX. A product
+// already there keeps what the owner wrote for it.
+function interestMerge(items, more) {
+  const out = [...items], have = new Set(items.map(interestKey));
+  for (const it of more) {
+    const k = interestKey(it);
+    if (have.has(k)) continue;
+    if (out.length >= INTEREST_MAX) { console.error("interests: the list is full, so", it.store, it.sku, "wasn't added"); continue; }
+    have.add(k); out.push(it);
+  }
+  return out;
+}
 let interestSeed = null;
-const seedItems = () => interestSeed ??= INTEREST_SEED.map((x) => interestItem(x).item).filter(Boolean);
-// The list as it is now: what the owner last saved, or the seed (rev 0) until then. Throws when D1 does.
-async function interestList(env) {
+const seedItems = () => interestSeed ??= interestMerge([], [...INTEREST_SEED.map((x) => interestItem(x).item).filter(Boolean), ...addsList().flatMap((a) => a.items)]);
+// The seed's rev counts the additions in it (1.9.142's seed alone was rev 0), so a FAFO that has the seed from before one
+// fetches it again rather than hearing it's the same; an addition stays in INTEREST_ADDS once it's out, for that.
+const seedRev = () => INTEREST_ADDS.length;
+const markAdd = (env, id, now) => env.DB.prepare("INSERT OR IGNORE INTO interest_adds (id, at) VALUES (?, ?)").bind(id, now);
+// The list as it is now: what the owner last saved, or the seed until then, with any addition not applied yet put on it
+// first. Throws when D1 does.
+async function interestList(env, again = false) {
+  // The additions this isolate didn't have as applied before the row was read. One applied after that, by another call here
+  // or in another isolate, may be on a newer row than the one read, which is read again then (the review of 1.9.143).
+  const pending = addsList().filter((a) => !interestAdded.has(a.id));
   const row = await env.DB.prepare("SELECT rev, items FROM interest_list WHERE id = 1").first();
-  return row ? { rev: row.rev, items: JSON.parse(row.items) } : { rev: 0, items: seedItems() };
+  // The seed has every addition. They're noted as applied with the owner's first save, in its batch (interestsPut), never
+  // before: a list saved some other way (by the worker from before, still answering while this one deploys) has none of
+  // them, and gets them at its next read.
+  if (!row) return { rev: seedRev(), items: seedItems(), seed: true };
+  const list = { rev: row.rev, items: JSON.parse(row.items) };
+  const reread = () => again ? list : interestList(env, true);
+  let due = pending.filter((a) => !interestAdded.has(a.id));
+  if (!due.length) return pending.length ? await reread() : list;
+  // An addition that can't be read or written just now waits for the next call, and the list is answered as it is, so it
+  // never stops buyers' FAFOs, batches or pictures reading the list.
+  try {
+    // Applied already by another isolate, or by this one's worker before it restarted.
+    const { results } = await env.DB.prepare("SELECT id FROM interest_adds WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(due.map((a) => a.id))).all();
+    for (const r of results) interestAdded.add(r.id);
+    due = due.filter((a) => !interestAdded.has(a.id));
+    if (!due.length) return await reread();
+    const items = interestMerge(list.items, due.flatMap((a) => a.items)), now = Date.now();
+    if (items.length === list.items.length) {
+      // Every product is on the list already (or it's full): nothing to add, only noted as applied.
+      if (list.rev > seedRev()) {
+        await env.DB.batch(due.map((a) => markAdd(env, a.id, now)));
+        due.forEach((a) => interestAdded.add(a.id));
+        return list;
+      }
+      // A row at the seed's rev or below gets a new rev too: the worker from before saved it while this one deployed (its
+      // first save has the seed's rev), and a FAFO may have that rev for the seed (the review of 1.9.143). Noted as applied
+      // only with the new rev, so a call that loses the race never notes it on a row that kept the seed's.
+      const res = await env.DB.batch([
+        env.DB.prepare("UPDATE interest_list SET rev = rev + 1, updated_at = ? WHERE id = 1 AND rev = ?").bind(now, list.rev),
+        ...due.map((a) => env.DB.prepare(`INSERT OR IGNORE INTO interest_adds (id, at) SELECT ?, ? WHERE (SELECT rev FROM interest_list WHERE id = 1) = ?
+          AND (SELECT items FROM interest_list WHERE id = 1) = ?`).bind(a.id, now, list.rev + 1, row.items)),
+      ]);
+      if (res[0].meta && res[0].meta.changes) { due.forEach((a) => interestAdded.add(a.id)); return { rev: list.rev + 1, items: list.items }; }
+      return await reread();
+    }
+    // Written only over the rev read, and noted as applied only once this list is the one saved (as the save's picture
+    // cleanup), so a call that loses the race never notes it without its products.
+    const body = JSON.stringify(items);
+    const res = await env.DB.batch([
+      env.DB.prepare("UPDATE interest_list SET rev = rev + 1, items = ?, updated_at = ? WHERE id = 1 AND rev = ?").bind(body, now, list.rev),
+      ...due.map((a) => env.DB.prepare("INSERT OR IGNORE INTO interest_adds (id, at) SELECT ?, ? WHERE (SELECT items FROM interest_list WHERE id = 1) = ?").bind(a.id, now, body)),
+    ]);
+    if (res[0].meta && res[0].meta.changes) { due.forEach((a) => interestAdded.add(a.id)); return { rev: list.rev + 1, items }; }
+    // Another call, or the owner's save, wrote first: read it again and try once more, else leave it for the next call.
+    return await reread();
+  } catch (e) { console.error("interests: addition", e); return list; }
 }
 // The picture an item shows: its upload, else its TCGplayer product's, else none.
 const interestRef = (it) => it.pic || (it.tcg ? "t" + it.tcg : "");
@@ -5910,18 +6079,27 @@ async function interestsPut(request, env) {
   const rev = b.rev, now = Date.now(), body = JSON.stringify(items);
   const cur = await interestList(env);
   if (!Number.isInteger(rev) || rev !== cur.rev) return json({ error: "changed", rev: cur.rev }, 409, NO_STORE);
-  // Written only over the rev it was made from (the first save makes the row: rev 0 is the seed). The pictures no item shows
-  // any more go in the same batch, only once this list is the one saved: a "t" one is fetched again if an item shows it
-  // later, and an upload is left a day, as the owner's other device may be about to save a list that shows it.
+  // Written only over the rev it was made from. A first save, made from the seed, makes the row, and is a 409 if one is
+  // there by then: it was saved after the seed was read (by the worker from before while this one deploys, say, whose first
+  // save has the seed's rev too: the review of 1.9.143). The pictures no item shows any more go in the same batch, only
+  // once this list is the one saved: a "t" one is fetched again if an item shows it later, and an upload is left a day, as
+  // the owner's other device may be about to save a list that shows it. A first save was made from the seed, which has
+  // every addition: they're noted as applied with it.
   const keep = JSON.stringify([...new Set(items.map(interestRef).filter(Boolean))]);
   const res = await env.DB.batch([
-    env.DB.prepare(`INSERT INTO interest_list (id, rev, items, updated_at) VALUES (1, ?, ?, ?)
-      ON CONFLICT (id) DO UPDATE SET rev = excluded.rev, items = excluded.items, updated_at = excluded.updated_at WHERE interest_list.rev = ?`)
+    cur.seed ? env.DB.prepare("INSERT INTO interest_list (id, rev, items, updated_at) VALUES (1, ?, ?, ?) ON CONFLICT (id) DO NOTHING RETURNING rev").bind(rev + 1, body, now)
+      : env.DB.prepare(`INSERT INTO interest_list (id, rev, items, updated_at) VALUES (1, ?, ?, ?)
+      ON CONFLICT (id) DO UPDATE SET rev = excluded.rev, items = excluded.items, updated_at = excluded.updated_at WHERE interest_list.rev = ? RETURNING rev`)
       .bind(rev + 1, body, now, rev),
     env.DB.prepare(`DELETE FROM interest_pics WHERE ref NOT IN (SELECT value FROM json_each(?)) AND (substr(ref, 1, 1) = 't' OR at < ?)
       AND (SELECT items FROM interest_list WHERE id = 1) = ?`).bind(keep, now - 86400000, body),
+    ...(cur.seed && INTEREST_ADDS.length ? [env.DB.prepare(`INSERT OR IGNORE INTO interest_adds (id, at) SELECT value, ? FROM json_each(?)
+      WHERE (SELECT items FROM interest_list WHERE id = 1) = ?`).bind(now, JSON.stringify(INTEREST_ADDS.map((a) => a.id)), body)] : []),
   ]);
-  if (!res[0].meta || !res[0].meta.changes) return json({ error: "changed", rev: (await interestList(env)).rev }, 409, NO_STORE);
+  // Saved only if that write returned the row it wrote: D1's count of changes takes in a trigger's writes too (the test puts
+  // the save of the worker from before in with one).
+  if (!res[0].results || !res[0].results.length) return json({ error: "changed", rev: (await interestList(env)).rev }, 409, NO_STORE);
+  if (cur.seed) for (const a of INTEREST_ADDS) interestAdded.add(a.id);
   return json(interestsOut({ rev: rev + 1, items }, true), 200, NO_STORE);
 }
 

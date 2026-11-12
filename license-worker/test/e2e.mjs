@@ -9,8 +9,18 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
+import { INTEREST_SEED, INTEREST_ADDS } from "../src/interest-seed.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// The Interests seed and the products added to the list once (INTEREST_ADDS, 2026-11-12), as the worker reads them. Their
+// names, sets and pictures come from a product lookup, so the tests go by their SKUs and shape, never their names.
+const iKey = (it) => it.store + ":" + String(it.sku).trim().toLowerCase();
+const SEED_KEYS = [...new Set(INTEREST_SEED.map(iKey))];
+const ADDED = INTEREST_ADDS.flatMap((a) => a.items).filter((it, i, all) => all.findIndex((x) => iKey(x) === iKey(it)) === i);
+const SEED_NEW = ADDED.filter((it) => !SEED_KEYS.includes(iKey(it)));   // the additions' products the seed doesn't have
+const SEED_ALL = [...SEED_KEYS, ...SEED_NEW.map(iKey)];                 // the list until the owner saves one, in its order
+const SEED_REV = INTEREST_ADDS.length;                                  // the seed's rev counts the additions in it
+const ADD_IDS = INTEREST_ADDS.map((a) => a.id).sort();
 const WORKER_PORT = 8791, APPROVAL_PORT = 8795, DISCORD_PORT = 8792, GUILD = "999000111";
 let BASE = `http://127.0.0.1:${WORKER_PORT}`;
 const tmp = mkdtempSync(join(tmpdir(), "orbit-license-test-"));
@@ -37,6 +47,7 @@ const USERS = {
   tess:  { id: snowflake(Date.parse("2022-01-01")), username: "tess", guilds: [] },
   uma:   { id: snowflake(Date.parse("2022-02-01")), username: "uma", guilds: [] },
   wes:   { id: snowflake(Date.parse("2022-03-01")), username: "wes", guilds: [] },
+  xia:   { id: snowflake(Date.parse("2022-05-01")), username: "xia", guilds: [] },   // with the monthly plan no longer offered
   vic:   { id: snowflake(Date.parse("2022-04-01")), username: "vic", guilds: [] },   // approved before payments began
 };
 const OWNER = snowflake(Date.parse("2017-02-01"));   // NOTIFY_USER_ID in approval mode
@@ -3639,13 +3650,18 @@ try {
 
   console.log("\nInterests (page 1.9.142, 2026-11-12)");
   // Bob's FAFO sends order alerts (above), so it's the owner's here, and the only one that changes the list; Gina is a buyer.
-  // The seed (INTEREST_SEED) is filled in from the product lookup separately, so only its shape is checked here.
+  // The seed (INTEREST_SEED) and the additions (INTEREST_ADDS) are filled in from the product lookup separately, so only
+  // their SKUs and shape are checked here.
   const iGet = async (key, q = "") => { const r = await fetchOnce(BASE + "/interests" + q, { headers: key ? { authorization: "Bearer " + key } : {}, cache: "no-store" }); return { status: r.status, cc: r.headers.get("cache-control"), body: await r.json() }; };
   const iPut = async (key, body) => { const r = await fetchOnce(BASE + "/interests", { method: "PUT", headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, cc: r.headers.get("cache-control"), body: await r.json() }; };
   const iPicUp = async (key, data) => { const r = await fetchOnce(BASE + "/interests/pic", { method: "POST", headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" }, body: JSON.stringify({ data }) }); return { status: r.status, body: await r.json() }; };
   const iPicGet = async (ref) => { const r = await fetchOnce(BASE + "/interests/pic/" + ref, { cache: "no-store" }); return { status: r.status, h: (n) => r.headers.get(n), bytes: Buffer.from(await r.arrayBuffer()) }; };
   const iItem = (sku, name, extra = {}) => ({ sku, store: "target", name, about: "", set: "", pic: "", tcg: "", ...extra });
   const iShown = (it) => ({ sku: it.sku, store: it.store, name: it.name, about: it.about, set: it.set, ref: it.pic || (it.tcg ? "t" + it.tcg : "") });
+  // A product from interest-seed.js as the list keeps it: one line, without control characters (interestItem's cleaning).
+  const iNorm = (v) => v == null ? "" : String(v).replace(/[\u0000-\u0008\u000e-\u001f\u007f-\u009f]/g, "").replace(/\s+/g, " ").trim();
+  const iSeedShown = (it) => iShown({ sku: iNorm(it.sku), store: it.store, name: iNorm(it.name), about: iNorm(it.about), set: iNorm(it.set), pic: "", tcg: iNorm(it.tcg) });
+  const iAdded = () => dbRows("SELECT id FROM interest_adds ORDER BY id").map((x) => x.id);
   const iPng = "data:image/png;base64," + PIXEL.toString("base64");
   const iFile = (store, storeKey, names, kind = "profiles") => kind === "logins"
     ? { store, storeKey, kind, text: names.map((n) => `${n.split(" ")[0].toLowerCase()}.${storeKey}@example.com:Sample-Pw-1`).join("\r\n") }
@@ -3659,29 +3675,34 @@ try {
     return { d: await r.json(), posts, files: posts.flatMap((m) => m.files) };
   };
   let irev = 0, iUp;
-  await test("interests: a license is needed; a buyer gets the seed, the owner gets it with each item's pic and tcg", async () => {
+  await test("interests: a license is needed; a buyer gets the seed with the additions' new products, the owner gets it with each item's pic and tcg", async () => {
     assert.equal((await iGet(null)).status, 401);
     assert.equal((await iGet("PVLT-NOPE-NOPE-NOPE-NOPE")).status, 401);
     const g = await iGet(ginaKey);
     assert.equal(g.status, 200); assert.equal(g.cc, "no-store");
-    assert.equal(g.body.rev, 0, "the seed, until the owner saves a list");
+    assert.equal(g.body.rev, SEED_REV, "the seed, until the owner saves a list: its rev counts the additions in it");
     assert.equal(g.body.owner, false);
-    assert.equal(g.body.items.length, 30, "the 30 SKUs the owner gave");
+    assert.equal(SEED_KEYS.length, 30, "the 30 SKUs the owner gave");
+    assert.deepEqual(g.body.items.map(iKey), SEED_ALL, "the seed's SKUs in order, then each addition's that the seed doesn't have, once each");
+    assert.equal(g.body.items.length, INTEREST_SEED.length + SEED_NEW.length, "the seed plus the new SKUs");
+    assert.deepEqual(g.body.items.slice(INTEREST_SEED.length), SEED_NEW.map(iSeedShown), "the added products as interest-seed.js has them");
     for (const it of g.body.items) {
       assert.deepEqual(Object.keys(it), ["sku", "store", "name", "about", "set", "ref"], "a buyer gets no pic or tcg");
       assert.ok(/^[A-Za-z0-9-]{3,24}$/.test(it.sku) && ["target", "pokemoncenter"].includes(it.store) && typeof it.name === "string" && it.name.trim() === it.name && it.name.length >= 1 && it.name.length <= 120, JSON.stringify(it));
       assert.ok(typeof it.about === "string" && it.about.length <= 400 && typeof it.set === "string" && it.set.length <= 60, JSON.stringify(it));
       assert.match(it.ref, /^(t\d{1,10})?$/, "a TCGplayer product's picture, or none");
     }
-    assert.equal(new Set(g.body.items.map((it) => it.store + ":" + it.sku)).size, 30, "each once");
+    assert.equal(new Set(g.body.items.map(iKey)).size, SEED_ALL.length, "each once");
     const o = await iGet(bobKey);
-    assert.equal(o.status, 200); assert.equal(o.body.owner, true); assert.equal(o.body.rev, 0);
+    assert.equal(o.status, 200); assert.equal(o.body.owner, true); assert.equal(o.body.rev, SEED_REV);
     assert.deepEqual(o.body.items.map((it) => iShown(it)), g.body.items, "the same list");
     assert.ok(o.body.items.every((it) => it.pic === "" && /^(\d{1,10})?$/.test(it.tcg) && it.ref === (it.tcg ? "t" + it.tcg : "")), "with what the owner edits");
-    assert.deepEqual((await iGet(ginaKey, "?rev=0")).body, { rev: 0, owner: false, same: true }, "nothing new");
-    assert.equal((await iGet(ginaKey, "?rev=3")).body.items.length, 30, "another rev gets the list");
-    assert.equal((await iGet(ginaKey, "?rev=")).body.items.length, 30, "and so does none");
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + SEED_REV)).body, { rev: SEED_REV, owner: false, same: true }, "nothing new");
+    if (SEED_REV) assert.equal((await iGet(ginaKey, "?rev=0")).body.items.length, SEED_ALL.length, "a FAFO with 1.9.142's seed (rev 0) gets the list again");
+    assert.equal((await iGet(ginaKey, "?rev=" + (SEED_REV + 3))).body.items.length, SEED_ALL.length, "another rev gets the list");
+    assert.equal((await iGet(ginaKey, "?rev=")).body.items.length, SEED_ALL.length, "and so does none");
     assert.equal((await fetch(BASE + "/interests", { method: "OPTIONS" })).status, 204);
+    assert.deepEqual(iAdded(), [], "not noted as applied while the list is the seed: the owner's first save notes them with its list");
   });
   await test("interests: only the owner's FAFO changes the list, and only from the rev it has", async () => {
     const list = [iItem("88897899", "Sample Elite Trainer Box")];
@@ -3689,12 +3710,13 @@ try {
     const g = await iPut(ginaKey, { rev: 0, items: list });
     assert.equal(g.status, 403); assert.deepEqual(g.body, { error: "only your seller's FAFO can change this" });
     assert.equal(g.cc, "no-store");
-    for (const rev of [5, undefined, "0", -1]) {
+    // 0 is 1.9.142's seed, before the additions: a FAFO that had it sees them first.
+    for (const rev of [5, undefined, String(SEED_REV), -1, ...(SEED_REV ? [0] : [])]) {
       const r = await iPut(bobKey, { rev, items: list });
-      assert.equal(r.status, 409, String(rev)); assert.deepEqual(r.body, { error: "changed", rev: 0 });
+      assert.equal(r.status, 409, String(rev)); assert.deepEqual(r.body, { error: "changed", rev: SEED_REV });
     }
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM interest_list")[0].n, 0, "nothing written");
-    assert.equal((await iGet(ginaKey)).body.rev, 0);
+    assert.equal((await iGet(ginaKey)).body.rev, SEED_REV);
   });
   await test("interests: a list with a bad product is refused, saying which", async () => {
     const good = iItem("88897899", "Sample Elite Trainer Box");
@@ -3708,12 +3730,12 @@ try {
       [{ sku: "88897899", name: "The same SKU again" }, /already/],
     ];
     for (const [change, err] of bad) {
-      const r = await iPut(bobKey, { rev: 0, items: [good, iItem("88897898", "Sample Booster Box", change)] });
+      const r = await iPut(bobKey, { rev: SEED_REV, items: [good, iItem("88897898", "Sample Booster Box", change)] });
       assert.equal(r.status, 400, JSON.stringify(change)); assert.match(r.body.error, err); assert.equal(r.body.at, 1, JSON.stringify(change));
     }
-    assert.deepEqual((await iPut(bobKey, { rev: 0, items: [good, "nope"] })).body, { error: "that isn't a product", at: 1 });
-    assert.equal((await iPut(bobKey, { rev: 0, items: "nope" })).status, 400);
-    const many = await iPut(bobKey, { rev: 0, items: Array.from({ length: 301 }, (_, i) => iItem(String(10000000 + i), "Sample " + i)) });
+    assert.deepEqual((await iPut(bobKey, { rev: SEED_REV, items: [good, "nope"] })).body, { error: "that isn't a product", at: 1 });
+    assert.equal((await iPut(bobKey, { rev: SEED_REV, items: "nope" })).status, 400);
+    const many = await iPut(bobKey, { rev: SEED_REV, items: Array.from({ length: 301 }, (_, i) => iItem(String(10000000 + i), "Sample " + i)) });
     assert.equal(many.status, 400); assert.equal(many.body.at, 300);
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM interest_list")[0].n, 0, "nothing written");
   });
@@ -3723,21 +3745,24 @@ try {
       iItem("100-10001", "Sample Booster Bundle", { store: "pokemoncenter", set: "Sample Set", tcg: 712103 }),
       iItem("88897899", "The same SKU at the other store", { store: "pokemoncenter" }),
     ];
-    const r = await iPut(bobKey, { rev: 0, items: list });
+    assert.deepEqual(iAdded(), [], "nothing noted while the list is the seed");
+    const r = await iPut(bobKey, { rev: SEED_REV, items: list });
     assert.equal(r.status, 200, JSON.stringify(r.body)); assert.equal(r.cc, "no-store");
     const saved = [
       iItem("88897899", "Sample Elite Trainer Box", { about: "Nine packs, sleeves and dice.", set: "Sample Set" }),
       iItem("100-10001", "Sample Booster Bundle", { store: "pokemoncenter", set: "Sample Set", tcg: "712103" }),
       iItem("88897899", "The same SKU at the other store", { store: "pokemoncenter" }),
     ];
-    assert.deepEqual(r.body, { rev: 1, owner: true, items: saved.map((it) => ({ ...iShown(it), pic: it.pic, tcg: it.tcg })) }, "answered as GET, for the owner");
-    assert.deepEqual((await iGet(ginaKey)).body, { rev: 1, owner: false, items: saved.map(iShown) }, "a buyer gets it");
-    assert.deepEqual((await iGet(ginaKey, "?rev=1")).body, { rev: 1, owner: false, same: true });
-    assert.deepEqual((await iGet(bobKey, "?rev=1")).body, { rev: 1, owner: true, same: true });
-    const stale = await iPut(bobKey, { rev: 0, items: list });
-    assert.equal(stale.status, 409); assert.deepEqual(stale.body, { error: "changed", rev: 1 }, "made from the seed: another device saved since");
-    assert.deepEqual(dbRows("SELECT rev FROM interest_list"), [{ rev: 1 }]);
-    irev = 1;
+    const rev = SEED_REV + 1;
+    assert.deepEqual(r.body, { rev, owner: true, items: saved.map((it) => ({ ...iShown(it), pic: it.pic, tcg: it.tcg })) }, "answered as GET, for the owner");
+    assert.deepEqual((await iGet(ginaKey)).body, { rev, owner: false, items: saved.map(iShown) }, "a buyer gets it, without the additions it doesn't keep");
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + rev)).body, { rev, owner: false, same: true });
+    assert.deepEqual((await iGet(bobKey, "?rev=" + rev)).body, { rev, owner: true, same: true });
+    const stale = await iPut(bobKey, { rev: SEED_REV, items: list });
+    assert.equal(stale.status, 409); assert.deepEqual(stale.body, { error: "changed", rev }, "made from the seed: another device saved since");
+    assert.deepEqual(dbRows("SELECT rev FROM interest_list"), [{ rev }]);
+    assert.deepEqual(iAdded(), ADD_IDS, "the save noted the additions as applied");
+    irev = rev;
   });
   await test("interests: the owner uploads a picture; it's served once the list shows it, with its type and headers", async () => {
     assert.equal((await iPicUp(null, iPng)).status, 401);
@@ -3875,6 +3900,166 @@ try {
       "Gina-target-aycd.json", "Gina-target-shikari.csv"], "right after Target's logins, not after the typed store's files");
   });
 
+  console.log("\nInterests: products added once (INTEREST_ADDS; the owner's request, 2026-11-12)");
+  // An addition goes onto a list the owner saved before it existed, once. Each case starts a worker on the same database with
+  // nothing in memory, as a deploy does, so what's applied is read from D1 (interest_adds), not only the isolate's memory.
+  // The owner's lists here use sample SKUs, so they never meet the added ones but where a case puts one in.
+  const iRev = () => dbRows("SELECT rev FROM interest_list")[0].rev;
+  const iFresh = async (port) => {
+    stopWorker(workers.pop());
+    await new Promise((r) => setTimeout(r, 1500));
+    await startWorker("approval-off", port, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0"], "approval");
+  };
+  const iMine = (it, n) => iItem(iNorm(it.sku), `Owner's name ${n}`, { store: it.store, set: "Owner's set" });   // the owner's version of an added product
+  let iBefore;
+  await test("interests: an addition whose products a saved list has already is only noted as applied; the owner's versions stay", async () => {
+    assert.ok(ADDED.length >= 2, "an addition to test with");
+    const list = [iItem("SAMPLE-1", "Sample Elite Trainer Box", { set: "Sample Set" }), ...ADDED.map((it, i) => iMine(it, i + 1))];
+    const r = await iPut(bobKey, { rev: irev, items: list });
+    assert.equal(r.status, 200, JSON.stringify(r.body)); irev = r.body.rev;
+    sqlRun("DELETE FROM interest_adds");   // as if saved before the addition existed
+    await iFresh(APPROVAL_PORT + 6);
+    const g = await iGet(ginaKey);
+    assert.equal(g.status, 200);
+    assert.deepEqual(g.body, { rev: irev, owner: false, items: list.map(iShown) }, "the same list and rev: nothing to add");
+    assert.deepEqual(iAdded(), ADD_IDS, "noted as applied");
+    assert.equal(iRev(), irev, "nothing written");
+  });
+  await test("interests: a list saved before an addition gets the products it doesn't have at the end, once, with one new rev, even asked three times at once", async () => {
+    // The owner keeps one added product (their version) and takes the rest off; then it's as if the addition were new.
+    const list = [iItem("SAMPLE-1", "Sample Elite Trainer Box", { set: "Sample Set" }), iMine(ADDED[0], 1), iItem("SAMPLE-2", "Sample Booster Box", { set: "Sample Set" })];
+    const r = await iPut(bobKey, { rev: irev, items: list });
+    assert.equal(r.status, 200, JSON.stringify(r.body)); irev = r.body.rev;
+    assert.deepEqual((await iGet(ginaKey)).body.items, list.map(iShown), "applied already: the ones taken off stay off");
+    sqlRun("DELETE FROM interest_adds");
+    await iFresh(APPROVAL_PORT + 7);
+    const missing = ADDED.filter((it) => !list.some((x) => iKey(x) === iKey(it)));
+    assert.equal(missing.length, ADDED.length - 1);
+    const want = [...list.map(iShown), ...missing.map(iSeedShown)];
+    const answers = await Promise.all([iGet(ginaKey), iGet(bobKey), iGet(ginaKey)]);
+    for (const a of answers) {
+      assert.equal(a.status, 200);
+      assert.equal(a.body.rev, irev + 1, "one new rev, so every FAFO fetches it");
+      assert.deepEqual(a.body.owner ? a.body.items.map(iShown) : a.body.items, want, "the list as it was, then the missing ones in the addition's order, each once; the owner's version kept");
+    }
+    assert.equal(iRev(), irev + 1, "written once");
+    assert.deepEqual(iAdded(), ADD_IDS, "noted as applied");
+    irev += 1; iBefore = list;
+    // An added product's TCGplayer picture is served, as the list shows it (650002 and 600001 are the stand-in's failures).
+    const pic = missing.find((it) => it.tcg && !["650002", "600001"].includes(iNorm(it.tcg)));
+    if (pic) assert.equal((await iPicGet("t" + iNorm(pic.tcg))).status, 200, "its picture");
+  });
+  await test("interests: asked again, nothing changes; a change made from the list before the addition is refused once", async () => {
+    const g = await iGet(ginaKey);
+    assert.equal(g.body.rev, irev);
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + irev)).body, { rev: irev, owner: false, same: true });
+    const stale = await iPut(bobKey, { rev: irev - 1, items: iBefore });
+    assert.equal(stale.status, 409); assert.deepEqual(stale.body, { error: "changed", rev: irev }, "the owner's FAFO reloads the list, with the added products");
+    assert.equal(iRev(), irev, "nothing written");
+  });
+  await test("interests: an added product the owner takes off stays off, also in a worker that starts from nothing", async () => {
+    const cur = (await iGet(bobKey)).body;
+    const gone = cur.items.at(-1);
+    assert.ok(ADDED.some((it) => iKey(it) === iKey(gone)), "an added one");
+    const r = await iPut(bobKey, { rev: irev, items: cur.items.slice(0, -1) });
+    assert.equal(r.status, 200, JSON.stringify(r.body)); irev = r.body.rev;
+    const after = (await iGet(ginaKey)).body;
+    assert.equal(after.rev, irev);
+    assert.deepEqual(after.items.map(iKey), cur.items.slice(0, -1).map(iKey), "not added again");
+    await iFresh(APPROVAL_PORT + 8);
+    assert.deepEqual((await iGet(ginaKey)).body, after, "the same list and rev in a worker that reads what was applied from the database");
+    assert.equal(iRev(), irev, "nothing written");
+    iBefore = after;
+  });
+  await test("interests: an addition that can't be written just now leaves the list as it was read, and goes on at the next read", async () => {
+    // As if the addition were new (the one product taken off above is missing), with its marker's write failing, which rolls
+    // back the list's write in the same batch: the list is still read, by buyers, batches and pictures alike.
+    sqlRun("DELETE FROM interest_adds");
+    sqlRun("CREATE TRIGGER iadd_test_fail BEFORE INSERT ON interest_adds BEGIN SELECT RAISE(ABORT, 'test'); END");
+    try {
+      await iFresh(APPROVAL_PORT + 9);
+      const g = await iGet(ginaKey);
+      assert.equal(g.status, 200, JSON.stringify(g.body));
+      assert.deepEqual(g.body, iBefore, "the list and rev as saved");
+      assert.equal(iRev(), irev, "nothing written");
+      assert.deepEqual(iAdded(), []);
+    } finally { sqlRun("DROP TRIGGER IF EXISTS iadd_test_fail"); }
+    const g = await iGet(ginaKey);
+    assert.equal(g.body.rev, irev + 1, "written at the next read");
+    assert.equal(g.body.items.length, iBefore.items.length + 1, "the one missing product added");
+    assert.deepEqual(g.body.items.slice(0, -1), iBefore.items, "at the end");
+    assert.deepEqual(iAdded(), ADD_IDS, "noted as applied");
+    irev += 1;
+  });
+  // While this worker deploys, the worker from before answers too. Its seed had the rev before this one's, so its first save
+  // has this seed's rev (the review of 1.9.143).
+  const iSql = (v) => "'" + JSON.stringify(v).replace(/'/g, "''") + "'";
+  await test("interests: a first list the worker from before saves after this one read the seed is never saved over (409), and gets the additions with a new rev", async () => {
+    sqlRun("DELETE FROM interest_list"); sqlRun("DELETE FROM interest_adds");
+    await iFresh(APPROVAL_PORT + 11);
+    assert.equal((await iGet(bobKey)).body.rev, SEED_REV, "the seed again");
+    // The other worker's save comes between this one's read of the seed and its write: a trigger puts it in just before.
+    const theirs = [iItem("SAMPLE-OLD", "Sample Old Worker Box", { set: "Sample Set" })];
+    sqlRun(`CREATE TRIGGER ilist_test_old BEFORE INSERT ON interest_list WHEN NOT EXISTS (SELECT 1 FROM interest_list WHERE id = 1)
+      BEGIN INSERT INTO interest_list (id, rev, items, updated_at) VALUES (1, ${SEED_REV}, ${iSql(theirs)}, 0); END`);
+    let r;
+    try { r = await iPut(bobKey, { rev: SEED_REV, items: [iItem("SAMPLE-NEW", "Sample New Worker Box")] }); }
+    finally { sqlRun("DROP TRIGGER IF EXISTS ilist_test_old"); }
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.deepEqual(r.body, { error: "changed", rev: SEED_REV + 1 }, "the owner's FAFO reloads the list that was saved, with the additions");
+    assert.deepEqual((await iGet(ginaKey)).body, { rev: SEED_REV + 1, owner: false, items: [...theirs.map(iShown), ...ADDED.map(iSeedShown)] });
+    assert.equal(iRev(), SEED_REV + 1);
+    assert.deepEqual(iAdded(), ADD_IDS);
+  });
+  await test("interests: a list the worker from before saved at the seed's rev, with every added product already, gets a new rev, so a FAFO with the seed's fetches it", async () => {
+    const list = [iItem("SAMPLE-OLD", "Sample Old Worker Box", { set: "Sample Set" }), ...ADDED.map((it, i) => iMine(it, i + 1))];
+    sqlRun(`UPDATE interest_list SET rev = ${SEED_REV}, items = ${iSql(list)}`); sqlRun("DELETE FROM interest_adds");
+    await iFresh(APPROVAL_PORT + 12);
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + SEED_REV)).body, { rev: SEED_REV + 1, owner: false, items: list.map(iShown) }, "not the seed's rev: the list as saved");
+    assert.equal(iRev(), SEED_REV + 1, "only the rev written");
+    assert.deepEqual(iAdded(), ADD_IDS, "noted as applied with it");
+    assert.deepEqual((await iGet(bobKey, "?rev=" + (SEED_REV + 1))).body, { rev: SEED_REV + 1, owner: true, same: true });
+  });
+  await test("interests: a call that read the list just before another applied an addition answers the list saved since, not the one it read", async () => {
+    // Requests to the local runtime can't time this race, so the worker's interests code runs here in Node: isolates on one
+    // SQLite database made from schema.sql, with the other call let in right after this one's read of the list, from
+    // another isolate or the same one.
+    const { DatabaseSync } = await import("node:sqlite");
+    const { pathToFileURL } = await import("node:url");
+    const src = readFileSync(join(root, "src", "index.js"), "utf8");
+    const code = src.slice(src.indexOf("// ---- interests"), src.indexOf("// The picture an item shows"));
+    let n = 0;
+    const isolate = async () => {
+      const file = join(tmp, `interests-${++n}.mjs`);
+      writeFileSync(file, `import { INTEREST_SEED, INTEREST_ADDS } from ${JSON.stringify(pathToFileURL(join(root, "src", "interest-seed.js")).href)};\n${code}\nexport { interestList };\n`);
+      return import(pathToFileURL(file).href);
+    };
+    const db = new DatabaseSync(":memory:");
+    db.exec(readFileSync(join(root, "schema.sql"), "utf8"));
+    let then = null;   // run once, right after the next read of the list
+    const stmt = (sql, args = []) => ({ sql, args, bind: (...a) => stmt(sql, a),
+      first: async () => { const r = db.prepare(sql).get(...args) ?? null; if (then && sql.startsWith("SELECT rev, items")) { const f = then; then = null; await f(); } return r; },
+      all: async () => ({ results: db.prepare(sql).all(...args) }) });
+    const env = { DB: { prepare: (sql) => stmt(sql), batch: async (list) => {
+      db.exec("BEGIN");
+      try { const out = list.map((s) => ({ meta: { changes: Number(db.prepare(s.sql).run(...s.args).changes) } })); db.exec("COMMIT"); return out; }
+      catch (e) { db.exec("ROLLBACK"); throw e; }
+    } } };
+    for (const same of [false, true]) {
+      db.exec("DELETE FROM interest_adds; DELETE FROM interest_list");
+      db.prepare("INSERT INTO interest_list (id, rev, items, updated_at) VALUES (1, 7, ?, 0)").run(JSON.stringify([iItem("SAMPLE-1", "Sample Elite Trainer Box")]));
+      const A = await isolate(), B = same ? A : await isolate();
+      let a;
+      then = async () => { a = await A.interestList(env); };
+      const b = await B.interestList(env);
+      const row = db.prepare("SELECT rev, items FROM interest_list").get(), now = { rev: 8, items: JSON.parse(row.items) };
+      const where = same ? "in the same isolate" : "in another isolate";
+      assert.equal(row.rev, 8, "the other call applied the addition, " + where);
+      assert.deepEqual(a, now);
+      assert.deepEqual(b, now, "the list as saved now, " + where);
+    }
+  });
+
   console.log("\nPayments: off until the Stripe keys are set (2026-10-18)");
   // Bob's FAFO sends order alerts (above), so it's the owner's here.
   const acctOf = (e) => createHash("sha256").update("acct:" + String(e).trim().toLowerCase()).digest("hex");
@@ -3956,7 +4141,9 @@ try {
   });
   stopWorker(workers.pop());
   await new Promise((r) => setTimeout(r, 1500));
-  await startWorker("billing", APPROVAL_PORT + 4, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_live_key_not_real"], "approval");
+  // With the monthly plan offered (BILLING_MONTHLY=on), as it was until the owner removed it on 2026-11-12: these tests go
+  // through it. Without it, below.
+  await startWorker("billing", APPROVAL_PORT + 4, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_live_key_not_real", "BILLING_MONTHLY=on"], "approval");
   const hookAt = (raw, opts = {}) => {
     const t = opts.t ?? Math.floor(Date.now() / 1000);
     const v1 = createHmac("sha256", opts.secret ?? "fake_webhook_secret_not_real").update(`${t}.${raw}`).digest("hex");
@@ -3973,8 +4160,8 @@ try {
   const alerts = async (events) => { const r = await api("/alerts", bobKey, { events }); assert.equal(r.status, 200); return r.json(); };
   await test("payments on: the first request notes when; buyers approved before are Friends and Family, keys made by hand too, and the FAFO that sends order alerts is the owner's", async () => {
     const g = await billOf(ginaKey);
-    assert.deepEqual({ ...g, now: 0 }, { on: true, mode: "live", exempt: "family", plan: null, nextPlan: null, block: null, now: 0,
-      prices: { checkout: 1000, monthly: 2500, extra: 2500, monthlySlots: 10, extraSlots: 15, extraMax: 1, dueDays: 3 }, sub: null, lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null });
+    assert.deepEqual({ ...g, now: 0 }, { on: true, mode: "live", exempt: "family", plan: null, nextPlan: null, block: null, now: 0, plans: ["checkout", "monthly"],
+      prices: { checkout: 500, monthly: 2500, extra: 2500, monthlySlots: 10, extraSlots: 15, extraMax: 1, dueDays: 3 }, sub: null, lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null });
     assert.equal((await billOf(bobKey)).exempt, "owner");
     assert.equal((await billOf(GH_KEY)).exempt, "family", "a key made by hand");
     const since = Number(dbRows("SELECT v FROM billing_config WHERE k = 'on_since:live'")[0].v);
@@ -4025,15 +4212,15 @@ try {
     tessAcct = dbRows(`SELECT email FROM accounts WHERE key_hash = '${tessHash}' AND store = 'target' AND profile = 'Tess Given'`)[0].email;
     assert.deepEqual(windowsOf(tessBatch).map((x) => [x.profile, x.acct_hash]), [["Tess Own", acctOf("tess.own@example.com")], ["Tess Both", acctOf("both.own@example.com")]]);
   });
-  await test("an order on an account given to them goes on their invoice: $10, due 3 days after it", async () => {
+  await test("an order on an account given to them goes on their invoice: $5, due 3 days after it", async () => {
     assert.equal((await alerts([billEv({ orderNo: "tb-1001" })])).sent, 1);
     const st = await billOf(tessKey), l = st.lines[0];
     assert.equal(st.lines.length, 1);
     const { id, createdAt, dueAt, ...rest } = l;
-    assert.deepEqual(rest, { store: "target", storeName: "Target", orderNo: "TB-1001", item: "Sample Booster Bundle", qty: "2", orderAt: today, source: "alert", amount: 1000,
+    assert.deepEqual(rest, { store: "target", storeName: "Target", orderNo: "TB-1001", item: "Sample Booster Bundle", qty: "2", orderAt: today, source: "alert", amount: 500,
       state: "due", paidAt: null, acctHash: acctOf(tessAcct), profile: "Tess Given", disputable: false });
     assert.equal(dueAt, Math.max(Date.parse(today) + 86400000, createdAt) + 3 * 86400000);
-    assert.deepEqual([st.owed, st.overdue, st.block], [1000, 0, null]);
+    assert.deepEqual([st.owed, st.overdue, st.block], [500, 0, null]);
     await alerts([billEv({ orderNo: "TB-1001", stage: "shipped" }), billEv({ orderNo: "TB-1001" })]);
     assert.equal((await billOf(tessKey)).lines.length, 1, "one line per order");
   });
@@ -4055,16 +4242,16 @@ try {
     await alerts([billEv({ orderNo: "TB-1002", stage: "canceled" })]);
     const st = await billOf(tessKey);
     assert.equal(st.lines.find((l) => l.orderNo === "TB-1002").state, "canceled");
-    assert.equal(st.owed, 1000);
+    assert.equal(st.owed, 500);
   });
   await test("an overdue checkout turns Submit off (402)", async () => {
     sqlRun(`UPDATE billing_lines SET due_at = due_at - ${4 * 86400000} WHERE order_no = 'TB-1001'`);
     const st = await billOf(tessKey);
     assert.equal(st.lines.find((l) => l.orderNo === "TB-1001").state, "overdue");
-    assert.deepEqual([st.overdue, st.block], [1000, { reason: "overdue", text: "1 checkout overdue: $10." }]);
+    assert.deepEqual([st.overdue, st.block], [500, { reason: "overdue", text: "1 checkout overdue: $5." }]);
     const r = await submit(tessKey, [ownFile([["Tess Own", "tess.own@example.com"]])], { on: 3 });
     assert.equal(r.status, 402);
-    assert.deepEqual(await r.json(), { error: "1 checkout overdue: $10.", billing: { reason: "overdue", due: 1000, overdue: 1000, n: 1 } });
+    assert.deepEqual(await r.json(), { error: "1 checkout overdue: $5.", billing: { reason: "overdue", due: 500, overdue: 500, n: 1 } });
   });
   let pay1;
   await test("Pay opens one Stripe Checkout session for what's owed; asking again gives the same one", async () => {
@@ -4072,7 +4259,7 @@ try {
     const r = await checkout(tessKey, { kind: "pay", web: "https://app.fafoaco.com", on: 3 });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     pay1 = r.body;
-    assert.deepEqual([pay1.amount, pay1.n], [1000, 1]); assert.match(pay1.url, /^https:\/\/checkout\.stripe\.test\/c\/pay\/cs_test_/);
+    assert.deepEqual([pay1.amount, pay1.n], [500, 1]); assert.match(pay1.url, /^https:\/\/checkout\.stripe\.test\/c\/pay\/cs_test_/);
     assert.equal(sx.sessions.size, n0 + 1);
     const cus = lastStripe("POST", "/v1/customers");
     assert.deepEqual(cus.params, { name: "tess", "metadata[fafo_license]": tessHash }); assert.equal(cus.idem, `cus:live:${tessHash}`);
@@ -4081,7 +4268,7 @@ try {
     assert.equal(c.auth, "Bearer fake_live_key_not_real"); assert.equal(c.version, "2026-09-30.endive"); assert.equal(c.idem, `pay:${pay1.pay}`);
     const expires = Number(c.params.expires_at);
     assert.ok(Math.abs(expires - (Date.now() / 1000 + 31 * 60)) < 120, "31 minutes");
-    assert.deepEqual({ ...c.params, expires_at: 0 }, { mode: "payment", customer: tessCus, "line_items[0][price_data][currency]": "usd", "line_items[0][price_data][unit_amount]": "1000",
+    assert.deepEqual({ ...c.params, expires_at: 0 }, { mode: "payment", customer: tessCus, "line_items[0][price_data][currency]": "usd", "line_items[0][price_data][unit_amount]": "500",
       "line_items[0][price_data][product_data][name]": "FAFO checkouts", "line_items[0][price_data][product_data][description]": "1 checkout: Target #TB-1001", "line_items[0][quantity]": "1",
       "payment_intent_data[metadata][fafo_pay]": pay1.pay, "allowed_payment_method_types[0]": "card", "allowed_payment_method_types[1]": "link", client_reference_id: pay1.pay,
       "metadata[fafo_license]": tessHash, "metadata[fafo_pay]": pay1.pay, success_url: `${BASE}/billing/done?s={CHECKOUT_SESSION_ID}&w=0`, cancel_url: `${BASE}/billing/done?c=1&w=0`, expires_at: 0 });
@@ -4093,14 +4280,14 @@ try {
     const s = sxPay(sessionOf(pay1.url).id), raw = event("checkout.session.completed", s), before = webhookPosts.length;
     const bad = [{ secret: "fake_other_secret_not_real" }, { header: null }, { header: "v1=abc" }, { t: Math.floor(Date.now() / 1000) - 301 }, { header: "t=1,v1=" }];
     for (const o of bad) { const r = await hookAt(raw, o); assert.equal(r.status, 400, JSON.stringify(o)); await r.text(); }
-    assert.equal((await billOf(tessKey)).owed, 1000, "nothing changed");
+    assert.equal((await billOf(tessKey)).owed, 500, "nothing changed");
     const r = await hookAt(raw);
     assert.equal(r.status, 200); assert.deepEqual(await r.json(), { received: true });
     const st = await billOf(tessKey);
     assert.deepEqual([st.lines.find((l) => l.orderNo === "TB-1001").state, st.owed, st.overdue, st.block], ["paid", 0, 0, null]);
-    assert.deepEqual(st.payments.find((p) => p.id === pay1.pay), { id: pay1.pay, kind: "pay", status: "paid", amount: 1000, refund: 0 });
-    assert.equal(st.paid30, 1000);
-    assert.deepEqual(posts(before), ["💳 **Tess** paid $10 for 1 checkout"]);
+    assert.deepEqual(st.payments.find((p) => p.id === pay1.pay), { id: pay1.pay, kind: "pay", status: "paid", amount: 500, refund: 0 });
+    assert.equal(st.paid30, 500);
+    assert.deepEqual(posts(before), ["💳 **Tess** paid $5 for 1 checkout"]);
     assert.equal((await hookAt(raw)).status, 200);
     assert.equal(webhookPosts.length, before + 1, "the same event again: nothing");
     assert.equal(dbRows(`SELECT COUNT(*) AS n FROM billing_events WHERE type = 'checkout.session.completed'`)[0].n, 1, "logged");
@@ -4113,20 +4300,20 @@ try {
   await test("a checkout canceled while its session is open expires the session; the rest is paid in a new one", async () => {
     await alerts([billEv({ orderNo: "TB-2001" }), billEv({ orderNo: "TB-2002" })]);
     const p = await checkout(tessKey, { kind: "pay" });
-    assert.deepEqual([p.status, p.body.amount, p.body.n], [200, 2000, 2]);
+    assert.deepEqual([p.status, p.body.amount, p.body.n], [200, 1000, 2]);
     await alerts([billEv({ orderNo: "TB-2001", stage: "canceled" })]);
     await new Promise((ok) => setTimeout(ok, 600));
     assert.equal(sessionOf(p.body.url).status, "expired", "Stripe was told");
     const st = await billOf(tessKey);
     assert.equal(st.payments.find((x) => x.id === p.body.pay).status, "expired");
-    assert.deepEqual([st.lines.find((l) => l.orderNo === "TB-2002").state, st.owed], ["due", 1000], "the other is still owed");
+    assert.deepEqual([st.lines.find((l) => l.orderNo === "TB-2002").state, st.owed], ["due", 500], "the other is still owed");
     const p2 = await checkout(tessKey, { kind: "pay" });
-    assert.deepEqual([p2.body.amount, p2.body.n], [1000, 1]); assert.notEqual(p2.body.url, p.body.url);
+    assert.deepEqual([p2.body.amount, p2.body.n], [500, 1]); assert.notEqual(p2.body.url, p.body.url);
   });
-  await test("a session paid after one of its checkouts was canceled refunds that $10", async () => {
+  await test("a session paid after one of its checkouts was canceled refunds that $5", async () => {
     await alerts([billEv({ orderNo: "TB-3001" })]);
     const p = await checkout(tessKey, { kind: "pay" });
-    assert.deepEqual([p.body.amount, p.body.n], [2000, 2], "a new session for both (the old one is expired first)");
+    assert.deepEqual([p.body.amount, p.body.n], [1000, 2], "a new session for both (the old one is expired first)");
     const s = sxPay(sessionOf(p.body.url).id);
     await alerts([billEv({ orderNo: "TB-3001", stage: "canceled" })]);
     await new Promise((ok) => setTimeout(ok, 400));
@@ -4135,11 +4322,11 @@ try {
     assert.equal(await hook("checkout.session.completed", s), 200);
     const st = await billOf(tessKey);
     assert.deepEqual([st.lines.find((l) => l.orderNo === "TB-2002").state, st.lines.find((l) => l.orderNo === "TB-3001").state, st.owed], ["paid", "canceled", 0]);
-    assert.deepEqual(st.payments.find((x) => x.id === p.body.pay), { id: p.body.pay, kind: "pay", status: "paid", amount: 2000, refund: 1000 });
+    assert.deepEqual(st.payments.find((x) => x.id === p.body.pay), { id: p.body.pay, kind: "pay", status: "paid", amount: 1000, refund: 500 });
     const re = sx.refunds.at(-1);
-    assert.deepEqual([re.amount, re.payment_intent, re.metadata.fafo_pay], [1000, s.payment_intent, p.body.pay]);
+    assert.deepEqual([re.amount, re.payment_intent, re.metadata.fafo_pay], [500, s.payment_intent, p.body.pay]);
     assert.equal(lastStripe("POST", "/v1/refunds").idem, `refund:${p.body.pay}`);
-    assert.deepEqual(posts(before), ["💳 **Tess** paid $20 for 1 checkout · refunded $10 for 1 canceled, waived or already paid"]);
+    assert.deepEqual(posts(before), ["💳 **Tess** paid $10 for 1 checkout · refunded $5 for 1 canceled, waived or already paid"]);
     assert.equal(await hook("checkout.session.completed", s), 200);
     assert.equal(sx.refunds.filter((x) => x.payment_intent === s.payment_intent).length, 1, "refunded once");
   });
@@ -4149,7 +4336,7 @@ try {
     Object.assign(s, { status: "expired", url: null });
     assert.equal(await hook("checkout.session.expired", s), 200);
     const st = await billOf(tessKey);
-    assert.deepEqual([st.payments.find((x) => x.id === p.body.pay).status, st.lines.find((l) => l.orderNo === "TB-4001").state, st.owed], ["expired", "due", 1000]);
+    assert.deepEqual([st.payments.find((x) => x.id === p.body.pay).status, st.lines.find((l) => l.orderNo === "TB-4001").state, st.owed], ["expired", "due", 500]);
   });
   let sub1;
   await test("the monthly plan needs how many slots are on, and no more than it covers (409)", async () => {
@@ -4335,7 +4522,7 @@ try {
     const r = await api("/billing/dispute", umaKey, { id: l.id, note: "Not a slot I sent\nfrom FAFO" });
     assert.equal(r.status, 200);
     const st = await r.json();
-    assert.deepEqual([st.lines.find((x) => x.orderNo === "UO-1").state, st.owed], ["disputed", 1000]);
+    assert.deepEqual([st.lines.find((x) => x.orderNo === "UO-1").state, st.owed], ["disputed", 500]);
     const m = posts(before);
     assert.equal(m.length, 1);
     assert.match(m[0], new RegExp(`^❓ \\*\\*Uma\\*\\* says Target #UO-1 \\(${today}\\) wasn't your checkout: "Not a slot I sent from FAFO" · \\[Answer\\]\\(${BASE}/billing/list/[A-Za-z0-9_-]+\\?t=[A-Za-z0-9_-]+&b=${umaHash.slice(0, 16)}\\)$`));
@@ -4384,22 +4571,23 @@ try {
     assert.equal(await lineOf(umaKey, "UG-LATE"), undefined);
     await alerts([billEv({ account: umaAcct, orderNo: "UG-1" })]);
     assert.equal((await lineOf(umaKey, "UG-1")).source, "alert", "the day of the pull still counts");
-    // Uma pays what's owed (not the disputed one). One was written when a checkout cost $12 (as if the price changed since):
-    // each is paid at its own amount, one Stripe line per amount.
-    sqlRun("UPDATE billing_lines SET amount = 1200 WHERE order_no = 'UG-1'");
+    // Uma pays what's owed (not the disputed one). One was written when a checkout cost $10 (before the owner made it $5 on
+    // 2026-11-12): it keeps that amount, and each is paid at its own, one Stripe line per amount.
+    assert.equal((await lineOf(umaKey, "UO-3")).amount, 500, "today's price");
+    sqlRun("UPDATE billing_lines SET amount = 1000 WHERE order_no = 'UG-1'");
     const p = await checkout(umaKey, { kind: "pay" });
-    assert.deepEqual([p.body.n, p.body.amount], [2, 2200], "UO-3 and UG-1; the disputed one waits");
+    assert.deepEqual([p.body.n, p.body.amount], [2, 1500], "UO-3 and UG-1; the disputed one waits");
     const items = lastStripe("POST", "/v1/checkout/sessions").params;
     assert.deepEqual([items["line_items[0][price_data][unit_amount]"], items["line_items[0][quantity]"], items["line_items[0][price_data][product_data][description]"],
       items["line_items[1][price_data][unit_amount]"], items["line_items[1][quantity]"], items["line_items[1][price_data][product_data][description]"]],
-      ["1000", "1", "1 checkout: Target #UO-3", "1200", "1", "1 checkout: Target #UG-1"]);
+      ["500", "1", "1 checkout: Target #UO-3", "1000", "1", "1 checkout: Target #UG-1"]);
     const s = sxPay(sessionOf(p.body.url).id);
-    assert.equal(s.amount_total, 2200);
+    assert.equal(s.amount_total, 1500);
     const before = webhookPosts.length;
     assert.equal(await hook("checkout.session.completed", s), 200);
     const st = await billOf(umaKey);
     assert.deepEqual([st.lines.find((l) => l.orderNo === "UO-3").state, st.lines.find((l) => l.orderNo === "UG-1").state, st.payments.find((x) => x.id === p.body.pay).refund], ["paid", "paid", 0]);
-    assert.deepEqual(posts(before), ["💳 **Uma** paid $22 for 2 checkouts"]);
+    assert.deepEqual(posts(before), ["💳 **Uma** paid $15 for 2 checkouts"]);
     umaPay = { ...p.body, pi: s.payment_intent };
   });
   await test("a Stripe customer deleted in the Dashboard is made again, with a new idempotency key (or Stripe would answer with the one that's gone)", async () => {
@@ -4416,7 +4604,7 @@ try {
   });
   await test("a card payment disputed with the bank turns Submit off until the owner clears it; refunds made in Stripe are told", async () => {
     const before = webhookPosts.length;
-    const dispute = { id: "dp_sample1", object: "dispute", charge: "ch_sample1", payment_intent: umaPay.pi, amount: 2000, status: "needs_response" };
+    const dispute = { id: "dp_sample1", object: "dispute", charge: "ch_sample1", payment_intent: umaPay.pi, amount: 1500, status: "needs_response" };
     assert.equal(await hook("charge.dispute.created", dispute), 200);
     const st = await billOf(umaKey);
     assert.deepEqual(st.block, { reason: "disputed-payment", text: "A payment is disputed with your bank. Contact your seller." });
@@ -4425,15 +4613,15 @@ try {
     assert.equal(await hook("charge.dispute.closed", { ...dispute, status: "won" }), 200);
     const m = posts(before);
     assert.equal(m.length, 3, JSON.stringify(m));
-    assert.equal(m[0], "⚠️ **Uma** disputed $20 with their bank. Submit is off for them until you clear it on the Billing page.");
+    assert.equal(m[0], "⚠️ **Uma** disputed $15 with their bank. Submit is off for them until you clear it on the Billing page.");
     assert.equal(m[1], "⛔ **Uma** tried to send 1 slot: a payment is disputed with their bank", "the refused batch");
-    assert.match(m[2], /^⚖️ \*\*Uma\*\*'s dispute of \$20 was closed \(won\)\./, "and the dispute told once");
+    assert.match(m[2], /^⚖️ \*\*Uma\*\*'s dispute of \$15 was closed \(won\)\./, "and the dispute told once");
     const n = webhookPosts.length;
-    sx.refunds.push({ id: "re_dashboard1", object: "refund", amount: 1000, payment_intent: umaPay.pi, metadata: {}, status: "succeeded", created: sxNow() });
-    assert.equal(await hook("charge.refunded", { id: "ch_sample1", object: "charge", payment_intent: umaPay.pi, customer: null, amount_refunded: 1000 }), 200);
-    assert.deepEqual(posts(n), ["↩️ Refunded $10 to **Uma**"]);
-    const tessRefund = sx.refunds.find((x) => x.metadata.fafo_pay && x.amount === 1000 && x.payment_intent !== umaPay.pi);
-    assert.equal(await hook("charge.refunded", { id: "ch_sample2", object: "charge", payment_intent: tessRefund.payment_intent, customer: tessCus, amount_refunded: 1000 }), 200);
+    sx.refunds.push({ id: "re_dashboard1", object: "refund", amount: 500, payment_intent: umaPay.pi, metadata: {}, status: "succeeded", created: sxNow() });
+    assert.equal(await hook("charge.refunded", { id: "ch_sample1", object: "charge", payment_intent: umaPay.pi, customer: null, amount_refunded: 500 }), 200);
+    assert.deepEqual(posts(n), ["↩️ Refunded $5 to **Uma**"]);
+    const tessRefund = sx.refunds.find((x) => x.metadata.fafo_pay && x.amount === 500 && x.payment_intent !== umaPay.pi);
+    assert.equal(await hook("charge.refunded", { id: "ch_sample2", object: "charge", payment_intent: tessRefund.payment_intent, customer: tessCus, amount_refunded: 500 }), 200);
     assert.equal(webhookPosts.length, n + 1, "not the worker's own refund");
   });
   let billLink;
@@ -4455,6 +4643,8 @@ try {
     assert.ok(/@gina[^<]*<br><span[^>]*>License …\w{4}<\/span><\/td>\s*<td>Friends and Family<\/td>/.test(html), "approved before: Friends and Family");
     assert.ok(/@bob[^<]*<br><span[^>]*>License …\w{4}<\/span><\/td>\s*<td>Your FAFO<\/td>/.test(html));
     assert.ok(/<td>Monthly · 10 slots · renews \d{4}-\d\d-\d\d<\/td>/.test(html), "Tess's plan");
+    assert.ok(html.includes('<p class="small">$5 per checkout, due 3 days after it (free if the store cancels it first), or $25 a month for 10 slots ($50 for 25). Buyers you approved'), "the prices, the monthly plan's while it's offered");
+    assert.ok(/<input id="price" name="price" value="5\.00"/.test(html), "the price per checkout's box");
     assert.ok(html.includes("sessionStorage.setItem(KEY, f.value)"), "the search is kept for the tab");
     for (const k of [tessKey, umaKey, ginaKey, bobKey]) assert.ok(!html.includes(k), "never a whole key");
     assert.equal((await fetchOnce(billLink.replace(/t=[^&]+/, "t=wrong"))).status, 404);
@@ -4532,7 +4722,7 @@ try {
     await act("waive", tessKey, "TB-1002");
     // One their monthly plan covered once its payment went through was never owed: no Charge again.
     const view = unescape(await (await fetchOnce(`${billLink}&b=${b}`)).text()), covered = await id(tessKey, "TB-6001");
-    assert.ok(/Target #TB-6001[\s\S]*?Covered by their monthly plan<\/span><\/td><td>\$10<\/td><td class="act"><\/td>/.test(view), view.slice(0, 3000));
+    assert.ok(/Target #TB-6001[\s\S]*?Covered by their monthly plan<\/span><\/td><td>\$5<\/td><td class="act"><\/td>/.test(view), view.slice(0, 3000));
     assert.ok(!view.includes(`name="line" value="${covered}"`), "no button for it");
     assert.equal(errOf((await act("charge-again", tessKey, "TB-6001")).location), "That checkout changed meanwhile, so nothing was done.");
     assert.equal((await lineOf(tessKey, "TB-6001")).state, "canceled");
@@ -4612,7 +4802,7 @@ try {
   });
   await test("Billing page: the link lasts 24 hours, and 10 are asked a day; the admin summary", async () => {
     const d = await (await adminGet("/admin/billing")).json();
-    assert.deepEqual([d.on, d.mode, d.alertsSeen.last4, typeof d.prices.live.base, d.plans.monthly], [true, "live", bobKey.slice(-4), "string", 1]);
+    assert.deepEqual([d.on, d.mode, d.alertsSeen.last4, typeof d.prices.live.base, d.plans.monthly, d.prices.checkout, d.offered], [true, "live", bobKey.slice(-4), "string", 1, 500, ["checkout", "monthly"]]);
     assert.ok(d.owed.owed > 0 && d.people.n >= 2);
     assert.equal((await fetch(BASE + "/admin/billing")).status, 401);
     const id = billLink.match(/\/billing\/list\/([^?]+)/)[1];
@@ -4665,7 +4855,7 @@ try {
   console.log("\nPayments in test mode (a key without _live_)");
   stopWorker(workers.pop());
   await new Promise((r) => setTimeout(r, 1500));
-  await startWorker("billing-test", APPROVAL_PORT - 1, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_test_key_not_real"], "approval");
+  await startWorker("billing-test", APPROVAL_PORT - 1, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "BILLING_MONTHLY=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_test_key_not_real"], "approval");
   await test("test mode reaches only testers (and the owner's FAFO); live rows never show in it", async () => {
     assert.deepEqual(await billOf(tessKey), { on: false });
     assert.deepEqual(await billOf(umaKey), { on: false });
@@ -4696,6 +4886,146 @@ try {
     assert.equal(await hook("checkout.session.completed", sx.sessions.values().next().value), 200, "a live event in test mode: nothing");
     await billPost(link, { action: "untester", key: umaHash, b });
     assert.deepEqual(await billOf(umaKey), { on: false });
+  });
+
+  console.log("\nPayments without the monthly plan, and the price per checkout (2026-11-12)");
+  stopWorker(workers.pop());
+  await new Promise((r) => setTimeout(r, 1500));
+  // As the worker runs now: BILLING_MONTHLY isn't "on", since the owner removed the monthly plan ("Remove $25 plan completely").
+  // Passed empty, as REQUIRE_APPROVAL is, so these run with the plan off even once wrangler.toml turns it back on.
+  await startWorker("billing-off", APPROVAL_PORT + 10, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "BILLING_MONTHLY=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_live_key_not_real"], "approval");
+  const NO_MONTHLY = { error: "The monthly plan isn't offered any more." }, NO_PLAN = { reason: "no-plan", text: "Pick a plan to submit." };
+  const basePrice = () => [...sx.prices.values()].find((x) => x.lookup_key === "fafo_monthly_base").id;
+  let xiaKey, xiaHash, xiaCus;
+  await test("no monthly plan: GET /billing offers pay per checkout only; the monthly plan, its extra 15 slots and Resume are refused (409), with no call to Stripe", async () => {
+    xiaKey = await newBuyer("xia"); xiaHash = hashOf(xiaKey);
+    const st = await billOf(xiaKey);
+    assert.deepEqual([st.exempt, st.plans, st.plan, st.block, st.prices.checkout], [null, ["checkout"], null, NO_PLAN, 500]);
+    assert.deepEqual([st.prices.monthly, st.prices.extra], [2500, 2500], "still there for a page showing a plan already going");
+    const n = stripeCalls.length;
+    const plan = await api("/billing/plan", xiaKey, { plan: "monthly" });
+    assert.deepEqual([plan.status, await plan.json()], [409, NO_MONTHLY]);
+    for (const body of [{ kind: "monthly", extras: 0, on: 2 }, { kind: "monthly", extras: 1, on: 2 }, { kind: "extras", extras: 1, on: 2 }, { kind: "extras", extras: 0, on: 2 }, { kind: "resume" }])
+      assert.deepEqual(await checkout(xiaKey, body), { status: 409, body: NO_MONTHLY }, JSON.stringify(body));
+    assert.equal(stripeCalls.length, n, "Stripe never asked");
+    assert.equal((await api("/billing/plan", xiaKey, { plan: "weekly" })).status, 400);
+    assert.deepEqual((await (await adminGet("/admin/billing")).json()).offered, ["checkout"]);
+  });
+  await test("no monthly plan: one picked and never paid for, or with no subscription left, is no plan (never stuck being set up); pay per checkout takes its place", async () => {
+    // Picked on an older FAFO and never paid: Stripe has it as being set up.
+    xiaCus = "cus_" + rid().slice(0, 14);
+    sx.customers.set(xiaCus, { id: xiaCus, object: "customer", name: "xia", metadata: { fafo_license: xiaHash } });
+    const stuck = sxSub(xiaCus, [basePrice()], { fafo_license: xiaHash }, { status: "incomplete" });
+    assert.equal(await hook("customer.subscription.created", stuck), 200);
+    assert.equal(dbRows(`SELECT sub_id FROM billing WHERE key_hash = '${xiaHash}' AND mode = 'live'`)[0].sub_id, stuck.id);
+    const st = await billOf(xiaKey);
+    assert.deepEqual([st.plan, st.block, st.sub], [null, NO_PLAN, null], "not setting-up, which they couldn't finish (an older FAFO offers Finish payment for a sub shown)");
+    const asked = stripeCalls.filter((x) => x.path === "/v1/invoices").length;
+    const fin = await checkout(xiaKey, { kind: "invoice" });
+    assert.deepEqual([fin.status, fin.body.error, fin.body.plan, fin.body.block], [409, NO_MONTHLY.error, null, NO_PLAN], "paying its first invoice would start the plan");
+    assert.equal(stripeCalls.filter((x) => x.path === "/v1/invoices").length, asked, "Stripe never asked for its invoice");
+    const r = await submit(xiaKey, [ownFile([["Xia Own", "xia.own@example.com"]]), loginsFile(["xia.own@example.com"])], { name: "Xia", on: 1 });
+    assert.equal(r.status, 402); assert.equal((await r.json()).billing.reason, "no-plan");
+    Object.assign(stuck, { status: "incomplete_expired", ended_at: sxNow() });
+    assert.equal(await hook("customer.subscription.deleted", stuck), 200);
+    // A monthly plan with no subscription at all, set to end into pay per checkout.
+    sqlRun(`UPDATE billing SET plan = 'monthly', next_plan = 'checkout', sub_id = NULL WHERE key_hash = '${xiaHash}' AND mode = 'live'`);
+    const gone = await billOf(xiaKey);
+    assert.deepEqual([gone.plan, gone.nextPlan, gone.sub, gone.block], [null, null, null, NO_PLAN]);
+    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [20, true, undefined], "they ask you for slots as anyone does");
+    const p = await (await api("/billing/plan", xiaKey, { plan: "checkout" })).json();
+    assert.deepEqual([p.plan, p.nextPlan, p.block, p.plans], ["checkout", null, null, ["checkout"]]);
+  });
+  await test("no monthly plan: one already going carries on (covered, its 10 slots, a failed payment paid on Stripe's page, Cancel), with no extra slots or Resume; once it ends they ask for slots as anyone does", async () => {
+    const sub = sxSub(xiaCus, [basePrice()], { fafo_license: xiaHash });
+    assert.equal(await hook("customer.subscription.created", sub), 200);
+    const st = await billOf(xiaKey);
+    assert.deepEqual([st.plan, st.sub.status, st.sub.slots, st.block, st.plans], ["monthly", "active", 10, null, ["checkout"]]);
+    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json(), { limit: 10, request: null, canRequest: false, plan: "monthly" });
+    const req = await api("/slots/request", xiaKey, { requested: 30 });
+    assert.deepEqual([req.status, await req.json()], [409, { error: "Your monthly plan has 10 slots" }]);
+    // Covered: an order on an account given to them isn't billed. More slots on than the plan has are refused.
+    sqlRun(`INSERT OR IGNORE INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES ('*', 'bill.pool9@example.com', 'bill.pool9@example.com', 'Sample-Pw-9', ${Date.now()}, 'test')`);
+    const sent = await submit(xiaKey, [ownFile([["Xia Given", ""]], 1)], { name: "Xia", on: 1 });
+    assert.equal(sent.status, 200, await sent.clone().text());
+    const acct = dbRows(`SELECT email FROM accounts WHERE key_hash = '${xiaHash}' AND store = 'target' AND profile = 'Xia Given'`)[0].email;
+    assert.equal((await alerts([billEv({ account: acct, orderNo: "XM-1" })])).sent, 1);
+    assert.equal(await lineOf(xiaKey, "XM-1"), undefined, "covered by their plan");
+    const over = await submit(xiaKey, [ownFile([["Xia Own", "xia.own@example.com"]]), loginsFile(["xia.own@example.com"])], { name: "Xia", on: 11 });
+    assert.deepEqual([over.status, (await over.json()).billing], [402, { reason: "over-limit", slots: 10, on: 11 }]);
+    for (const body of [{ kind: "extras", extras: 1, on: 2 }, { kind: "resume" }]) assert.deepEqual(await checkout(xiaKey, body), { status: 409, body: NO_MONTHLY }, JSON.stringify(body));
+    // A renewal that fails turns Submit off until it's paid on Stripe's page, as before.
+    const renewal = sxRenew(sub), invEv = { id: renewal.id, object: "invoice", parent: { type: "subscription_details", subscription_details: { subscription: sub.id } } };
+    renewal.status = "open"; sub.status = "past_due";
+    assert.equal(await hook("invoice.payment_failed", invEv), 200);
+    assert.deepEqual((await billOf(xiaKey)).block, { reason: "past-due", text: "Your monthly payment didn't go through." });
+    assert.deepEqual(await checkout(xiaKey, { kind: "invoice" }), { status: 200, body: { url: renewal.hosted_invoice_url } });
+    renewal.status = "paid"; sub.status = "active";
+    assert.equal(await hook("invoice.paid", invEv), 200);
+    assert.equal((await billOf(xiaKey)).block, null);
+    const end = await checkout(xiaKey, { kind: "cancel" });
+    assert.deepEqual([end.status, end.body.plan, end.body.nextPlan, end.body.sub.cancelAtEnd], [200, "monthly", null, true]);
+    assert.equal(lastStripe("POST", `/v1/subscriptions/${sub.id}`).params.cancel_at_period_end, "true");
+    assert.deepEqual(await checkout(xiaKey, { kind: "resume" }), { status: 409, body: NO_MONTHLY }, "one set to end can't be kept going");
+    assert.equal((await alerts([billEv({ account: acct, orderNo: "XM-2" })])).sent, 1);
+    assert.equal(await lineOf(xiaKey, "XM-2"), undefined, "still covered until it ends");
+    // It ends (they didn't pick what comes after): no plan, and the slots you approved again at once, not the plan's for 30 days.
+    Object.assign(sub, { status: "canceled", ended_at: sxNow() });
+    assert.equal(await hook("customer.subscription.deleted", sub), 200);
+    const after = await billOf(xiaKey);
+    assert.deepEqual([after.plan, after.sub, after.block], [null, null, NO_PLAN]);
+    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [20, true, undefined]);
+  });
+  let offLink;
+  const priceRow = () => dbRows("SELECT v FROM billing_config WHERE k = 'price:checkout'");
+  const BAD_PRICE = "Not saved: type a price from $1 to $100 in dollars, like 5 or 7.50.";
+  await test("the Billing page's price per checkout: the box shows $5; anything but $1 to $100 in dollars and cents is refused, the same price changes nothing, and only the owner's link can change it", async () => {
+    assert.equal((await api("/billing/list", tessKey, { name: "Tess" })).status, 403, "only the owner's FAFO gets the page");
+    assert.equal((await api("/billing/list", bobKey, { name: "Owner" })).status, 200);
+    offLink = webhookPosts.at(-1).content.match(/\((http[^)]+)\)/)[1];
+    const html = unescape(await (await fetchOnce(offLink)).text());
+    assert.ok(html.includes('<p class="small">$5 per checkout, due 3 days after it (free if the store cancels it first). Buyers you approved'), html.slice(0, 3000));
+    assert.ok(!/a month|monthly plan isn't offered/.test(html), "no monthly plan offered, and no one on one");
+    assert.ok(/<label for="price">Price per checkout<\/label>[\s\S]*?<input id="price" name="price" value="5\.00"[^>]*>[\s\S]*?value="price">Save<\/button><\/div>\s*<p class="hint">Applies to checkouts from now on\. Ones already on an invoice keep their price\.<\/p>/.test(html), html.slice(0, 4000));
+    const before = webhookPosts.length;
+    for (const price of ["abc", "", "0.99", "0", "100.01", "101", "5.555", "-5", "1e3", "5,00", "$", "10 dollars", "1000"]) {
+      const r = await billPost(offLink, { action: "price", price });
+      assert.deepEqual([r.status, errOf(r.location)], [303, BAD_PRICE], JSON.stringify(price));
+    }
+    for (const price of ["5", "5.00", "$5", " 5.0 "]) assert.equal(doneOf((await billPost(offLink, { action: "price", price })).location), "The price per checkout is already $5.", JSON.stringify(price));
+    assert.deepEqual(priceRow(), [], "nothing written");
+    assert.equal(webhookPosts.length, before, "nothing posted");
+    assert.equal((await billPost(offLink.replace(/t=[^&]+/, "t=wrong"), { action: "price", price: "20" })).status, 404, "the page is the owner's, by its link");
+    assert.deepEqual(priceRow(), []);
+    assert.equal((await billOf(umaKey)).prices.checkout, 500);
+  });
+  await test("changing the price per checkout: the channel hears once, new checkouts take it (an order alert, a buyer's FAFO, Add a checkout), and ones already on an invoice keep theirs", async () => {
+    const ub = umaHash.slice(0, 16);
+    assert.deepEqual(await lineOf(umaKey, "OWN-9001").then((l) => [l.amount, l.state]), [500, "due"]);
+    const before = webhookPosts.length;
+    assert.equal(doneOf((await billPost(offLink, { action: "price", price: "$10" })).location), "The price per checkout is $10 now, for checkouts from now on.");
+    assert.deepEqual(posts(before), ["💲 Price per checkout: $5 → $10 (from now on; checkouts already on an invoice keep their price)"]);
+    assert.deepEqual(priceRow(), [{ v: "1000" }]);
+    assert.equal(doneOf((await billPost(offLink, { action: "price", price: "10.00" })).location), "The price per checkout is already $10.");
+    assert.equal(webhookPosts.length, before + 1, "the same price again posts nothing");
+    const st = await billOf(umaKey);
+    assert.deepEqual([st.prices.checkout, st.lines.find((l) => l.orderNo === "OWN-9001").amount], [1000, 500], "one already on the invoice keeps its price");
+    assert.equal((await (await adminGet("/admin/billing")).json()).prices.checkout, 1000);
+    await alerts([billEv({ account: umaAcct, orderNo: "UG-P10" })]);
+    const rep = await (await api("/billing/checkouts", umaKey, { orders: [{ account: "both.own@example.com", store: "target", orderNo: "UO-P10", at: today, stage: "placed" }] })).json();
+    assert.equal(rep.added, 1);
+    assert.equal(doneOf((await billPost(offLink, { action: "add", key: umaHash, b: ub, store: "target", order: "OWN-P10", date: today })).location), "Added Target #OWN-P10 to their invoice.");
+    const now = await billOf(umaKey), amt = (no) => now.lines.find((l) => l.orderNo === no).amount;
+    assert.deepEqual([amt("UG-P10"), amt("UO-P10"), amt("OWN-P10"), amt("OWN-9001")], [1000, 1000, 1000, 500]);
+    // In cents too; checkouts from before keep theirs.
+    const n = webhookPosts.length;
+    assert.equal(doneOf((await billPost(offLink, { action: "price", price: "7.5" })).location), "The price per checkout is $7.50 now, for checkouts from now on.");
+    assert.deepEqual(posts(n), ["💲 Price per checkout: $10 → $7.50 (from now on; checkouts already on an invoice keep their price)"]);
+    await alerts([billEv({ account: umaAcct, orderNo: "UG-P750" })]);
+    const last = await billOf(umaKey);
+    assert.deepEqual([last.prices.checkout, last.lines.find((l) => l.orderNo === "UG-P750").amount, last.lines.find((l) => l.orderNo === "UG-P10").amount], [750, 750, 1000]);
+    const html = unescape(await (await fetchOnce(offLink)).text());
+    assert.ok(html.includes("$7.50 per checkout, due 3 days after it") && /<input id="price" name="price" value="7\.50"/.test(html), html.slice(0, 3000));
   });
 
   console.log("\nProduct pictures (app 1.9.113)");
@@ -4979,12 +5309,12 @@ try {
     assert.equal((await ask("not a key")).status, 401);
     const key = await newKey("gina");
     const g = await ask(key);
-    assert.deepEqual([g.status, g.body.rev, g.body.owner, g.body.items.length], [200, 0, false, 30], "a key from Continue with Discord is in this database");
+    assert.deepEqual([g.status, g.body.rev, g.body.owner, g.body.items.length], [200, SEED_REV, false, SEED_ALL.length], "a key from Continue with Discord is in this database");
     await admin("/admin/revoke", { key });
     assert.deepEqual([(await ask(key)).status, (await getAuth("/premium", key)).status], [401, 401], "turned off");
     ghDown = false;
     const up = await ask(GH_KEY);
-    assert.deepEqual([up.status, up.body.items.length], [200, 30], "once the list can be read");
+    assert.deepEqual([up.status, up.body.items.length], [200, SEED_ALL.length], "once the list can be read");
     assert.equal((await ask("PVLT-NOPE-NOPE-NOPE-NOPE")).status, 401, "and a key that isn't on it is refused");
   });
   console.log(`\n${passed} passed`);

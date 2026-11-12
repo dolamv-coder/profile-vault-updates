@@ -335,6 +335,25 @@ alone (every store's rows of one account) from reading the whole table. Only
     That's the 30 SKUs, looked up on 2026-11-12 from search results (target.com couldn't be opened from here), with names,
     descriptions, sets and TCGplayer products for pictures. Three numbers no source tied to a product are named "Target
     item <n>" for the owner to name.
+  - **Additions** (1.9.143; the owner's request, 2026-11-12, with a tracker's list of 24 products "that may be dropping on
+    friday": add the 13 new ones and keep the rest): `INTEREST_ADDS` (`{id, items}`, in `interest-seed.js`), each put on
+    the list once, saved or not (D1 `interest_adds`, new: the ids applied), so a product the owner takes off afterwards
+    stays off.
+    - The seed has every addition. Its rev is `seedRev`, the number of additions, so a FAFO holding 1.9.142's seed (rev
+      0) fetches it again: never take an addition out of `INTEREST_ADDS` once it's out. They're noted as applied with the
+      owner's first save, in its batch.
+    - A saved list without them gets the products it doesn't have (by store and SKU; one already there keeps the owner's
+      version) at its end, with rev + 1 (`interestMerge`, `interestList`), in one batch that notes them as applied only if
+      that list is the one saved. A row at the seed's rev or below that has them all gets a new rev too, since the worker
+      from before may have saved one while this one deployed. A first save made from the seed is a 409 if a row appeared
+      meanwhile (`ON CONFLICT DO NOTHING`), and saves go by the row `RETURNING rev` gives, since local D1 counts a
+      trigger's writes in `meta.changes`. A call that finds an addition applied after it read the row reads it again once.
+    - An addition that can't be read or written waits for the next call, and the list is answered as it is.
+    - The first, `2026-11-13-friday`, is Friday's 13, looked up like the seed's: Unova Heavy Hitters Premium Collection
+      (Black Bolt & White Flare), 30th Celebration's Big Tin 4-Pack, Ditto Premium Collection, Battle Deck: Umbreon ex, the
+      Night and Day Ultra-Premium Collections and the Mew and Mewtwo Figure Collections, Delta Reign's Booster Bundle, Elite
+      Trainer Box, Three-Booster Blister and Booster Display, and the Mega Charizard X ex Ultra-Premium Collection (Mega
+      Evolution).
   - **Items:** `{sku, store, name, about, set, pic, tcg}`, checked by `interestItem`. A SKU is 3 to 24 letters, digits or
     hyphens; the store is Target or Pokémon Center; a name is at most 120 characters, a description 400, a set 60. A list
     holds at most 300.
@@ -385,9 +404,27 @@ alone (every store's rows of one account) from reading the whole table. Only
   1.9.127 and 1.9.129 below.
   Since 2026-10-18 (the owner's request: "Create payment option. $10 per checkout or $25 a month plan or 10 slots") it
   takes **payments through Stripe**, dormant until the owner adds the secrets `STRIPE_SECRET_KEY` and
-  `STRIPE_WEBHOOK_SECRET` (`billingOn`; setup in `license-worker/README.md` → Payments). Plans: $10 per checkout (one
+  `STRIPE_WEBHOOK_SECRET` (`billingOn`; setup in `license-worker/README.md` → Payments). Plans: $5 per checkout (the
+  owner's change on 2026-11-12, from $10: `PRICE_CHECKOUT`; a line already on an invoice keeps what it was billed) (one
   order is one checkout, due 3 days after it, free if the store cancels it before it's paid; no automatic refund after),
   or monthly, $25 for 10 slots switched on at once with nothing per checkout, plus one add-on of 15 slots for another $25.
+  Since 2026-11-12 (the owner's requests: "Maybe I want to change it to $10 later", then "Remove $25 plan completely") the
+  price per checkout is the owner's to set, and the monthly plan isn't offered (worker and page 1.9.143):
+  - **The price:** Price per checkout on the Billing page, $1 to $100 (`PRICE_MIN`, `PRICE_MAX`, `priceCents`), kept as
+    `price:checkout` in `billing_config` (one price for test and live) and read in SQL as each line is written (`priceSql`
+    in `lineStmt`; `checkoutPrice` for pages and `GET /billing`'s `prices.checkout`), else `PRICE_CHECKOUT`. A new checkout
+    takes the price of the moment it's added; lines already there keep theirs, and so do payments and refunds. A change
+    posts "💲 Price per checkout: $5 → $10 (from now on; checkouts already on an invoice keep their price)" to the channel;
+    the same price writes and posts nothing (one D1 batch reads the old price and writes the new one).
+  - **No monthly plan** (`monthlyOffered`: only with `BILLING_MONTHLY = "on"`; production has none, and the tests pass it
+    to each payments worker, `on` or empty, so they don't depend on `wrangler.toml`):
+    `/billing/plan` monthly and `/billing/checkout` `monthly`, `extras` and `resume` answer 409 "The monthly plan isn't
+    offered any more." (`NO_MONTHLY`), and so does `invoice` for a subscription still being set up. `GET /billing` says
+    `plans: ["checkout"]` (`plansOf`; both when offered), a buyer whose plan is monthly with no live subscription counts as
+    having none (`no-plan`, never `setting-up` for a plan that can't start), and one with a live subscription keeps it
+    (coverage, Cancel, paying a failed invoice, its slots, `over-limit`) until it ends, with no extras to add or remove.
+    `/slots/limit`'s `canRequest:false` is only for those. The Billing page says how many still have one. The monthly
+    code stays, for them and for the tests.
   The owner's words: "Buyers that I already approved should not be charged for anything", so **Friends and Family**
   (`exemptOf`): everyone issued a license before payments came on (`on_since:<mode>` in `billing_config`, stamped by the
   first request that sees the keys), every hand-made key, and anyone the owner moves there, is never charged or refused
@@ -409,8 +446,8 @@ alone (every store's rows of one account) from reading the whole table. Only
   (a monthly buyer with more on than the plan: 1.9.130 sends `on`, and the worker counts the CSV rows too); the channel
   hears of a refusal at most every 6 hours per buyer, saying when it came from a FAFO too old to explain it.
   `/slots/limit` answers a monthly buyer's plan slots with `canRequest:false` (POST /slots/request 409s "Add 15 slots in
-  Invoice"). Stripe: `Stripe-Version: 2026-09-30.endive` pinned (`stripe`), Checkout sessions with card and Link only, one
-  open 'pay' session per buyer (a partial unique index on `billing_payments`), the amounts worked out here, one Customer
+  Invoice" while the monthly plan is offered, else "Your monthly plan has N slots"). Stripe: `Stripe-Version:
+  2026-09-30.endive` pinned (`stripe`), Checkout sessions with card and Link only, one open 'pay' session per buyer (a partial unique index on `billing_payments`), the amounts worked out here, one Customer
   per buyer and mode, prices made by lookup key (`ensurePrices`). It never trusts a webhook's payload: each event makes it
   fetch the session or subscription again (`fulfillSession`, `syncSubscription`), so repeats and order don't matter, and
   `reconcile` asks Stripe again from GET /billing and Submit, so a missed webhook changes nothing. A payment for lines
@@ -1472,7 +1509,7 @@ From 1.9.130 the app has **Invoice** (the owner's request, 2026-10-18: payment p
 section above), shown only once the worker says payments are on for this license (`GET /billing` → `on:true`; with them
 off every view's markup is 1.9.129's). `refreshBilling` asks at unlock, every 5 minutes while shown, when Invoice or Submit
 is drawn, on coming back to the tab or online, and every 4 seconds for 3 minutes after Stripe was opened; a 401 counts as
-off, other errors keep the last answer. Only `{h, on, plan, exempt, block reason}` goes to localStorage (`orbit-billing`,
+off, other errors keep the last answer. Only `{h, on, plan, exempt, block reason}` (from 1.9.143 also `plans` and whether there's a subscription, `sub`) goes to localStorage (`orbit-billing`,
 for other tabs and a fresh unlock); the invoice and amounts stay in memory and go at lock. `renderInvoice` (sidebar after
 Submit, with "!" when blocked or the number owed; phone tab after Submit) shows Friends and Family ("Nothing to pay"), no
 plan (the two plan cards: Pay per checkout, or Monthly with "Add 15 more slots"), pay per checkout (counts strip, the
@@ -1914,6 +1951,37 @@ From 1.9.142 the app has **Interests** (the owner's request, 2026-11-12; the wor
   - With no inbox to clean, a run says so on the Clean page.
   - `clean-rules.test.mjs` covers it.
 - Settings gain `interestPicks`.
+
+From 1.9.143 the owner's Add products on Interests reads a **drop list** pasted from a restock tracker (the owner's
+request, 2026-11-12, with Friday's 24 products; the worker adds the 13 that were new, above).
+- **Blocks:** a name line and `SKU: <number>` (or TCIN, any case, with or without the colon or #: `INTEREST_DROP_SKU`).
+  Retail, QL, Stock and a tracker's other `Key: value` lines (`INTEREST_DROP_KEY`) are read and left out, as the owner
+  chose cards show neither. Links and "SKU name" lines can be mixed in (`interestsFromText`).
+- **A SKU line's name:** the words after its number (`interestSkuName`; not a stock word, `INTEREST_SKU_STATUS`, a store's
+  name or the tracker's next field), else the nearest plain line above it, back to the SKU line before. A tracker that
+  writes the SKU line first is read that way: when more SKU lines have a name right under them than right above, each
+  takes the first line under it. A line that's a product of its own (`interestOwnLine`) is never a name, and a name with
+  tracker lines but no SKU line counts as couldn't be read.
+- **Names** are written as the list writes its own (`interestDropName`): no "Pokémon TCG:"; no "Mega Evolution —" in front
+  of a set's product (kept for the series' own products, `INTEREST_DROP_KIND`); no tracker tag such as "— New Drop"
+  (`INTEREST_DROP_TAG`); "— Styles May Vary" as "(styles may vary)" and any other dash as ": " ("30th Celebration
+  Ultra-Premium Collection: Night").
+- **Sets** ("by set, as now", the owner's choice): each new product goes in the set on the list that its name has
+  (`interestSetFor`: never one inside another, then the one latest in the name, the longest on a tie), else the Set box's.
+  The preview lists up to 50 new products with their sets (`INTEREST_ADD_SHOWN`), and pictures are looked up for 20 at a
+  time, where it was 8 (`INTEREST_FIND_MAX`).
+
+Also from 1.9.143 **Invoice offers only the plans the worker's `plans` names** (`billMonthlyOffered`; an answer without
+`plans`, from an older worker, offers both), so the owner could bring the monthly plan back from the worker alone.
+- With the monthly plan gone (the worker section above), a buyer with no plan sees Pay per checkout alone, at the worker's
+  price ("Your seller charges per checkout. Until you choose it, Submit stays off.").
+- Nothing offers the monthly plan or its extra 15 slots: Invoice, `planLimitDialog`, Submit's slot meter, or
+  `billingBlockDialog` (titled "Choose pay per checkout first").
+- A monthly plan with no subscription counts as none (`billPlan`). A subscriber keeps Cancel plan and Pay now, with no
+  extras or Keep my plan.
+- Buttons drawn before the change say the plan isn't offered any more (`billMonthlyGone`).
+- `orbit-billing` gains `plans` and `sub`. `.github/scripts/billing.test.mjs` runs Invoice against a pretend worker.
+- Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
