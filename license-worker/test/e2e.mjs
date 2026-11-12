@@ -3701,7 +3701,7 @@ try {
     assert.equal((await iGet(ginaKey, "?rev=" + (SEED_REV + 3))).body.items.length, SEED_ALL.length, "another rev gets the list");
     assert.equal((await iGet(ginaKey, "?rev=")).body.items.length, SEED_ALL.length, "and so does none");
     assert.equal((await fetch(BASE + "/interests", { method: "OPTIONS" })).status, 204);
-    assert.deepEqual(iAdded(), ADD_IDS, "the additions noted as applied: once the owner saves, one they take off stays off");
+    assert.deepEqual(iAdded(), [], "not noted as applied while the list is the seed: the owner's first save notes them with its list");
   });
   await test("interests: only the owner's FAFO changes the list, and only from the rev it has", async () => {
     const list = [iItem("88897899", "Sample Elite Trainer Box")];
@@ -3744,8 +3744,7 @@ try {
       iItem("100-10001", "Sample Booster Bundle", { store: "pokemoncenter", set: "Sample Set", tcg: 712103 }),
       iItem("88897899", "The same SKU at the other store", { store: "pokemoncenter" }),
     ];
-    // As if the seed's answers hadn't noted the additions as applied: the first save, made from the seed, notes them itself.
-    sqlRun("DELETE FROM interest_adds");
+    assert.deepEqual(iAdded(), [], "nothing noted while the list is the seed");
     const r = await iPut(bobKey, { rev: SEED_REV, items: list });
     assert.equal(r.status, 200, JSON.stringify(r.body)); assert.equal(r.cc, "no-store");
     const saved = [
@@ -3969,6 +3968,27 @@ try {
     await iFresh(APPROVAL_PORT + 8);
     assert.deepEqual((await iGet(ginaKey)).body, after, "the same list and rev in a worker that reads what was applied from the database");
     assert.equal(iRev(), irev, "nothing written");
+    iBefore = after;
+  });
+  await test("interests: an addition that can't be written just now leaves the list as it was read, and goes on at the next read", async () => {
+    // As if the addition were new (the one product taken off above is missing), with its marker's write failing, which rolls
+    // back the list's write in the same batch: the list is still read, by buyers, batches and pictures alike.
+    sqlRun("DELETE FROM interest_adds");
+    sqlRun("CREATE TRIGGER iadd_test_fail BEFORE INSERT ON interest_adds BEGIN SELECT RAISE(ABORT, 'test'); END");
+    try {
+      await iFresh(APPROVAL_PORT + 9);
+      const g = await iGet(ginaKey);
+      assert.equal(g.status, 200, JSON.stringify(g.body));
+      assert.deepEqual(g.body, iBefore, "the list and rev as saved");
+      assert.equal(iRev(), irev, "nothing written");
+      assert.deepEqual(iAdded(), []);
+    } finally { sqlRun("DROP TRIGGER IF EXISTS iadd_test_fail"); }
+    const g = await iGet(ginaKey);
+    assert.equal(g.body.rev, irev + 1, "written at the next read");
+    assert.equal(g.body.items.length, iBefore.items.length + 1, "the one missing product added");
+    assert.deepEqual(g.body.items.slice(0, -1), iBefore.items, "at the end");
+    assert.deepEqual(iAdded(), ADD_IDS, "noted as applied");
+    irev += 1;
   });
 
   console.log("\nPayments: off until the Stripe keys are set (2026-10-18)");

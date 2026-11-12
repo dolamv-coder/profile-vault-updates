@@ -99,10 +99,12 @@ export const INTEREST_SEED = [
 ];
 
 // Products added to the live list once, after the seed (interest_adds records each batch applied): kept on a list the
-// owner already saved, never brought back once the owner takes one off. "2026-11-13-friday": the 13 new products on the
-// drop list the owner sent on 2026-11-12 ("here are the product that may be dropping on friday"); the other 11 on it were
-// on the list already. Looked up from search results the same way as the seed; the Big Tin 4-Pack is most likely the ex
-// Tin (the line's only tin with 4 packs), so its description says no more than that.
+// owner already saved, never brought back once the owner takes one off. An entry stays here once it's out: the seed's rev
+// counts them (seedRev in index.js), so a FAFO that has the seed from before an addition fetches it again.
+// "2026-11-13-friday": the 13 new products on the drop list the owner sent on 2026-11-12 ("here are the product that may
+// be dropping on friday"); the other 11 on it were on the list already. Looked up from search results the same way as the
+// seed; the Big Tin 4-Pack is most likely the ex Tin (the line's only tin with 4 packs), so its description says no more
+// than that.
 export const INTEREST_ADDS = [
   { id: "2026-11-13-friday", items: [
     { sku: "1013645543", store: "target", set: "Black Bolt & White Flare", tcg: "668632",

@@ -5883,40 +5883,39 @@ const markAdd = (env, id, now) => env.DB.prepare("INSERT OR IGNORE INTO interest
 // first. Throws when D1 does.
 async function interestList(env, again = false) {
   const row = await env.DB.prepare("SELECT rev, items FROM interest_list WHERE id = 1").first();
-  let due = addsList().filter((a) => !interestAdded.has(a.id));
-  if (!row) {
-    // The seed has them all. Noted as applied, so once the owner first saves, one they took off doesn't come back (the save
-    // notes them too, in case this didn't go through).
-    if (due.length) {
-      const now = Date.now();
-      await env.DB.batch(due.map((a) => markAdd(env, a.id, now))).then(() => due.forEach((a) => interestAdded.add(a.id)), (e) => console.error("interests", e));
-    }
-    return { rev: seedRev(), items: seedItems(), seed: true };
-  }
+  // The seed has every addition. They're noted as applied with the owner's first save, in its batch (interestsPut), never
+  // before: a list saved some other way (by the worker from before, still answering while this one deploys) has none of
+  // them, and gets them at its next read.
+  if (!row) return { rev: seedRev(), items: seedItems(), seed: true };
   const list = { rev: row.rev, items: JSON.parse(row.items) };
+  let due = addsList().filter((a) => !interestAdded.has(a.id));
   if (!due.length) return list;
-  // Applied already by another isolate, or by this one's worker before it restarted.
-  const { results } = await env.DB.prepare("SELECT id FROM interest_adds WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(due.map((a) => a.id))).all();
-  for (const r of results) interestAdded.add(r.id);
-  due = due.filter((a) => !interestAdded.has(a.id));
-  if (!due.length) return list;
-  const items = interestMerge(list.items, due.flatMap((a) => a.items)), now = Date.now();
-  if (items.length === list.items.length) {
-    // Every product is on the list already (or it's full): only noted as applied.
-    await env.DB.batch(due.map((a) => markAdd(env, a.id, now)));
-    due.forEach((a) => interestAdded.add(a.id));
-    return list;
-  }
-  // Written only over the rev read, and noted as applied only once this list is the one saved (as the save's picture
-  // cleanup), so a call that loses the race never notes it without its products.
-  const body = JSON.stringify(items);
-  const res = await env.DB.batch([
-    env.DB.prepare("UPDATE interest_list SET rev = rev + 1, items = ?, updated_at = ? WHERE id = 1 AND rev = ?").bind(body, now, list.rev),
-    ...due.map((a) => env.DB.prepare("INSERT OR IGNORE INTO interest_adds (id, at) SELECT ?, ? WHERE (SELECT items FROM interest_list WHERE id = 1) = ?").bind(a.id, now, body)),
-  ]);
-  if (res[0].meta && res[0].meta.changes) { due.forEach((a) => interestAdded.add(a.id)); return { rev: list.rev + 1, items }; }
-  // Another call, or the owner's save, wrote first: read it again and try once more, else leave it for the next call.
-  return again ? list : interestList(env, true);
+  // An addition that can't be read or written just now waits for the next call, and the list is answered as it is, so it
+  // never stops buyers' FAFOs, batches or pictures reading the list.
+  try {
+    // Applied already by another isolate, or by this one's worker before it restarted.
+    const { results } = await env.DB.prepare("SELECT id FROM interest_adds WHERE id IN (SELECT value FROM json_each(?))").bind(JSON.stringify(due.map((a) => a.id))).all();
+    for (const r of results) interestAdded.add(r.id);
+    due = due.filter((a) => !interestAdded.has(a.id));
+    if (!due.length) return list;
+    const items = interestMerge(list.items, due.flatMap((a) => a.items)), now = Date.now();
+    if (items.length === list.items.length) {
+      // Every product is on the list already (or it's full): only noted as applied.
+      await env.DB.batch(due.map((a) => markAdd(env, a.id, now)));
+      due.forEach((a) => interestAdded.add(a.id));
+      return list;
+    }
+    // Written only over the rev read, and noted as applied only once this list is the one saved (as the save's picture
+    // cleanup), so a call that loses the race never notes it without its products.
+    const body = JSON.stringify(items);
+    const res = await env.DB.batch([
+      env.DB.prepare("UPDATE interest_list SET rev = rev + 1, items = ?, updated_at = ? WHERE id = 1 AND rev = ?").bind(body, now, list.rev),
+      ...due.map((a) => env.DB.prepare("INSERT OR IGNORE INTO interest_adds (id, at) SELECT ?, ? WHERE (SELECT items FROM interest_list WHERE id = 1) = ?").bind(a.id, now, body)),
+    ]);
+    if (res[0].meta && res[0].meta.changes) { due.forEach((a) => interestAdded.add(a.id)); return { rev: list.rev + 1, items }; }
+    // Another call, or the owner's save, wrote first: read it again and try once more, else leave it for the next call.
+    return again ? list : await interestList(env, true);
+  } catch (e) { console.error("interests: addition", e); return list; }
 }
 // The picture an item shows: its upload, else its TCGplayer product's, else none.
 const interestRef = (it) => it.pic || (it.tcg ? "t" + it.tcg : "");
