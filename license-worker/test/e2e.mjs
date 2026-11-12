@@ -4855,7 +4855,7 @@ try {
   console.log("\nPayments in test mode (a key without _live_)");
   stopWorker(workers.pop());
   await new Promise((r) => setTimeout(r, 1500));
-  await startWorker("billing-test", APPROVAL_PORT - 1, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_test_key_not_real"], "approval");
+  await startWorker("billing-test", APPROVAL_PORT - 1, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "BILLING_MONTHLY=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_test_key_not_real"], "approval");
   await test("test mode reaches only testers (and the owner's FAFO); live rows never show in it", async () => {
     assert.deepEqual(await billOf(tessKey), { on: false });
     assert.deepEqual(await billOf(umaKey), { on: false });
@@ -4892,7 +4892,8 @@ try {
   stopWorker(workers.pop());
   await new Promise((r) => setTimeout(r, 1500));
   // As the worker runs now: BILLING_MONTHLY isn't "on", since the owner removed the monthly plan ("Remove $25 plan completely").
-  await startWorker("billing-off", APPROVAL_PORT + 10, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_live_key_not_real"], "approval");
+  // Passed empty, as REQUIRE_APPROVAL is, so these run with the plan off even once wrangler.toml turns it back on.
+  await startWorker("billing-off", APPROVAL_PORT + 10, ["REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "BILLING_MONTHLY=", "MIN_ACCOUNT_AGE_DAYS=0", ...STRIPE, "STRIPE_SECRET_KEY=fake_live_key_not_real"], "approval");
   const NO_MONTHLY = { error: "The monthly plan isn't offered any more." }, NO_PLAN = { reason: "no-plan", text: "Pick a plan to submit." };
   const basePrice = () => [...sx.prices.values()].find((x) => x.lookup_key === "fafo_monthly_base").id;
   let xiaKey, xiaHash, xiaCus;

@@ -416,7 +416,8 @@ alone (every store's rows of one account) from reading the whole table. Only
     takes the price of the moment it's added; lines already there keep theirs, and so do payments and refunds. A change
     posts "💲 Price per checkout: $5 → $10 (from now on; checkouts already on an invoice keep their price)" to the channel;
     the same price writes and posts nothing (one D1 batch reads the old price and writes the new one).
-  - **No monthly plan** (`monthlyOffered`: only with `BILLING_MONTHLY = "on"`, which the tests set; production has none):
+  - **No monthly plan** (`monthlyOffered`: only with `BILLING_MONTHLY = "on"`; production has none, and the tests pass it
+    to each payments worker, `on` or empty, so they don't depend on `wrangler.toml`):
     `/billing/plan` monthly and `/billing/checkout` `monthly`, `extras` and `resume` answer 409 "The monthly plan isn't
     offered any more." (`NO_MONTHLY`), and so does `invoice` for a subscription still being set up. `GET /billing` says
     `plans: ["checkout"]` (`plansOf`; both when offered), a buyer whose plan is monthly with no live subscription counts as
@@ -445,8 +446,8 @@ alone (every store's rows of one account) from reading the whole table. Only
   (a monthly buyer with more on than the plan: 1.9.130 sends `on`, and the worker counts the CSV rows too); the channel
   hears of a refusal at most every 6 hours per buyer, saying when it came from a FAFO too old to explain it.
   `/slots/limit` answers a monthly buyer's plan slots with `canRequest:false` (POST /slots/request 409s "Add 15 slots in
-  Invoice"). Stripe: `Stripe-Version: 2026-09-30.endive` pinned (`stripe`), Checkout sessions with card and Link only, one
-  open 'pay' session per buyer (a partial unique index on `billing_payments`), the amounts worked out here, one Customer
+  Invoice" while the monthly plan is offered, else "Your monthly plan has N slots"). Stripe: `Stripe-Version:
+  2026-09-30.endive` pinned (`stripe`), Checkout sessions with card and Link only, one open 'pay' session per buyer (a partial unique index on `billing_payments`), the amounts worked out here, one Customer
   per buyer and mode, prices made by lookup key (`ensurePrices`). It never trusts a webhook's payload: each event makes it
   fetch the session or subscription again (`fulfillSession`, `syncSubscription`), so repeats and order don't matter, and
   `reconcile` asks Stripe again from GET /billing and Submit, so a missed webhook changes nothing. A payment for lines

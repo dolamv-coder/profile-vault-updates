@@ -727,7 +727,7 @@ month plan and its extra 15 slots ("Remove $25 plan completely"); a buyer who's 
   cancel it or pay a failed payment in Invoice, but not resume one set to end. Once it ends they're on pay per checkout
   if they chose it, or else pick it in Invoice. A buyer who picked the monthly plan but never finished paying for it
   counts as having no plan. To offer the plan again, set `BILLING_MONTHLY = "on"` in `wrangler.toml`'s `[vars]` and
-  deploy (the tests run that way).
+  deploy (the tests start each payments worker with the setting it tests, whatever `wrangler.toml` says).
 - **Who can submit.** A buyer has to pick a plan in FAFO's **Invoice** page first (pay per checkout). Submit stays off
   for them while a checkout is overdue, their monthly payment has failed, or a payment is disputed with their bank, and a
   buyer still on a monthly plan can't have more slots on than it has (10 or 25). A batch refused this way is never
