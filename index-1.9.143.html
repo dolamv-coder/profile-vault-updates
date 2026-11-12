@@ -18379,9 +18379,12 @@ async function removeInterest(key){
 // on the buyer's own accounts sent as slots (POST /billing/checkouts: the worker bills the ones placed while the slot was
 // out). With payments off on the worker, or for the seller's own FAFO, GET /billing answers {on:false} (or exempt
 // "owner") and none of this shows. The prices shown are the worker's (prices in GET /billing): BILL_PRICES is only a
-// fallback, and each invoice line shows its own amount.
-// The answer stays in memory (amounts, order numbers); this device keeps only {h, on, plan, exempt, block reason, at} for
-// the license (orbit-billing, h a hash of the key, as orbit-premium), so Invoice and Submit's note show at once at unlock.
+// fallback, and each invoice line shows its own amount. Which plans a buyer can pick is the worker's too (plans in GET
+// /billing): from 1.9.143 the owner offers pay per checkout only (2026-11-12: "Remove $25 plan completely"), and a
+// buyer already on the monthly plan keeps it until it ends or they cancel it.
+// The answer stays in memory (amounts, order numbers); this device keeps only {h, on, plan, exempt, block reason, at, and
+// from 1.9.143 plans and whether a subscription is left (sub: true)} for the license (orbit-billing, h a hash of the key,
+// as orbit-premium), so Invoice and Submit's note show at once at unlock.
 const BILL_STORE = "orbit-billing", BILL_EVERY_MS = 5 * 60000, BILL_WATCH_MS = 3 * 60000;
 const BILL = {d:null, h:"", at:0, tried:0, busy:false, p:null, watch:0, watchPay:"", wait:null, shown:"", names:new Map(), naming:false, checking:false};
 const BILL_PRICES = {checkout:500, monthly:2500, extra:2500, monthlySlots:10, extraSlots:15, extraMax:1, dueDays:3};
@@ -18401,14 +18404,24 @@ function billRead(){
   return d && (!v || BILL.at >= v.at || billSum(d) === billSum(v)) ? d : v;
 }
 // What the kept answer holds, to tell whether another tab's says something else.
-const billSum = (b) => b ? JSON.stringify([!!b.on, b.plan || null, b.exempt || null, typeof b.block === "string" ? b.block : (b.block && b.block.reason) || null]) : "";
+const billSum = (b) => b ? JSON.stringify([!!b.on, b.plan || null, b.exempt || null, typeof b.block === "string" ? b.block : (b.block && b.block.reason) || null, Array.isArray(b.plans) ? b.plans.join() : null]) : "";
 const billBlockOf = (b) => !b || !b.on || b.exempt || !b.block ? null : typeof b.block === "string" ? {reason:b.block, text:BILL_BLOCK[b.block] || ""} : b.block;
 const billingBlock = () => billBlockOf(billRead());
 const invoiceShown = () => { const b = billRead(); return !!(b && b.on && b.exempt !== "owner"); };
 const billFull = () => { const b = billRead(); return b && b.on && Array.isArray(b.lines) ? b : null; };
 const billOwner = () => { const b = billRead(); return !!(b && b.on && b.exempt === "owner"); };
-const billMonthly = () => { const b = billRead(); return !!(b && b.on && !b.exempt && b.plan === "monthly"); };
+const billMonthly = () => { const b = billRead(); return !!(b && b.on && !b.exempt && billPlan(b) === "monthly"); };
 const billPrices = (d) => Object.assign({}, BILL_PRICES, (d && d.prices) || {});
+// Whether a buyer can pick or start the monthly plan, and add its extra 15 slots (1.9.143): only when the worker's plans
+// has "monthly", never decided here, so the owner could bring it back from the worker alone. An answer without plans (an
+// older worker), or none yet, offers both, as before.
+const billMonthlyOffered = (b) => !b || !Array.isArray(b.plans) || b.plans.includes("monthly");
+// A subscription the buyer still has: being paid, past due or set to end, not one never paid for (incomplete). The answer
+// kept on this device only says whether there is one (sub: true).
+const billSubKept = (b) => !!b && (b.sub === true || (!!b.sub && typeof b.sub === "object" && b.sub.status !== "incomplete"));
+// The plan the buyer is on. With the monthly plan no longer offered, one picked and never paid for, or one that ended, is
+// none (the owner's request, 2026-11-12): the worker blocks Submit as no-plan, and Invoice offers pay per checkout.
+const billPlan = (b) => { const p = (b && b.plan) || null; return p === "monthly" && !billMonthlyOffered(b) && !billSubKept(b) ? null : p; };
 const billOwed = (d) => (d.lines || []).filter(l => BILL_OWED.includes(l.state));
 // What Pay takes: the owed checkouts but disputed ones (the seller decides those) and held ones (not due yet).
 const billPayable = (d) => (d.lines || []).filter(l => l.state === "due" || l.state === "overdue").reduce((n, l) => n + (Number(l.amount) || 0), 0);
@@ -18494,7 +18507,8 @@ window.addEventListener("online", () => { if (S) refreshBilling(true); });
 function billTake(d, k){
   const h = premiumHash(k), prev = BILL.h === h ? BILL.d : null;
   BILL.d = d; BILL.h = h; BILL.at = Date.now();
-  billMem = {h, on:!!d.on, plan:d.plan || null, exempt:d.exempt || null, block:d.block && d.block.reason || null, at:BILL.at};
+  billMem = {h, on:!!d.on, plan:d.plan || null, exempt:d.exempt || null, block:d.block && d.block.reason || null, at:BILL.at, sub:billSubKept(d)};
+  if (Array.isArray(d.plans)) billMem.plans = d.plans.filter(x => typeof x === "string");
   try { localStorage.setItem(BILL_STORE, JSON.stringify(billMem)); } catch(e){}
   // A plan's slots come through GET /slots/limit (10, or 25 with the extra 15).
   const plan = (x) => x && x.on && !x.exempt ? (x.plan || "") + ":" + ((x.sub && x.sub.slots) || "") : "";
@@ -18650,6 +18664,14 @@ function billSubscribe(extras){
   return "";
 }
 const billSubmitLink = `<button class="link" data-act="view" data-id="submit">Go to Submit</button>`;
+// A click on a monthly offer (subscribe, its extra slots, Keep my plan) drawn before the worker stopped offering the plan
+// (1.9.143): says so and redraws, rather than asking the worker, which refuses it.
+function billMonthlyGone(){
+  if (billMonthlyOffered(billRead())) return false;
+  toast("The monthly plan isn't offered any more.", "err");
+  if (UI.view === "invoice" && !typedUnsaved()) renderMain();
+  return true;
+}
 function openMonthlyPick(){
   const pr = billPrices(billFull());
   openLayer({
@@ -18714,15 +18736,16 @@ function openBillDispute(id){
     }
   });
 }
-// Submit's gate: why the seller won't take slots now, with the way out.
+// Submit's gate: why the seller won't take slots now, with the way out. With no monthly plan offered (1.9.143), pay per
+// checkout is the only plan to pick, and the monthly one isn't mentioned.
 function billingBlockDialog(b){
-  const r = b.reason, d = billFull(), pay = d ? billPayable(d) : 0;
-  const title = {"no-plan":"Pick a plan first", overdue:"Pay what's overdue", "past-due":"Your monthly payment failed", "setting-up":"Your monthly plan is being set up", "disputed-payment":"Payment disputed"}[r] || "Your seller needs a payment";
+  const r = b.reason, d = billFull(), pay = d ? billPayable(d) : 0, mo = billMonthlyOffered(d || billRead());
+  const title = {"no-plan":mo ? "Pick a plan first" : "Choose pay per checkout first", overdue:"Pay what's overdue", "past-due":"Your monthly payment failed", "setting-up":"Your monthly plan is being set up", "disputed-payment":"Payment disputed"}[r] || "Your seller needs a payment";
   const act = r === "no-plan" ? "Pay per checkout" : r === "overdue" ? (pay ? `Pay ${billMoney(pay)}` : "Pay") : r === "past-due" ? "Pay now" : r === "setting-up" ? "Finish payment" : "";
   const pr = billPrices(d);
   openLayer({
     title, small:true,
-    body:`<p style="margin:0;color:var(--ink-2)">${esc(b.text || BILL_BLOCK[r] || "Your seller won't take slots until this is paid.")}</p>${r === "no-plan" ? `<p style="margin:10px 0 0;color:var(--ink-2)">Pay per checkout is ${billMoney(pr.checkout)} for each order your seller places on your slots. Invoice also has the monthly plan, ${billMoney(pr.monthly)} for ${pr.monthlySlots} slots.</p>` : ""}`,
+    body:`<p style="margin:0;color:var(--ink-2)">${esc(b.text || BILL_BLOCK[r] || "Your seller won't take slots until this is paid.")}</p>${r === "no-plan" ? `<p style="margin:10px 0 0;color:var(--ink-2)">Pay per checkout is ${billMoney(pr.checkout)} for each order your seller places on your slots.${mo ? ` Invoice also has the monthly plan, ${billMoney(pr.monthly)} for ${pr.monthlySlots} slots.` : ""}</p>` : ""}`,
     foot:`<button class="btn" data-close>Close</button><button class="btn" id="bb-inv">Open Invoice</button>${act ? `<button class="btn btn-primary" id="bb-go">${esc(act)}</button>` : ""}`,
     mount:(panel, close) => {
       $("#bb-inv", panel).addEventListener("click", () => { closeAllLayers(); billOpen(); });
@@ -18760,9 +18783,11 @@ async function billRefused(bill, text, lic, panel){
   if (keepTypedLic(lic, panel)){ persist(); render(); }
   const k = sellerLic(); if (!S || !k) return;
   const reason = String(bill.reason || "");
-  // Until GET /billing answers, the refusal stands in for it (no amounts: Invoice says it's checking).
+  // Until GET /billing answers, the refusal stands in for it (no amounts: Invoice says it's checking), with the plans this
+  // device last heard of (1.9.143). Those two reasons are a monthly plan's, whose subscription is still there.
   if (!(BILL.d && BILL.h === premiumHash(k) && BILL.d.on)){
-    BILL.d = {on:true, mode:"", exempt:null, plan:reason === "over-limit" || reason === "past-due" ? "monthly" : null, nextPlan:null, sub:null,
+    const monthly = reason === "over-limit" || reason === "past-due", kept = billMem && billMem.h === premiumHash(k) ? billMem : null;
+    BILL.d = {on:true, mode:"", exempt:null, plan:monthly ? "monthly" : null, nextPlan:null, sub:monthly || null, plans:kept && kept.plans || undefined,
       block:reason && reason !== "over-limit" ? {reason, text} : null, seeded:true};
     BILL.h = premiumHash(k); BILL.at = Date.now(); billApply();
   }
@@ -18924,7 +18949,9 @@ function renderInvoice(){
   BILL.checking = !d && BILL.busy;
   const head = (sub) => `<div class="view-head"><div><h1 class="view-title">Invoice</h1><p class="view-sub">${sub}</p></div></div>`;
   if (!d) return head("What you pay your seller") + `<div class="slip inv-plan"><p class="item-sub">${BILL.busy ? "Checking…" : "FAFO couldn't check your invoice just now. It tries again by itself."}</p>${BILL.busy ? "" : `<div class="inv-acts"><button class="btn btn-sm" data-act="bill-refresh">${ic("refresh")}Try again</button></div>`}</div>`;
-  const pr = billPrices(d), s = d.sub, reason = d.block && d.block.reason;
+  // mo: the monthly plan and its extra slots are offered (1.9.143: not once the owner removed it, the worker's plans). A
+  // buyer already on it keeps it, with Cancel plan and Pay now, but adds or removes no slots and doesn't resume it.
+  const pr = billPrices(d), s = d.sub, reason = d.block && d.block.reason, mo = billMonthlyOffered(d), plan = billPlan(d);
   const notes = (reason === "disputed-payment" ? `<p class="note note-bad" style="margin:0 0 14px">A payment is disputed with your bank. Contact your seller.</p>` : "")
     + (d.mode === "test" ? `<p class="note" style="margin:0 0 14px">Test mode: your seller is trying payments out. Stripe takes only its test cards, so nothing is really charged.</p>` : "");
   const card = (name, pill, rest) => `<div class="slip inv-plan inv-cur"><div class="inv-top"><div><div class="inv-eyebrow">Your plan</div><div class="inv-name">${name}</div></div>${pill}</div>${rest}</div>`;
@@ -18932,28 +18959,28 @@ function renderInvoice(){
   // Friends and Family: nothing to pay (a monthly plan from before stays, paused by Stripe, until it's canceled).
   if (d.exempt === "family"){
     const plan = s ? `<div class="inv-line">${s.paused ? "Monthly plan · no charge while you're Friends and Family" : `Monthly plan · ${s.cancelAtEnd ? "ends" : "renews"} ${esc(billDay(s.periodEnd))}`}</div>
-      <div class="inv-acts">${s.cancelAtEnd ? `<button class="btn btn-sm" data-act="bill-resume">Keep my plan</button>` : `<button class="btn btn-sm" data-act="bill-cancel">Cancel plan</button>`}</div>` : "";
+      <div class="inv-acts">${s.cancelAtEnd ? (mo ? `<button class="btn btn-sm" data-act="bill-resume">Keep my plan</button>` : "") : `<button class="btn btn-sm" data-act="bill-cancel">Cancel plan</button>`}</div>` : "";
     return head("Friends and Family") + notes + card("Friends and Family", `<span class="ppill ppill-ok">Nothing to pay</span>`, `<p class="item-sub">Your seller doesn't charge you.</p>${plan}`);
   }
-  // Signed up on Stripe, but the first payment isn't through yet.
-  if (!d.plan && (reason === "setting-up" || (s && s.status === "incomplete"))){
+  // Signed up on Stripe, but the first payment isn't through yet (with no monthly plan offered, only when the worker says so).
+  if (!plan && (reason === "setting-up" || (mo && s && s.status === "incomplete"))){
     return head("Monthly subscription plan") + notes + card("Monthly subscription plan", `<span class="ppill ppill-warn">Setting up</span>`,
       `<p class="item-sub">Your monthly plan is being set up on Stripe. If the payment didn't go through there, finish it to submit.</p><div class="inv-acts"><button class="btn btn-primary" data-act="bill-invoice" data-id="setup">${ic("ext")}Finish payment</button></div>`) + lines;
   }
-  if (!d.plan){
+  if (!plan){
     const monthlyN = pr.monthlySlots + pr.extraSlots;
-    return head("What you pay your seller") + notes + `<p class="inv-lead">Pick how you pay. Until you do, Submit stays off.</p>
+    return head("What you pay your seller") + notes + `<p class="inv-lead">${mo ? "Pick how you pay. Until you do, Submit stays off." : "Your seller charges per checkout. Until you choose it, Submit stays off."}</p>
       <div class="inv-plans">
         <div class="slip inv-plan"><div class="inv-eyebrow">Plan</div><div class="inv-name">Pay per checkout</div><div class="inv-price">${billMoney(pr.checkout)} <small>per checkout</small></div>
           <p class="item-sub">You pay for each order on an account you sent as a slot or one your seller gave you. Each is due ${plural(pr.dueDays, "day")} after it, and free if the store cancels it before you pay.</p>
           <div class="inv-acts"><button class="btn btn-primary" data-act="bill-plan-checkout">Pay per checkout</button></div></div>
-        <div class="slip inv-plan"><div class="inv-eyebrow">Plan</div><div class="inv-name">Monthly</div><div class="inv-price">${billMoney(pr.monthly)} <small>a month</small></div>
+        ${mo ? `<div class="slip inv-plan"><div class="inv-eyebrow">Plan</div><div class="inv-name">Monthly</div><div class="inv-price">${billMoney(pr.monthly)} <small>a month</small></div>
           <p class="item-sub">${pr.monthlySlots} slots switched on at once. Nothing per checkout.</p>
           <label class="check"><input type="checkbox" id="inv-extra"><span>Add ${pr.extraSlots} more slots (+${billMoney(pr.extra)} a month, ${monthlyN} in all)</span></label>
-          <div class="inv-acts"><button class="btn btn-primary" data-act="bill-subscribe">${ic("ext")}Subscribe on Stripe</button></div><p class="err-line" id="inv-sub-err" role="alert"></p></div>
+          <div class="inv-acts"><button class="btn btn-primary" data-act="bill-subscribe">${ic("ext")}Subscribe on Stripe</button></div><p class="err-line" id="inv-sub-err" role="alert"></p></div>` : ""}
       </div>${lines}`;
   }
-  if (d.plan === "monthly"){
+  if (plan === "monthly"){
     // Stripe couldn't take the monthly payment (from the subscription: an overdue checkout or a dispute hold is the block
     // the worker names first).
     const owed = billOwed(d).reduce((n, l) => n + (Number(l.amount) || 0), 0), failed = reason === "past-due" || !!(s && !s.paused && ["past_due", "unpaid", "incomplete", "paused"].includes(s.status));
@@ -18963,8 +18990,8 @@ function renderInvoice(){
     const when = !s ? "" : s.cancelAtEnd ? `<div class="inv-line">Ends ${esc(billDay(s.periodEnd))} · after that: ${d.nextPlan === "checkout" ? "pay per checkout" : "no plan (Submit turns off)"} <button class="link" data-act="bill-change">Change</button></div>`
       : `<div class="inv-line">${failed ? "Stripe couldn't take this month's payment. Pay now to keep submitting." : `Renews ${esc(billDay(s.periodEnd))}`}</div>`;
     const acts = (failed ? `<button class="btn btn-primary" data-act="bill-invoice">${ic("ext")}Pay now</button>` : "")
-      + (s && subLive(s) ? (extras < pr.extraMax ? `<button class="btn btn-sm" data-act="bill-extra-add">${ic("plus")}Add ${pr.extraSlots} slots (+${billMoney(pr.extra)}/month)</button>` : `<button class="btn btn-sm" data-act="bill-extra-remove">Remove the extra ${pr.extraSlots} slots</button>`) : "")
-      + (s ? (s.cancelAtEnd ? `<button class="btn btn-sm" data-act="bill-resume">Keep my plan</button>` : `<button class="btn btn-sm" data-act="bill-cancel">Cancel plan</button>`) : "")
+      + (s && subLive(s) && mo ? (extras < pr.extraMax ? `<button class="btn btn-sm" data-act="bill-extra-add">${ic("plus")}Add ${pr.extraSlots} slots (+${billMoney(pr.extra)}/month)</button>` : `<button class="btn btn-sm" data-act="bill-extra-remove">Remove the extra ${pr.extraSlots} slots</button>`) : "")
+      + (s ? (s.cancelAtEnd ? (mo ? `<button class="btn btn-sm" data-act="bill-resume">Keep my plan</button>` : "") : `<button class="btn btn-sm" data-act="bill-cancel">Cancel plan</button>`) : "")
       + (s && s.cancelAtEnd && d.nextPlan === "checkout" ? "" : `<button class="btn btn-sm" data-act="bill-switch-checkout">Switch to pay per checkout</button>`);
     return head("Monthly subscription plan") + notes + card("Monthly subscription plan", pill,
       `<div class="inv-price">${billMoney(pr.monthly + pr.extra * extras)} <small>a month · ${slots} slots</small></div>${when}<div class="inv-acts">${acts}</div>`) + lines;
@@ -18974,7 +19001,7 @@ function renderInvoice(){
   const kpis = `<div class="p-kpis">${kpi("var(--caution)", "Owed", billMoney(d.owed))}${d.overdue ? kpi("var(--danger)", "Overdue", billMoney(d.overdue)) : ""}${kpi("var(--ok)", "Paid in the last 30 days", billMoney(d.paid30))}</div>`;
   const body = d.lines.length ? invPayHTML(d) + invTableHTML(d) : `<div class="empty"><h2>Nothing owed</h2><p>Checkouts your seller makes on your slots show up here.</p></div>`;
   return head(`Pay per checkout · ${billMoney(pr.checkout)} each`) + notes + kpis + body
-    + `<p class="note" style="margin:14px 0 0">Each checkout is ${billMoney(pr.checkout)}, due ${plural(pr.dueDays, "day")} after it. An overdue checkout turns Submit off until it's paid. <button class="link" data-act="bill-monthly" style="font-size:calc(13px*var(--fs))">Switch to the monthly plan</button></p>`;
+    + `<p class="note" style="margin:14px 0 0">Each checkout is ${billMoney(pr.checkout)}, due ${plural(pr.dueDays, "day")} after it. An overdue checkout turns Submit off until it's paid.${mo ? ` <button class="link" data-act="bill-monthly" style="font-size:calc(13px*var(--fs))">Switch to the monthly plan</button>` : ""}</p>`;
 }
 
 /* ---- Settings → Billing (the seller's own FAFO) ---- */
@@ -19010,8 +19037,10 @@ function slotLimitDialog(){
   });
 }
 // The same on the monthly plan (1.9.130): its slots are the plan's, and more come from Invoice (the extra 15), not a request.
+// From 1.9.143, with the plan no longer offered (the worker's plans), there are no extra slots to add: the plan has what it has.
 function planLimitDialog(){
-  const n = slotAllow(), inUse = slotsInUse(), over = inUse > n, d = billFull(), pr = billPrices(d), more = !d || !d.sub || (Number(d.sub.extras) || 0) < pr.extraMax;
+  const n = slotAllow(), inUse = slotsInUse(), over = inUse > n, d = billFull(), pr = billPrices(d);
+  const more = billMonthlyOffered(d || billRead()) && (!d || !d.sub || (Number(d.sub.extras) || 0) < pr.extraMax);
   openLayer({
     title: over ? "Too many slots switched on" : `You're using all ${n} slots`, small:true,
     body:`<p style="margin:0;color:var(--ink-2)">${over ? `You have ${inUse} slots switched on, and your plan has ${n}. Switch ${inUse - n} off before submitting${more ? `, or add ${pr.extraSlots} slots in Invoice` : ""}.` : `Your plan has ${n} slots switched on at once, across all stores. Switch one off${more ? `, or add ${pr.extraSlots} slots in Invoice` : ""}.`}</p>`,
@@ -19021,7 +19050,11 @@ function planLimitDialog(){
 }
 function openSlotRequest(){
   const n = slotAllow(), q = slotReq(), L = {key:sellerLic()};
-  if (billMonthly()){ toast(`Add ${billPrices(billFull()).extraSlots} slots in Invoice`); billOpen(); return; }   // the monthly plan (1.9.130)
+  if (billMonthly()){   // the monthly plan (1.9.130), whose extra slots aren't offered from 1.9.143
+    if (billMonthlyOffered(billRead())){ toast(`Add ${billPrices(billFull()).extraSlots} slots in Invoice`); billOpen(); }
+    else toast(`Your monthly plan has ${n} slots switched on at once.`);
+    return;
+  }
   if (!canRequestSlots()){ toast("Asking for more slots needs your license key. Submit once from here, or turn on sync in Settings.", "err"); return; }
   if (q && q.status === "pending"){ toast(`You've asked for ${q.requested} slots. It's waiting for approval.`); return; }
   if (n >= SLOT_MAX){ toast(`${SLOT_MAX} slots is the most there is.`); return; }
@@ -19092,10 +19125,11 @@ function submitRowHTML(r, g){
 }
 // The slot allowance, as a meter in Submit's action panel (1.9.124): slots in use of the license's limit, what a request
 // for more is waiting on, and Request more slots.
-// On the monthly plan (1.9.130): the extra 15 slots, from Invoice, while the plan doesn't have them.
+// On the monthly plan (1.9.130): the extra 15 slots, from Invoice, while the plan doesn't have them (and, from 1.9.143, only
+// while the worker offers the plan).
 function planMoreHTML(){
   const d = billFull(), pr = billPrices(d);
-  return d && d.sub && (Number(d.sub.extras) || 0) >= pr.extraMax ? "" : ` <button class="link" data-act="bill-open" style="font-size:calc(13px*var(--fs))">Add ${pr.extraSlots} slots in Invoice</button>`;
+  return !billMonthlyOffered(d || billRead()) || d && d.sub && (Number(d.sub.extras) || 0) >= pr.extraMax ? "" : ` <button class="link" data-act="bill-open" style="font-size:calc(13px*var(--fs))">Add ${pr.extraSlots} slots in Invoice</button>`;
 }
 function slotAllowHTML(){
   const n = slotAllow(), inUse = slotsInUse(), q = slotReq(), pending = q && q.status === "pending";
@@ -19937,8 +19971,8 @@ document.addEventListener("click", async (e) => {
     case "bill-refresh": refreshBilling(true); renderMain(); break;
     case "bill-pay": openStripe("pay"); break;
     case "bill-invoice": openStripe("invoice", {setup:id === "setup"}); break;
-    case "bill-monthly": openMonthlyPick(); break;
-    case "bill-subscribe": { const why = billSubscribe(!!($("#inv-extra") || {}).checked), err = $("#inv-sub-err");
+    case "bill-monthly": if (!billMonthlyGone()) openMonthlyPick(); break;
+    case "bill-subscribe": { if (billMonthlyGone()) break; const why = billSubscribe(!!($("#inv-extra") || {}).checked), err = $("#inv-sub-err");
       if (err) err.innerHTML = why ? `${esc(why)} ${billSubmitLink}` : ""; break; }
     case "bill-plan-checkout": billAction("/billing/plan", {plan:"checkout"}, "You pay per checkout now", t); break;
     case "bill-switch-checkout": { const d = billFull(), s = d && d.sub;
@@ -19950,12 +19984,12 @@ document.addEventListener("click", async (e) => {
       break; }
     case "bill-cancel": openBillCancel(false); break;
     case "bill-change": openBillCancel(true); break;
-    case "bill-resume": { billAction("/billing/checkout", {kind:"resume"}, (x) => x.sub ? `Your monthly plan renews ${billDay(x.sub.periodEnd)}` : "Your monthly plan stays on", t); break; }
-    case "bill-extra-add": { const pr = billPrices(billFull());
+    case "bill-resume": { if (billMonthlyGone()) break; billAction("/billing/checkout", {kind:"resume"}, (x) => x.sub ? `Your monthly plan renews ${billDay(x.sub.periodEnd)}` : "Your monthly plan stays on", t); break; }
+    case "bill-extra-add": { if (billMonthlyGone()) break; const pr = billPrices(billFull());
       if (await confirmDialog({title:`Add ${pr.extraSlots} slots?`, body:`Stripe charges your card now for the rest of this month, then ${billMoney(pr.monthly + pr.extra)} a month.`, confirm:`Add ${pr.extraSlots} slots`}))
         openStripe("extras", {extras:1});
       break; }
-    case "bill-extra-remove": { const pr = billPrices(billFull()), on = slotsInUse();
+    case "bill-extra-remove": { if (billMonthlyGone()) break; const pr = billPrices(billFull()), on = slotsInUse();
       if (on > pr.monthlySlots){ toast(`You have ${on} slots switched on, and without the extra ${pr.extraSlots} your plan has ${pr.monthlySlots}. Switch ${on - pr.monthlySlots} off on Submit first.`, "err"); break; }
       if (await confirmDialog({title:`Remove the extra ${pr.extraSlots} slots?`, body:`Your plan goes back to ${pr.monthlySlots} slots at ${billMoney(pr.monthly)} a month. Stripe credits what's left of this month on your next payment.`, confirm:"Remove them"}))
         billAction("/billing/checkout", {kind:"extras", extras:0, on:slotsInUse()}, (x) => `Your plan has ${(x.sub && x.sub.slots) || pr.monthlySlots} slots now`);

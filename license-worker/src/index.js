@@ -98,18 +98,21 @@
 //   GET  /alerts/webhook       {set, lastOk, lastError}: this license's Discord webhook for its alerts
 //   PUT  /alerts/webhook       {url}: set it (it gets a test post first), or "" to remove it
 // Payments (Stripe; off until STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set; page 1.9.130+, license Bearer):
-//   GET  /billing              {on:false}, or {on, mode, exempt, plan, nextPlan, block, prices, sub, lines, owed, overdue,
-//                              paid30, payments, report}: this license's plan and invoice ($5 per checkout, or $25 a month)
+//   GET  /billing              {on:false}, or {on, mode, exempt, plan, nextPlan, block, plans, prices, sub, lines, owed,
+//                              overdue, paid30, payments, report}: this license's plan and invoice (prices.checkout is the
+//                              price the owner set on the Billing page, $5 to start; plans is ["checkout"], with "monthly"
+//                              only while BILLING_MONTHLY is "on")
 //   POST /billing/plan         {plan:"checkout"}: pay per checkout (a monthly plan ends first)
 //   POST /billing/checkouts    {orders:[{account, store, orderNo, at, stage}]}: checkouts their FAFO found on their own
 //                              accounts, billed when that account was out as one of their slots then
 //   POST /billing/checkout     {kind: pay | monthly | extras | cancel | resume | invoice, ...}: {url} of a Stripe page to
-//                              open, or GET /billing's answer
+//                              open, or GET /billing's answer (monthly, extras and resume: 409 while the plan isn't offered)
 //   POST /billing/dispute      {id, note}: "not my seller's checkout", for the owner to waive or keep
 //   GET  /billing/done         where Stripe sends the buyer back
 //   POST /stripe/webhook       Stripe's events (signed with STRIPE_WEBHOOK_SECRET)
 //   POST /submissions refuses a buyer who isn't paid up (402 {error, billing:{reason, ...}}); /slots/limit gives a monthly
 //                              plan's 10 or 25.
+//   The owner's Billing page (/billing/list/:id) sets the price per checkout (billing_config price:checkout).
 // Web version and sync (app 1.9.65+). The app seals its vault (AES-GCM, with a key from the vault's
 // password) before it leaves the device, so what's kept here can't be read here. Every call takes the
 // license key (Bearer); reading or saving also takes the vault's access token (x-vault-auth), which
@@ -158,7 +161,9 @@
 //   GET  /admin/accounts       the account list: free and given out per store, who got which, offers
 //   GET  /admin/vaults         synced vaults: whose, how big, from which device, when (never their contents)
 //   GET  /admin/alerts         order alerts: who asked to send them and the decisions, and how many each buyer got
-//   GET  /admin/billing        payments: on or off, the mode, since when, plans, what's owed, prices, the last order alerts
+//   GET  /admin/billing        payments: on or off, the mode, since when, plans, what's owed, prices (the checkout's as
+//                              set now, and Stripe's monthly price ids), whether the monthly plan is offered, the last
+//                              order alerts
 //   GET  /admin/pictures?q=NAME what a name's picture search reads: its words, the groups searched, every product that
 //                              fits and the answer (nothing kept or fetched for the picture)
 //   POST /admin/accounts/free  {email, store?}: give an account back to the list
@@ -686,7 +691,10 @@ async function slotLimit(request, env) {
 async function slotRequest(request, env, ctx, url) {
   const lic = await slotLicense(request, env);
   if (!lic) return json({ error: "license not recognized" }, 401);
-  if (await planSlots(env, lic.hash).catch(() => null)) return json({ error: "Add 15 slots in Invoice" }, 409);
+  // A monthly plan's slots: its extra 15 are added in Invoice, or, with the plan no longer offered (2026-11-12), they're
+  // what that plan has until it ends.
+  const plan = await planSlots(env, lic.hash).catch(() => null);
+  if (plan) return json({ error: monthlyOffered(env) ? "Add 15 slots in Invoice" : `Your monthly plan has ${plan} slots` }, 409);
   if (!env.DISCORD_WEBHOOK_URL) return json({ error: "requests aren't set up" }, 503);
   const b = await request.json().catch(() => ({}));
   const current = await currentSlotLimit(env, lic.hash);
@@ -4050,12 +4058,27 @@ async function premiumListPage(request, env, url, id) {
 // with Stripe again (reconcile), so a lost one changes nothing. Off until both STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET
 // are set; a test key (not _live_) reaches only licenses marked Tester (and the owner's own FAFO, which is never charged).
 // Removing the keys turns it off here, while Stripe goes on billing subscriptions.
+// Also on 2026-11-12: "Is there a way to change the pricing structure in the backend? Maybe I want to change it to $10
+// later" (they chose a price box on their Billing page: checkoutPrice), and "Remove $25 plan completely" (monthlyOffered:
+// no one can pick or start the monthly plan, or its extra 15 slots; subscriptions that already exist carry on).
 const STRIPE_VERSION = "2026-09-30.endive";
 const stripeApi = (env) => String(env.STRIPE_API_BASE || "https://api.stripe.com").replace(/\/+$/, "");   // tests set it
 // cents, usd. The checkout was 1000 ($10) until 2026-11-12. Each billing_lines row keeps its own amount, so a line already
 // on an invoice keeps what it was billed at (lineStmt's upsert never changes it), and paying groups lines by amount.
 const PRICE_CHECKOUT = 500, PRICE_MONTHLY = 2500, PRICE_EXTRA = 2500;
 const MONTHLY_SLOTS = 10, EXTRA_SLOTS = 15, EXTRA_MAX = 1;
+// The price per checkout the owner sets on the Billing page (2026-11-12), in cents, one for both modes: billing_config
+// price:checkout, else PRICE_CHECKOUT. As SQL, so a new line takes the price at the moment it's written (lineStmt), and
+// checkoutPrice reads the same row the same way. $1 to $100; a row outside that (never written here) counts as none.
+const PRICE_MIN = 100, PRICE_MAX = 10000;
+const priceSql = (dflt) => `COALESCE((SELECT CAST(v AS INTEGER) FROM billing_config WHERE k = 'price:checkout' AND CAST(v AS INTEGER) BETWEEN ${PRICE_MIN} AND ${PRICE_MAX}), ${dflt})`;
+const checkoutPrice = async (env) => (await env.DB.prepare(`SELECT ${priceSql("?")} AS p`).bind(PRICE_CHECKOUT).first()).p;
+// The monthly plan is offered only with BILLING_MONTHLY = "on" (the tests, or the owner bringing it back): the owner removed
+// it on 2026-11-12 ("Remove $25 plan completely"). Off, a buyer can't pick it, add or remove its extra 15 slots or resume
+// one set to end; one whose subscription is still going keeps it as it is (its coverage, slots and limit, Cancel, paying a
+// failed invoice), and a monthly plan with no subscription left counts as no plan.
+const monthlyOffered = (env) => env.BILLING_MONTHLY === "on";
+const NO_MONTHLY = "The monthly plan isn't offered any more.";
 const DUE_MS = 3 * 86400000;
 // An order's date is the day where whoever reported it is: windows and plans stretch this much either side, in the buyer's favour.
 const TZ_SLACK_MS = 14 * 3600000;
@@ -4241,8 +4264,9 @@ async function billable(c, w, d) {
   const held = waiting && (cur.paid_through == null || cur.paid_through + TZ_SLACK_MS < start);
   return { ok: true, held: held ? cur.sub_id : null };
 }
-// The statement that puts one order on a buyer's invoice (billable already checked): PRICE_CHECKOUT ($5), due 3 days after
-// the order's day (or after now, if that's later). One order belongs to one buyer, so an alert or the owner never adds one
+// The statement that puts one order on a buyer's invoice (billable already checked): at the price per checkout as it is
+// when the line is written (priceSql: the owner's Billing page, else PRICE_CHECKOUT, $5), due 3 days after the order's day
+// (or after now, if that's later). One order belongs to one buyer, so an alert or the owner never adds one
 // that an alert or the owner put on another buyer's invoice (another buyer's own report doesn't count: it's only their
 // word). An alert or the owner takes over a line the buyer's FAFO reported, unless their FAFO said the store canceled it
 // (the owner can charge it again); a buyer's report never touches one from an alert or the owner. Nothing if it's there
@@ -4251,7 +4275,7 @@ function lineStmt(env, c, l) {
   const due = Math.max(dayStart(l.orderAt) + 86400000, c.now) + DUE_MS;
   const solo = l.source === "buyer" ? "1" : "NOT EXISTS (SELECT 1 FROM billing_lines o WHERE o.store = ?3 AND o.order_no = ?4 AND o.mode = ?2 AND o.key_hash <> ?1 AND o.source <> 'buyer')";
   return env.DB.prepare(`INSERT INTO billing_lines (id, key_hash, mode, store, store_name, order_no, item, qty, order_at, acct_hash, profile, source, amount, created_at, due_at, held_sub)
-    SELECT ?5, ?1, ?2, ?3, ?6, ?4, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16 WHERE ${solo}
+    SELECT ?5, ?1, ?2, ?3, ?6, ?4, ?7, ?8, ?9, ?10, ?11, ?12, ${priceSql("?13")}, ?14, ?15, ?16 WHERE ${solo}
     ON CONFLICT (key_hash, mode, store, order_no) DO UPDATE SET source = excluded.source, acct_hash = excluded.acct_hash, due_at = excluded.due_at
     WHERE billing_lines.source = 'buyer' AND excluded.source <> 'buyer' AND billing_lines.paid_at IS NULL AND billing_lines.waived_at IS NULL AND billing_lines.canceled_at IS NULL`)
     .bind(l.hash, c.mode, l.store, l.orderNo, randomId(12), String(l.storeName || "").slice(0, 40), String(l.item || "").slice(0, 120), String(l.qty || "").slice(0, 6),
@@ -4310,28 +4334,34 @@ async function billingState(env, c, hash) {
       s = w.bill && w.bill.sub_id ? (await c.subs(hash)).find((x) => x.sub_id === w.bill.sub_id) : null;
     } catch (e) { console.error("billing resync", e && e.message); }
   }
-  const b = w.bill;
-  Object.assign(out, { exempt: w.exempt, plan: b ? b.plan : null, nextPlan: b ? b.next_plan : null, sub: s && !subEnded(s) ? subOut(s) : null });
+  const b = w.bill, live = !!s && !subEnded(s);
+  // With the monthly plan no longer offered, a monthly plan whose subscription is gone (or never was) is no plan: they pick
+  // pay per checkout, never left waiting on a plan that can't be started.
+  const gone = !!b && b.plan === "monthly" && !live && !monthlyOffered(env);
+  Object.assign(out, { exempt: w.exempt, plan: b && !gone ? b.plan : null, nextPlan: b && !gone ? b.next_plan : null, sub: live ? subOut(s) : null });
   out.monthlyOk = out.plan === "monthly" && !!s && (s.status === "active" || s.status === "trialing");
   if (w.exempt) return out;
   Object.assign(out, await lineTotals(env, c, hash));
   if (b && b.dispute_hold) out.block = { reason: "disputed-payment", text: "A payment is disputed with your bank. Contact your seller." };
   else if (out.late) out.block = { reason: "overdue", text: `${plural(out.late, "checkout")} overdue: ${money(out.overdue)}.` };
   else if (out.plan === "monthly" && s && ["past_due", "unpaid", "incomplete", "paused"].includes(s.status) && !s.paused) out.block = { reason: "past-due", text: "Your monthly payment didn't go through." };
-  else if (!out.plan && s && s.status === "incomplete") out.block = { reason: "setting-up", text: "Your monthly plan is being set up on Stripe." };
+  else if (!out.plan && s && s.status === "incomplete" && monthlyOffered(env)) out.block = { reason: "setting-up", text: "Your monthly plan is being set up on Stripe." };
   else if (!out.plan) out.block = { reason: "no-plan", text: "Pick a plan to submit." };
   return out;
 }
 
 // The slots a monthly plan gives (10, or 25 with the extra 15) to a license billed on one: while its plan is monthly (whatever
 // its subscription's state), and for 30 days after one ended with no plan picked. Null otherwise: Friends and Family and pay
-// per checkout keep the limit the owner approved, or the default.
+// per checkout keep the limit the owner approved, or the default. With the monthly plan no longer offered (2026-11-12), only
+// while its subscription is still going: once it's gone they ask the owner for slots as everyone does, since they can't add
+// the extra 15 any more.
 async function planSlots(env, hash) {
   if (!billingOn(env)) return null;
   const c = billCtx(env), w = await c.who(hash);
   if (!w.on || w.exempt || !w.bill || !w.bill.sub_id) return null;
   const s = (await c.subs(hash)).find((x) => x.sub_id === w.bill.sub_id);
   if (!s) return null;
+  if (!monthlyOffered(env)) return w.bill.plan === "monthly" && !subEnded(s) ? MONTHLY_SLOTS + EXTRA_SLOTS * s.extras : null;
   return w.bill.plan === "monthly" || (!w.bill.plan && s.ended_at && s.ended_at > c.now - 30 * 86400000) ? MONTHLY_SLOTS + EXTRA_SLOTS * s.extras : null;
 }
 
@@ -4663,14 +4693,16 @@ async function billingLicense(request, env) {
   return { lic: { hash, last4: norm.slice(-4), discordId: row ? row.discord_id : null, username: row ? row.username : null } };
 }
 const PRICES = { checkout: PRICE_CHECKOUT, monthly: PRICE_MONTHLY, extra: PRICE_EXTRA, monthlySlots: MONTHLY_SLOTS, extraSlots: EXTRA_SLOTS, extraMax: EXTRA_MAX, dueDays: DUE_MS / 86400000 };
+// The plans a buyer can pick (page 1.9.143+ reads it; an answer without it is read as both, as before).
+const plansOf = (env) => monthlyOffered(env) ? ["checkout", "monthly"] : ["checkout"];
 // GET /billing's answer: the plan, the invoice (lines still owed, held or disputed, and the rest from the last 60 days, newest
 // first), what's owed, the last day's payments, and which of their own accounts their FAFO should report checkouts on (those
 // out as slots in the last 45 days, from the earliest day one was).
 async function billingBody(env, c, lic) {
   const st = await billingState(env, c, lic.hash);
   if (!st.on) return { on: false };
-  const out = { on: true, mode: c.mode, exempt: st.exempt, plan: st.plan, nextPlan: st.nextPlan, block: st.block, now: c.now, prices: PRICES, sub: st.sub,
-    lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null };
+  const out = { on: true, mode: c.mode, exempt: st.exempt, plan: st.plan, nextPlan: st.nextPlan, block: st.block, now: c.now, plans: plansOf(env),
+    prices: { ...PRICES, checkout: await checkoutPrice(env) }, sub: st.sub, lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null };
   if (st.exempt) return out;
   const [lines, paid, pays, wins] = await env.DB.batch([
     env.DB.prepare(`SELECT * FROM billing_lines WHERE key_hash = ? AND mode = ? AND ((paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL) OR created_at > ?)
@@ -4735,13 +4767,19 @@ async function billingPlan(request, env) {
   if (error) return error;
   const b = await readBody(request, 2000);
   if (!b) return json({ error: "too large" }, 413, NO_STORE);
+  // (The monthly plan was only ever started through Stripe: /billing/checkout.)
+  if (b.plan === "monthly" && !monthlyOffered(env)) return json({ error: NO_MONTHLY }, 409, NO_STORE);
   if (b.plan !== "checkout") return json({ error: "plan" }, 400, NO_STORE);
   const g = await billingBuyer(env, lic, false);
   if (g.error) return g.error;
   const { c, w } = g;
   let message = "";
+  // A monthly plan with no subscription left, which billingState reads as none while the plan isn't offered: pay per
+  // checkout takes its place whatever it was set to end into.
+  let gone = false;
   try {
     const s = w.bill && w.bill.plan === "monthly" ? await liveSubOf(env, c, w) : null;
+    gone = !s && !!w.bill && w.bill.plan === "monthly" && !monthlyOffered(env);
     if (s) {
       const sub = await syncSubscription(env, c, s.sub_id);
       const now = await env.DB.prepare("SELECT * FROM billing_subs WHERE sub_id = ?").bind(s.sub_id).first();
@@ -4764,8 +4802,9 @@ async function billingPlan(request, env) {
   // Pay per checkout now, unless a paid-up monthly plan runs to its end first.
   await env.DB.prepare(`INSERT INTO billing (key_hash, mode, plan, plan_at, updated_at) VALUES (?1, ?2, 'checkout', ?3, ?3)
     ON CONFLICT (key_hash, mode) DO UPDATE SET plan = 'checkout', plan_at = CASE WHEN billing.plan = 'checkout' THEN billing.plan_at ELSE excluded.plan_at END, next_plan = NULL, updated_at = excluded.updated_at
-    WHERE billing.plan IS NULL OR billing.plan = 'checkout' OR (billing.next_plan IS NULL AND NOT EXISTS (SELECT 1 FROM billing_subs s WHERE s.sub_id = billing.sub_id AND s.status IN ('active', 'trialing')))`)
-    .bind(lic.hash, c.mode, c.now).run();
+    WHERE billing.plan IS NULL OR billing.plan = 'checkout' OR (billing.next_plan IS NULL AND NOT EXISTS (SELECT 1 FROM billing_subs s WHERE s.sub_id = billing.sub_id AND s.status IN ('active', 'trialing')))
+      OR ?4`)
+    .bind(lic.hash, c.mode, c.now, gone ? 1 : 0).run();
   return json({ ...(await billingBody(env, billCtx(env), lic)), ...(message ? { message } : {}) }, 200, NO_STORE);
 }
 
@@ -4851,6 +4890,9 @@ async function billingCheckout(request, env, ctx, url) {
   if (!["pay", "monthly", "extras", "cancel", "resume", "invoice"].includes(kind)) return json({ error: "kind" }, 400, NO_STORE);
   const g = await billingBuyer(env, lic, kind === "cancel" || kind === "resume");
   if (g.error) return g.error;
+  // The monthly plan no longer offered (2026-11-12): nothing starts or grows one, nor keeps one set to end going. Cancel and
+  // paying a failed invoice still work for a subscription that's still going.
+  if ((kind === "monthly" || kind === "extras" || kind === "resume") && !monthlyOffered(env)) return json({ error: NO_MONTHLY }, 409, NO_STORE);
   const { c } = g;
   const web = WEB_APPS.indexOf(String(b.web || "")), back = web >= 0 ? `&w=${web}` : "";
   const on = typeof b.on === "number" && Number.isFinite(b.on) ? Math.max(0, Math.floor(b.on)) : null;
@@ -5201,6 +5243,13 @@ async function ownerOutcome(env, c, hash, x) {
   return { ok: true, held: ok.held };
 }
 
+// The Billing page's price per checkout as typed: dollars with up to 2 decimals ("5", "$7.50"), from $1 to $100, in cents;
+// null for anything else.
+const priceCents = (v) => {
+  const m = /^\$?\s*(\d{1,3})(?:\.(\d{1,2}))?$/.exec(String(v).trim());
+  const c = m ? Number(m[1]) * 100 + Number((m[2] || "").padEnd(2, "0")) : NaN;
+  return c >= PRICE_MIN && c <= PRICE_MAX ? c : null;
+};
 const SOURCE_TEXT = { alert: "Account you gave", buyer: "Their account", owner: "Added by you" };
 const STATE_TEXT = { paid: "Paid", canceled: "Canceled · no charge", covered: "Covered by their monthly plan", waived: "Waived", held: "On hold", disputed: "Disputed", overdue: "Overdue", due: "Due" };
 const STATE_COLOR = { paid: "#5fd39a", overdue: "#ff8a80", disputed: "#9cc7ff", due: "#ffd27a" };
@@ -5286,6 +5335,23 @@ async function billingListPage(request, env, ctx, url, id) {
           const r = await lineStmt(env, c, { hash: key, store: x.store, storeName: accountStoreName(x.store), orderNo: x.orderNo, item, qty: "", orderAt: x.date, source: "owner", held: out.held }).run();
           if (r.meta && r.meta.changes) done = `Added ${accountStoreName(x.store)} #${x.orderNo} to their invoice.`; else err = "Not added: already on the invoice.";
         }
+      }
+    } else if (action === "price") {
+      // Price per checkout (the owner's request, 2026-11-12: "Maybe I want to change it to $10 later"): for checkouts from now
+      // on (lineStmt reads it as it writes a line); lines already on an invoice keep theirs. The price before and the write
+      // are one transaction, so the channel's note says what it really was, and the same price writes and posts nothing.
+      const want = priceCents(get("price"));
+      if (want == null) err = `Not saved: type a price from ${money(PRICE_MIN)} to ${money(PRICE_MAX)} in dollars, like 5 or 7.50.`;
+      else {
+        const [was, w] = await env.DB.batch([
+          env.DB.prepare(`SELECT ${priceSql("?")} AS p`).bind(PRICE_CHECKOUT),
+          env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) SELECT 'price:checkout', ?1, ?2 WHERE ${priceSql(PRICE_CHECKOUT)} <> CAST(?1 AS INTEGER)
+            ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at`).bind(String(want), now),
+        ]);
+        if (w.meta && w.meta.changes) {
+          await billNote(env, `💲 Price per checkout: ${money(was.results[0].p)} → ${money(want)} (from now on; checkouts already on an invoice keep their price)`);
+          done = `The price per checkout is ${money(want)} now, for checkouts from now on.`;
+        } else done = `The price per checkout is already ${money(want)}.`;
       }
     } else if (action === "paste-preview" || action === "paste-add") {
       const lines = get("paste").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 300);
@@ -5400,6 +5466,16 @@ async function billingListPage(request, env, ctx, url, id) {
     : `<p class="small">Order alerts: last from your FAFO ${esc(ago(seen.at))}.</p>`;
   const sum = (f) => buyers.filter((x) => !x.exempt).reduce((n, x) => n + f(x), 0);
   const fam = buyers.filter((x) => x.exempt === "family" && !x.off).length, monthly = buyers.filter((x) => x.monthly).length;
+  // The prices as they are now: the checkout's from the box below, and the monthly plan only while it's offered (the owner
+  // removed it on 2026-11-12; the buyers already on one keep it).
+  const price = await checkoutPrice(env);
+  const prices = `${money(price)} per checkout, due 3 days after it (free if the store cancels it first)${monthlyOffered(env)
+    ? `, or ${money(PRICE_MONTHLY)} a month for ${MONTHLY_SLOTS} slots (${money(PRICE_MONTHLY + PRICE_EXTRA)} for ${MONTHLY_SLOTS + EXTRA_SLOTS})`
+    : monthly ? `. The monthly plan isn't offered any more: ${monthly === 1 ? "1 buyer with one keeps it until it ends" : `${monthly} buyers with one keep theirs until they end`}` : ""}.`;
+  const priceBox = `<form class="edit" method="post" action="${esc(url.pathname)}">${hidden}
+      <label for="price">Price per checkout</label>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span aria-hidden="true" style="color:#e6ecff;font-weight:600">$</span><input id="price" name="price" value="${(price / 100).toFixed(2)}" inputmode="decimal" maxlength="8" required autocomplete="off" spellcheck="false" style="width:9ch;margin:0"><button class="go" style="width:auto;padding:10px 18px" type="submit" name="action" value="price">Save</button></div>
+      <p class="hint">Applies to checkouts from now on. Ones already on an invoice keep their price.</p></form>`;
   let pastePart;
   if (preview) {
     const ok = preview.rows.filter((r) => r.out.ok).length;
@@ -5429,7 +5505,8 @@ async function billingListPage(request, env, ctx, url, id) {
     <p class="who">${c.mode === "test" ? "Test mode: only testers are charged" : "Payments are on"}</p>
     <p class="small">Owed ${money(sum((x) => x.tot.owed))} · Overdue ${money(sum((x) => x.tot.overdue))} · Paid in the last 30 days ${money(paid30.results[0].s)} · ${plural(monthly, "monthly plan")} · ${fam} Friends and Family</p>
     ${alerts}
-    <p class="small">$5 per checkout, due 3 days after it (free if the store cancels it first), or $25 a month for 10 slots ($50 for 25). Buyers you approved before payments began are Friends and Family and never charged; Details moves anyone either way. Refunds are made in your Stripe Dashboard; the prices are set in FAFO (a change to the license worker).</p>
+    <p class="small">${esc(prices)} Buyers you approved before payments began are Friends and Family and never charged; Details moves anyone either way. Refunds are made in your Stripe Dashboard.</p>
+    ${priceBox}
     ${pastePart}
     <h3>Buyers</h3>
     ${body ? `<div class="find"><input type="search" id="find" placeholder="Search by name, last 4, plan or status" aria-label="Search buyers"><span class="shown" id="shown"></span></div>
@@ -5459,8 +5536,9 @@ async function admin(request, env, path) {
     ]);
     const conf = Object.fromEntries(cfg.results.map((x) => [x.k, x.v])), parse = (v) => { try { return JSON.parse(v); } catch { return null; } };
     const num = (k) => conf[k] ? Number(conf[k]) : null;
+    // prices.checkout: the price per checkout as set now (the Billing page's box, 2026-11-12); offered: the plans buyers can pick.
     return json({ on: billingOn(env), mode, onSince: { live: num("on_since:live"), test: num("on_since:test") }, backOn: { live: num("back_on:live"), test: num("back_on:test") }, offSeen: num("off_seen"),
-      alertsSeen: parse(conf.alerts_seen || "null"), prices: { live: parse(conf["prices:live"] || "null"), test: parse(conf["prices:test"] || "null") },
+      alertsSeen: parse(conf.alerts_seen || "null"), prices: { checkout: await checkoutPrice(env), live: parse(conf["prices:live"] || "null"), test: parse(conf["prices:test"] || "null") }, offered: plansOf(env),
       people: people.results[0], plans: Object.fromEntries(plans.results.map((x) => [x.plan, x.n])), owed: owed.results[0] }, 200, NO_STORE);
   }
   if (request.method === "GET" && path === "/admin/premium") {
