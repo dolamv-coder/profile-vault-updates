@@ -2081,6 +2081,81 @@ From 1.9.144 Invoice says checkouts are **due every Sunday** and shows **Friends
   Friends and Family who pay and ones not charged (`exempt: "family"`), and an older worker's answer. Nothing gains a
   field.
 
+From 1.9.145 FAFO has a **setup guide** (the owner's requests, 2026-11-13: "Can you create a step by step instruction on how to
+set up and submit a profile. Like a walk-through that ask if they need help setting up their profiles", and on how a profile
+checks out: "if they use their own account they have to provide me with their imap access and they have to send the it
+manually to my discord. If they choose "use assigned accounts" then they do not have to. They won't have access to the email
+and will only be able to see updates through fafo").
+- **Never a window:** `#guide` (`role="region"`, "Setup guide") is a fixed element in `#app` (so locking removes it), bottom
+  right, 360px wide, at most `min(70vh, 560px)` tall with its own scroll; on phones (≤ 900px) the screen's width less 12px a
+  side, at the bottom, at most `min(60vh, 520px)` and short enough to leave 120px of the page under the top bar (two rows
+  there; `--guide-top`), also when lifted, but never under 160px. z-index 40: under windows, menus and toasts, over the
+  selection bar, and lifted above that bar while it shows (`pageRoom`, which `renderBulk` now calls, sets `--guide-lift`,
+  `--guide-top` and the room under the page for both). Minimized, `#guide` is `.guide-pill` and its button `.guide-pill-btn`
+  (sharing a class gave the container the button's padding and dot). While the open panel has more under its bottom edge (a
+  phone's step 1 is taller than it), a fade there says More below (`.guide-more`: sticky, no height, no clicks; `guideMore`
+  hides it at the end). It's never an `openLayer`, so sync, seller alerts,
+  pictures and update restarts never wait for it; it never takes the cursor (a redraw under the cursor keeps it in the guide),
+  and Escape with the cursor in it minimizes it. Its buttons are `data-act`s the page's click handler runs (`guide-yes`,
+  `guide-later`, `guide-never`, `guide-open`, `guide-min`, `guide-close`, `guide-go` with the step, `guide-skip`, `guide-done`;
+  `guideAct`). `paintGuide` draws it from `render()`, from `persist()` (`guideSoon`), and from what changes without them:
+  `billApply`, `interestsApply` (both guarded with `typeof`, for tests that run parts of the page alone), the premium answer
+  and a sync round.
+- **When it asks** (`guideAskNow`: 1.5 seconds after unlock, after each sync round, and when the premium answer comes in):
+  "Need help setting up your profiles?" with Walk me through it, Not now and I know how, only in the vault itself (`MODE`),
+  once the first sync round is in (`!SYNC.oneStoreDue && !SYNC.busy`, as the invoice's notices wait), for a buyer
+  (`guideBuyer`: not `isPremiumOwner()`, `orderAlertsOn()`, `billOwner()` or the Interests list's owner; with a key whose
+  `/premium` hasn't answered yet it waits for that answer; a vault with no key is a buyer), who never submitted (no `S.subs`
+  entry but `unsent` ones, and no name typed in Submit's window, `S.submitName`, synced, which every Submit saves (Request more
+  slots too): one who submitted before 1.9.145 and has pulled every slot since has no slot left; `guideSentBefore`), with
+  nothing in the setting below and not snoozed here. The card is small (340px wide) and never a window.
+- **State:** per device, `orbit-guide` in localStorage `{open, min, later}` (in memory when storage throws; Erase vault clears
+  it): Not now sets `later` 24 hours ahead. Synced, the setting `guide` `{off, done, sent, skip:{interests}}` (times in ms): I
+  know how and Close (×) set `off` ("You can open the setup guide any time from Profiles or Submit."), Close guide sets `done`,
+  `sent` is set by a successful Submit or the first time the guide sees a submitted slot or `S.submitName` (after the first
+  sync round), so it stays after the slots are pulled.
+- **Steps** (`guideState`, from the vault each paint; numbered as shown; the current one is the first not done, and one step's
+  text and buttons show at a time, the current one or one whose row was opened): 1. Make your profile (done when a profile has
+  a store; Make a profile switches to Profiles and opens New profile, Import profiles is the page's own; its text explains Use
+  Assigned Account and your own account in the owner's words); 2. Check it's Ready to submit (a profile with a store and no
+  `profileProblems`; otherwise "<name> isn't ready yet: <its pill's words, `profileIssueWords`>" with Fix it, which opens it);
+  3. Pick what your seller runs (optional), while `interestsShown()` and the list isn't known to be empty (a ticked product, or
+  Skip), and only before the first Submit unless ticked or skipped: a key typed in Submit's window only shows Interests after
+  that Submit, and a seller may add products later, either of which put it back as the current step ahead of the approval;
+  4. Choose how you'll pay, while Invoice shows and payments ask this buyer (`billPlan`; the worker's price when it gives one);
+  5. Switch it on and submit (`sent`, a submitted slot or `S.submitName`; in a browser with no key it says Submit asks for the
+  license key the first time); 6. Wait for your seller's approval, once 5 is done (its text says orders on an assigned account
+  show up in Orders on their own, and on the buyer's own account the desktop app adds them when it syncs that inbox, which the
+  web version doesn't; done with a slot at Success, or `done`). All done: "You're all set" with Close guide. The panel heads
+  "Setup guide" with "N of M done", minus and ×; minimized it's a pill "Setup guide · N of M".
+- **Highlights:** what to press next pulses with an `--info` ring (`--guide-ring`, darker in the light theme; no animation with
+  reduced motion) by a name on `<html>` (`data-guide-hl`: `new-profile`, `slot` (the first three switches), `submit`, `plan`,
+  `interests`), since `#main` is drawn again on every change. It goes on the next click on what it rings, when the current step
+  changes from the one it was set on, or after 12 seconds; Go to Submit rings the switches while none is on, and switching one
+  on moves it to Submit, without scrolling (`guideHl`'s `still`: the buyer may be switching on more). What's ringed is scrolled
+  to the middle of what nothing covers (`guideScroll`): under the top bar, and above the guide when it's beside them and the
+  selection bar (in the middle of a phone's screen it was under the guide); the first three together when they fit there (a row
+  of Interests' ticks), else the first. The one of them with the keyboard's focus keeps an `--ink` ring, so it can be told from
+  the others.
+- **Setup guide** buttons on Profiles (before Import profiles) and Submit, in every vault (the owner too, to see what buyers
+  see), open it as new (`off` and `done` taken off).
+- **The profile editor** (`retCfgHTML`), but not in the seller's own FAFO: Use Assigned Account adds "You won't have access to
+  this account's email: you'll see your order updates in FAFO.", and Target's Store login and Pokémon Center's own email "Your
+  seller needs this email's IMAP access (the email and its app password) to follow your orders. Send it to your seller on
+  Discord yourself: FAFO doesn't send it."
+- **Tests:** `walkthrough.test.mjs` runs the page in Chromium against a pretend license server (the question, Not now and I
+  know how across lock and unlock, Walk me through it with a profile made in the editor, the rings, Interests, Invoice, Submit
+  and the approval with a key, the seller's own FAFO, the editor's notes, a phone with the selection bar, Escape), and what the
+  review found: a vault that submitted before (`S.submitName`) with no slot out; a first Submit with the key typed in Submit's
+  window, after which Interests shows; one pill, no second dot; the seller's FAFO known only by the premium answer, and by
+  order alerts, with every way `#guide` showed recorded (a MutationObserver), so a question shown for a moment counts;
+  `/premium` slow on a device with no answer kept (`forget()`), for the seller (never asked) and a buyer (asked once it
+  answers); a 375 × 667 phone, where what's ringed must be under nothing (`elementFromPoint`) and a slot switched on doesn't
+  scroll; Interests' three ringed ticks in a 1366 × 650 window; a 360 × 640 phone with the selection bar; a keyboard's
+  focus on a ringed switch; and More below on a phone (gone at the panel's end, none on a desktop where step 1 fits). CI runs it after the Invoice plans. `billing.test.mjs` and `interests.test.mjs` set `orbit-guide`'s
+  `later` far ahead, so it doesn't ask there.
+- Settings gain `guide`, which 1.9.112 syncs as it is.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

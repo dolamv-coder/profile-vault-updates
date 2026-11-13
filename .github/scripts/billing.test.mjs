@@ -106,6 +106,8 @@ await ctx.route("**/*", async (route) => {
   if (u.origin === "https://license.fafoaco.com" || u.origin === "https://orbit-license.orbit-app.workers.dev") return worker(route, req, u);
   return route.fulfill({ status: 404, body: "" });
 });
+// The setup guide (1.9.145) doesn't ask here (Not now, until far ahead): its own test is walkthrough.test.mjs.
+await ctx.addInitScript(() => { try { localStorage.setItem("orbit-guide", JSON.stringify({ later: Date.UTC(2100, 0, 1) })); } catch (e) {} });
 const page = await ctx.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
