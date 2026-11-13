@@ -1364,6 +1364,12 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .guide-body ul{margin:0 0 8px;padding-left:18px;color:var(--ink-2)}
 .guide-body li{margin:0 0 6px}
 .guide-fin{padding:8px 16px 16px}
+/* More below: when the open panel scrolls (a phone's step 1 is taller than its panel), a fade at its bottom edge says so. It
+   takes no room (height 0, sticky) and no clicks, and goes once the panel is scrolled to its end (guideMore). */
+.guide-more{position:sticky;bottom:0;height:0;pointer-events:none}
+.guide-more > span{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:flex-end;justify-content:center;gap:4px;height:52px;padding-bottom:6px;
+  background:linear-gradient(to bottom,transparent,var(--panel-bg,var(--sheet)) 62%);color:var(--ink-2);font-size:calc(12px*var(--fs));font-weight:700}
+.guide-more svg{width:14px;height:14px;stroke-width:2.4}
 .guide-pill-btn{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:var(--panel-bg,var(--sheet));color:var(--ink);
   font-weight:700;font-size:calc(14px*var(--fs));cursor:pointer;box-shadow:0 12px 30px -10px rgba(0,0,0,.5)}
 .guide-pill-btn::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--guide-ring);flex:none}
@@ -19981,7 +19987,7 @@ function paintGuide(){
       const st = guideState();
       guideHlCheck(st);
       kind = L.min ? "pill" : "open";
-      html = L.min ? guidePillHTML(st) : guidePanelHTML(st);
+      html = L.min ? guidePillHTML(st) : guidePanelHTML(st) + `<div class="guide-more" aria-hidden="true" hidden><span>${ic("chevD")}More below</span></div>`;
     } else if (GUIDE.ask){ kind = "ask"; html = guideAskHTML(); }
   }
   if (!kind && GUIDE.hl) guideHl("");
@@ -19995,7 +20001,14 @@ function paintGuide(){
   el.hidden = !html;
   pageRoom();
   guideScroll();
+  guideMore();
 }
+// Shows More below while the open panel has more under its bottom edge.
+function guideMore(){
+  const el = GUIDE.el, m = el && !el.hidden ? $(".guide-more", el) : null;
+  if (m) m.hidden = !(el.scrollHeight - el.clientHeight - el.scrollTop > 12);
+}
+document.addEventListener("scroll", (e) => { if (e.target && e.target.id === "guide") guideMore(); }, {capture:true, passive:true});
 // The highlight: a name on <html> the CSS reads, since #main is drawn again on every change. It goes on the next click on
 // what it rings, when the current step changes (from the one current when it was set, so a step opened from its row keeps
 // its ring), or after 12 seconds. Switching a slot on moves it to the Submit button, without scrolling (`still`): the buyer
@@ -20101,7 +20114,7 @@ function guideReset(){
   guideHl("");
 }
 window.addEventListener("storage", (e) => { if (e.key === GUIDE_STORE && S) paintGuide(); });
-window.addEventListener("resize", () => { if (S) pageRoom(); }, {passive:true});
+window.addEventListener("resize", () => { if (S){ pageRoom(); guideMore(); } }, {passive:true});
 
 /* ================= EVENTS ================= */
 // Shift+click (or Shift+Space) on a row's tick (1.9.85+, as Orders already had): every row between it and the last

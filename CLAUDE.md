@@ -2092,7 +2092,9 @@ and will only be able to see updates through fafo").
   there; `--guide-top`), also when lifted, but never under 160px. z-index 40: under windows, menus and toasts, over the
   selection bar, and lifted above that bar while it shows (`pageRoom`, which `renderBulk` now calls, sets `--guide-lift`,
   `--guide-top` and the room under the page for both). Minimized, `#guide` is `.guide-pill` and its button `.guide-pill-btn`
-  (sharing a class gave the container the button's padding and dot). It's never an `openLayer`, so sync, seller alerts,
+  (sharing a class gave the container the button's padding and dot). While the open panel has more under its bottom edge (a
+  phone's step 1 is taller than it), a fade there says More below (`.guide-more`: sticky, no height, no clicks; `guideMore`
+  hides it at the end). It's never an `openLayer`, so sync, seller alerts,
   pictures and update restarts never wait for it; it never takes the cursor (a redraw under the cursor keeps it in the guide),
   and Escape with the cursor in it minimizes it. Its buttons are `data-act`s the page's click handler runs (`guide-yes`,
   `guide-later`, `guide-never`, `guide-open`, `guide-min`, `guide-close`, `guide-go` with the step, `guide-skip`, `guide-done`;
@@ -2149,8 +2151,8 @@ and will only be able to see updates through fafo").
   order alerts, with every way `#guide` showed recorded (a MutationObserver), so a question shown for a moment counts;
   `/premium` slow on a device with no answer kept (`forget()`), for the seller (never asked) and a buyer (asked once it
   answers); a 375 × 667 phone, where what's ringed must be under nothing (`elementFromPoint`) and a slot switched on doesn't
-  scroll; Interests' three ringed ticks in a 1366 × 650 window; a 360 × 640 phone with the selection bar; and a keyboard's
-  focus on a ringed switch. CI runs it after the Invoice plans. `billing.test.mjs` and `interests.test.mjs` set `orbit-guide`'s
+  scroll; Interests' three ringed ticks in a 1366 × 650 window; a 360 × 640 phone with the selection bar; a keyboard's
+  focus on a ringed switch; and More below on a phone (gone at the panel's end, none on a desktop where step 1 fits). CI runs it after the Invoice plans. `billing.test.mjs` and `interests.test.mjs` set `orbit-guide`'s
   `later` far ahead, so it doesn't ask there.
 - Settings gain `guide`, which 1.9.112 syncs as it is.
 

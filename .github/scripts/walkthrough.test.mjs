@@ -522,6 +522,45 @@ try {
   });
   await s.close();
 
+  // A phone's step 1 is taller than its panel: More below shows at the panel's bottom edge, takes no clicks, and goes once
+  // the panel is scrolled to its end.
+  fresh();
+  s = await session("E2", { width: 390, height: 844 });
+  await test("on a phone, More below shows while the guide has more under its edge, and goes at its end", async () => {
+    await s.page.waitForSelector("#guide.guide-ask", { timeout: 6000 });
+    await s.page.click('#guide [data-act="guide-yes"]');
+    await s.page.waitForSelector("#guide.guide-open");
+    const more = () => s.page.$eval("#guide .guide-more", (m) => !m.hidden && m.firstElementChild.getBoundingClientRect().height > 0);
+    assert.ok(await s.page.$eval("#guide", (g) => g.scrollHeight > g.clientHeight + 12), "step 1 is taller than the panel here");
+    await s.page.waitForFunction(() => !document.querySelector("#guide .guide-more").hidden);
+    assert.ok(await more(), "More below shows");
+    const r = await s.page.$eval("#guide", (g) => [g.getBoundingClientRect().toJSON(), g.querySelector(".guide-more > span").getBoundingClientRect().toJSON()]);
+    assert.ok(Math.abs(r[1].bottom - (r[0].bottom - 1)) < 2, "at the panel's bottom edge: " + JSON.stringify(r));
+    assert.equal(await s.page.$eval("#guide .guide-more", (m) => getComputedStyle(m).pointerEvents), "none", "it takes no clicks");
+    await s.page.$eval("#guide", (g) => { g.scrollTop = g.scrollHeight; });
+    await s.page.waitForFunction(() => document.querySelector("#guide .guide-more").hidden);
+    await s.page.$eval("#guide", (g) => { g.scrollTop = 0; });
+    await s.page.waitForFunction(() => !document.querySelector("#guide .guide-more").hidden);
+    // Under the fade, Make a profile still presses.
+    await s.page.$eval("#guide", (g) => { g.scrollTop = g.scrollHeight; });
+    await s.page.click('#guide [data-act="guide-go"][data-id="make"]');
+    await s.page.waitForSelector("#layers .panel");
+  });
+  await s.close();
+  {
+    // On a desktop the same step fits: no More below.
+    fresh();
+    s = await session("E3", { width: 1280, height: 1000 });
+    await test("on a desktop where step 1 fits, no More below", async () => {
+      await s.page.waitForSelector("#guide.guide-ask", { timeout: 6000 });
+      await s.page.click('#guide [data-act="guide-yes"]');
+      await s.page.waitForSelector("#guide.guide-open");
+      if (await s.page.$eval("#guide", (g) => g.scrollHeight > g.clientHeight + 12)) return;   // a bigger font: it scrolls, and that's tested above
+      assert.ok(await s.page.$eval("#guide .guide-more", (m) => m.hidden), "hidden when nothing's below");
+    });
+    await s.close();
+  }
+
   // ---- F: a small phone (375 × 667), where the open guide reaches above the middle of the screen ----
   fresh();
   s = await session("F", { width: 375, height: 667 });
