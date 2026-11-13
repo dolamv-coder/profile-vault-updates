@@ -404,19 +404,20 @@ alone (every store's rows of one account) from reading the whole table. Only
   1.9.127 and 1.9.129 below.
   Since 2026-10-18 (the owner's request: "Create payment option. $10 per checkout or $25 a month plan or 10 slots") it
   takes **payments through Stripe**, dormant until the owner adds the secrets `STRIPE_SECRET_KEY` and
-  `STRIPE_WEBHOOK_SECRET` (`billingOn`; setup in `license-worker/README.md` → Payments). Plans: $5 per checkout (the
-  owner's change on 2026-11-12, from $10: `PRICE_CHECKOUT`; a line already on an invoice keeps what it was billed) (one
-  order is one checkout, due 3 days after it until 1.9.144's Sundays, below, free if the store cancels it before it's
-  paid; no automatic refund after),
+  `STRIPE_WEBHOOK_SECRET` (`billingOn`; setup in `license-worker/README.md` → Payments). Plans: $10 per checkout
+  (`PRICE_CHECKOUT`; $5 from the owner's change on 2026-11-12 to 2026-11-13, below; a line already on an invoice keeps what
+  it was billed) (one order is one checkout, due 3 days after it until 1.9.144's Sundays, below, free if the store cancels
+  it before it's paid; no automatic refund after),
   or monthly, $25 for 10 slots switched on at once with nothing per checkout, plus one add-on of 15 slots for another $25.
   Since 2026-11-12 (the owner's requests: "Maybe I want to change it to $10 later", then "Remove $25 plan completely") the
   price per checkout is the owner's to set, and the monthly plan isn't offered (worker and page 1.9.143):
   - **The price:** Price per checkout on the Billing page, $1 to $100 (`PRICE_MIN`, `PRICE_MAX`, `priceCents`), kept as
     `price:checkout` in `billing_config` (one price for test and live) and read in SQL as each line is written (`priceSql`
-    in `lineStmt`; `checkoutPrice` for pages and `GET /billing`'s `prices.checkout`), else `PRICE_CHECKOUT`. A new checkout
-    takes the price of the moment it's added; lines already there keep theirs, and so do payments and refunds. A change
-    posts "💲 Price per checkout: $5 → $10 (from now on; checkouts already on an invoice keep their price)" to the channel;
-    the same price writes and posts nothing (one D1 batch reads the old price and writes the new one).
+    in `lineStmt`; `checkoutPrice` for pages and `GET /billing`'s `prices.checkout`), else `PRICE_CHECKOUT` ($10 since
+    2026-11-13, below). A new checkout takes the price of the moment it's added; lines already there keep theirs, and so do
+    payments and refunds. A change posts "💲 Price per checkout: $10 → $12 (from now on; checkouts already on an invoice
+    keep their price)" to the channel; the same price writes and posts nothing (one D1 batch reads the old price and writes
+    the new one).
   - **No monthly plan** (`monthlyOffered`: only with `BILLING_MONTHLY = "on"`; production has none, and the tests pass it
     to each payments worker, `on` or empty, so they don't depend on `wrangler.toml`):
     `/billing/plan` monthly and `/billing/checkout` `monthly`, `extras` and `resume` answer 409 "The monthly plan isn't
@@ -428,7 +429,7 @@ alone (every store's rows of one account) from reading the whole table. Only
     code stays, for them and for the tests.
   Later on 2026-11-12 (the owner's requests: "Change invoice due date to every Sunday", "Change friends and family cost to
   $5"; they skipped the follow-up questions, so the defaults below were chosen and told to them) checkouts are **due every
-  Sunday** and **Friends and Family pay their own price** (worker and page 1.9.144):
+  Sunday** and **Friends and Family pay $5** (worker and page 1.9.144; the price as set out on 2026-11-13, below):
   - **Due dates:** a checkout is due at the end of the first Sunday strictly after the day it counts from, US Eastern time
     (`DUE_TZ`, with DST), so it's overdue from Monday 00:00 Eastern; a Sunday's is due the next Sunday. `due_at` stores
     Monday 00:00 Eastern minus 1 ms, so every `due_at < now` stays as it was. Helpers: `etDay`, `etMidnight` (with
@@ -446,33 +447,57 @@ alone (every store's rows of one account) from reading the whole table. Only
     - `GET /billing`'s `prices` adds `dueRule: "sunday"` and `dueTz`, and keeps `dueDays: 3` for older pages, which say
       "due 3 days after it" until they update (their Due by column is right). The Billing page shows due dates in
       Eastern time ("Sun, Nov 15").
-  - **Friends and Family pay** their own price per checkout: `price:family` in `billing_config` (`PRICE_FAMILY`, $5; $0 to
-    $100, and $0 means they aren't charged, as before), set in the Billing page's second box (`action=price-family`; a
-    change posts "💲 Friends and Family price per checkout: …" to the channel). Only checkouts placed after the Eastern
-    day of `family_from:<mode>` are billed to them (stamped beside `on_since` by the first billing request that finds it
-    missing, and again when their price goes from $0 to more). An order dated that day or before is `family-before`,
-    since an order's day is local and may be from before the stamp, and their FAFO's `report.from` is the day after.
-    - `c.who` gives `family` (the class `exemptOf` gives) and `famPrice`; `exempt` is now "owner", or "family" only at $0,
-      so every `w.exempt` check still means "not charged at all". The owner's own FAFO stays free.
+  - **Friends and Family pay** $5 per checkout (`PRICE_FAMILY`, always: 2026-11-13, below). Only checkouts placed after
+    the Eastern day of `family_from:<mode>` are billed to them (stamped beside `on_since` by the first billing request that
+    finds it missing). An order dated that day or before is `family-before`, since an order's day is local and may be from
+    before the stamp, and their FAFO's `report.from` is the day after.
+    - `c.who` gives `family` (the class `exemptOf` gives) and `famPrice` (`PRICE_FAMILY`); `exempt` is now "owner" or
+      null, never "family", so every `w.exempt` check still means "not charged at all". The owner's own FAFO stays free.
     - Billed Friends and Family are on pay per checkout with nothing to pick (`plan` "checkout", `plans` ["checkout"];
       monthly and extras answer 409 "Friends and Family pay per checkout."), keep the slot limits the owner gave them
       (`planSlots`), and are refused Submit only while a checkout is overdue or a payment is disputed. `prices.checkout`
       is their own price, and `prices.family` goes to everyone.
     - Lines take the price of the buyer's kind as they're written (`priceSql(key, …)`; never a $0 line). Unpaid lines a
-      Friends and Family buyer already had keep their amounts and show on their invoice (no automatic waive); at $0 they
-      stay hidden, as before. None comes back already overdue, which would turn Submit off at once: when their billing
-      starts (`family_from` first written in `onSince`, or the price going from $0 up), the same D1 batch makes every
-      unpaid line of theirs (canceled and waived too) due the coming Sunday at the earliest, `MAX(due_at, dueNow(now))`
-      (`familyRaise`: who's Friends and Family as `exemptOf` and the Billing page work it out, only while `family_from`
-      holds that call's stamp and their price isn't $0, so a request that lost the race, or a repeat, moves nothing).
+      Friends and Family buyer already had keep their amounts and show on their invoice (no automatic waive), where they
+      were hidden while they weren't charged. None comes back already overdue, which would turn Submit off at once: when
+      their billing starts (`family_from` first written in `onSince`), the same D1 batch makes every unpaid line of theirs
+      (canceled and waived too) due the coming Sunday at the earliest, `MAX(due_at, dueNow(now))` (`familyRaise`: who's
+      Friends and Family as `exemptOf` and the Billing page work it out, only while `family_from` holds that call's stamp,
+      so a request that lost the race, or a repeat, moves nothing).
     - Charge on a Friends and Family buyer also sets their plan to pay per checkout, so they never get `no-plan`; orders
       from before Charge stay `charge`, never billed. A paused subscription never holds lines.
     - The Billing page's rows say "Friends and Family · $5 per checkout", their status follows the usual chain, and its
       sums count them; `/admin/billing` adds `prices.family`, `familyFrom` and `dueSunday`.
+  On 2026-11-13 (the owner, in reply to 1.9.144's screenshots, whose Billing page had a box for the Friends and Family price
+  under Price per checkout, both $5: "Friends and family are always 5 dollars but everyone else is 10 or can be set for
+  more later") the prices are **$5 for Friends and Family, always, and $10 for everyone else**, which the owner can change
+  (in the 1.9.144 worker, before it was deployed; the details below were chosen for the owner):
+  - **Friends and Family:** `PRICE_FAMILY` (500), fixed. The Billing page has no box for it, and a Save from a page opened
+    before (`action=price-family`) writes and posts nothing ("Friends and Family always pay $5 per checkout."). A
+    `price:family` row in `billing_config` is never read: `priceSql("family", dflt)` is the default it's given (bound to
+    `PRICE_FAMILY` in `lineStmt`), and `checkoutPrice(env, "family")` is `PRICE_FAMILY`. With no $0 any more, the worker
+    never answers `exempt: "family"` (`billingBuyer` lost its `family` argument, `priceCents` its `free`, `WHY_TEXT` its
+    `family`), `familyRaise` runs only when `family_from` is first stamped, and the page keeps its handling of `exempt:
+    "family"` for an older worker's answer. `GET /billing`'s `prices.family` is 500, and `prices.checkout` is 500 for them.
+  - **Everyone else:** `PRICE_CHECKOUT` (1000) to start, and the Price per checkout box as before ($1 to $100, a note on
+    each change, lines on an invoice keep theirs), whose hint adds "Friends and Family always pay $5." The Billing page's
+    prices line says "Friends and Family pay $5 per checkout, due the same way." always.
+  - **Moved to $10 once** (`priceTen`): production's worker before had $5 to start, and the owner may have saved a price
+    below $10. The first request after the deploy with payments on moves it: one D1 batch reads the price before (one
+    saved, else `PRICE_BEFORE`, 500), writes the marker `price_ten` (`INSERT … ON CONFLICT (k) DO NOTHING`, a value only
+    that call has) and moves a saved price below $10 to '1000' only while the marker holds that call's value; one of $10 or
+    more stays, and with none saved nothing is written ($10 is the default). The call that wrote the marker posts
+    "💲 Price per checkout: $5 → $10 (from now on; checkouts already on an invoice keep their price)" (the real amount
+    before; $5 with none saved). Each isolate reads the marker once and then never again (`priceDone`). It runs in
+    `onSince`, after `dueSundays`: every path that writes a line gets there first (`billable` calls `c.from()`: POST
+    /alerts, POST /billing/checkouts, Add a checkout, Paste), and so does `GET /billing` (through `c.who`). It also runs at
+    the top of the Billing page, GET and POST (so a Save from a page opened before the deploy comes after it and is never
+    undone by it), and in `/admin/billing` (its `priceTen` is when). Charge again, Undo waive and a plan ending write no new
+    amount. With payments off it waits. Errors are logged and never fail the request.
   The owner's words: "Buyers that I already approved should not be charged for anything", so **Friends and Family**
   (`exemptOf`): everyone issued a license before payments came on (`on_since:<mode>` in `billing_config`, stamped by the
   first request that sees the keys), every hand-made key, and anyone the owner moves there, was never charged or refused
-  and keeps their slot limits (from 1.9.144 they pay the Friends and Family price, above, unless it's $0); the owner's own FAFO (`currentAlertSender`) too. Anyone else not covered by a paid month
+  and keeps their slot limits (from 1.9.144 they pay $5 per checkout, above); the owner's own FAFO (`currentAlertSender`) too. Anyone else not covered by a paid month
   pays per checkout on the slots they sent, plan picked or not (the owner's choice); a plan only decides whether they
   can submit. Checkouts (`billing_lines`, unique per buyer, mode, store and order number): orders on accounts the owner
   gave out, from POST /alerts (placed from the day given out, not after the buyer pulled that slot, `billing_pulled`;
@@ -2028,7 +2053,7 @@ Also from 1.9.143 **Invoice offers only the plans the worker's `plans` names** (
 - Nothing gains a field.
 
 From 1.9.144 Invoice says checkouts are **due every Sunday** and shows **Friends and Family's invoice** (the owner's requests,
-2026-11-12; the worker section above).
+2026-11-12 and 2026-11-13; the worker section above).
 - **Due dates:** with the worker's `prices.dueRule === "sunday"` (`billSundays`), due dates show in Eastern time ("Sun,
   Nov 15": `billDueDay`, 1 ms back so the stored Monday 00:00 reads as Sunday; `billDueAt` picks it or `billDay`), in the
   Due by column (titled "Due by the end of Sun, Nov 15, Eastern time"), the new-checkout notice, Submit's note and the
@@ -2037,11 +2062,15 @@ From 1.9.144 Invoice says checkouts are **due every Sunday** and shows **Friends
   older worker's answer, with no `dueRule`, gets 1.9.143's dates and "due 3 days after it".
 - **Friends and Family who pay** (`family` and not `exempt`): the pay per checkout view headed "Friends and Family · $5 per
   checkout", with no plan cards or monthly plan; `billPlan` reads them as pay per checkout whatever `plan` says. A live
-  subscription shows "Monthly plan · paused while you're Friends and Family" with Cancel plan (`then:"checkout"`). At $0
-  (`exempt: "family"`) it's "Nothing to pay", as before.
-- The owner's Settings → Billing names the Friends and Family price and says their own FAFO is never charged.
-- `orbit-billing` gains `family`. `billing.test.mjs` covers the Sunday wording and dates (in Tokyo's time zone too), billed
-  and $0 Friends and Family, and an older worker's answer. Nothing gains a field.
+  subscription shows "Monthly plan · paused while you're Friends and Family" with Cancel plan (`then:"checkout"`). An answer
+  with `exempt: "family"` (a worker before 1.9.144's, which didn't charge them; 1.9.144's never sends it) is "Nothing to
+  pay", as before.
+- The owner's Settings → Billing says Friends and Family always pay $5 per checkout (from `prices.family`) and that their
+  own FAFO is never charged.
+- `BILL_PRICES.checkout`, used only until the worker answers, is 1000 ($10).
+- `orbit-billing` gains `family`. `billing.test.mjs` covers the Sunday wording and dates (in Tokyo's time zone too),
+  Friends and Family who pay and ones not charged (`exempt: "family"`), and an older worker's answer. Nothing gains a
+  field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

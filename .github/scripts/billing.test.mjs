@@ -7,11 +7,13 @@
 // interests.test.mjs runs it: a vault made with Use this browser only, then a license key kept as Submit keeps one typed
 // there. Sample keys and amounts only.
 // From 1.9.144 (the owner's requests, 2026-11-12: "Change invoice due date to every Sunday", "Change friends and family cost
-// to $5"): with the worker's prices.dueRule "sunday" a checkout is due by the end of the Sunday after it, Eastern time, and
-// Invoice says so and shows each due date as that Sunday in Eastern time, wherever the computer is (this test runs in
-// Tokyo's time zone, where the instant is Monday); Friends and Family who pay (family: true, exempt null) get the pay per
-// checkout page at their own price, with no plan cards or monthly plan; at $0 (exempt "family") they have nothing to pay,
-// as before; and an older worker's answer (no dueRule, no family) shows what 1.9.143 did.
+// to $5"; 2026-11-13: "Friends and family are always 5 dollars but everyone else is 10 or can be set for more later"): with
+// the worker's prices.dueRule "sunday" a checkout is due by the end of the Sunday after it, Eastern time, and Invoice says
+// so and shows each due date as that Sunday in Eastern time, wherever the computer is (this test runs in Tokyo's time zone,
+// where the instant is Monday); Friends and Family (family: true, exempt null) get the pay per checkout page at their price,
+// $5, with no plan cards or monthly plan; an answer with exempt "family" (a worker before 1.9.144's, where they weren't
+// charged; 1.9.144's never sends it) has nothing to pay, as before; and an older worker's answer (no dueRule, no family)
+// shows what 1.9.143 did. The amounts are the answers' own (the page shows what the worker says), $5 a checkout in most.
 //   node .github/scripts/billing.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must read plans (billMonthlyOffered) and the Sunday rule (billDueDay); a page named on the command line
 // that doesn't read plans is skipped, and one that doesn't read the Sunday rule skips those tests.
@@ -400,7 +402,7 @@ try {
       assert.notEqual(await ev((k) => window.__t.billSum(k), kept), await ev((k) => window.__t.billSum(Object.assign({}, k, { family: false })), kept));
     });
 
-    await test("Friends and Family who pay report checkouts on their own accounts; at $0 they don't", async () => {
+    await test("Friends and Family who pay report checkouts on their own accounts; ones not charged (exempt \"family\") don't", async () => {
       const email = "sample.buyer@example.com", hash = createHash("sha256").update("acct:" + email).digest("hex");
       await ev((e) => { window.__t.S.orders = (window.__t.S.orders || []).concat([{ id: "o-bill-test", orderNo: "3000000001", at: "2026-11-10", stage: "placed", store: "target", sentTo: e, item: "Sample Elite Trainer Box", qty: "1" }]); }, email);
       try {
@@ -408,7 +410,7 @@ try {
         await answer({ plans: ["checkout"], family: true, exempt: "family", plan: null, prices: Object.assign({}, PRICES_SUN, { checkout: 0, family: 0 }), report });
         let n = W.reports.length;
         await ev(() => window.__t.reportCheckouts());
-        assert.equal(W.reports.length, n, "nothing reported at $0");
+        assert.equal(W.reports.length, n, "nothing reported while they aren't charged");
         await answer({ plans: ["checkout"], family: true, exempt: null, plan: "checkout", prices: PRICES_SUN, report });
         n = W.reports.length;
         await ev(() => window.__t.reportCheckouts());
@@ -435,7 +437,7 @@ try {
       await page.waitForFunction(() => !document.querySelector("#layers .panel"));
     });
 
-    await test("Friends and Family at $0: nothing to pay, no count, as before", async () => {
+    await test("Friends and Family not charged (exempt \"family\": a worker before 1.9.144's answer, never 1.9.144's): nothing to pay, no count, as before", async () => {
       await answer({ plans: ["checkout"], family: true, exempt: "family", plan: null, prices: Object.assign({}, PRICES_SUN, { checkout: 0, family: 0 }) });
       assert.equal(await sub(), "Friends and Family");
       assert.match(await mainText(), /Nothing to pay/);
@@ -473,13 +475,16 @@ try {
       assert.equal(kept.family, false);
     });
 
-    await test("the seller's Settings → Billing names the Friends and Family price and the Sunday rule, or says what an older worker does", async () => {
-      await answer({ exempt: "owner", plans: ["checkout"], prices: PRICES_SUN });
+    await test("the seller's Settings → Billing says Friends and Family always pay $5, and the Sunday rule, or says what an older worker does", async () => {
+      await answer({ exempt: "owner", plans: ["checkout"], prices: Object.assign({}, PRICES_SUN, { checkout: 1000 }) });
       let h = await ev(() => window.__t.billingSectionHTML());
-      assert.match(h, /are Friends and Family: they pay \$5 per checkout, the price you set for them on the billing page \(\$0 means they aren't charged\)\. Your own FAFO is never charged\. Checkouts are due by the end of the Sunday after them, Eastern time\./);
-      assert.doesNotMatch(h, /Friends and Family and aren't charged/);
+      assert.match(h, /are Friends and Family: they always pay \$5 per checkout\. Your own FAFO is never charged\. Checkouts are due by the end of the Sunday after them, Eastern time\./);
+      assert.doesNotMatch(h, /Friends and Family and aren't charged|billing page|\$0/);
+      // Never from the 1.9.144 worker: prices.family 0.
       await answer({ exempt: "owner", plans: ["checkout"], prices: Object.assign({}, PRICES_SUN, { family: 0 }) });
-      assert.match(await ev(() => window.__t.billingSectionHTML()), /they aren't charged, since their price on the billing page is \$0/);
+      h = await ev(() => window.__t.billingSectionHTML());
+      assert.match(h, /are Friends and Family: they aren't charged\. Your own FAFO is never charged\./);
+      assert.doesNotMatch(h, /billing page|\$0/);
       await answer({ exempt: "owner", plans: ["checkout"] });
       h = await ev(() => window.__t.billingSectionHTML());
       assert.match(h, /Plans, invoices and Friends and Family\. Buyers you approved before payments started are Friends and Family and aren't charged\.<\/p>/);

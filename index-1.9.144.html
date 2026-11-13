@@ -18397,15 +18397,17 @@ async function removeInterest(key){
 }
 
 /* ================= INVOICE: PAYING THE SELLER (1.9.130) ================= */
-// The seller can charge for checkouts (the owner's decisions, 2026-10-18), through Stripe: $5 per checkout ($10 until
-// 2026-11-12, when the owner lowered it), each due 3 days after it and free if the store cancels it before it's paid, or a
-// monthly plan, $25 for 10 slots switched on at once (+$25 for 15 more). Buyers the seller approved before payments
-// started are Friends and Family and pay nothing. From 1.9.144 (the owner's requests, 2026-11-12: "Change invoice due
-// date to every Sunday", "Change friends and family cost to $5") a checkout is due by the end of the first Sunday after it,
-// Eastern time (overdue from Monday 00:00 Eastern; the worker's prices.dueRule "sunday", and each line's dueAt is that
-// Sunday's last moment), and Friends and Family pay their own price per checkout (prices.checkout in their answer, with
-// family: true and exempt null; $0 keeps them free, exempt "family" as before). An older worker sends neither, and this
-// page then shows what 1.9.143 did. The license worker keeps the plan and the invoice (GET /billing) and
+// The seller can charge for checkouts (the owner's decisions, 2026-10-18), through Stripe: $10 per checkout (the owner
+// lowered it to $5 on 2026-11-12 and set $10 again on 2026-11-13), which the seller can raise on their Billing page, each
+// due 3 days after it and free if the store cancels it before it's paid, or a monthly plan, $25 for 10 slots switched on
+// at once (+$25 for 15 more). Buyers the seller approved before payments started are Friends and Family and pay nothing.
+// From 1.9.144 (the owner's requests, 2026-11-12: "Change invoice due date to every Sunday", "Change friends and family
+// cost to $5"; 2026-11-13: "Friends and family are always 5 dollars but everyone else is 10 or can be set for more later")
+// a checkout is due by the end of the first Sunday after it, Eastern time (overdue from Monday 00:00 Eastern; the worker's
+// prices.dueRule "sunday", and each line's dueAt is that Sunday's last moment), and Friends and Family always pay $5 per
+// checkout (prices.checkout in their answer, with family: true and exempt null). An older worker sends neither, and this
+// page then shows what 1.9.143 did; there exempt "family" keeps them free (the 1.9.144 worker never answers it, as there's
+// no $0 for Friends and Family any more). The license worker keeps the plan and the invoice (GET /billing) and
 // refuses Submit to a buyer who isn't paid up (402); this page shows them on Invoice, opens Stripe, and reports the orders
 // on the buyer's own accounts sent as slots (POST /billing/checkouts: the worker bills the ones placed while the slot was
 // out). With payments off on the worker, or for the seller's own FAFO, GET /billing answers {on:false} (or exempt
@@ -18420,7 +18422,7 @@ async function removeInterest(key){
 const BILL_STORE = "orbit-billing", BILL_EVERY_MS = 5 * 60000, BILL_WATCH_MS = 3 * 60000;
 const BILL = {d:null, h:"", at:0, tried:0, busy:false, p:null, watch:0, watchPay:"", wait:null, shown:"", names:new Map(), naming:false, checking:false};
 // No dueRule here: an answer without one is an older worker's, whose checkouts are due dueDays after them.
-const BILL_PRICES = {checkout:500, family:500, monthly:2500, extra:2500, monthlySlots:10, extraSlots:15, extraMax:1, dueDays:3};
+const BILL_PRICES = {checkout:1000, family:500, monthly:2500, extra:2500, monthlySlots:10, extraSlots:15, extraMax:1, dueDays:3};
 // What each block says without the worker's own words (only its reason is kept on this device).
 const BILL_BLOCK = {"disputed-payment":"A payment is disputed with your bank. Contact your seller.", overdue:"A checkout is overdue. Pay it to submit again.",
   "past-due":"Your monthly payment didn't go through.", "setting-up":"Your monthly plan is being set up on Stripe.", "no-plan":"Pick a plan to submit."};
@@ -18457,8 +18459,8 @@ const billSubKept = (b) => !!b && !!b.sub;
 // checkout. Friends and Family who pay (1.9.144: family, and not exempt) are on pay per checkout, whatever the plan says (a
 // monthly plan from before stays paused for them), so they never see the plan cards or the monthly plan's page.
 const billPlan = (b) => { const p = (b && b.plan) || null; if (b && b.family && !b.exempt) return "checkout"; return p === "monthly" && !billMonthlyOffered(b) && !billSubKept(b) ? null : p; };
-// Friends and Family, charged or not: family from a worker since 1.9.144, or exempt "family" (only those at $0 from then on;
-// all of them before).
+// Friends and Family, charged or not: family from a worker since 1.9.144, or exempt "family" (all of them, from a worker
+// before 1.9.144, which didn't charge them).
 const billFamily = (b) => !!b && (!!b.family || b.exempt === "family");
 const billOwed = (d) => (d.lines || []).filter(l => BILL_OWED.includes(l.state));
 // What Pay takes: the owed checkouts but disputed ones (the seller decides those) and held ones (not due yet).
@@ -18745,8 +18747,8 @@ function openMonthlyPick(){
 function openBillCancel(change){
   const d = billFull(); if (!d || !d.sub) return;
   const pr = billPrices(d), end = billDay(d.sub.periodEnd), cur = change ? d.nextPlan || "" : "checkout";
-  // Friends and Family: their plan is paused, and after it they pay what they pay now (1.9.144: their price per checkout,
-  // or nothing at $0).
+  // Friends and Family: their plan is paused, and after it they pay what they pay now (1.9.144: $5 per checkout; nothing
+  // with a worker before 1.9.144, exempt "family").
   if (billFamily(d)){
     const free = d.exempt === "family";
     confirmDialog({title:"Cancel your monthly plan?", body:free ? `It ends ${end}. You're Friends and Family, so nothing is charged meanwhile or after.`
@@ -19018,7 +19020,7 @@ function renderInvoice(){
   // Friends and Family's monthly plan from before stays, paused by Stripe, until it's canceled.
   const famSub = s ? `<div class="inv-line">${s.paused ? (famPay ? "Monthly plan · paused while you're Friends and Family" : "Monthly plan · no charge while you're Friends and Family") : `Monthly plan · ${s.cancelAtEnd ? "ends" : "renews"} ${esc(billDay(s.periodEnd))}`}</div>
       <div class="inv-acts">${s.cancelAtEnd ? (mo ? `<button class="btn btn-sm" data-act="bill-resume">Keep my plan</button>` : "") : `<button class="btn btn-sm" data-act="bill-cancel">Cancel plan</button>`}</div>` : "";
-  // Friends and Family at $0 (all of them before 1.9.144): nothing to pay.
+  // Friends and Family who aren't charged (exempt "family": all of them with a worker before 1.9.144): nothing to pay.
   if (d.exempt === "family"){
     return head("Friends and Family") + notes + card("Friends and Family", `<span class="ppill ppill-ok">Nothing to pay</span>`, `<p class="item-sub">Your seller doesn't charge you.</p>${famSub}`);
   }
@@ -19069,13 +19071,13 @@ function renderInvoice(){
 /* ---- Settings → Billing (the seller's own FAFO) ---- */
 // The license worker posts a link to the seller's Discord channel, as Premium buyers does: plans, invoices, Friends and
 // Family. Checkouts on accounts the seller gives out are billed from order alerts, which this FAFO sends (desktop only).
-// From 1.9.144 Friends and Family pay their own price per checkout, which the worker's answer names (prices.family); an
-// older worker's (no prices.family) doesn't charge them, as before, and until an answer is in (only what this device kept,
-// with no prices) the lead says neither.
+// From 1.9.144 Friends and Family always pay $5 per checkout (the owner, 2026-11-13), which the worker's answer names
+// (prices.family); an older worker's (no prices.family) doesn't charge them, as before, and until an answer is in (only
+// what this device kept, with no prices) the lead says neither.
 function billingSectionHTML(){
   const d = billRead() || {}, alertsOk = DESK && orderAlertsOn() && OALERT.status === "allowed", pr = d.prices;
   const fam = !pr ? "" : pr.family == null ? " Buyers you approved before payments started are Friends and Family and aren't charged."
-    : ` Buyers you approved before payments started, keys you made by hand and buyers you move there are Friends and Family: ${Number(pr.family) > 0 ? `they pay ${billMoney(pr.family)} per checkout, the price you set for them on the billing page ($0 means they aren't charged)` : "they aren't charged, since their price on the billing page is $0"}. Your own FAFO is never charged.${billSundays(d) ? " Checkouts are due by the end of the Sunday after them, Eastern time." : ""}`;
+    : ` Buyers you approved before payments started, keys you made by hand and buyers you move there are Friends and Family: ${Number(pr.family) > 0 ? `they always pay ${billMoney(pr.family)} per checkout` : "they aren't charged"}. Your own FAFO is never charged.${billSundays(d) ? " Checkouts are due by the end of the Sunday after them, Eastern time." : ""}`;
   return `<div class="set-eyebrow">Selling</div>
     <h2 class="set-title">Billing</h2>
     <p class="set-lead">Plans, invoices and Friends and Family.${fam}</p>

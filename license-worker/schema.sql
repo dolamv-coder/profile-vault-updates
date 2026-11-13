@@ -598,8 +598,9 @@ CREATE TABLE IF NOT EXISTS billing_calls (
 );
 CREATE INDEX IF NOT EXISTS billing_calls_key ON billing_calls (key_hash, kind, at);
 -- Settings and stamps: on_since:<mode>, back_on:<mode>, off_seen, alerts_seen, prices:<mode> (Stripe's ids), price:checkout
--- and price:family (cents), family_from:<mode> (since when Friends and Family are charged), due_sunday (when unpaid lines
--- were moved onto the Sunday rule).
+-- (cents; a price:family row is never read: Friends and Family always pay $5), family_from:<mode> (since when Friends and
+-- Family are charged), due_sunday (when unpaid lines were moved onto the Sunday rule), price_ten (when a price below $10
+-- was moved to $10, once).
 CREATE TABLE IF NOT EXISTS billing_config (
   k          TEXT PRIMARY KEY,
   v          TEXT NOT NULL,
