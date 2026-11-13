@@ -545,7 +545,9 @@ alone (every store's rows of one account) from reading the whole table. Only
 - `web-worker/`: the web version, a Cloudflare Worker (`app`) at
   `https://app.fafoaco.com` (and still `https://app.orbit-app.workers.dev`), and FAFO's front page at
   `https://fafoaco.com`, whose button since 2026-10-13 is Login with Discord, to the app (the owner's request: no
-  Windows download or "Windows 10 and 11, or any browser" on it; `/download` still redirects for old links). The same day
+  Windows download or "Windows 10 and 11, or any browser" on it; `/download` still redirects for old links, and since
+  2026-11-13 to the newest release's `FAFO-Windows-<version>.zip` when it has one, else to the plain `FAFO-Windows.zip`:
+  `downloadUrl`, `findDownload`, "The version in the download's name" below). The same day
   the owner asked for a look "similar to" aphrowuu.com (an ACO's site): `site.js` is now light with a dark theme (the
   system's, or the header's switch, kept as `fafo-site-theme` on fafoaco.com), Inter with the Bruno Ace SC wordmark,
   mockups of FAFO's own Submit and Orders screens with sample data, four stacked steps, a grid of features, an FAQ and a
@@ -562,7 +564,33 @@ alone (every store's rows of one account) from reading the whole table. Only
   `releases/latest/download/FAFO-Windows.zip` on this repo (`Orbit-Windows.zip`
   until 1.9.75; each release also carries the same zip as `Orbit-Windows.zip` and
   `ProfileVault-Windows.zip` for older pages). From v1.9.61 the "Release desktop
-  app" Action makes these from `desktop/`.
+  app" Action makes these from `desktop/`. Since 2026-11-13 each release it makes also carries the same zip as
+  `FAFO-Windows-<version>.zip`, the name fafoaco.com/download gives, so a browser saves it with its version in the name,
+  and the sha256 line of its notes names that first.
+  Run by hand with "Only add FAFO-Windows-<version>.zip to the latest release" ticked (`name_latest`), the Action builds
+  nothing: it adds that name to the release that's out (v1.9.139 was the latest without it), a copy of its
+  `FAFO-Windows.zip` checked against the release's own sha256 (GitHub's `digest` of the asset, else the notes' line),
+  and names it in that line, changing nothing else. A run that stopped part way is finished by running it again: a name
+  already there is checked (fully uploaded, the same sha256) and the line rewritten if it still has the old wording.
+
+**The version in the download's name** (the owner's request, 2026-11-13, with a screenshot of Chrome's downloads showing
+`FAFO-Windows (2).zip`: "anytime a new update is available, can you have the version in the description"). A browser names
+a release download after the asset, so the asset carries the version:
+- **Releases:** "Release desktop app" uploads the zip as `FAFO-Windows-<version>.zip` too, beside the three plain names
+  that every page before 1.9.146 links (`releases/latest/download/FAFO-Windows.zip` and the others), which keep working; the
+  notes' sha256 line names it first. Its by-hand mode (`name_latest`, above) is run once after this is merged, to add the
+  name to v1.9.139, the release that's out; until then `/download` gives the plain name. Both scripts were tested with a
+  stub `gh` kept out of the repo (already named, whole or not, the same zip or not, with the notes' line in either
+  wording; a digest, only the notes' line, neither; a download that doesn't match; an upload, reading it back or the edit
+  failing, then the next run finishing it; the notes rewritten byte for byte, CRLF too; and the real v1.9.139 JSON).
+- **fafoaco.com/download** (the web worker's `downloadUrl`, `findDownload`) goes to the newest release's
+  `FAFO-Windows-<version>.zip` when it has one, found without GitHub's API (60 unauthenticated requests an hour per address,
+  shared with every worker on Cloudflare's): where github.com sends `releases/latest/download/FAFO-Windows.zip` must be
+  exactly this repo's `releases/download/v<X.Y.Z>/FAFO-Windows.zip`, then a `HEAD` of the versioned zip, 3 seconds in all;
+  anything else, a 404, an error or a timeout gives the plain link (`DOWNLOAD_URL`). An answer is kept 10 minutes when found
+  and 1 minute when not, per worker instance, and requests meanwhile share one lookup (`RELEASES_URL`, `DOWNLOAD_FOUND_MS`,
+  `DOWNLOAD_MISS_MS` and `DOWNLOAD_TIMEOUT_MS` in the environment are for `web-worker/test/e2e.mjs`).
+- FAFO's own buttons open it from page 1.9.146 (below).
 
 `licenses.json` goes live as soon as it's on `main`. So does a new app version:
 the desktop wrapper checks
@@ -646,7 +674,10 @@ was lost; `desktop/` holds the code from the v1.9.49 download's
 "Release desktop app" (`.github/workflows/desktop-release.yml`) tests and
 builds `FAFO-Windows.zip` on pull requests, and publishes release
 `v<desktop/package.json version>` when run by hand on main, once the page of
-that version is out. `pvDesktop.version` is 10 in the v1.9.49 download, 11
+that version is out, with the zip as `FAFO-Windows-<version>.zip` (from 2026-11-13, so a download's file name says its
+version) and as `FAFO-Windows.zip`, `Orbit-Windows.zip` and `ProfileVault-Windows.zip`; run by hand with `name_latest`
+ticked, it only adds `FAFO-Windows-<version>.zip` to the latest release (GitHub Releases above). `pvDesktop.version` is
+10 in the v1.9.49 download, 11
 from the v1.9.61 download, 12 from the v1.9.76 download, the first that is
 `FAFO.exe` (in `FAFO-win32-x64`; `build.mjs` renames the base's `Orbit.exe` and
 writes FAFO into its version information), 13 from the v1.9.105 download
