@@ -705,20 +705,33 @@ for another store, are left out, and nothing about them can stop a batch.
 ## Payments (Stripe)
 
 From FAFO 1.9.130 your buyers can pay you for checkouts through Stripe (the owner's decisions, 2026-10-18): a price
-**per checkout**, **$5** to start ($10 until 2026-11-12, when the owner lowered it), which you change in the **Price per
-checkout** box on the Billing page (below). There's no monthly plan any more: on 2026-11-12 the owner removed the $25 a
-month plan and its extra 15 slots ("Remove $25 plan completely"); a buyer who's already on one keeps it until it ends
-(below). It stays off until you add the two Stripe secrets below; until then nothing changes anywhere.
+**per checkout**, **$10** to start, which you can change in the **Price per checkout** box on the Billing page (below),
+and Friends and Family always pay **$5** (the owner, 2026-11-13: "Friends and family are always 5 dollars but everyone
+else is 10 or can be set for more later"; it was $10 until 2026-11-12, then $5 to start until 2026-11-13, and Friends
+and Family paid nothing until then). There's no monthly plan any more: on 2026-11-12 the owner removed the $25 a month
+plan and its extra 15 slots ("Remove $25 plan completely"); a buyer who's already on one keeps it until it ends (below).
+It stays off until you add the two Stripe secrets below; until then nothing changes anywhere.
 
-- **Who pays.** Anyone who isn't Friends and Family and isn't on a paid monthly plan pays the price per checkout for each
-  checkout on the slots they sent: an order on an account you gave them (from your FAFO's order alerts), an order on
-  their own account while it was out as one of their slots (their FAFO finds it in their email and reports it; this
-  worker checks the account was out then), or one you add on the Billing page. One order is one checkout, whatever the
-  quantity. Each is due 3 days after the order, and free if the store cancels it before it's paid. A checkout takes the
-  price as it is when it goes on the invoice, and keeps it: a new price is for checkouts from then on ($10 ones from
-  before 2026-11-12 stay $10). Orders from before payments came on are never billed, and neither are checkouts on a
-  declined batch's slots (add one by hand if you ran it), nor ones after a slot was pulled (once your channel was told
-  of the pull).
+- **Who pays.** Anyone who isn't on a paid monthly plan pays the price per checkout for each checkout on the slots they
+  sent (Friends and Family $5): an order on an account you gave them (from your FAFO's order alerts), an order on their
+  own account while it was out as one of their slots (their FAFO finds it in their email and reports it; this worker
+  checks the account was out then), or one you add on the Billing page. One order is one checkout, whatever the
+  quantity. Each is free if the store cancels it before it's paid, and **due by the end of the Sunday after it**, 11:59
+  PM US Eastern time (the owner's request, 2026-11-12: "Change invoice due date to every Sunday"; it was 3 days after
+  the order until then): an order on a Sunday is due the Sunday after, and from Monday 00:00 Eastern an unpaid one is
+  overdue. One that reaches the invoice late (a late order alert or report, or one you add or paste with an older date)
+  is due the Sunday after the day it's added, so it's never overdue as it arrives. A checkout takes the price as it is
+  when it goes on the invoice, and keeps it: a new price is for checkouts from then on ($5 ones from 2026-11-12 to
+  2026-11-13 stay $5). Orders from before payments came on are never billed, and neither are checkouts on a declined
+  batch's slots (add one by hand if you ran it), nor ones after a slot was pulled (once your channel was told of the
+  pull).
+- **Checkouts from before the Sunday rule.** The first request after the worker that has it was deployed moved every
+  unpaid checkout (in test and live mode, waived, canceled and disputed ones too) to the end of the Sunday on or after
+  the day it was due, never earlier (so one overdue from earlier that week is due again until Sunday). For the hour after
+  that, while the worker from before could still be writing 3-day due dates, each copy of the worker does it again for
+  checkouts added since. It's noted as `due_sunday` in `billing_config`, and `/admin/billing` does it again for any
+  left over (it changes nothing that's already on a Sunday). A checkout due more than 400 days ahead (an order dated
+  years ahead) keeps its due date.
 - **No monthly plan.** Buyers can't pick the monthly plan or start one, nor add or remove its extra 15 slots (FAFO
   1.9.143 offers only pay per checkout; an older FAFO that still shows the monthly plan is told "The monthly plan isn't
   offered any more."). A subscription that's already going carries on as it was until it ends: it covers its months once
@@ -728,17 +741,23 @@ month plan and its extra 15 slots ("Remove $25 plan completely"); a buyer who's 
   if they chose it, or else pick it in Invoice. A buyer who picked the monthly plan but never finished paying for it
   counts as having no plan. To offer the plan again, set `BILLING_MONTHLY = "on"` in `wrangler.toml`'s `[vars]` and
   deploy (the tests start each payments worker with the setting it tests, whatever `wrangler.toml` says).
-- **Who can submit.** A buyer has to pick a plan in FAFO's **Invoice** page first (pay per checkout). Submit stays off
-  for them while a checkout is overdue, their monthly payment has failed, or a payment is disputed with their bank, and a
-  buyer still on a monthly plan can't have more slots on than it has (10 or 25). A batch refused this way is never
-  posted, and your channel hears about it (at most every 6 hours per buyer). FAFOs older than 1.9.130 can't say why; the
-  channel's message says so.
-- **Friends and Family** are never charged, Submit is never off for them, and their slot limits stay as you approved
-  them. Everyone you approved before payments came on is Friends and Family (the first request that sees the Stripe
-  keys notes when that was), and so is every key you made by hand. The Billing page moves anyone either way: **Charge**
-  makes a buyer pay like one approved after payments began, for checkouts from then on (never for ones from while they
-  were Friends and Family). If you make a buyer with a monthly plan Friends and Family, Stripe stops charging it (its
-  collection is paused) until you charge them again.
+- **Who can submit.** A buyer has to pick a plan in FAFO's **Invoice** page first (pay per checkout; Friends and Family
+  have none to pick). Submit stays off for them while a checkout is overdue, their monthly payment has failed, or a
+  payment is disputed with their bank, and a buyer still on a monthly plan can't have more slots on than it has (10 or
+  25). A batch refused this way is never posted, and your channel hears about it (at most every 6 hours per buyer).
+  FAFOs older than 1.9.130 can't say why; the channel's message says so.
+- **Friends and Family** always pay $5 per checkout, on pay per checkout with no plan to pick, and only for orders from
+  the day after that began, in US Eastern time (the first request after the worker that charges them was deployed notes
+  when, as `family_from` in `billing_config`; an order dated that day may be from before it, so it isn't billed). Submit
+  is off for them only while a checkout is overdue or a payment is disputed with their bank, and their slot limits stay
+  as you approved them. Checkouts they already had on their invoice from before (from while they were charged, say) keep
+  their amounts and show again, due the coming Sunday at the earliest, so none is overdue as it comes back and Submit
+  isn't off for them at once; **Waive** any you don't want them to pay. Everyone you approved before payments came on is
+  Friends and Family (the first request that sees the Stripe keys notes when that was), and so is every key you made by
+  hand. The Billing page moves anyone either way: **Charge** makes a buyer pay the regular price like one approved after
+  payments began, for checkouts from then on (never for ones from while they were Friends and Family), on pay per
+  checkout. If you make a buyer with a monthly plan Friends and Family, Stripe stops charging it (its collection is
+  paused) until you charge them again; they pay $5 per checkout meanwhile, and can't start or grow a monthly plan.
 - **Your own FAFO** (the license that sends order alerts) is never charged, and is the only one that can open the
   Billing page.
 
@@ -802,18 +821,29 @@ what's owed and overdue, what was paid in the last 30 days, whether your FAFO's 
 stop, checkouts on accounts you give out aren't billed: keep Order alerts for buyers on in your desktop FAFO), and every
 buyer with their plan and status.
 
-**Price per checkout** (the owner's request, 2026-11-12) is the price in dollars, from $1 to $100, with up to two
-decimals (5, 7.50). **Save** changes it for checkouts from then on, in test and live mode alike: ones already on an
-invoice keep the price they went on at, and are paid at it. Your channel gets a note each time it changes (`💲 Price per
-checkout: $5 → $10 …`); saving the same price changes nothing. Buyers' FAFOs show the new price in Invoice.
+**Price per checkout** (the owner's request, 2026-11-12) is the price in dollars, $10 to start, from $1 to $100, with up
+to two decimals (12, 12.50). **Save** changes it for checkouts from then on, in test and live mode alike: ones already
+on an invoice keep the price they went on at, and are paid at it. Your channel gets a note each time it changes (`💲 Price
+per checkout: $10 → $12 …`); saving the same price changes nothing. Buyers' FAFOs show the new price in Invoice. It's
+everyone's but Friends and Family's, who always pay $5 (nothing on the page changes that). Each buyer's row says their
+plan ("Friends and Family · $5 per checkout"), and each checkout's due date is its Sunday (in Eastern time).
+
+**From $5 to $10, once.** The worker before 2026-11-13 had $5 to start. The first request after this one was deployed
+with payments on (a buyer's FAFO asking, an order alert, the Billing page, `/admin/billing`) saved $10 as the price when
+it was below $10, saved or not, and told your channel (`💲 Price per checkout: $5 → $10 …`; with none saved, too, since
+it was $5 until then). It's saved either way so that the worker before, if it still answers for a moment during the
+deploy or you roll back to it in Cloudflare, bills $10 too. A price of $10 or more stayed as it was, and checkouts
+already on an invoice keep theirs. It's noted as `price_ten` in `billing_config`, and never happens again: a price you
+save afterwards, lower too, stays (saving a price notes it as done too, if it wasn't yet).
 
 A buyer's **Details** has:
 
 - **Friends and Family** or **Charge**, **Tester** (in test mode), and **Clear dispute hold** after a bank dispute.
 - Their invoice, with **Waive**, **Undo waive**, **Mark paid** (paid some other way), **Charge again** (one canceled
-  because the store canceled it, if you think it wasn't; not one their monthly plan covered), and **Waive** or **Keep**
-  for a checkout they said wasn't yours ("Not my seller's checkout?" in their Invoice; your channel gets a link to
-  answer it).
+  because the store canceled it, if you think it wasn't; not one their monthly plan covered; like Undo waive and Keep,
+  it's then due by the end of the Sunday after that day, or later if it was due later, never earlier), and **Waive** or
+  **Keep** for a checkout they said wasn't yours ("Not my seller's checkout?" in their Invoice; your channel gets a link
+  to answer it).
 - **Add a checkout**, and their recent batches to match your bot's log against.
 
 **Paste checkouts** takes your bot's success log, one checkout per line: each line needs the account's email and the
@@ -824,14 +854,17 @@ account, their FAFO says so and it's free, as for the checkouts it reports itsel
 
 - **Refunds** are made in your Stripe Dashboard; your channel hears about them. The prices are FAFO's own, not Stripe's:
   the price per checkout is the Billing page's box (kept in `billing_config` as `price:checkout`, in cents; `PRICE_CHECKOUT`
-  in `src/index.js` until it's first saved), and the monthly plan's are `PRICE_MONTHLY` and `PRICE_EXTRA` there.
+  in `src/index.js` until it's first saved), Friends and Family's is `PRICE_FAMILY` there (never set on the page), and
+  the monthly plan's are `PRICE_MONTHLY` and `PRICE_EXTRA`.
 - **Removing either secret turns payments off here, but Stripe keeps charging monthly plans.** Cancel those in Stripe
   first if you're stopping for good. Checkouts from while they were gone aren't billed once you add them back.
 - Payments are in the `billing_*` tables, which `npm run db:init` (and the deploy Action) adds.
 
 ```
-# Payments: on or off, the mode, since when, plans, what's owed, the price per checkout (prices.checkout, in cents),
-# which plans buyers can pick (offered), Stripe's price ids, the last order alerts from your FAFO
+# Payments: on or off, the mode, since when, plans, what's owed, the prices per checkout (prices.checkout and
+# prices.family, in cents), since when Friends and Family are charged (familyFrom), when checkouts from before were moved
+# onto the Sunday rule (dueSunday; asking moves any left over), when a price below $10 was moved to $10 (priceTen), which
+# plans buyers can pick (offered), Stripe's price ids, the last order alerts from your FAFO
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/billing
 ```
 
@@ -972,5 +1005,5 @@ products added to it once, and the SKUs a batch carries), product pictures
 synced vaults (revisions, two devices saving at once, large vaults, a new password, and the lock
 after wrong passwords), and payments against a stand-in Stripe (plans, invoices, Submit refused and allowed, sessions,
 signed webhooks, refunds, the monthly plan's states with `BILLING_MONTHLY` on and what's left of it with it off,
-disputes, the Billing page and its price per checkout, test mode, and that the tables a database from the last release
-gets are the same as a new one's).
+disputes, the Billing page and its price per checkout (moved to $10 once), Friends and Family's $5, test mode, and that
+the tables a database from the last release gets are the same as a new one's).

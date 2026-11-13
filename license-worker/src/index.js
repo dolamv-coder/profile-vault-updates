@@ -98,21 +98,26 @@
 //   GET  /alerts/webhook       {set, lastOk, lastError}: this license's Discord webhook for its alerts
 //   PUT  /alerts/webhook       {url}: set it (it gets a test post first), or "" to remove it
 // Payments (Stripe; off until STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set; page 1.9.130+, license Bearer):
-//   GET  /billing              {on:false}, or {on, mode, exempt, plan, nextPlan, block, plans, prices, sub, lines, owed,
-//                              overdue, paid30, payments, report}: this license's plan and invoice (prices.checkout is the
-//                              price the owner set on the Billing page, $5 to start; plans is ["checkout"], with "monthly"
-//                              only while BILLING_MONTHLY is "on")
+//   GET  /billing              {on:false}, or {on, mode, exempt, family, plan, nextPlan, block, plans, prices, sub, lines,
+//                              owed, overdue, paid30, payments, report}: this license's plan and invoice (prices.checkout is
+//                              this buyer's price per checkout: the owner's on the Billing page, $10 to start, or for
+//                              Friends and Family their $5 (prices.family, fixed); plans is ["checkout"], with "monthly" only
+//                              while BILLING_MONTHLY is "on", never for Friends and Family; each line's dueAt is the end of
+//                              the Sunday after it, US Eastern: prices.dueRule "sunday", dueTz; exempt is "owner" or null,
+//                              never "family" from 2026-11-13, when Friends and Family all pay $5)
 //   POST /billing/plan         {plan:"checkout"}: pay per checkout (a monthly plan ends first)
 //   POST /billing/checkouts    {orders:[{account, store, orderNo, at, stage}]}: checkouts their FAFO found on their own
 //                              accounts, billed when that account was out as one of their slots then
 //   POST /billing/checkout     {kind: pay | monthly | extras | cancel | resume | invoice, ...}: {url} of a Stripe page to
-//                              open, or GET /billing's answer (monthly, extras and resume: 409 while the plan isn't offered)
+//                              open, or GET /billing's answer (monthly, extras and resume: 409 while the plan isn't offered;
+//                              monthly and extras: 409 for Friends and Family)
 //   POST /billing/dispute      {id, note}: "not my seller's checkout", for the owner to waive or keep
 //   GET  /billing/done         where Stripe sends the buyer back
 //   POST /stripe/webhook       Stripe's events (signed with STRIPE_WEBHOOK_SECRET)
 //   POST /submissions refuses a buyer who isn't paid up (402 {error, billing:{reason, ...}}); /slots/limit gives a monthly
 //                              plan's 10 or 25.
-//   The owner's Billing page (/billing/list/:id) sets the price per checkout (billing_config price:checkout).
+//   The owner's Billing page (/billing/list/:id) sets the price per checkout (billing_config price:checkout, $10 to start);
+//                              Friends and Family always pay $5 (PRICE_FAMILY), which nothing sets.
 // Web version and sync (app 1.9.65+). The app seals its vault (AES-GCM, with a key from the vault's
 // password) before it leaves the device, so what's kept here can't be read here. Every call takes the
 // license key (Bearer); reading or saving also takes the vault's access token (x-vault-auth), which
@@ -4049,38 +4054,51 @@ async function premiumListPage(request, env, url, id) {
 
 // ---- payments (Stripe) --------------------------------------------------------------------------
 // The owner's decisions (2026-10-18): "$10 per checkout or $25 a month plan or 10 slots", paid with Stripe, plus "an
-// additional 15 slots for additional $25"; buyers already approved are Friends and Family and never charged; a buyer who
-// isn't paid up can't submit. On 2026-11-12 the owner made a checkout $5 ("Can I change it to $5 a checkout?"). Anyone
-// else not on a paid monthly plan pays $5 for each checkout on slots they sent: an order on an account the owner gave them
-// (order alerts), or on their own account while it was out as a slot (their FAFO reports those, checked against when it
-// went out and was pulled: billing_accounts), or one the owner adds. Each is due 3 days after the order and free if the
-// store cancels it before it's paid. The worker keeps the invoice lines and plans, and Stripe takes the money: a Checkout
-// session for what's owed, or a subscription for the monthly plan. Webhooks only make it quicker: each answer is checked
-// with Stripe again (reconcile), so a lost one changes nothing. Off until both STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET
-// are set; a test key (not _live_) reaches only licenses marked Tester (and the owner's own FAFO, which is never charged).
-// Removing the keys turns it off here, while Stripe goes on billing subscriptions.
+// additional 15 slots for additional $25"; buyers already approved are Friends and Family and never charged (until
+// 2026-11-12, below); a buyer who isn't paid up can't submit. On 2026-11-12 the owner made a checkout $5 ("Can I change it
+// to $5 a checkout?"), and on 2026-11-13 $10 again: "Friends and family are always 5 dollars but everyone else is 10 or can
+// be set for more later". Anyone else not on a paid monthly plan pays $10 (or what the owner sets) for each checkout on
+// slots they sent: an order on an account the owner gave them (order alerts), or on their own account while it was out as a
+// slot (their FAFO reports those, checked against when it went out and was pulled: billing_accounts), or one the owner
+// adds. Each is free if the store cancels it before it's paid, and due by the end of the Sunday after it, US Eastern time
+// (2026-11-12, the owner: "Change invoice due date to every Sunday"; it was 3 days after the order until then). The worker
+// keeps the invoice lines and plans, and Stripe takes the money: a Checkout session for what's owed, or a subscription for
+// the monthly plan. Webhooks only make it quicker: each answer is checked with Stripe again (reconcile), so a lost one
+// changes nothing. Off until both STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set; a test key (not _live_) reaches only
+// licenses marked Tester (and the owner's own FAFO, which is never charged). Removing the keys turns it off here, while
+// Stripe goes on billing subscriptions.
 // Also on 2026-11-12: "Is there a way to change the pricing structure in the backend? Maybe I want to change it to $10
 // later" (they chose a price box on their Billing page: checkoutPrice), and "Remove $25 plan completely" (monthlyOffered:
 // no one can pick or start the monthly plan, or its extra 15 slots; subscriptions that already exist carry on).
+// Later that day: "Change friends and family cost to $5". Friends and Family pay a price per checkout of their own, for
+// orders from when that began (family_from), with no plan to pick; the owner's own FAFO is never charged. From 2026-11-13
+// it's always $5 (PRICE_FAMILY), never set on the Billing page (1.9.144 had a box for it, $0 to $100, that never shipped).
 const STRIPE_VERSION = "2026-09-30.endive";
 const stripeApi = (env) => String(env.STRIPE_API_BASE || "https://api.stripe.com").replace(/\/+$/, "");   // tests set it
-// cents, usd. The checkout was 1000 ($10) until 2026-11-12. Each billing_lines row keeps its own amount, so a line already
-// on an invoice keeps what it was billed at (lineStmt's upsert never changes it), and paying groups lines by amount.
-const PRICE_CHECKOUT = 500, PRICE_MONTHLY = 2500, PRICE_EXTRA = 2500;
+// cents, usd. The checkout was 1000 ($10) until 2026-11-12, 500 ($5) to start from then until 2026-11-13 (PRICE_BEFORE, for
+// priceTen), and 1000 again since. Each billing_lines row keeps its own amount, so a line already on an invoice keeps what
+// it was billed at (lineStmt's upsert never changes it), and paying groups lines by amount.
+const PRICE_CHECKOUT = 1000, PRICE_BEFORE = 500, PRICE_MONTHLY = 2500, PRICE_EXTRA = 2500;
 const MONTHLY_SLOTS = 10, EXTRA_SLOTS = 15, EXTRA_MAX = 1;
-// The price per checkout the owner sets on the Billing page (2026-11-12), in cents, one for both modes: billing_config
-// price:checkout, else PRICE_CHECKOUT. As SQL, so a new line takes the price at the moment it's written (lineStmt), and
+// The price per checkout, in cents, by the buyer's kind (`key`, "checkout" or "family", never anything typed). Everyone
+// charged: what the owner sets on the Billing page (2026-11-12), one for both modes, billing_config price:checkout, else
+// `dflt` (PRICE_CHECKOUT, $10). As SQL, so a new line takes the price of the moment it's written (lineStmt), and
 // checkoutPrice reads the same row the same way. $1 to $100; a row outside that (never written here) counts as none.
-const PRICE_MIN = 100, PRICE_MAX = 10000;
-const priceSql = (dflt) => `COALESCE((SELECT CAST(v AS INTEGER) FROM billing_config WHERE k = 'price:checkout' AND CAST(v AS INTEGER) BETWEEN ${PRICE_MIN} AND ${PRICE_MAX}), ${dflt})`;
-const checkoutPrice = async (env) => (await env.DB.prepare(`SELECT ${priceSql("?")} AS p`).bind(PRICE_CHECKOUT).first()).p;
+// Friends and Family: always PRICE_FAMILY, $5 (the owner, 2026-11-13: "Friends and family are always 5 dollars"), as `dflt`
+// (priceDefault gives it), whatever billing_config holds: a price:family row (from 1.9.144's box, which never shipped) is
+// never read.
+const PRICE_MIN = 100, PRICE_MAX = 10000, PRICE_FAMILY = 500;
+const priceDefault = (key) => key === "family" ? PRICE_FAMILY : PRICE_CHECKOUT;
+const priceSql = (key, dflt) => key === "family" ? String(dflt)
+  : `COALESCE((SELECT CAST(v AS INTEGER) FROM billing_config WHERE k = 'price:checkout' AND CAST(v AS INTEGER) BETWEEN ${PRICE_MIN} AND ${PRICE_MAX}), ${dflt})`;
+const checkoutPrice = async (env, key = "checkout") => key === "family" ? PRICE_FAMILY
+  : (await env.DB.prepare(`SELECT ${priceSql(key, "?")} AS p`).bind(PRICE_CHECKOUT).first()).p;
 // The monthly plan is offered only with BILLING_MONTHLY = "on" (the tests, or the owner bringing it back): the owner removed
 // it on 2026-11-12 ("Remove $25 plan completely"). Off, a buyer can't pick it, add or remove its extra 15 slots or resume
 // one set to end; one whose subscription is still going keeps it as it is (its coverage, slots and limit, Cancel, paying a
 // failed invoice), and a monthly plan with no subscription left counts as no plan.
 const monthlyOffered = (env) => env.BILLING_MONTHLY === "on";
 const NO_MONTHLY = "The monthly plan isn't offered any more.";
-const DUE_MS = 3 * 86400000;
 // An order's date is the day where whoever reported it is: windows and plans stretch this much either side, in the buyer's favour.
 const TZ_SLACK_MS = 14 * 3600000;
 const LOOKUP_BASE = "fafo_monthly_base", LOOKUP_EXTRA = "fafo_monthly_extra", PRODUCT_BASE = "fafo_monthly", PRODUCT_EXTRA = "fafo_extra_slots";
@@ -4102,6 +4120,37 @@ const stripeMode = (env) => /_live_/.test(String(env.STRIPE_SECRET_KEY || "")) ?
 const acctHash = (email) => sha256Hex("acct:" + String(email).trim().toLowerCase());
 const money = (c) => "$" + (c % 100 ? (c / 100).toFixed(2) : String(c / 100));
 const dayStart = (d) => Date.parse(d + "T00:00:00Z");
+// ---- due dates: the end of a Sunday, US Eastern time (2026-11-12) ----
+// A checkout is due by the end of the first Sunday after the day it counts from (a Sunday gives the next one), in
+// America/New_York with its daylight saving time, and overdue from Monday 00:00 there. due_at keeps that Monday 00:00 less
+// 1 ms (Sunday 23:59:59.999 Eastern), so every `due_at < now` stays as it was, and a page formatting it in its own US time
+// zone says Sunday. Days are YYYY-MM-DD; only an instant needs the time zone to give its day (etDay).
+const DUE_TZ = "America/New_York";
+// Built once (it's costly): h23, so midnight is 00, never 24.
+const DUE_ET = new Intl.DateTimeFormat("en-US", { timeZone: DUE_TZ, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short" });
+const DUE_DAY = new Intl.DateTimeFormat("en-US", { timeZone: DUE_TZ, weekday: "short", month: "short", day: "numeric" });
+const DUE_LONG = new Intl.DateTimeFormat("en-US", { timeZone: DUE_TZ, weekday: "long", month: "short", day: "numeric" });
+const etParts = (t) => Object.fromEntries(DUE_ET.formatToParts(new Date(t)).map((p) => [p.type, p.value]));
+const etDay = (t) => { const p = etParts(t); return `${p.year}-${p.month}-${p.day}`; };
+const addDays = (d, n) => new Date(dayStart(d) + n * 86400000).toISOString().slice(0, 10);   // calendar days, no time zone
+// 00:00 Eastern on day d. The clocks change at 02:00 there, so it's there once: 04:00 UTC (EDT) or 05:00 (EST). Without the
+// time zone's data (never in the Workers runtime) the US rule: EDT from the second Sunday of March to the first of November.
+function etMidnight(d) {
+  const u = dayStart(d);
+  for (const h of [4, 5]) { const t = u + h * 3600000, p = etParts(t); if (`${p.year}-${p.month}-${p.day}` === d && p.hour === "00" && p.minute === "00") return t; }
+  return usMidnight(d);
+}
+function usMidnight(d) {
+  const y = d.slice(0, 4), sunday = (m, n) => { const f = new Date(Date.parse(`${y}-${m}-01T00:00:00Z`)).getUTCDay(); return `${y}-${m}-${String(1 + (7 - f) % 7 + 7 * (n - 1)).padStart(2, "0")}`; };
+  return dayStart(d) + (d > sunday("03", 2) && d <= sunday("11", 1) ? 4 : 5) * 3600000;
+}
+// The end of the first Sunday strictly after day d; the end of the Sunday on or after the instant t (the move of lines from
+// before); and the due date of something owed from today (Charge again, Keep, Undo waive, held lines released).
+const sundayEndAfter = (d) => { const wd = new Date(dayStart(d)).getUTCDay(); return etMidnight(addDays(d, wd === 0 ? 8 : 8 - wd)) - 1; };
+const sundayEndOnOrAfter = (t) => sundayEndAfter(addDays(etDay(t), -1));
+const dueNow = (now) => sundayEndAfter(etDay(now));
+const dueText = (t) => DUE_DAY.format(new Date(t));          // "Sun, Nov 15"
+const dueWords = (t) => DUE_LONG.format(new Date(t));        // "Sunday, Nov 15"
 const realDay = (d) => ORDER_DAY.test(String(d || "")) && Number.isFinite(dayStart(d));
 const storeKeyOfName = (name) => {
   const p = String(name || "").normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toLowerCase();
@@ -4113,9 +4162,10 @@ const subEnded = (s) => s.status === "canceled" || s.status === "incomplete_expi
 const subOut = (s) => s ? { status: s.status, cancelAtEnd: !!s.cancel_at_end, extras: s.extras, paused: !!s.paused, periodEnd: s.period_end, slots: MONTHLY_SLOTS + EXTRA_SLOTS * s.extras } : null;
 const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
 
-// Who isn't charged, first that applies: the owner's own FAFO (the license that sends order alerts), then Friends and Family:
-// marked so, or (unless marked Charge) approved before billing came on, or a key made by hand. A Tester in test mode is
-// Friends and Family only when marked so, or test mode would have no one to try it with.
+// Who isn't charged the regular price, first that applies: the owner's own FAFO (the license that sends order alerts, never
+// charged), then Friends and Family (always $5 a checkout): marked so, or (unless marked Charge) approved before
+// billing came on, or a key made by hand. A Tester in test mode is Friends and Family only when marked so, or test mode would
+// have no one to try it with. "owner" | "family" | null.
 const exemptOf = (hash, p, l, sender, since, mode) => sender && sender.key_hash === hash ? "owner"
   : p && p.family === 1 ? "family"
   : p && p.family === 0 ? null
@@ -4123,24 +4173,124 @@ const exemptOf = (hash, p, l, sender, since, mode) => sender && sender.key_hash 
   : !l || l.issued_at < since ? "family" : null;
 
 // When billing first saw itself on in this mode (since): licenses issued before then are Friends and Family. Stamped once
-// (INSERT OR IGNORE). And since when orders are billed (from): then, or when it was on again after a request saw the keys
-// gone (off_seen), since no FAFO reported its checkouts meanwhile and they aren't billed late. {since, from}.
-let onSinceStamped = "";
+// (INSERT OR IGNORE), by the first request that finds it missing. And since when orders are billed (from): then, or when it
+// was on again after a request saw the keys gone (off_seen), since no FAFO reported its checkouts meanwhile and they aren't
+// billed late. And since when Friends and Family are charged (famFrom, family_from): stamped the same way by the first
+// request after the worker that charges them came (2026-11-12), when their unpaid lines from before become due the coming
+// Sunday at the earliest (familyRaise), in the same batch. Each request first runs the one-time moves of what was there
+// before: lines onto the Sunday rule (dueSundays) and a price per checkout below $10 to $10 (priceTen), so no line is
+// written and no page shows a price before them. {since, from, famFrom}.
 async function onSince(env, mode, now) {
-  if (onSinceStamped !== mode) {
-    await env.DB.prepare("INSERT OR IGNORE INTO billing_config (k, v, updated_at) VALUES (?, ?, ?)").bind("on_since:" + mode, String(now), now).run();
-    onSinceStamped = mode;
+  await dueSundays(env, now).catch((e) => console.error("billing due dates", e && e.message));
+  await priceTen(env, now).catch((e) => console.error("billing price", e && e.message));
+  const sk = "on_since:" + mode, fk = "family_from:" + mode;
+  const read = async () => Object.fromEntries((await env.DB.prepare("SELECT k, v FROM billing_config WHERE k IN (?, ?, ?, 'off_seen')").bind(sk, "back_on:" + mode, fk).all())
+    .results.map((r) => [r.k, Number(r.v)]));
+  let v = await read();
+  if (v[sk] === undefined || v[fk] === undefined) {
+    const raise = v[fk] === undefined ? await familyRaise(env, mode, v[sk] || now, now, await currentAlertSender(env)) : null;
+    await env.DB.batch([
+      env.DB.prepare("INSERT OR IGNORE INTO billing_config (k, v, updated_at) VALUES (?, ?, ?)").bind(sk, String(now), now),
+      env.DB.prepare("INSERT OR IGNORE INTO billing_config (k, v, updated_at) VALUES (?, ?, ?)").bind(fk, String(now), now),
+      ...(raise ? [raise] : []),
+    ]);
+    v = await read();
   }
-  const { results } = await env.DB.prepare("SELECT k, v FROM billing_config WHERE k IN (?, ?, 'off_seen')").bind("on_since:" + mode, "back_on:" + mode).all();
-  const v = Object.fromEntries(results.map((r) => [r.k, Number(r.v)]));
-  const since = v["on_since:" + mode] || now;
+  const since = v[sk] || now;
   let from = Math.max(since, v["back_on:" + mode] || 0);
   if (v.off_seen > from) {
     await env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) VALUES (?1, ?2, ?2) ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at
       WHERE CAST(billing_config.v AS INTEGER) < ?3`).bind("back_on:" + mode, now, v.off_seen).run();
     from = now;
   }
-  return { since, from };
+  return { since, from, famFrom: v["family_from:" + mode] || now };
+}
+// When Friends and Family start being charged (family_from stamped: the first billing request in a mode after the worker that
+// charges them came), their unpaid lines from before (from while they were charged, before being moved there) come back on
+// their invoice, which hid them while they weren't charged. None may come back overdue, which would turn Submit off at once:
+// each (canceled or waived too, which Charge again and Undo waive bring back) is due by the end of the Sunday after today at
+// the earliest. Who's Friends and Family is worked out as the Billing page works it out (exemptOf), among the buyers with
+// unpaid lines in that mode. The statement goes in the batch that writes family_from, and applies only while family_from
+// holds this call's stamp (`now`), so a request that lost the race to stamp it, or a later one, moves nothing. Null when
+// none of them has an unpaid line.
+async function familyRaise(env, mode, since, now, sender) {
+  const [lines, lics, people] = (await env.DB.batch([
+    env.DB.prepare("SELECT DISTINCT key_hash FROM billing_lines WHERE mode = ? AND paid_at IS NULL").bind(mode),
+    env.DB.prepare("SELECT key_hash, issued_at FROM licenses WHERE key_hash IN (SELECT key_hash FROM billing_lines WHERE mode = ? AND paid_at IS NULL)").bind(mode),
+    env.DB.prepare("SELECT * FROM billing_people WHERE key_hash IN (SELECT key_hash FROM billing_lines WHERE mode = ? AND paid_at IS NULL)").bind(mode),
+  ])).map((r) => r.results);
+  const L = new Map(lics.map((l) => [l.key_hash, l])), P = new Map(people.map((p) => [p.key_hash, p]));
+  const hashes = lines.map((x) => x.key_hash).filter((h) => exemptOf(h, P.get(h), L.get(h), sender, since, mode) === "family");
+  if (!hashes.length) return null;
+  return env.DB.prepare(`UPDATE billing_lines SET due_at = MAX(due_at, ?1) WHERE mode = ?2 AND paid_at IS NULL AND key_hash IN (SELECT value FROM json_each(?3))
+    AND (SELECT v FROM billing_config WHERE k = ?4) = ?5`).bind(dueNow(now), mode, JSON.stringify(hashes), "family_from:" + mode, String(now));
+}
+// The Sunday rule for lines written before it (2026-11-12): every unpaid line, in both modes (waived, canceled, held and
+// disputed ones too, which Undo waive and Charge again bring back), goes to the end of the Sunday on or after its due date,
+// never earlier, in one statement, with the marker billing_config due_sunday in the same batch. A Sunday's end goes to
+// itself, so it can run again and again. For an hour after the marker, while a worker from before can still be writing
+// 3-day due dates, each isolate runs it again at most once a minute for lines written since 10 minutes before the marker;
+// `all` (the admin summary) runs it over every unpaid line. Never with payments off (onSince isn't reached then).
+const DUE_MOVE_MS = 3600000, DUE_RERUN_MS = 60000, DUE_SLACK_MS = 10 * 60000, DUE_AHEAD_MS = 400 * 86400000;
+let dueDone = false, dueRan = 0;
+async function dueSundays(env, now, all = false) {
+  if (!all && (dueDone || now - dueRan < DUE_RERUN_MS)) return;
+  dueRan = now;
+  const m = await env.DB.prepare("SELECT v FROM billing_config WHERE k = 'due_sunday'").first();
+  const at = m ? Number(m.v) : 0;
+  if (!all && m && now - at > DUE_MOVE_MS) { dueDone = true; return; }
+  const from = all || !m ? 0 : at - DUE_SLACK_MS;
+  const r = await env.DB.prepare("SELECT MIN(due_at) AS lo, MAX(due_at) AS hi FROM billing_lines WHERE paid_at IS NULL AND created_at >= ?").bind(from).first();
+  // Every Sunday's end from the first line's to a week past the last's, but never more than DUE_AHEAD_MS from now: a line due
+  // later than that (an order dated years ahead) keeps its due date (the COALESCE below), and near the year 10000 a Sunday's
+  // end stops moving on (addDays writes a 6-digit year), so the loop also stops when the next one isn't later.
+  const ends = [];
+  const hi = r && r.lo != null ? Math.min(r.hi, now + DUE_AHEAD_MS) + 8 * 86400000 : 0;
+  if (r && r.lo != null && r.lo <= hi) {
+    for (let s = sundayEndOnOrAfter(r.lo); s <= hi;) {
+      ends.push(s);
+      const next = sundayEndAfter(etDay(s));
+      if (!(next > s)) break;
+      s = next;
+    }
+  }
+  const stmts = [];
+  if (ends.length) stmts.push(env.DB.prepare(`UPDATE billing_lines SET due_at = COALESCE((SELECT MIN(CAST(value AS INTEGER)) FROM json_each(?1) WHERE CAST(value AS INTEGER) >= billing_lines.due_at), due_at)
+    WHERE paid_at IS NULL AND created_at >= ?2 AND due_at NOT IN (SELECT CAST(value AS INTEGER) FROM json_each(?1))`).bind(JSON.stringify(ends), from));
+  stmts.push(env.DB.prepare("INSERT OR IGNORE INTO billing_config (k, v, updated_at) VALUES ('due_sunday', ?, ?)").bind(String(now), now));
+  const out = await env.DB.batch(stmts);
+  return ends.length ? out[0].meta.changes : 0;
+}
+// The price per checkout from 2026-11-13 (the owner: "Friends and family are always 5 dollars but everyone else is 10 or can
+// be set for more later"): $10 to start (PRICE_CHECKOUT), and a price saved lower in the Billing page's box (the worker before
+// had $5 to start, PRICE_BEFORE) goes to $10, once. One D1 batch (a transaction) reads the price before (one saved, else
+// PRICE_BEFORE), writes the marker billing_config price_ten with a value only this call has (INSERT … DO NOTHING: one call
+// ever writes it), and saves '1000' as the price when the price before was below $10 (one saved lower, or none saved, or one
+// outside $1 to $100, which counts as none) only while the marker holds this call's value, so a call that lost the race
+// writes nothing. Saving it with none saved too means the worker from before (which reads none as $5), still answering for
+// a while during the deploy or after a rollback in Cloudflare, bills $10 as well, as the channel was told. A price saved at
+// $10 or more stays. The call that wrote the marker tells the channel, when the price was below $10 (with none saved,
+// $5 → $10, as it was $5 until then). A Save of the Billing page's price writes the marker too (if it isn't there), so a
+// price the owner saves through this worker is never moved by this, even when a D1 error stopped priceTen before it. Once
+// the marker is there, each isolate reads it once and never again (priceDone). Run first by onSince (every request that
+// writes a line or shows a price gets there before) and the Billing page; never with payments off, so it waits until
+// they're on.
+let priceDone = false;
+async function priceTen(env, now) {
+  if (priceDone) return;
+  if (await env.DB.prepare("SELECT 1 AS m FROM billing_config WHERE k = 'price_ten'").first()) { priceDone = true; return; }
+  const me = `${now}:${randomId(12)}`;
+  const [was, , , mark] = await env.DB.batch([
+    env.DB.prepare(`SELECT ${priceSql("checkout", "?")} AS p`).bind(PRICE_BEFORE),
+    env.DB.prepare("INSERT INTO billing_config (k, v, updated_at) VALUES ('price_ten', ?1, ?2) ON CONFLICT (k) DO NOTHING").bind(me, now),
+    env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) SELECT 'price:checkout', ?1, ?2 WHERE ${priceSql("checkout", PRICE_BEFORE)} < ?3
+      AND (SELECT v FROM billing_config WHERE k = 'price_ten') = ?4
+      ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at`).bind(String(PRICE_CHECKOUT), now, PRICE_CHECKOUT, me),
+    env.DB.prepare("SELECT v FROM billing_config WHERE k = 'price_ten'"),
+  ]);
+  priceDone = true;
+  const before = was.results[0].p, mine = !!mark.results[0] && mark.results[0].v === me;
+  if (mine && before < PRICE_CHECKOUT) await billNote(env, `💲 Price per checkout: ${money(before)} → ${money(PRICE_CHECKOUT)} (from now on; checkouts already on an invoice keep their price)`);
 }
 // Payments off (the keys taken away) after they were on: noted at most every 5 minutes, for onSince.
 let offStamped = 0;
@@ -4159,10 +4309,13 @@ function billCtx(env, now = Date.now()) {
   const c = { mode, on, now };
   c.since = async () => (await (starts || (starts = onSince(env, mode, now)))).since;
   c.from = async () => (await (starts || (starts = onSince(env, mode, now)))).from;
+  c.famFrom = async () => (await (starts || (starts = onSince(env, mode, now)))).famFrom;
   c.sender = async () => sender !== undefined ? sender : (sender = await currentAlertSender(env));
   c.forget = (hash) => { memo.delete(hash); subMemo.delete(hash); };
-  // {hash, on, tester, owner, exempt, person, bill}: on is billing on for this license (live, or test and a Tester, or the
-  // owner's own FAFO, which is never charged but gets Settings → Billing).
+  // {hash, on, tester, owner, family, famPrice, exempt, person, bill}: on is billing on for this license (live, or test and a
+  // Tester, or the owner's own FAFO, which is never charged but gets Settings → Billing). family: Friends and Family (billing
+  // on for them), who pay famPrice (PRICE_FAMILY, $5) per checkout. exempt: not charged at all, "owner" (their own FAFO);
+  // null for everyone else, Friends and Family included (never "family" from 2026-11-13: they all pay $5).
   c.who = (hash) => {
     if (!memo.has(hash)) memo.set(hash, (async () => {
       const [p, b, l] = (await env.DB.batch([
@@ -4172,7 +4325,8 @@ function billCtx(env, now = Date.now()) {
       ])).map((r) => r.results[0] || null);
       const s = await c.sender(), owner = !!(s && s.key_hash === hash), tester = !!(p && p.tester);
       const lon = on && (mode === "live" || tester || owner);
-      return { hash, on: lon, tester, owner, exempt: lon ? exemptOf(hash, p, l, s, await c.since(), mode) : null, person: p, bill: b };
+      const cls = lon ? exemptOf(hash, p, l, s, await c.since(), mode) : null, family = cls === "family";
+      return { hash, on: lon, tester, owner, family, famPrice: PRICE_FAMILY, exempt: cls === "owner" ? "owner" : null, person: p, bill: b };
     })());
     return memo.get(hash);
   };
@@ -4248,39 +4402,45 @@ const billNote = (env, content) => webhookPost(env, { content }).catch((e) => co
 // from before then were placed while they weren't. 0 when that isn't so.
 const chargeFrom = (c, p) => p && p.charge_from && (p.family === 0 || (c.mode === "test" && p.tester && p.family == null)) ? p.charge_from : 0;
 // Whether an order dated `d` goes on this license's invoice: billing reaches it and it isn't exempt, it's from after billing
-// came on (and after they were charged), and no monthly plan of theirs covers that day. `held`: their monthly plan is waiting
-// on a payment (one that failed, or a renewal still being paid) and the order is after what they paid for, so it waits for
-// that payment (covered if it's paid, due if the plan ends). {ok, held} or {why}.
+// came on (and after they were charged; for Friends and Family, after the Eastern day family_from fell on, as due dates go
+// by Eastern days: an order dated that day may be from before it), and no monthly plan of theirs covers that day. `held`:
+// their monthly plan is waiting on a payment (one that failed, or a renewal still being paid; never one paused for Friends
+// and Family) and the order is after what they paid for, so it waits for that payment (covered if it's paid, due if the
+// plan ends). `price`: which price per checkout it's at (lineStmt). {ok, held, price} or {why}.
 async function billable(c, w, d) {
   if (!w.on) return { why: "off" };
   if (w.exempt) return { why: w.exempt };
   const start = dayStart(d), end = start + 86400000, charged = chargeFrom(c, w.person);
   if (await c.from() + TZ_SLACK_MS >= end) return { why: "before" };
+  if (w.family && d <= etDay(await c.famFrom())) return { why: "family-before" };
   if (charged && charged + TZ_SLACK_MS >= end) return { why: "charge" };
   const subs = await c.subs(w.hash);
   if (subs.some((s) => s.started_at != null && s.paid_through != null && s.started_at - TZ_SLACK_MS < end && s.paid_through + TZ_SLACK_MS >= start)) return { why: "monthly" };
   const cur = w.bill && w.bill.sub_id ? subs.find((s) => s.sub_id === w.bill.sub_id) : null;
-  const waiting = cur && !cur.ended_at && (cur.status === "past_due" || cur.status === "unpaid"
+  const waiting = cur && !cur.ended_at && !cur.paused && (cur.status === "past_due" || cur.status === "unpaid"
     || ((cur.status === "active" || cur.status === "trialing") && cur.started_at != null && (cur.invoice_status === "draft" || cur.invoice_status === "open")));
   const held = waiting && (cur.paid_through == null || cur.paid_through + TZ_SLACK_MS < start);
-  return { ok: true, held: held ? cur.sub_id : null };
+  return { ok: true, held: held ? cur.sub_id : null, price: w.family ? "family" : "checkout" };
 }
-// The statement that puts one order on a buyer's invoice (billable already checked): at the price per checkout as it is
-// when the line is written (priceSql: the owner's Billing page, else PRICE_CHECKOUT, $5), due 3 days after the order's day
-// (or after now, if that's later). One order belongs to one buyer, so an alert or the owner never adds one
-// that an alert or the owner put on another buyer's invoice (another buyer's own report doesn't count: it's only their
-// word). An alert or the owner takes over a line the buyer's FAFO reported, unless their FAFO said the store canceled it
-// (the owner can charge it again); a buyer's report never touches one from an alert or the owner. Nothing if it's there
-// already, and a line already there keeps the amount it was billed at (the upsert never changes it: $10 before 2026-11-12).
+// The statement that puts one order on a buyer's invoice (billable already checked): at the price per checkout of the
+// buyer's kind (`price` from billable: "family" for Friends and Family) as it is when the line is written (priceSql: the
+// owner's Billing page, else PRICE_CHECKOUT, $10; Friends and Family's always PRICE_FAMILY, $5), never at $0, due by the
+// end of the Sunday after the order's day, or after today (Eastern) if that's later, so a late alert or report is never
+// overdue as it arrives. One order belongs to one buyer, so an alert or the owner never adds one that an alert or the owner
+// put on another buyer's invoice (another buyer's own report doesn't count: it's only their word). An alert or the owner
+// takes over a line the buyer's FAFO reported, unless their FAFO said the store canceled it (the owner can charge it
+// again), and its due date never moves earlier; a buyer's report never touches one from an alert or the owner. Nothing if
+// it's there already, and a line already there keeps the amount it was billed at (the upsert never changes it: $10 before
+// 2026-11-12, $5 from then to 2026-11-13).
 function lineStmt(env, c, l) {
-  const due = Math.max(dayStart(l.orderAt) + 86400000, c.now) + DUE_MS;
+  const today = etDay(c.now), due = sundayEndAfter(l.orderAt > today ? l.orderAt : today), key = l.price === "family" ? "family" : "checkout";
   const solo = l.source === "buyer" ? "1" : "NOT EXISTS (SELECT 1 FROM billing_lines o WHERE o.store = ?3 AND o.order_no = ?4 AND o.mode = ?2 AND o.key_hash <> ?1 AND o.source <> 'buyer')";
   return env.DB.prepare(`INSERT INTO billing_lines (id, key_hash, mode, store, store_name, order_no, item, qty, order_at, acct_hash, profile, source, amount, created_at, due_at, held_sub)
-    SELECT ?5, ?1, ?2, ?3, ?6, ?4, ?7, ?8, ?9, ?10, ?11, ?12, ${priceSql("?13")}, ?14, ?15, ?16 WHERE ${solo}
-    ON CONFLICT (key_hash, mode, store, order_no) DO UPDATE SET source = excluded.source, acct_hash = excluded.acct_hash, due_at = excluded.due_at
+    SELECT ?5, ?1, ?2, ?3, ?6, ?4, ?7, ?8, ?9, ?10, ?11, ?12, ${priceSql(key, "?13")}, ?14, ?15, ?16 WHERE ${solo} AND ${priceSql(key, "?13")} > 0
+    ON CONFLICT (key_hash, mode, store, order_no) DO UPDATE SET source = excluded.source, acct_hash = excluded.acct_hash, due_at = MAX(billing_lines.due_at, excluded.due_at)
     WHERE billing_lines.source = 'buyer' AND excluded.source <> 'buyer' AND billing_lines.paid_at IS NULL AND billing_lines.waived_at IS NULL AND billing_lines.canceled_at IS NULL`)
     .bind(l.hash, c.mode, l.store, l.orderNo, randomId(12), String(l.storeName || "").slice(0, 40), String(l.item || "").slice(0, 120), String(l.qty || "").slice(0, 6),
-      l.orderAt, l.acctHash || "", String(l.profile || "").slice(0, 80), l.source, PRICE_CHECKOUT, c.now, due, l.held || null);
+      l.orderAt, l.acctHash || "", String(l.profile || "").slice(0, 80), l.source, priceDefault(key), c.now, due, l.held || null);
 }
 const orderNoOf = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toUpperCase().slice(0, 40);
 // A canceled order: unpaid lines go (free), from an alert (any buyer's line from an alert or the owner) or from the buyer's
@@ -4323,7 +4483,7 @@ async function lineTotals(env, c, hash) {
 // so a payment made counts without its webhook; if Stripe doesn't answer, what's kept stands.
 async function billingState(env, c, hash) {
   let w = await c.who(hash);
-  const out = { on: w.on, mode: c.mode, exempt: w.exempt, tester: w.tester, plan: null, nextPlan: null, sub: null, monthlyOk: false, block: null, owed: 0, overdue: 0, n: 0, late: 0 };
+  const out = { on: w.on, mode: c.mode, exempt: w.exempt, family: w.family, tester: w.tester, plan: null, nextPlan: null, sub: null, monthlyOk: false, block: null, owed: 0, overdue: 0, n: 0, late: 0 };
   if (!w.on) return out;
   let s = w.bill && w.bill.sub_id ? (await c.subs(hash)).find((x) => x.sub_id === w.bill.sub_id) : null;
   const waiting = (x) => !w.exempt && !x.ended_at && x.synced_at < c.now - RECONCILE_MS
@@ -4339,10 +4499,13 @@ async function billingState(env, c, hash) {
   // With the monthly plan no longer offered, a monthly plan whose subscription is gone (or never was) is no plan: they pick
   // pay per checkout, never left waiting on a plan that can't be started.
   const gone = !!b && b.plan === "monthly" && !live && !monthlyOffered(env);
-  Object.assign(out, { exempt: w.exempt, plan: b && !gone ? b.plan : null, nextPlan: b && !gone ? b.next_plan : null });
+  Object.assign(out, { exempt: w.exempt, family: w.family, plan: b && !gone ? b.plan : null, nextPlan: b && !gone ? b.next_plan : null });
   // Nor is one never paid for (still being set up when the plan went) shown as theirs: an older FAFO (1.9.130 to 1.9.142)
   // would offer only to finish paying for it in Invoice, which /billing/checkout refuses now.
   out.sub = live && !(s.status === "incomplete" && out.plan !== "monthly" && !monthlyOffered(env)) ? subOut(s) : null;
+  // Friends and Family pay per checkout with no plan to pick (2026-11-12): never no-plan, and a monthly plan of theirs (paused
+  // since they were moved there) never makes them over the limit or past due. Its sub stays, for Cancel.
+  if (w.family) Object.assign(out, { plan: "checkout", nextPlan: null });
   out.monthlyOk = out.plan === "monthly" && !!s && (s.status === "active" || s.status === "trialing");
   if (w.exempt) return out;
   Object.assign(out, await lineTotals(env, c, hash));
@@ -4362,7 +4525,7 @@ async function billingState(env, c, hash) {
 async function planSlots(env, hash) {
   if (!billingOn(env)) return null;
   const c = billCtx(env), w = await c.who(hash);
-  if (!w.on || w.exempt || !w.bill || !w.bill.sub_id) return null;
+  if (!w.on || w.exempt || w.family || !w.bill || !w.bill.sub_id) return null;
   const s = (await c.subs(hash)).find((x) => x.sub_id === w.bill.sub_id);
   if (!s) return null;
   if (!monthlyOffered(env)) return w.bill.plan === "monthly" && !subEnded(s) ? MONTHLY_SLOTS + EXTRA_SLOTS * s.extras : null;
@@ -4437,7 +4600,7 @@ async function alertLine(env, c, a, store, orderNo, ev) {
   if (!ok.ok) return null;
   if ((await c.pulled(a.key_hash)).some((x) => x.store === store && x.profile === (a.profile || "") && x.batch === a.batch && x.pulled_at + TZ_SLACK_MS < dayStart(d))) return null;
   return lineStmt(env, c, { hash: a.key_hash, store, storeName: ev.storeName || a.store_name || store, orderNo, item: ev.item, qty: ev.qty, orderAt: d,
-    acctHash: await acctHash(ev.account), profile: a.profile || "", source: "alert", held: ok.held });
+    acctHash: await acctHash(ev.account), profile: a.profile || "", source: "alert", held: ok.held, price: ok.price });
 }
 // The owner's FAFO is sending order alerts: noted at most every 5 minutes, for the Billing page (and, with payments off, that
 // they are: onSince).
@@ -4614,7 +4777,7 @@ async function syncSubscription(env, c, subId, o = {}) {
     await env.DB.batch([
       env.DB.prepare(`UPDATE billing SET plan = CASE WHEN next_plan = 'checkout' THEN 'checkout' ELSE NULL END, plan_at = ?1, next_plan = NULL, updated_at = ?1
         WHERE key_hash = ?2 AND mode = ?3 AND sub_id = ?4 AND plan = 'monthly'`).bind(c.now, hash, c.mode, subId),
-      env.DB.prepare("UPDATE billing_lines SET held_sub = NULL, due_at = ? WHERE held_sub = ? AND paid_at IS NULL AND canceled_at IS NULL").bind(c.now + DUE_MS, subId),
+      env.DB.prepare("UPDATE billing_lines SET held_sub = NULL, due_at = MAX(due_at, ?) WHERE held_sub = ? AND paid_at IS NULL AND canceled_at IS NULL").bind(dueNow(c.now), subId),
     ]);
   }
   // The channel, once per change (told is claimed): started, more or fewer slots, set to end, payment failed, ended.
@@ -4696,17 +4859,23 @@ async function billingLicense(request, env) {
   if (!on) return { error: json({ error: "license not recognized" }, 401, NO_STORE) };
   return { lic: { hash, last4: norm.slice(-4), discordId: row ? row.discord_id : null, username: row ? row.username : null } };
 }
-const PRICES = { checkout: PRICE_CHECKOUT, monthly: PRICE_MONTHLY, extra: PRICE_EXTRA, monthlySlots: MONTHLY_SLOTS, extraSlots: EXTRA_SLOTS, extraMax: EXTRA_MAX, dueDays: DUE_MS / 86400000 };
-// The plans a buyer can pick (page 1.9.143+ reads it; an answer without it is read as both, as before).
-const plansOf = (env) => monthlyOffered(env) ? ["checkout", "monthly"] : ["checkout"];
+// dueDays: what pages 1.9.130 to 1.9.143 say a checkout is due after ("3 days"; they need a number). From 2026-11-12 it's
+// dueRule "sunday": by the end of the Sunday after it, in dueTz (page 1.9.144+ says so; each line's dueAt is that instant).
+const PRICES = { checkout: PRICE_CHECKOUT, monthly: PRICE_MONTHLY, extra: PRICE_EXTRA, monthlySlots: MONTHLY_SLOTS, extraSlots: EXTRA_SLOTS, extraMax: EXTRA_MAX, dueDays: 3,
+  dueRule: "sunday", dueTz: DUE_TZ };
+// The plans a buyer can pick (page 1.9.143+ reads it; an answer without it is read as both, as before). Friends and Family
+// have none to pick: they pay per checkout.
+const plansOf = (env, w) => monthlyOffered(env) && !(w && w.family) ? ["checkout", "monthly"] : ["checkout"];
 // GET /billing's answer: the plan, the invoice (lines still owed, held or disputed, and the rest from the last 60 days, newest
 // first), what's owed, the last day's payments, and which of their own accounts their FAFO should report checkouts on (those
-// out as slots in the last 45 days, from the earliest day one was).
+// out as slots in the last 45 days, from the earliest day one was). family: Friends and Family, whose price per checkout
+// (prices.checkout, their own; prices.family is that price for anyone) is always $5 (PRICE_FAMILY).
 async function billingBody(env, c, lic) {
   const st = await billingState(env, c, lic.hash);
   if (!st.on) return { on: false };
-  const out = { on: true, mode: c.mode, exempt: st.exempt, plan: st.plan, nextPlan: st.nextPlan, block: st.block, now: c.now, plans: plansOf(env),
-    prices: { ...PRICES, checkout: await checkoutPrice(env) }, sub: st.sub, lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null };
+  const w = await c.who(lic.hash), family = w.famPrice;
+  const out = { on: true, mode: c.mode, exempt: st.exempt, family: !!st.family, plan: st.plan, nextPlan: st.nextPlan, block: st.block, now: c.now, plans: plansOf(env, st),
+    prices: { ...PRICES, checkout: st.family ? family : await checkoutPrice(env), family }, sub: st.sub, lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null };
   if (st.exempt) return out;
   const [lines, paid, pays, wins] = await env.DB.batch([
     env.DB.prepare(`SELECT * FROM billing_lines WHERE key_hash = ? AND mode = ? AND ((paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL) OR created_at > ?)
@@ -4722,10 +4891,11 @@ async function billingBody(env, c, lic) {
       disputable: l.source === "buyer" && !l.dispute_at && (state === "due" || state === "overdue") };
   });
   Object.assign(out, { owed: st.owed, overdue: st.overdue, paid30: paid.results[0].s, payments: pays.results });
-  // Not from before billing came on (or on again), nor from before the owner charged them: none of those are billed.
+  // Not from before billing came on (or on again), nor from before the owner charged them, nor, for Friends and Family, from
+  // the Eastern day they were charged from or before (family_from, as billable): none of those are billed.
   if (wins.results.length) {
-    const from = Math.max(await c.from(), chargeFrom(c, (await c.who(lic.hash)).person)) + TZ_SLACK_MS;
-    out.report = { from: day(Math.max(c.now - 45 * 86400000, Math.min(...wins.results.map((x) => x.first)) - TZ_SLACK_MS, from)), accts: wins.results.map((x) => x.acct_hash) };
+    const from = Math.max(await c.from(), chargeFrom(c, w.person)) + TZ_SLACK_MS, fam = w.family ? dayStart(addDays(etDay(await c.famFrom()), 1)) : 0;
+    out.report = { from: day(Math.max(c.now - 45 * 86400000, Math.min(...wins.results.map((x) => x.first)) - TZ_SLACK_MS, from, fam)), accts: wins.results.map((x) => x.acct_hash) };
   }
   return out;
 }
@@ -4746,12 +4916,12 @@ async function billingGet(request, env) {
   return json(await billingBody(env, c, lic), 200, NO_STORE);
 }
 
-// Billing on for this license, and not exempt (`family` lets a Friends and Family buyer through, for cancelling a plan paused
-// for them): {c, w}, or the answer to give.
-async function billingBuyer(env, lic, family) {
+// Billing on for this license, and not exempt (Friends and Family come through: they pay, and can cancel a plan paused for
+// them): {c, w}, or the answer to give.
+async function billingBuyer(env, lic) {
   const c = billCtx(env), w = await c.who(lic.hash);
   if (!c.on || !w.on) return { error: json({ error: "Your seller doesn't take payments here.", on: false }, 409, NO_STORE) };
-  if (w.exempt && !(family && w.exempt === "family")) return { error: json({ error: "Your seller doesn't charge you.", exempt: w.exempt }, 409, NO_STORE) };
+  if (w.exempt) return { error: json({ error: "Your seller doesn't charge you.", exempt: w.exempt }, 409, NO_STORE) };
   return { c, w };
 }
 const readBody = async (request, max) => {
@@ -4774,7 +4944,7 @@ async function billingPlan(request, env) {
   // (The monthly plan was only ever started through Stripe: /billing/checkout.)
   if (b.plan === "monthly" && !monthlyOffered(env)) return json({ error: NO_MONTHLY }, 409, NO_STORE);
   if (b.plan !== "checkout") return json({ error: "plan" }, 400, NO_STORE);
-  const g = await billingBuyer(env, lic, false);
+  const g = await billingBuyer(env, lic);
   if (g.error) return g.error;
   const { c, w } = g;
   let message = "";
@@ -4863,7 +5033,7 @@ async function billingCheckouts(request, env, ctx) {
     if (room <= 0) { capped = true; ignored++; continue; }
     room--;
     adds.push(lineStmt(env, c, { hash: lic.hash, store: x.store, storeName: accountStoreName(x.store), orderNo: x.orderNo, item: x.item, qty: x.qty, orderAt: x.at,
-      acctHash: acct, profile: "", source: "buyer", held: ok.held }));
+      acctHash: acct, profile: "", source: "buyer", held: ok.held, price: ok.price }));
   }
   for (const r of adds.length ? await env.DB.batch(adds) : []) if (r.meta && r.meta.changes) added++; else ignored++;
   const cancels = orders.filter((o) => o.stage === "canceled"), gone = [];
@@ -4892,8 +5062,10 @@ async function billingCheckout(request, env, ctx, url) {
   if (!b) return json({ error: "too large" }, 413, NO_STORE);
   const kind = String(b.kind || "");
   if (!["pay", "monthly", "extras", "cancel", "resume", "invoice"].includes(kind)) return json({ error: "kind" }, 400, NO_STORE);
-  const g = await billingBuyer(env, lic, kind === "cancel" || kind === "resume");
+  const g = await billingBuyer(env, lic);
   if (g.error) return g.error;
+  // Friends and Family have no plan to pick (2026-11-12): they pay per checkout, so no monthly plan or its extra slots.
+  if ((kind === "monthly" || kind === "extras") && g.w.family) return json({ error: "Friends and Family pay per checkout." }, 409, NO_STORE);
   // The monthly plan no longer offered (2026-11-12): nothing starts or grows one, nor keeps one set to end going. Cancel and
   // paying a failed invoice still work for a subscription that's still going.
   if ((kind === "monthly" || kind === "extras" || kind === "resume") && !monthlyOffered(env)) return json({ error: NO_MONTHLY }, 409, NO_STORE);
@@ -5054,7 +5226,7 @@ async function billingDispute(request, env, ctx, url) {
   if (error) return error;
   const b = await readBody(request, 4000);
   if (!b) return json({ error: "too large" }, 413, NO_STORE);
-  const g = await billingBuyer(env, lic, false);
+  const g = await billingBuyer(env, lic);
   if (g.error) return g.error;
   const { c } = g;
   const l = /^[A-Za-z0-9_-]{8,40}$/.test(String(b.id || "")) ? await env.DB.prepare("SELECT * FROM billing_lines WHERE id = ? AND key_hash = ? AND mode = ?").bind(b.id, lic.hash, c.mode).first() : null;
@@ -5234,9 +5406,9 @@ async function pasteMatches(env, x) {
   for (const r of [...own.results, ...given.results]) if (!m.has(r.key_hash)) m.set(r.key_hash, { hash: r.key_hash, profile: r.profile || "", acct });
   return [...m.values()];
 }
-const WHY_TEXT = { off: "Billing is off for them (test mode)", owner: "Your FAFO", family: "Friends and Family", before: "Before billing started", monthly: "Monthly plan, not billed",
-  charge: "From before you charged them (Friends and Family then)" };
-// Whether an order the owner adds would go on that buyer's invoice: {ok, held} or {why} in words. Their own report of it is
+const WHY_TEXT = { off: "Billing is off for them (test mode)", owner: "Your FAFO", before: "Before billing started", monthly: "Monthly plan, not billed",
+  charge: "From before you charged them (Friends and Family then)", "family-before": "From before Friends and Family were charged" };
+// Whether an order the owner adds would go on that buyer's invoice: {ok, held, price} or {why} in words. Their own report of it is
 // taken over, unless it's paid, waived, or their FAFO said the store canceled it (Charge again on their invoice undoes that).
 async function ownerOutcome(env, c, hash, x) {
   const ok = await billable(c, await c.who(hash), x.date);
@@ -5246,10 +5418,10 @@ async function ownerOutcome(env, c, hash, x) {
   if (mine && (mine.source !== "buyer" || mine.paid_at || mine.waived_at)) return { why: "Already on the invoice" };
   if (mine && mine.canceled_at) return { why: "Canceled by the store, their FAFO said" };
   if (results.some((l) => l.key_hash !== hash && l.source !== "buyer")) return { why: "On another buyer's invoice" };
-  return { ok: true, held: ok.held };
+  return { ok: true, held: ok.held, price: ok.price };
 }
 
-// The Billing page's price per checkout as typed: dollars with up to 2 decimals ("5", "$7.50"), from $1 to $100, in cents;
+// The Billing page's price per checkout as typed: dollars with up to 2 decimals ("10", "$12.50"), from $1 to $100, in cents;
 // null for anything else.
 const priceCents = (v) => {
   const m = /^\$?\s*(\d{1,3})(?:\.(\d{1,2}))?$/.exec(String(v).trim());
@@ -5276,6 +5448,9 @@ async function billingListPage(request, env, ctx, url, id) {
   if (now > o.created_at + BILL_LIST_TTL_MS) return page(410, "Billing", "This link has expired. Ask again from FAFO: Settings → Billing.");
   if (!billingOn(env)) return page(503, "Billing", "Payments aren't set up: the Stripe keys aren't there.");
   const c = billCtx(env, now);
+  // When billing began, with the one-time moves first (onSince): lines onto the Sunday rule, and a price below $10 to $10
+  // (priceTen), before any change here, so a price the owner saves is never moved after.
+  await c.since();
   const get = (k) => String((form ? form.get(k) : url.searchParams.get(k)) ?? "");
   const action = form ? get("action") : "", bq = get("b").replace(/[^0-9a-f]/g, "").slice(0, 16);
   const key = /^[0-9a-f]{64}$/.test(get("key")) ? get("key") : "", lineId = get("line").slice(0, 40);
@@ -5290,17 +5465,23 @@ async function billingListPage(request, env, ctx, url, id) {
       // again when they're charged; if Stripe says no, nothing changes.
       const b = await env.DB.prepare("SELECT sub_id FROM billing WHERE key_hash = ? AND mode = ?").bind(key, c.mode).first();
       const s = b && b.sub_id ? await env.DB.prepare("SELECT * FROM billing_subs WHERE sub_id = ?").bind(b.sub_id).first() : null;
+      const was = await c.who(key), price = await checkoutPrice(env);
       try {
         if (s && !subEnded(s)) {
           await stripe(env, "POST", `/v1/subscriptions/${encodeURIComponent(s.sub_id)}`, { pause_collection: action === "family" ? { behavior: "void" } : "" });
           await syncSubscription(env, c, s.sub_id).catch((e) => console.error("billing sync", e && e.message));
         }
         // Charged from now on: orders from while they were Friends and Family aren't billed (chargeFrom). A second Charge keeps the first's time.
-        await env.DB.prepare(`INSERT INTO billing_people (key_hash, family, charge_from, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (key_hash) DO UPDATE SET family = excluded.family,
-          charge_from = CASE WHEN excluded.charge_from IS NULL OR billing_people.family = 0 THEN billing_people.charge_from ELSE excluded.charge_from END, updated_at = excluded.updated_at`)
-          .bind(key, action === "family" ? 1 : 0, action === "charge" ? now : null, now).run();
-        done = action === "family" ? "They're Friends and Family now: never charged, and Submit is never off for them."
-          : "They're charged now, like any buyer approved after payments began, for checkouts from now on.";
+        // Friends and Family charged go on pay per checkout, which they were on (they had no plan to pick), not on no plan.
+        await env.DB.batch([
+          env.DB.prepare(`INSERT INTO billing_people (key_hash, family, charge_from, updated_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (key_hash) DO UPDATE SET family = excluded.family,
+            charge_from = CASE WHEN excluded.charge_from IS NULL OR billing_people.family = 0 THEN billing_people.charge_from ELSE excluded.charge_from END, updated_at = excluded.updated_at`)
+            .bind(key, action === "family" ? 1 : 0, action === "charge" ? now : null, now),
+          ...(action === "charge" && was.family ? [env.DB.prepare(`INSERT INTO billing (key_hash, mode, plan, plan_at, updated_at) VALUES (?1, ?2, 'checkout', ?3, ?3)
+            ON CONFLICT (key_hash, mode) DO UPDATE SET plan = 'checkout', plan_at = excluded.plan_at, updated_at = excluded.updated_at WHERE billing.plan IS NULL`).bind(key, c.mode, now)] : []),
+        ]);
+        done = action === "charge" ? `They're charged now, like any buyer approved after payments began: ${money(price)} per checkout (the regular price), for checkouts from now on.`
+          : `They're Friends and Family now: ${money(was.famPrice)} per checkout (what Friends and Family always pay) from now on, with no plan to pick.`;
         if (s && !subEnded(s)) done += action === "family" ? " Stripe stopped charging their monthly plan." : " Stripe charges their monthly plan again.";
       } catch (e) { err = e instanceof StripeError ? `Stripe said no: ${e.message}` : "That didn't work. Try again."; if (!(e instanceof StripeError)) console.error("billing", e); }
     } else if ((action === "tester" || action === "untester") && await known(key)) {
@@ -5315,18 +5496,21 @@ async function billingListPage(request, env, ctx, url, id) {
       done = "Hold cleared: they can submit again.";
     } else if (["waive", "unwaive", "mark-paid", "charge-again", "dispute-waive", "dispute-keep"].includes(action)) {
       const l = await lineOf();
+      // Owed again from today: due by the end of the Sunday after it (Eastern), or later if it was due later (never earlier).
+      const due = dueNow(now);
       const sql = {
-        waive: ["UPDATE billing_lines SET waived_at = ?1 WHERE id = ?2 AND paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL", "Waived."],
-        unwaive: ["UPDATE billing_lines SET waived_at = NULL, dispute_answer = CASE WHEN dispute_answer = 'waived' THEN NULL ELSE dispute_answer END WHERE id = ?2 AND paid_at IS NULL AND waived_at IS NOT NULL AND ?1 > 0", "Waive undone: it's owed again."],
-        "mark-paid": ["UPDATE billing_lines SET paid_at = ?1, pay_id = 'manual' WHERE id = ?2 AND paid_at IS NULL AND canceled_at IS NULL", "Marked paid."],
-        "charge-again": [`UPDATE billing_lines SET canceled_at = NULL, cancel_src = NULL, held_sub = NULL, due_at = ?1 + ${DUE_MS} WHERE id = ?2 AND paid_at IS NULL AND canceled_at IS NOT NULL
-          AND COALESCE(cancel_src, '') <> 'covered'`, "It's owed again, due in 3 days."],
-        "dispute-waive": [`UPDATE billing_lines SET dispute_answer = 'waived', waived_at = ?1 WHERE id = ?2 AND ${DISPUTED} AND paid_at IS NULL`, "Waived: not their checkout."],
-        "dispute-keep": [`UPDATE billing_lines SET dispute_answer = 'kept', due_at = MAX(due_at, ?1 + ${DUE_MS}) WHERE id = ?2 AND ${DISPUTED} AND paid_at IS NULL`, "Kept: it's owed, due in 3 days at the earliest."],
+        waive: ["UPDATE billing_lines SET waived_at = ?1 WHERE id = ?2 AND paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL", () => "Waived."],
+        unwaive: [`UPDATE billing_lines SET waived_at = NULL, dispute_answer = CASE WHEN dispute_answer = 'waived' THEN NULL ELSE dispute_answer END, due_at = MAX(due_at, ${due})
+          WHERE id = ?2 AND paid_at IS NULL AND waived_at IS NOT NULL AND ?1 > 0`, (d) => `Waive undone: it's owed again, due ${dueWords(d)}.`],
+        "mark-paid": ["UPDATE billing_lines SET paid_at = ?1, pay_id = 'manual' WHERE id = ?2 AND paid_at IS NULL AND canceled_at IS NULL", () => "Marked paid."],
+        "charge-again": [`UPDATE billing_lines SET canceled_at = NULL, cancel_src = NULL, held_sub = NULL, due_at = MAX(due_at, ${due}) WHERE id = ?2 AND paid_at IS NULL AND canceled_at IS NOT NULL
+          AND COALESCE(cancel_src, '') <> 'covered'`, (d) => `It's owed again, due ${dueWords(d)}.`],
+        "dispute-waive": [`UPDATE billing_lines SET dispute_answer = 'waived', waived_at = ?1 WHERE id = ?2 AND ${DISPUTED} AND paid_at IS NULL`, () => "Waived: not their checkout."],
+        "dispute-keep": [`UPDATE billing_lines SET dispute_answer = 'kept', due_at = MAX(due_at, ${due}) WHERE id = ?2 AND ${DISPUTED} AND paid_at IS NULL`, (d) => `Kept: it's owed, due ${dueWords(d)}.`],
       }[action];
-      const r = l ? await env.DB.prepare(sql[0]).bind(now, l.id).run() : null;
-      if (r && r.meta && r.meta.changes) {
-        done = sql[1];
+      const r = l ? await env.DB.prepare(sql[0] + " RETURNING due_at").bind(now, l.id).all() : null;
+      if (r && r.results && r.results.length) {
+        done = sql[1](r.results[0].due_at);
         if (["waive", "mark-paid", "dispute-waive"].includes(action)) ctx.waitUntil(expireFor(env, c, [l.id]));
       } else err = "That checkout changed meanwhile, so nothing was done.";
     } else if (action === "add" && await known(key)) {
@@ -5338,27 +5522,35 @@ async function billingListPage(request, env, ctx, url, id) {
         const out = await ownerOutcome(env, c, key, x);
         if (!out.ok) err = `Not added: ${out.why.toLowerCase().replace(/\bfafo\b/g, "FAFO")}.`;
         else {
-          const r = await lineStmt(env, c, { hash: key, store: x.store, storeName: accountStoreName(x.store), orderNo: x.orderNo, item, qty: "", orderAt: x.date, source: "owner", held: out.held }).run();
+          const r = await lineStmt(env, c, { hash: key, store: x.store, storeName: accountStoreName(x.store), orderNo: x.orderNo, item, qty: "", orderAt: x.date, source: "owner", held: out.held, price: out.price }).run();
           if (r.meta && r.meta.changes) done = `Added ${accountStoreName(x.store)} #${x.orderNo} to their invoice.`; else err = "Not added: already on the invoice.";
         }
       }
     } else if (action === "price") {
-      // Price per checkout (the owner's request, 2026-11-12: "Maybe I want to change it to $10 later"): for checkouts from now
-      // on (lineStmt reads it as it writes a line); lines already on an invoice keep theirs. The price before and the write
-      // are one transaction, so the channel's note says what it really was, and the same price writes and posts nothing.
+      // Price per checkout (the owner's request, 2026-11-12: "Maybe I want to change it to $10 later"; on 2026-11-13: "everyone
+      // else is 10 or can be set for more later"): for checkouts from now on (lineStmt reads it as it writes a line); lines
+      // already on an invoice keep theirs. The price before and the write are one transaction, so the channel's note says what
+      // it really was, and the same price writes and posts nothing.
       const want = priceCents(get("price"));
       if (want == null) err = `Not saved: type a price from ${money(PRICE_MIN)} to ${money(PRICE_MAX)} in dollars, like 5 or 7.50.`;
       else {
+        // The marker of the one-time move to $10 (priceTen) goes in with it, if it isn't there: a price saved here is the
+        // owner's choice, never moved to $10 by a later request, also when a D1 error stopped the move at the top.
         const [was, w] = await env.DB.batch([
-          env.DB.prepare(`SELECT ${priceSql("?")} AS p`).bind(PRICE_CHECKOUT),
-          env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) SELECT 'price:checkout', ?1, ?2 WHERE ${priceSql(PRICE_CHECKOUT)} <> CAST(?1 AS INTEGER)
+          env.DB.prepare(`SELECT ${priceSql("checkout", "?")} AS p`).bind(PRICE_CHECKOUT),
+          env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) SELECT 'price:checkout', ?1, ?2 WHERE ${priceSql("checkout", PRICE_CHECKOUT)} <> CAST(?1 AS INTEGER)
             ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at`).bind(String(want), now),
+          env.DB.prepare("INSERT INTO billing_config (k, v, updated_at) VALUES ('price_ten', ?1, ?2) ON CONFLICT (k) DO NOTHING").bind(`${now}:saved`, now),
         ]);
         if (w.meta && w.meta.changes) {
           await billNote(env, `💲 Price per checkout: ${money(was.results[0].p)} → ${money(want)} (from now on; checkouts already on an invoice keep their price)`);
           done = `The price per checkout is ${money(want)} now, for checkouts from now on.`;
         } else done = `The price per checkout is already ${money(want)}.`;
       }
+    } else if (action === "price-family") {
+      // A Save from the Friends and Family price box 1.9.144 had before it shipped (2026-11-13: "Friends and family are always
+      // 5 dollars"), on a page that still shows it: nothing is written or posted.
+      err = `Friends and Family always pay ${money(PRICE_FAMILY)} per checkout.`;
     } else if (action === "paste-preview" || action === "paste-add") {
       const lines = get("paste").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 300);
       const rows = [];
@@ -5373,7 +5565,7 @@ async function billingListPage(request, env, ctx, url, id) {
         let added = 0;
         for (const r of rows.filter((y) => y.out.ok)) {
           const res = await lineStmt(env, c, { hash: r.chosen.hash, store: r.x.store, storeName: accountStoreName(r.x.store), orderNo: r.x.orderNo, item: "", qty: "", orderAt: r.x.date,
-            acctHash: r.chosen.acct, profile: r.chosen.profile, source: "owner", held: r.out.held }).run();
+            acctHash: r.chosen.acct, profile: r.chosen.profile, source: "owner", held: r.out.held, price: r.out.price }).run();
           if (res.meta && res.meta.changes) added++;
         }
         done = `Added ${plural(added, "checkout")}.`;
@@ -5390,6 +5582,8 @@ async function billingListPage(request, env, ctx, url, id) {
     }
   } else { done = get("done").slice(0, 600); err = get("err").slice(0, 600); }
 
+  // When billing began (which also moves lines from before onto the Sunday rule, before the totals are read), and the price.
+  const since = await c.since(), sender = await c.sender(), price = await checkoutPrice(env);
   const [lics, people, bills, subs, totals, named, paid30, seenRow] = await env.DB.batch([
     env.DB.prepare("SELECT username, license_key, key_hash, issued_at, revoked_at FROM licenses"),
     env.DB.prepare("SELECT * FROM billing_people"),
@@ -5400,26 +5594,27 @@ async function billingListPage(request, env, ctx, url, id) {
     env.DB.prepare("SELECT COALESCE(SUM(amount), 0) AS s FROM billing_lines WHERE mode = ? AND paid_at > ?").bind(c.mode, now - 30 * 86400000),
     env.DB.prepare("SELECT v FROM billing_config WHERE k = 'alerts_seen'"),
   ]);
-  const since = await c.since(), sender = await c.sender();
   const L = new Map(lics.results.map((l) => [l.key_hash, l])), P = new Map(people.results.map((p) => [p.key_hash, p])), B = new Map(bills.results.map((b) => [b.key_hash, b]));
   const S = new Map(subs.results.map((s) => [s.sub_id, s])), T = new Map(totals.results.map((x) => [x.key_hash, x])), N = new Map(named.results.map((x) => [x.key_hash, x]));
   const keys = new Set([...lics.results.filter((l) => !l.revoked_at).map((l) => l.key_hash), ...P.keys(), ...B.keys(), ...T.keys()]);
   const when = (x) => new Date(x).toISOString().replace("T", " ").slice(0, 16) + " UTC";
   const buyers = [...keys].map((h) => {
     const l = L.get(h), p = P.get(h), b = B.get(h), s = b && b.sub_id ? S.get(b.sub_id) : null, tot = T.get(h) || { owed: 0, overdue: 0 }, n = N.get(h);
-    const exempt = exemptOf(h, p, l, sender, since, c.mode), tester = !!(p && p.tester), reach = c.mode === "live" || tester || exempt === "owner";
+    // Friends and Family (family) always pay $5 (PRICE_FAMILY); not charged at all (exempt): the owner's own FAFO.
+    const cls = exemptOf(h, p, l, sender, since, c.mode), family = cls === "family", exempt = cls === "owner" ? "owner" : null;
+    const tester = !!(p && p.tester), reach = c.mode === "live" || tester || exempt === "owner";
     const last4 = l ? last4Of(l.license_key) : n ? n.key_last4 : "";
     const name = [l ? "@" + l.username : "", n && n.name || ""].filter(Boolean).join(" · ") || (last4 ? `License …${last4}` : "A key made by hand");
     const live = s && !subEnded(s);
     // A monthly plan with no subscription left is no plan while the plan isn't offered, as billingState reads it.
     const gone = !!b && b.plan === "monthly" && !live && !monthlyOffered(env);
-    const plan = exempt === "owner" ? "Your FAFO" : exempt === "family" ? "Friends and Family" + (live ? " · monthly plan paused" : "")
+    const plan = exempt === "owner" ? "Your FAFO" : family ? `Friends and Family · ${money(PRICE_FAMILY)} per checkout` + (live ? " · monthly plan paused" : "")
       : !b || !b.plan || gone ? "No plan" : b.plan === "checkout" ? "Pay per checkout"
       : `Monthly · ${s ? MONTHLY_SLOTS + EXTRA_SLOTS * s.extras : MONTHLY_SLOTS} slots${s && s.period_end ? ` · ${s.cancel_at_end ? "ends" : "renews"} ${day(s.period_end)}` : ""}`;
     const status = exempt ? "Not charged" : !reach ? "Not a tester" : b && b.dispute_hold ? "Dispute hold" : tot.overdue ? `${money(tot.overdue)} overdue`
-      : b && b.plan === "monthly" && !gone && s && ["past_due", "unpaid", "incomplete", "paused"].includes(s.status) && !s.paused ? "Payment failed"
+      : !family && b && b.plan === "monthly" && !gone && s && ["past_due", "unpaid", "incomplete", "paused"].includes(s.status) && !s.paused ? "Payment failed"
       : tot.owed ? `${money(tot.owed)} owed` : !(p && p.seen_at) ? "Older FAFO" : "Paid up";
-    return { h, l, p, b, s, tot, exempt, tester, reach, last4, name, plan, status, off: !!(l && l.revoked_at), monthly: !exempt && b && b.plan === "monthly" && live };
+    return { h, l, p, b, s, tot, exempt, family, tester, reach, last4, name, plan, status, off: !!(l && l.revoked_at), monthly: !exempt && !family && b && b.plan === "monthly" && live };
   });
   buyers.sort((x, y) => (y.tot.overdue - x.tot.overdue) || (y.tot.owed - x.tot.owed) || ((x.exempt === "owner") - (y.exempt === "owner")) || x.name.localeCompare(y.name));
   const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
@@ -5436,7 +5631,7 @@ async function billingListPage(request, env, ctx, url, id) {
         SUM(CASE WHEN pulled_at IS NULL THEN 0 ELSE 1 END) AS pulled_n FROM billing_accounts WHERE key_hash = ? GROUP BY batch, store_name ORDER BY sent DESC LIMIT 20`).bind(one.h),
     ]);
     const k = { key: one.h };
-    const acts = one.exempt === "owner" ? "" : [one.exempt === "family" ? btn(k, "charge", "Charge") : btn(k, "family", "Friends and Family"),
+    const acts = one.exempt === "owner" ? "" : [one.family ? btn(k, "charge", "Charge") : btn(k, "family", "Friends and Family"),
       c.mode === "test" ? (one.tester ? btn(k, "untester", "Not a tester") : btn(k, "tester", "Tester")) : "",
       one.b && one.b.dispute_hold ? btn(k, "clear-hold", "Clear dispute hold", "ok") : ""].join("");
     const rows = lines.results.map((l) => {
@@ -5447,14 +5642,14 @@ async function billingListPage(request, env, ctx, url, id) {
         : st === "canceled" ? btn(f, "charge-again", "Charge again") : st === "held" ? btn(f, "waive", "Waive") : "";
       const note = l.dispute_at ? `<br><span style="font-size:12px">“${esc(l.dispute_note || "No note")}”${l.dispute_answer ? ` · ${l.dispute_answer === "waived" ? "you waived it" : "you kept it"}` : ""}</span>` : "";
       return `<tr><td>${esc(l.order_at)}</td><td class="em">${esc(l.store_name || accountStoreName(l.store))} #${esc(l.order_no)}<br><span style="font-size:12px">${esc([l.item + (l.qty && l.qty !== "1" ? ` ×${l.qty}` : ""), l.profile, SOURCE_TEXT[l.source] || l.source].filter((x) => String(x).trim()).join(" · "))}</span></td>
-        <td><span style="color:${STATE_COLOR[st] || "#b9c6ea"}">${esc(STATE_TEXT[st])}</span>${st === "due" || st === "overdue" ? `<br><span style="font-size:12px">due ${esc(day(l.due_at))}</span>` : ""}${note}</td><td>${money(l.amount)}</td><td class="act">${a}</td></tr>`;
+        <td><span style="color:${STATE_COLOR[st] || "#b9c6ea"}">${esc(STATE_TEXT[st])}</span>${st === "due" || st === "overdue" ? `<br><span style="font-size:12px">due ${esc(dueText(l.due_at))}</span>` : ""}${note}</td><td>${money(l.amount)}</td><td class="act">${a}</td></tr>`;
     }).join("");
     const bat = batches.results.map((x) => `<tr><td>${esc(day(x.sent))}</td><td class="em">${esc(x.store_name)}: ${esc(String(x.profiles || "").slice(0, 300))}</td><td>${x.pulled_n ? `${x.pulled_n} of ${x.n} pulled, last ${esc(day(x.pulled))}` : "Still out"}</td></tr>`).join("");
     return page(200, "Billing", "", `${msgs}<p><a class="back" href="${esc(base)}">← All buyers</a></p>
       <p class="who">${esc(one.name)}</p>
       <p class="small">${one.last4 ? `License …${esc(one.last4)} · ` : ""}${esc(one.plan)} · ${esc(one.status)}${one.off ? " · License turned off" : ""}${one.tester ? " · Tester" : ""}</p>
       ${acts ? `<div class="row">${acts}</div>` : ""}
-      <p class="small">Friends and Family are never charged and Submit is never off for them. Charge makes them pay like any buyer approved after payments began, for checkouts from then on.${c.mode === "test" ? " In test mode only testers see plans and pay, with Stripe's test cards." : ""}</p>
+      <p class="small">Friends and Family always pay ${esc(money(PRICE_FAMILY))} per checkout, with no plan to pick; Submit is off for them only while a checkout is overdue or a payment is disputed with their bank. Charge makes them pay the regular price (${esc(money(price))} per checkout) like any buyer approved after payments began, for checkouts from then on.${c.mode === "test" ? " In test mode only testers see plans and pay, with Stripe's test cards." : ""}</p>
       <h3>Their invoice</h3>
       ${rows ? `<table><thead><tr><th>Date</th><th>Checkout</th><th>State</th><th>Amount</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : `<p class="small">No checkouts yet.</p>`}
       <h3>Add a checkout</h3>
@@ -5473,17 +5668,18 @@ async function billingListPage(request, env, ctx, url, id) {
     ? `<p class="hint err">Checkouts on accounts you give out aren't being billed: turn on Order alerts for buyers in your desktop FAFO and keep it running.${seen ? ` Last from your FAFO ${esc(ago(seen.at))}.` : ""}</p>`
     : `<p class="small">Order alerts: last from your FAFO ${esc(ago(seen.at))}.</p>`;
   const sum = (f) => buyers.filter((x) => !x.exempt).reduce((n, x) => n + f(x), 0);
-  const fam = buyers.filter((x) => x.exempt === "family" && !x.off).length, monthly = buyers.filter((x) => x.monthly).length;
-  // The prices as they are now: the checkout's from the box below, and the monthly plan only while it's offered (the owner
-  // removed it on 2026-11-12; the buyers already on one keep it).
-  const price = await checkoutPrice(env);
-  const prices = `${money(price)} per checkout, due 3 days after it (free if the store cancels it first)${monthlyOffered(env)
+  const fam = buyers.filter((x) => x.family && !x.off).length, monthly = buyers.filter((x) => x.monthly).length;
+  // The prices as they are now: the checkout's from the box below, Friends and Family's (always $5), the Sunday rule, and the
+  // monthly plan only while it's offered (the owner removed it on 2026-11-12; the buyers already on one keep it).
+  const prices = `${money(price)} per checkout, due by the end of the Sunday after it (Eastern time; free if the store cancels it first)${monthlyOffered(env)
     ? `, or ${money(PRICE_MONTHLY)} a month for ${MONTHLY_SLOTS} slots (${money(PRICE_MONTHLY + PRICE_EXTRA)} for ${MONTHLY_SLOTS + EXTRA_SLOTS})`
-    : monthly ? `. The monthly plan isn't offered any more: ${monthly === 1 ? "1 buyer with one keeps it until it ends" : `${monthly} buyers with one keep theirs until they end`}` : ""}.`;
-  const priceBox = `<form class="edit" method="post" action="${esc(url.pathname)}">${hidden}
-      <label for="price">Price per checkout</label>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span aria-hidden="true" style="color:#e6ecff;font-weight:600">$</span><input id="price" name="price" value="${(price / 100).toFixed(2)}" inputmode="decimal" maxlength="8" required autocomplete="off" spellcheck="false" style="width:9ch;margin:0"><button class="go" style="width:auto;padding:10px 18px" type="submit" name="action" value="price">Save</button></div>
-      <p class="hint">Applies to checkouts from now on. Ones already on an invoice keep their price.</p></form>`;
+    : monthly ? `. The monthly plan isn't offered any more: ${monthly === 1 ? "1 buyer with one keeps it until it ends" : `${monthly} buyers with one keep theirs until they end`}` : ""}. Friends and Family pay ${
+      money(PRICE_FAMILY)} per checkout, due the same way.`;
+  const box = (id, label, cents, hint) => `<form class="edit" method="post" action="${esc(url.pathname)}">${hidden}
+      <label for="${id}">${label}</label>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span aria-hidden="true" style="color:#e6ecff;font-weight:600">$</span><input id="${id}" name="price" value="${(cents / 100).toFixed(2)}" inputmode="decimal" maxlength="8" required autocomplete="off" spellcheck="false" style="width:9ch;margin:0"><button class="go" style="width:auto;padding:10px 18px" type="submit" name="action" value="${id}">Save</button></div>
+      <p class="hint">${hint}</p></form>`;
+  const priceBox = box("price", "Price per checkout", price, `Applies to checkouts from now on. Ones already on an invoice keep their price. Friends and Family always pay ${money(PRICE_FAMILY)}.`);
   let pastePart;
   if (preview) {
     const ok = preview.rows.filter((r) => r.out.ok).length;
@@ -5513,7 +5709,7 @@ async function billingListPage(request, env, ctx, url, id) {
     <p class="who">${c.mode === "test" ? "Test mode: only testers are charged" : "Payments are on"}</p>
     <p class="small">Owed ${money(sum((x) => x.tot.owed))} · Overdue ${money(sum((x) => x.tot.overdue))} · Paid in the last 30 days ${money(paid30.results[0].s)} · ${plural(monthly, "monthly plan")} · ${fam} Friends and Family</p>
     ${alerts}
-    <p class="small">${esc(prices)} Buyers you approved before payments began are Friends and Family and never charged; Details moves anyone either way. Refunds are made in your Stripe Dashboard.</p>
+    <p class="small">${esc(prices)} Buyers you approved before payments began are Friends and Family; Details moves anyone either way. Refunds are made in your Stripe Dashboard.</p>
     ${priceBox}
     ${pastePart}
     <h3>Buyers</h3>
@@ -5534,6 +5730,12 @@ async function admin(request, env, path) {
   }
   if (request.method === "GET" && path === "/admin/billing") {
     const mode = stripeMode(env), now = Date.now();
+    // Every unpaid line written before the Sunday rule on it (its marker too), and a price below $10 moved to $10 (priceTen),
+    // as it shows the price; with payments off, nothing's written.
+    if (billingOn(env)) {
+      await dueSundays(env, now, true);
+      await priceTen(env, now).catch((e) => console.error("billing price", e && e.message));
+    }
     const [people, plans, owed, cfg] = await env.DB.batch([
       env.DB.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN family = 1 THEN 1 ELSE 0 END), 0) AS family, COALESCE(SUM(CASE WHEN family = 0 THEN 1 ELSE 0 END), 0) AS charge,
         COALESCE(SUM(tester), 0) AS testers, COALESCE(SUM(CASE WHEN seen_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS seen FROM billing_people`),
@@ -5544,9 +5746,13 @@ async function admin(request, env, path) {
     ]);
     const conf = Object.fromEntries(cfg.results.map((x) => [x.k, x.v])), parse = (v) => { try { return JSON.parse(v); } catch { return null; } };
     const num = (k) => conf[k] ? Number(conf[k]) : null;
-    // prices.checkout: the price per checkout as set now (the Billing page's box, 2026-11-12); offered: the plans buyers can pick.
+    // prices.checkout: the price per checkout as set now (the Billing page's box, 2026-11-12), and prices.family Friends and
+    // Family's (always $5, 2026-11-13); familyFrom: since when Friends and Family are charged; dueSunday: when unpaid lines
+    // were moved onto the Sunday rule; priceTen: when a price below $10 was moved to $10 (or found $10 or more, or a price
+    // was saved on the Billing page first); offered: the plans buyers can pick.
     return json({ on: billingOn(env), mode, onSince: { live: num("on_since:live"), test: num("on_since:test") }, backOn: { live: num("back_on:live"), test: num("back_on:test") }, offSeen: num("off_seen"),
-      alertsSeen: parse(conf.alerts_seen || "null"), prices: { checkout: await checkoutPrice(env), live: parse(conf["prices:live"] || "null"), test: parse(conf["prices:test"] || "null") }, offered: plansOf(env),
+      familyFrom: { live: num("family_from:live"), test: num("family_from:test") }, dueSunday: num("due_sunday"), priceTen: conf.price_ten ? parseInt(conf.price_ten, 10) : null,
+      alertsSeen: parse(conf.alerts_seen || "null"), prices: { checkout: await checkoutPrice(env), family: PRICE_FAMILY, live: parse(conf["prices:live"] || "null"), test: parse(conf["prices:test"] || "null") }, offered: plansOf(env),
       people: people.results[0], plans: Object.fromEntries(plans.results.map((x) => [x.plan, x.n])), owed: owed.results[0] }, 200, NO_STORE);
   }
   if (request.method === "GET" && path === "/admin/premium") {

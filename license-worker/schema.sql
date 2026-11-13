@@ -493,7 +493,9 @@ CREATE TABLE IF NOT EXISTS billing_subs (
 );
 CREATE INDEX IF NOT EXISTS billing_subs_key ON billing_subs (key_hash, mode);
 
--- Invoice lines: one per order per buyer, $10 each, due 3 days after the order. An order belongs to one buyer.
+-- Invoice lines: one per order per buyer, each at the price per checkout of its buyer's kind when it was written (amount:
+-- the regular price, or Friends and Family's from 2026-11-12), due by the end of the Sunday after the order, US Eastern
+-- (due_at: Monday 00:00 Eastern less 1 ms; 3 days after the order until 2026-11-12). An order belongs to one buyer.
 CREATE TABLE IF NOT EXISTS billing_lines (
   id             TEXT PRIMARY KEY,
   key_hash       TEXT NOT NULL,
@@ -595,6 +597,10 @@ CREATE TABLE IF NOT EXISTS billing_calls (
   at       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS billing_calls_key ON billing_calls (key_hash, kind, at);
+-- Settings and stamps: on_since:<mode>, back_on:<mode>, off_seen, alerts_seen, prices:<mode> (Stripe's ids), price:checkout
+-- (cents; a price:family row is never read: Friends and Family always pay $5), family_from:<mode> (since when Friends and
+-- Family are charged), due_sunday (when unpaid lines were moved onto the Sunday rule), price_ten (when a price below $10
+-- was moved to $10, once).
 CREATE TABLE IF NOT EXISTS billing_config (
   k          TEXT PRIMARY KEY,
   v          TEXT NOT NULL,
