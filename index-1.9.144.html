@@ -19064,8 +19064,11 @@ function renderInvoice(){
   const body = d.lines.length ? invPayHTML(d) + invTableHTML(d) : `<div class="empty"><h2>Nothing owed</h2><p>Checkouts your seller makes on your slots show up here.</p></div>`;
   const sub = famPay ? (pr.checkout ? `Friends and Family · ${billMoney(pr.checkout)} per checkout` : "Friends and Family") : `Pay per checkout · ${billMoney(pr.checkout)} each`;
   const overdue = billSundays(d) ? "From Monday it's overdue and Submit turns off until it's paid." : "An overdue checkout turns Submit off until it's paid.";
+  // A checkout still to pay at another price (one from before the price changed, which keeps what it was billed) is why the
+  // price is said to be for new ones, so the line doesn't contradict the rows above it.
+  const kept = d.lines.some(l => !["paid", "canceled", "waived"].includes(l.state) && Number(l.amount) !== Number(pr.checkout));
   return head(sub) + notes + (famPay && famSub ? `<div class="slip inv-plan inv-cur">${famSub}</div>` : "") + kpis + body
-    + `<p class="note" style="margin:14px 0 0">Each checkout is ${billMoney(pr.checkout)}, ${billDueRule(d)}. ${overdue}${mo ? ` <button class="link" data-act="bill-monthly" style="font-size:calc(13px*var(--fs))">Switch to the monthly plan</button>` : ""}</p>`;
+    + `<p class="note" style="margin:14px 0 0">Each ${kept ? "new " : ""}checkout is ${billMoney(pr.checkout)}${kept ? " (ones already on your invoice keep their price)" : ""}, ${billDueRule(d)}. ${overdue}${mo ? ` <button class="link" data-act="bill-monthly" style="font-size:calc(13px*var(--fs))">Switch to the monthly plan</button>` : ""}</p>`;
 }
 
 /* ---- Settings → Billing (the seller's own FAFO) ---- */

@@ -390,6 +390,8 @@ try {
       // Their price is the worker's, and a plan the worker didn't name is still pay per checkout.
       await answer({ plans: ["checkout"], family: true, exempt: null, plan: null, prices: Object.assign({}, PRICES_SUN, { checkout: 1000 }), lines, owed: 1000 });
       assert.equal(await sub(), "Friends and Family · $10 per checkout");
+      // Their $5 checkout still to pay keeps its price, and the line under the table says the price is for new ones.
+      assert.match(await mainText(), /Each new checkout is \$10 \(ones already on your invoice keep their price\), due by the end of the Sunday after it/);
       assert.equal(await page.$$eval("#main .inv-plan", (e) => e.length), 0);
       assert.equal(await ev(() => window.__t.billPlan(window.__t.BILL.d)), "checkout");
       // Overdue: Submit's window has them pay it.

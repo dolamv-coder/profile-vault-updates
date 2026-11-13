@@ -2074,6 +2074,9 @@ From 1.9.144 Invoice says checkouts are **due every Sunday** and shows **Friends
 - The owner's Settings → Billing says Friends and Family always pay $5 per checkout (from `prices.family`) and that their
   own FAFO is never charged.
 - `BILL_PRICES.checkout`, used only until the worker answers, is 1000 ($10).
+- A checkout still to pay at another price than the buyer's now (one from before the move to $10, which keeps its amount)
+  makes the line under the invoice say "Each new checkout is $10 (ones already on your invoice keep their price)", so it
+  doesn't contradict the rows above it.
 - `orbit-billing` gains `family`. `billing.test.mjs` covers the Sunday wording and dates (in Tokyo's time zone too),
   Friends and Family who pay and ones not charged (`exempt: "family"`), and an older worker's answer. Nothing gains a
   field.
