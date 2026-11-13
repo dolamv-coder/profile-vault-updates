@@ -26,7 +26,7 @@ if (!/const appDownload = /.test(HTML)) {
 // The app runs inside one function, so the copy served here hands the test a few of its own names (window.__t).
 const END = "\ntry { if (window.pvDesktop && window.pvDesktop.appReady) window.pvDesktop.appReady(); } catch(e){}\n})();";
 assert.equal(HTML.split(END).length, 2, "couldn't find the end of the app's code");
-const PAGE = HTML.replace(END, "\nwindow.__t = {UPD, setUpdateIndicators, updAction, appDownload, relayUse, relayProbe, APP_DOWNLOAD, RELAY_NEW, RELAY_OLD, get LICENSE_RELAY(){ return LICENSE_RELAY; }};" + END);
+const PAGE = HTML.replace(END, "\nwindow.__t = {UPD, setUpdateIndicators, updAction, appDownload, relayUse, relayProbe, APP_DOWNLOAD, RELAY_NEW, RELAY_OLD, get LICENSE_RELAY(){ return LICENSE_RELAY; }, get relayBusy(){ return !!relayProbing; }};" + END);
 let chromium;
 try { ({ chromium } = createRequire(import.meta.url)("playwright")); }
 catch (e) { console.error("This test needs Playwright: npm install --no-save playwright, then npx playwright install chromium"); process.exit(1); }
@@ -80,6 +80,12 @@ async function clickOpens(sel) {
   return got[0];
 }
 const relay = () => ev(() => window.__t.LICENSE_RELAY);
+// The page looks for the address that answers on its own too (1.2 seconds after it loads, and when a request can't
+// connect), so a test that puts it on the old address does so as a network that blocks the new domain would: with the
+// new address down, once a look under way has finished, so no look can move it back meanwhile.
+const notLooking = () => page.waitForFunction(() => !window.__t.relayBusy);
+const useOld = async () => { W.up[NEW] = false; await notLooking(); await ev(() => window.__t.relayUse(window.__t.RELAY_OLD)); };
+const useNew = async () => { await notLooking(); W.up[NEW] = true; await ev(() => window.__t.relayUse(window.__t.RELAY_NEW)); };
 
 console.log(`Where a new download comes from in ${file.split(/[\\/]/).pop()}`);
 try {
@@ -122,12 +128,12 @@ try {
   });
 
   await test("on the license server's old address (a network that blocks the new domain): GitHub's latest FAFO-Windows.zip, decided at the click", async () => {
-    await ev(() => window.__t.relayUse(window.__t.RELAY_OLD));
+    await useOld();
     await needsDownload();
     assert.equal(await clickOpens('#lock-upd [data-act="upd-get"]'), GITHUB);
     await needsDownload("https://downloads.example.com/FAFO-Setup-1.9.200.zip");
     assert.equal(await clickOpens('#lock-upd [data-act="upd-get"]'), "https://downloads.example.com/FAFO-Setup-1.9.200.zip", "a signed installerUrl still first");
-    await ev(() => window.__t.relayUse(window.__t.RELAY_NEW));
+    await useNew();
     await needsDownload();
     assert.equal(await clickOpens('#lock-upd [data-act="upd-get"]'), SITE);
   });
@@ -162,9 +168,9 @@ try {
     await page.waitForSelector('#top-update:not([hidden])');
     assert.equal(await page.$eval("#top-update", (e) => e.dataset.act), "upd-get");
     assert.equal(await clickOpens("#top-update"), SITE);
-    await ev(() => window.__t.relayUse(window.__t.RELAY_OLD));
+    await useOld();
     assert.equal(await clickOpens("#top-update"), GITHUB);
-    await ev(() => window.__t.relayUse(window.__t.RELAY_NEW));
+    await useNew();
   });
 
   assert.deepEqual(errors, [], "no errors on the page");
