@@ -2187,6 +2187,21 @@ and will only be able to see updates through fafo").
   `later` far ahead, so it doesn't ask there.
 - Settings gain `guide`, which 1.9.112 syncs as it is.
 
+From 1.9.146 FAFO's own buttons for a new download give the file **with its version in its name** (the owner's request,
+2026-11-13; "The version in the download's name" above: releases carry `FAFO-Windows-<version>.zip` and
+fafoaco.com/download gives it). It shipped after `name_latest` had named v1.9.139's zip, so its release note was true at
+once.
+- `updAction("upd-get")` (the lock screen's Get it, the top bar's New version and every Get the newest FAFO button) opens a
+  signed update's `installerUrl` first, as before, else `appDownload()`: `https://fafoaco.com/download` (`SITE_DOWNLOAD`),
+  or `APP_DOWNLOAD` (GitHub's latest `FAFO-Windows.zip`, as before) on a device that reaches the license server only at its
+  old address (`LICENSE_RELAY === RELAY_OLD`: a network that blocks the new domain blocks fafoaco.com too), decided at the
+  click. The web version offers no download, so nothing changes there.
+- **Tests:** `download.test.mjs` runs the page in Chromium (in CI after the setup guide's): Get it on the lock screen, a
+  signed `installerUrl` (https only), the old address (`relayUse`, and the page's own look with the new domain blocked, also
+  after a reload, as it's kept 6 hours), and the top bar's New version once unlocked. It fails if the newest page has no
+  `appDownload`.
+- Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

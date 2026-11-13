@@ -1,0 +1,1 @@
+When FAFO needs a new Windows download, the file you get now has its version in its name, like FAFO-Windows-1.9.139.zip, so you can tell your downloads apart.
