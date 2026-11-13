@@ -549,7 +549,8 @@ try {
     const { state } = await webSignIn(r, "", "https://app.fafoaco.com", "&error=access_denied");
     const again = await (await get(`/discord/callback?state=${encodeURIComponent(state)}&error=access_denied`)).text();
     assert.match(again, /Something went wrong/); assert.match(again, /Back to FAFO/);
-    const gone = await (await get(`/discord/callback?state=${encodeURIComponent(state.replace(/^./, "x"))}&code=alice`)).text();
+    // Another state with the same ending: its first character changed (never to the one it had: a state is random base64url).
+    const gone = await (await get(`/discord/callback?state=${encodeURIComponent(state.replace(/^./, (c) => c === "x" ? "y" : "x"))}&code=alice`)).text();
     assert.match(gone, /This sign-in expired/); assert.match(gone, /Back to FAFO/, "the address still says where it came from");
     const desk = await get(`/discord/callback?state=nope&code=alice`);
     assert.doesNotMatch(await desk.text(), /Back to FAFO/);
@@ -4194,9 +4195,9 @@ try {
     const bob = await billOf(bobKey);
     assert.deepEqual([bob.exempt, bob.family, bob.prices.checkout, bob.prices.family], ["owner", false, 1000, 500], "the owner's own FAFO is never charged");
     // The worker before had $5 to start: with none saved, the channel hears the price is $10 now, once (priceTen), and
-    // nothing is written but the marker ($10 is the default).
+    // $10 is saved, so the worker before (which read none as $5) bills $10 too while it still answers.
     assert.deepEqual(posts(p0), ["💲 Price per checkout: $5 → $10 (from now on; checkouts already on an invoice keep their price)"]);
-    assert.deepEqual(dbRows("SELECT v FROM billing_config WHERE k = 'price:checkout'"), [], "no price saved");
+    assert.deepEqual(dbRows("SELECT v FROM billing_config WHERE k = 'price:checkout'"), [{ v: "1000" }], "$10 saved");
     assert.ok(Math.abs(parseInt(dbRows("SELECT v FROM billing_config WHERE k = 'price_ten'")[0].v, 10) - Date.now()) < 300000, "the marker");
     const gh = await billOf(GH_KEY);
     assert.deepEqual([gh.exempt, gh.family, gh.plan], [null, true, "checkout"], "a key made by hand");
@@ -5203,10 +5204,10 @@ try {
       assert.deepEqual([r.status, errOf(r.location)], [303, BAD_PRICE], JSON.stringify(price));
     }
     for (const price of ["10", "10.00", "$10", " 10.0 "]) assert.equal(doneOf((await billPost(offLink, { action: "price", price })).location), "The price per checkout is already $10.", JSON.stringify(price));
-    assert.deepEqual(priceRow(), [], "nothing written");
+    assert.deepEqual(priceRow(), [{ v: "1000" }], "nothing written (the $10 the first request saved)");
     assert.equal(webhookPosts.length, before, "nothing posted");
     assert.equal((await billPost(offLink.replace(/t=[^&]+/, "t=wrong"), { action: "price", price: "20" })).status, 404, "the page is the owner's, by its link");
-    assert.deepEqual(priceRow(), []);
+    assert.deepEqual(priceRow(), [{ v: "1000" }]);
     assert.equal((await billOf(umaKey)).prices.checkout, 1000);
   });
   await test("changing the price per checkout: the channel hears once, new checkouts take it (an order alert, a buyer's FAFO, Add a checkout), and ones already on an invoice keep theirs", async () => {
@@ -5428,13 +5429,44 @@ try {
     await alerts([billEv({ account: umaAcct, orderNo: "UG-TWELVE" })]);
     assert.deepEqual(umaAmt("UG-TWELVE"), [1200]);
   });
-  await test("no price saved: $10 (it was $5), and the channel hears $5 → $10 once, even with several requests at once", async () => {
+  // Two calls that both find no marker: the one whose marker the INSERT … DO NOTHING didn't write must write and post
+  // nothing. Requests sent together don't overlap there in the local runtime, so a trigger makes this call lose: another
+  // call's marker goes in just before its own. The price is left to that call (here, no one), and nothing is posted.
+  await test("a price of $5 saved: a call that loses the race to write the marker saves no price and posts nothing", async () => {
+    await restart(APPROVAL_PORT + 19, 500);
+    const before = webhookPosts.length;
+    sqlRun(`CREATE TRIGGER price_ten_rival BEFORE INSERT ON billing_config WHEN NEW.k = 'price_ten' AND NEW.v <> 'rival'
+      BEGIN INSERT INTO billing_config (k, v, updated_at) VALUES ('price_ten', 'rival', 0); END`);
+    let st;
+    try { st = await billOf(umaKey); } finally { sqlRun("DROP TRIGGER IF EXISTS price_ten_rival"); }
+    assert.deepEqual([tenRow(), priceRow(), st.prices.checkout], [[{ v: "rival" }], [{ v: "500" }], 500], "the other call's marker; the price left to it");
+    assert.deepEqual(posts(before), [], "nothing posted");
+    assert.equal((await billOf(umaKey)).prices.checkout, 500, "and this isolate doesn't try again");
+    assert.equal(webhookPosts.length, before);
+  });
+  // A D1 error in the move at the top of the Billing page doesn't stop a Save, and the Save notes the move as done: a later
+  // request never moves the price the owner saved (the review reproduced $8 going to $10 with a second note).
+  await test("a price of $5 saved: a Save whose request couldn't move it to $10 (a D1 error) saves what was typed, and it's never moved afterwards", async () => {
+    await restart(APPROVAL_PORT + 20, 500);
+    const before = webhookPosts.length;
+    sqlRun("CREATE TRIGGER price_ten_fail BEFORE UPDATE ON billing_config WHEN NEW.k = 'price:checkout' AND NEW.v = '1000' BEGIN SELECT RAISE(ABORT, 'test'); END");
+    try {
+      assert.equal(doneOf((await billPost(offLink, { action: "price", price: "8" })).location), "The price per checkout is $8 now, for checkouts from now on.");
+    } finally { sqlRun("DROP TRIGGER IF EXISTS price_ten_fail"); }
+    assert.deepEqual(posts(before), ["💲 Price per checkout: $5 → $8 (from now on; checkouts already on an invoice keep their price)"], "the move didn't happen");
+    assert.deepEqual([priceRow(), tenRow().length], [[{ v: "800" }], 1], "the Save noted it as done");
+    await restart(APPROVAL_PORT + 21);
+    assert.deepEqual([(await billOf(umaKey)).prices.checkout, priceRow()], [800, [{ v: "800" }]], "what the owner saved stays");
+    assert.equal((await (await adminGet("/admin/billing")).json()).prices.checkout, 800);
+    assert.equal(webhookPosts.length, before + 1, "nothing more posted");
+  });
+  await test("no price saved: $10 (it was $5), saved as $10 for the worker from before too, and the channel hears $5 → $10 once over several requests", async () => {
     await restart(APPROVAL_PORT + 18, null);
     const before = webhookPosts.length;
     const all = await Promise.all([billOf(umaKey), billOf(xiaKey), billOf(vicKey), billOf(umaKey)]);
     assert.deepEqual(all.map((x) => x.prices.checkout), [1000, 1000, 500, 1000]);
     assert.deepEqual(posts(before), [TEN], "once");
-    assert.deepEqual([priceRow(), tenRow().length], [[], 1], "nothing saved: $10 is the default");
+    assert.deepEqual([priceRow(), tenRow().length], [[{ v: "1000" }], 1], "saved, so the worker from before (none read as $5) bills $10 too");
     await alerts([billEv({ account: umaAcct, orderNo: "UG-TEN-2" }), billEv({ account: vicAcct(), orderNo: "VF-TEN-2" })]);
     assert.deepEqual([umaAmt("UG-TEN-2"), vicLines("VF-TEN-2")], [[1000], [500]]);
     assert.equal(webhookPosts.length, before + 1);

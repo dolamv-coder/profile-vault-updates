@@ -4265,12 +4265,16 @@ async function dueSundays(env, now, all = false) {
 // be set for more later"): $10 to start (PRICE_CHECKOUT), and a price saved lower in the Billing page's box (the worker before
 // had $5 to start, PRICE_BEFORE) goes to $10, once. One D1 batch (a transaction) reads the price before (one saved, else
 // PRICE_BEFORE), writes the marker billing_config price_ten with a value only this call has (INSERT … DO NOTHING: one call
-// ever writes it), and moves a saved price below $10 to $10 only while the marker holds this call's value, so a call that
-// lost the race writes nothing. A price saved at $10 or more stays, and with none saved nothing is written ($10 is the
-// default now). The call that wrote the marker tells the channel, when the price was below $10 (with none saved, $5 → $10,
-// as it was $5 until then). Once the marker is there, each isolate reads it once and never again (priceDone). Run first by
-// onSince (every request that writes a line or shows a price gets there before) and the Billing page; never with payments
-// off, so it waits until they're on.
+// ever writes it), and saves '1000' as the price when the price before was below $10 (one saved lower, or none saved, or one
+// outside $1 to $100, which counts as none) only while the marker holds this call's value, so a call that lost the race
+// writes nothing. Saving it with none saved too means the worker from before (which reads none as $5), still answering for
+// a while during the deploy or after a rollback in Cloudflare, bills $10 as well, as the channel was told. A price saved at
+// $10 or more stays. The call that wrote the marker tells the channel, when the price was below $10 (with none saved,
+// $5 → $10, as it was $5 until then). A Save of the Billing page's price writes the marker too (if it isn't there), so a
+// price the owner saves through this worker is never moved by this, even when a D1 error stopped priceTen before it. Once
+// the marker is there, each isolate reads it once and never again (priceDone). Run first by onSince (every request that
+// writes a line or shows a price gets there before) and the Billing page; never with payments off, so it waits until
+// they're on.
 let priceDone = false;
 async function priceTen(env, now) {
   if (priceDone) return;
@@ -4279,8 +4283,9 @@ async function priceTen(env, now) {
   const [was, , , mark] = await env.DB.batch([
     env.DB.prepare(`SELECT ${priceSql("checkout", "?")} AS p`).bind(PRICE_BEFORE),
     env.DB.prepare("INSERT INTO billing_config (k, v, updated_at) VALUES ('price_ten', ?1, ?2) ON CONFLICT (k) DO NOTHING").bind(me, now),
-    env.DB.prepare(`UPDATE billing_config SET v = ?1, updated_at = ?2 WHERE k = 'price:checkout' AND CAST(v AS INTEGER) BETWEEN ?3 AND ?4
-      AND (SELECT v FROM billing_config WHERE k = 'price_ten') = ?5`).bind(String(PRICE_CHECKOUT), now, PRICE_MIN, PRICE_CHECKOUT - 1, me),
+    env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) SELECT 'price:checkout', ?1, ?2 WHERE ${priceSql("checkout", PRICE_BEFORE)} < ?3
+      AND (SELECT v FROM billing_config WHERE k = 'price_ten') = ?4
+      ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at`).bind(String(PRICE_CHECKOUT), now, PRICE_CHECKOUT, me),
     env.DB.prepare("SELECT v FROM billing_config WHERE k = 'price_ten'"),
   ]);
   priceDone = true;
@@ -5529,10 +5534,13 @@ async function billingListPage(request, env, ctx, url, id) {
       const want = priceCents(get("price"));
       if (want == null) err = `Not saved: type a price from ${money(PRICE_MIN)} to ${money(PRICE_MAX)} in dollars, like 5 or 7.50.`;
       else {
+        // The marker of the one-time move to $10 (priceTen) goes in with it, if it isn't there: a price saved here is the
+        // owner's choice, never moved to $10 by a later request, also when a D1 error stopped the move at the top.
         const [was, w] = await env.DB.batch([
           env.DB.prepare(`SELECT ${priceSql("checkout", "?")} AS p`).bind(PRICE_CHECKOUT),
           env.DB.prepare(`INSERT INTO billing_config (k, v, updated_at) SELECT 'price:checkout', ?1, ?2 WHERE ${priceSql("checkout", PRICE_CHECKOUT)} <> CAST(?1 AS INTEGER)
             ON CONFLICT (k) DO UPDATE SET v = excluded.v, updated_at = excluded.updated_at`).bind(String(want), now),
+          env.DB.prepare("INSERT INTO billing_config (k, v, updated_at) VALUES ('price_ten', ?1, ?2) ON CONFLICT (k) DO NOTHING").bind(`${now}:saved`, now),
         ]);
         if (w.meta && w.meta.changes) {
           await billNote(env, `💲 Price per checkout: ${money(was.results[0].p)} → ${money(want)} (from now on; checkouts already on an invoice keep their price)`);
@@ -5740,8 +5748,8 @@ async function admin(request, env, path) {
     const num = (k) => conf[k] ? Number(conf[k]) : null;
     // prices.checkout: the price per checkout as set now (the Billing page's box, 2026-11-12), and prices.family Friends and
     // Family's (always $5, 2026-11-13); familyFrom: since when Friends and Family are charged; dueSunday: when unpaid lines
-    // were moved onto the Sunday rule; priceTen: when a price below $10 was moved to $10 (or found $10 or more); offered: the
-    // plans buyers can pick.
+    // were moved onto the Sunday rule; priceTen: when a price below $10 was moved to $10 (or found $10 or more, or a price
+    // was saved on the Billing page first); offered: the plans buyers can pick.
     return json({ on: billingOn(env), mode, onSince: { live: num("on_since:live"), test: num("on_since:test") }, backOn: { live: num("back_on:live"), test: num("back_on:test") }, offSeen: num("off_seen"),
       familyFrom: { live: num("family_from:live"), test: num("family_from:test") }, dueSunday: num("due_sunday"), priceTen: conf.price_ten ? parseInt(conf.price_ten, 10) : null,
       alertsSeen: parse(conf.alerts_seen || "null"), prices: { checkout: await checkoutPrice(env), family: PRICE_FAMILY, live: parse(conf["prices:live"] || "null"), test: parse(conf["prices:test"] || "null") }, offered: plansOf(env),

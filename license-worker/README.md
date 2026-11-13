@@ -829,10 +829,12 @@ everyone's but Friends and Family's, who always pay $5 (nothing on the page chan
 plan ("Friends and Family · $5 per checkout"), and each checkout's due date is its Sunday (in Eastern time).
 
 **From $5 to $10, once.** The worker before 2026-11-13 had $5 to start. The first request after this one was deployed
-with payments on (a buyer's FAFO asking, an order alert, the Billing page, `/admin/billing`) moved a price saved below
-$10 to $10, and told your channel (`💲 Price per checkout: $5 → $10 …`; with none saved, too, since it was $5 until
-then). A price of $10 or more stayed as it was, and checkouts already on an invoice keep theirs. It's noted as
-`price_ten` in `billing_config`, and never happens again: a price you save afterwards, lower too, stays.
+with payments on (a buyer's FAFO asking, an order alert, the Billing page, `/admin/billing`) saved $10 as the price when
+it was below $10, saved or not, and told your channel (`💲 Price per checkout: $5 → $10 …`; with none saved, too, since
+it was $5 until then). It's saved either way so that the worker before, if it still answers for a moment during the
+deploy or you roll back to it in Cloudflare, bills $10 too. A price of $10 or more stayed as it was, and checkouts
+already on an invoice keep theirs. It's noted as `price_ten` in `billing_config`, and never happens again: a price you
+save afterwards, lower too, stays (saving a price notes it as done too, if it wasn't yet).
 
 A buyer's **Details** has:
 

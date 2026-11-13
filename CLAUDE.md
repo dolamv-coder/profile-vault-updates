@@ -485,15 +485,21 @@ alone (every store's rows of one account) from reading the whole table. Only
   - **Moved to $10 once** (`priceTen`): production's worker before had $5 to start, and the owner may have saved a price
     below $10. The first request after the deploy with payments on moves it: one D1 batch reads the price before (one
     saved, else `PRICE_BEFORE`, 500), writes the marker `price_ten` (`INSERT … ON CONFLICT (k) DO NOTHING`, a value only
-    that call has) and moves a saved price below $10 to '1000' only while the marker holds that call's value; one of $10 or
-    more stays, and with none saved nothing is written ($10 is the default). The call that wrote the marker posts
-    "💲 Price per checkout: $5 → $10 (from now on; checkouts already on an invoice keep their price)" (the real amount
-    before; $5 with none saved). Each isolate reads the marker once and then never again (`priceDone`). It runs in
-    `onSince`, after `dueSundays`: every path that writes a line gets there first (`billable` calls `c.from()`: POST
-    /alerts, POST /billing/checkouts, Add a checkout, Paste), and so does `GET /billing` (through `c.who`). It also runs at
-    the top of the Billing page, GET and POST (so a Save from a page opened before the deploy comes after it and is never
-    undone by it), and in `/admin/billing` (its `priceTen` is when). Charge again, Undo waive and a plan ending write no new
-    amount. With payments off it waits. Errors are logged and never fail the request.
+    that call has) and saves '1000' as `price:checkout` when the price before was below $10 (one saved lower, none, or one
+    outside $1 to $100) only while the marker holds that call's value; one of $10 or more stays. With none saved it's saved
+    too, so the 1.9.143 worker, which reads none as $5, bills $10 as well while it still answers during the deploy, or
+    after a rollback in Cloudflare (the review of 1.9.144). The call that wrote the marker posts "💲 Price per checkout:
+    $5 → $10 (from now on; checkouts already on an invoice keep their price)" (the real amount before; $5 with none saved).
+    Each isolate reads the marker once and then never again (`priceDone`). It runs in `onSince`, after `dueSundays`: every
+    path that writes a line gets there first (`billable` calls `c.from()`: POST /alerts, POST /billing/checkouts, Add a
+    checkout, Paste), and so does `GET /billing` (through `c.who`). It also runs at the top of the Billing page, GET and
+    POST (so a Save from a page opened before the deploy comes after it), and in `/admin/billing` (its `priceTen` is when).
+    A Save of the price writes the marker too, in its batch, if it isn't there, so a price the owner saves on this worker is
+    never moved by it, also when a D1 error stopped `priceTen` at the top of that page (the review reproduced a later
+    request moving a saved $8 to $10). Charge again, Undo waive and a plan ending write no new amount. With payments off it
+    waits. Errors are logged and never fail the request. The tests make a call lose the race to the marker (a trigger in
+    the local database writes another value first: that call saves and posts nothing) and make `priceTen` fail before a
+    Save.
   The owner's words: "Buyers that I already approved should not be charged for anything", so **Friends and Family**
   (`exemptOf`): everyone issued a license before payments came on (`on_since:<mode>` in `billing_config`, stamped by the
   first request that sees the keys), every hand-made key, and anyone the owner moves there, was never charged or refused
