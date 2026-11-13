@@ -1,10 +1,10 @@
 {
-  "version": "1.9.143",
-  "url": "index-1.9.143.html",
-  "sha256": "52ddcf4efc586a95bff41b67df24a25fc04e6f9e2f5e6b6ab8b004a327c9d4bb",
-  "signature": "YsEo811tbbz6L1e21N6oGm+zHTLdh5I+U9i9FI6tkhqIx5v6V4Gsly421BQXZ2/OqQvWhMeAFlwwbMpsLP1aDg==",
+  "version": "1.9.144",
+  "url": "index-1.9.144.html",
+  "sha256": "80b829c4b2ac691d3166ed0c1fd1f0174dcb96b5d5ef8a92847777a4520073a8",
+  "signature": "6QyVGANFVK3H+tbh5RoZ2dIpx6VX09f5pDGpUt9aipcbaqi/399DAuhRQswXKUHA74F0APEU9u9+5bYePrG4DA==",
   "minAppVersion": "0",
-  "notes": "Interests now lists more products from your seller, including the latest drops. Your seller can also add a whole drop list at once. If your seller charges for checkouts, Invoice now offers pay per checkout only (a monthly plan you already have carries on until it ends).",
+  "notes": "Checkouts on your invoice are now due each Sunday, by 11:59 PM Eastern time, and Invoice shows the price your seller charges you per checkout.",
   "installerUrl": "",
-  "publishedAt": "2026-11-12T11:38:18.212Z"
+  "publishedAt": "2026-11-13T05:59:45.101Z"
 }
