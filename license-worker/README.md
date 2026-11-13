@@ -267,6 +267,15 @@ request; before, `orbit-slots-<date>-<time>-Kim-target-aycd.json`):
   order as the first profiles of the AYCD list and the Shikari CSV. AYCD's profile format has no place
   for them. Pokémon Center gets none (since 2026-10-07, at your request): it checks out with just an
   email, which is on each of its profiles, so a Pokémon Center batch is its AYCD list and Shikari CSV.
+- `Kim-target-imap.txt` (FAFO 1.9.147 and later, since 2026-11-13, at your request: "during submission
+  only", "email - apppassword format", "same where all the slots go"): the inbox access for that store's
+  slots on the buyer's own accounts (a Target store login, Pokémon Center's own email), one
+  `email:app password` per line: each inbox's email and the app password the buyer saved in FAFO, so you
+  can follow their orders. One line per inbox, in the order its slots go out, once each however many slots
+  share it; never for Use Assigned Account, and none for a slot whose inbox (or its app password) isn't
+  saved in FAFO. It comes right after the store's logins file, or after its Shikari CSV when there's none
+  (Pokémon Center gets one too), and only when there's a line. This worker checks it (each line an email
+  and a password, no more lines than the store's slots) and keeps nothing of it.
 - `Kim-target-skus.txt` (FAFO 1.9.142 and later, since 2026-11-12, at your request): the products on your
   Interests list (below) the buyer had ticked for that store when they sent the batch, one SKU per line, in
   your list's order. It comes right after the store's other files, and only when they ticked any there. The
@@ -285,7 +294,7 @@ see the `="…"`, and FAFO's **Import** (1.9.68+) reads them as the text inside.
 
 > 📦 **6 slots** from **Kim** · @kim · license …ABCD
 > Target 3 · Walmart 3
-> Per store: its profiles for AYCD (.json) and Shikari (.csv), with its logins (email:password, .txt) in the same order.
+> Per store: its profiles for AYCD (.json) and Shikari (.csv), with its logins (email:password, .txt) in the same order, and the inbox access for its slots on the buyer's own accounts (email:app password, .txt).
 > ⏳ **Pending your approval** · Approve or decline
 
 ### Approving or declining a batch

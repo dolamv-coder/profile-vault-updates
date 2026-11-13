@@ -49,6 +49,7 @@ const USERS = {
   wes:   { id: snowflake(Date.parse("2022-03-01")), username: "wes", guilds: [] },
   xia:   { id: snowflake(Date.parse("2022-05-01")), username: "xia", guilds: [] },   // with the monthly plan no longer offered
   vic:   { id: snowflake(Date.parse("2022-04-01")), username: "vic", guilds: [] },   // approved before payments began
+  yuri:  { id: snowflake(Date.parse("2022-06-01")), username: "yuri", guilds: [] },   // inbox access with Submit (page 1.9.147)
 };
 const OWNER = snowflake(Date.parse("2017-02-01"));   // NOTIFY_USER_ID in approval mode
 
@@ -1391,7 +1392,7 @@ try {
       [], [{ store: "Target", kind: "logins", text: "a@b.co:p" }],
       [{ store: "", kind: "profiles", text: tgtCsv }], [{ store: "Target", kind: "other", text: tgtCsv }],
       [{ store: "Target", kind: "profiles", text: "name,email\r\nKim,kim@example.com" }], [{ store: "Target", kind: "profiles", text: tgtCsv }, { store: "Target", kind: "logins", text: " " }],
-      Array.from({ length: 61 }, (_, i) => ({ store: "Target " + i, kind: "profiles", text: tgtCsv })),
+      Array.from({ length: 81 }, (_, i) => ({ store: "Target " + i, kind: "profiles", text: tgtCsv })),
     ]) assert.equal((await slots("/submissions", frankKey, { files, slots: 1 })).status, 400, JSON.stringify(files).slice(0, 80));
   });
   await test("more than 10 files go out in follow-up messages", async () => {
@@ -3899,6 +3900,117 @@ try {
     const targetFirst = await iSubmit([iFile("Target", "target", ["Gina T3"]), logins(["Gina T3"]), typed(["Gina O2"])], { interests: { target: ["88897899"] } });
     assert.deepEqual(targetFirst.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-skus.txt",
       "Gina-target-aycd.json", "Gina-target-shikari.csv"], "right after Target's logins, not after the typed store's files");
+  });
+
+  console.log("\nInbox access with Submit (page 1.9.147, 2026-11-13)");
+  // A store's slots on the buyer's own accounts bring their inboxes' access, one email:app password line per inbox (kind
+  // "imap"), posted as <buyer>-<store>-imap.txt after the store's logins file, or its Shikari CSV when there's none (the
+  // owner: "during submission only", "email - apppassword format", "same where all the slots go"). Sample addresses and
+  // app passwords only.
+  let yuriKey;
+  const Y_PW = ["ysmplqwkzjvmnbtx", "ysmp-lqwk-zjvm-nbtx", "Yuri Sample Inbox Pw 3", "yuri:sample:pw:4"];
+  const yFile = (store, storeKey, names, kind = "profiles", text) => kind === "profiles"
+    ? { store, storeKey, kind, text: slotCsv(names.map((n) => slotRow(n, `${n.split(" ")[1].toLowerCase()}.${storeKey}@example.com`))), assigned: 0 }
+    : { store, storeKey: kind === "logins" ? undefined : storeKey, kind, text };
+  const ySend = (files, extra = {}) => fetchOnce(BASE + "/submissions", { method: "POST", headers: { authorization: "Bearer " + yuriKey, "content-type": "application/json" },
+    body: JSON.stringify({ files, name: "Yuri", slots: files.filter((f) => f.kind === "profiles").reduce((n, f) => n + f.text.split("\r\n").length - 1, 0) || 1, batch: "imap" + rid(), ...extra }) });
+  const ySubmit = async (files, extra = {}) => {
+    const before = webhookPosts.length;
+    const r = await ySend(files, extra);
+    assert.equal(r.status, 200, await r.clone().text());
+    const posts = webhookPosts.slice(before).filter((m) => m.content.startsWith("📦") || m.content.startsWith("-# More files"));
+    return { d: await r.json(), posts, files: posts.flatMap((m) => m.files) };
+  };
+  const tgtLogins = "one.target@example.com:Store-Pw-1\r\ntwo.target@example.com:Store-Pw-2";
+  const tgtImap = `inbox.one@example.com:${Y_PW[0]}\r\ninbox.two@example.com:${Y_PW[2]}`;
+  const pcImap = `pc.inbox@example.com:${Y_PW[1]}`;
+  const yBatches = [];
+  await test("inbox access: a license for these tests", async () => { yuriKey = await newKey("yuri"); });
+  await test("inbox access: Target's goes right after its logins, Pokémon Center's after its Shikari CSV, each before the store's SKUs, as sent", async () => {
+    // Sent in another order than it goes out: the inbox file before the logins file, and an old Pokémon Center logins file
+    // (an older page's data) that isn't posted.
+    const files = [yFile("Target", "target", ["Yuri One", "Yuri Two", "Yuri Three"]), yFile("Target", "target", null, "imap", tgtImap), yFile("Target", "target", null, "logins", tgtLogins),
+      yFile("Pokémon Center", "pokemoncenter", ["Yuri Four"]), { store: "Pokémon Center", kind: "logins", text: `four.pc@example.com:${Y_PW[3]}` }, yFile("Pokémon Center", "pokemoncenter", null, "imap", pcImap)];
+    const s = await ySubmit(files, { interests: { target: ["88897898"], pokemoncenter: ["100-10001"] }, stores: [{ name: "Target", n: 3 }, { name: "Pokémon Center", n: 1 }] });
+    yBatches.push(s.d.id);
+    assert.equal(s.posts.length, 1);
+    assert.deepEqual(s.files.map((f) => f.name), ["Yuri-target-aycd.json", "Yuri-target-shikari.csv", "Yuri-target-logins.txt", "Yuri-target-imap.txt", "Yuri-target-skus.txt",
+      "Yuri-pokemon-center-aycd.json", "Yuri-pokemon-center-shikari.csv", "Yuri-pokemon-center-imap.txt", "Yuri-pokemon-center-skus.txt"]);
+    const im = s.files.filter((f) => f.name.endsWith("-imap.txt"));
+    assert.deepEqual(im.map((f) => f.text), [tgtImap, pcImap], "exactly as sent");
+    assert.ok(im.every((f) => /^text\/plain/.test(f.type)));
+    assert.ok(!s.files.some((f) => f.text.includes(Y_PW[3])), "Pokémon Center's logins file still goes nowhere");
+    const m = s.posts[0].content;
+    assert.ok(m.includes("\n-# Per store: its profiles for AYCD (.json) and Shikari (.csv), with its logins (email:password, .txt) in the same order (none for Pokémon Center), and the inbox access for its slots on the buyer's own accounts (email:app password, .txt).\n⏳ **Pending your approval** · [Approve or decline]("), m);
+    for (const x of [...Y_PW, "inbox.one@example.com", "pc.inbox@example.com"]) assert.ok(!m.includes(x), "never in the message: " + x);
+    assert.deepEqual(s.d.skus, { target: 1, pokemoncenter: 1 });
+    // The review page shows the message's text, never the file.
+    const page = await (await fetchOnce(approveLink(m))).text();
+    assert.match(page, /4 slots from Yuri/);
+    for (const x of [...Y_PW, "inbox.one@example.com", "pc.inbox@example.com"]) assert.ok(!page.includes(x), "never on the review page: " + x);
+  });
+  await test("inbox access: Pokémon Center alone gets one with no logins file; a batch without any says nothing of it", async () => {
+    const pc = await ySubmit([yFile("Pokémon Center", "pokemoncenter", ["Yuri Five"]), yFile("Pokémon Center", "pokemoncenter", null, "imap", pcImap)], { stores: [{ name: "Pokémon Center", n: 1 }] });
+    yBatches.push(pc.d.id);
+    assert.deepEqual(pc.files.map((f) => f.name), ["Yuri-pokemon-center-aycd.json", "Yuri-pokemon-center-shikari.csv", "Yuri-pokemon-center-imap.txt"]);
+    assert.ok(pc.posts[0].content.includes("\n-# Per store: its profiles for AYCD (.json) and Shikari (.csv), and the inbox access for its slots on the buyer's own accounts (email:app password, .txt).\n"), pc.posts[0].content);
+    const none = await ySubmit([yFile("Target", "target", ["Yuri Six"]), yFile("Target", "target", null, "logins", "six.target@example.com:Store-Pw-6")], { stores: [{ name: "Target", n: 1 }] });
+    assert.deepEqual(none.files.map((f) => f.name), ["Yuri-target-aycd.json", "Yuri-target-shikari.csv", "Yuri-target-logins.txt"]);
+    assert.ok(none.posts[0].content.includes("\n-# Per store: its profiles for AYCD (.json) and Shikari (.csv), with its logins (email:password, .txt) in the same order.\n"), none.posts[0].content);
+  });
+  await test("inbox access: a password with colons and spaces, and a line break at the end, are fine", async () => {
+    const text = `inbox.one@example.com:${Y_PW[3]}\r\ninbox.two@example.com:${Y_PW[2]}\r\n`;
+    const s = await ySubmit([yFile("Target", "target", ["Yuri Seven", "Yuri Eight"]), yFile("Target", "target", null, "imap", text)]);
+    yBatches.push(s.d.id);
+    assert.deepEqual(s.files.filter((f) => f.name.endsWith("-imap.txt")).map((f) => f.text), [text]);
+  });
+  await test("inbox access: refused (400 files) with no store's profiles for it, two for a store, a line that isn't email:password, or more lines than the store's slots", async () => {
+    const tgt = yFile("Target", "target", ["Yuri Nine", "Yuri Ten"]), im = (text, o = {}) => ({ ...yFile("Target", "target", null, "imap", text), ...o });
+    const ok = `inbox.one@example.com:${Y_PW[0]}`;
+    const cases = [
+      [tgt, im(ok, { store: "Walmart", storeKey: "walmart" })], [tgt, im(ok, { storeKey: "pokemoncenter" })], [tgt, im(ok, { storeKey: undefined })],
+      [tgt, im(ok), im(`inbox.two@example.com:${Y_PW[2]}`)], [tgt, im(ok), im(ok, { kind: "imaps" })],
+      ...["inbox.one@example.com", "inbox.one@example.com:", "inbox.one@example.com: ", "not-an-email:pw", "in box@example.com:pw", "inbox@example:pw", ":pw",
+        `${ok}\r\n\r\ninbox.two@example.com:pw`, "inbox.one@example.com:p\rw", "inbox.one@example.com:" + "x".repeat(201), "a".repeat(250) + "@example.com:pw",
+        `${ok}\r\ninbox.two@example.com:pw\r\ninbox.three@example.com:pw`].map((t) => [tgt, im(t)]),
+    ];
+    for (const files of cases) {
+      const before = webhookPosts.length;
+      const r = await ySend(files);
+      assert.equal(r.status, 400, JSON.stringify(files.map((f) => [f.kind, f.store, f.storeKey, f.text.slice(0, 40)])));
+      assert.deepEqual(await r.json(), { error: "files" });
+      assert.equal(webhookPosts.length, before, "nothing posted");
+    }
+    // Without a profiles file at all, as for any batch.
+    assert.equal((await ySend([im(ok)])).status, 400);
+  });
+  await test("inbox access: with more than 10 files, each store's follows its other files into the next message, then its SKUs", async () => {
+    const files = [];
+    for (const [store, key, n] of [["Walmart", "walmart", "W"], ["Best Buy", "bestbuy", "B"], ["Target", "target", "T"]])
+      files.push(yFile(store, key, [`Yuri ${n}1`]), yFile(store, key, null, "logins", `${n.toLowerCase()}1.${key}@example.com:Store-Pw`), yFile(store, key, null, "imap", `${n.toLowerCase()}.inbox@example.com:${Y_PW[0]}`));
+    const s = await ySubmit(files, { interests: { target: ["88897898"] } });
+    yBatches.push(s.d.id);
+    assert.deepEqual(s.posts.map((m) => m.files.map((f) => f.name)), [
+      ["Yuri-walmart-aycd.json", "Yuri-walmart-shikari.csv", "Yuri-walmart-logins.txt", "Yuri-walmart-imap.txt", "Yuri-best-buy-aycd.json", "Yuri-best-buy-shikari.csv",
+        "Yuri-best-buy-logins.txt", "Yuri-best-buy-imap.txt", "Yuri-target-aycd.json", "Yuri-target-shikari.csv"],
+      ["Yuri-target-logins.txt", "Yuri-target-imap.txt", "Yuri-target-skus.txt"]]);
+    assert.match(s.posts[1].content, /^-# More files for the batch from \*\*Yuri\*\* · @yuri · license …\w{4} \(11–13 of 13\)\.$/);
+    assert.deepEqual(s.files.filter((f) => f.name.endsWith("-imap.txt")).map((f) => f.text), ["w.inbox@example.com:" + Y_PW[0], "b.inbox@example.com:" + Y_PW[0], "t.inbox@example.com:" + Y_PW[0]]);
+  });
+  await test("inbox access: counted in the batch's bytes, and kept nowhere in the database", async () => {
+    const base = [yFile("Target", "target", ["Yuri Eleven"]), yFile("Target", "target", null, "logins", "eleven.target@example.com:Store-Pw-11")];
+    const text = `inbox.one@example.com:${Y_PW[0]}`;
+    const a = await ySubmit(base), b = await ySubmit(base.concat(yFile("Target", "target", null, "imap", text)));
+    yBatches.push(b.d.id);
+    const subs = (await (await admin("/admin/submissions")).json()).submissions;
+    const bytes = (id) => subs.find((x) => x.id === id).bytes;
+    assert.equal(bytes(b.d.id) - bytes(a.d.id), text.length);
+    // Every table, every row: no app password or inbox address sent above is in any of them.
+    const tables = dbRows("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name NOT LIKE 'd1_%'").map((x) => x.name);
+    assert.ok(tables.includes("submissions") && tables.includes("submission_reviews"), tables.join(","));
+    const dump = JSON.stringify(JSON.parse(d1Exec(["--command", tables.map((t) => `SELECT * FROM "${t}"`).join("; "), "--json"]).toString()).map((x) => x.results));
+    for (const id of yBatches) assert.ok(dump.includes(id), "the dump has the batch " + id);
+    for (const x of [...Y_PW, "inbox.one@example.com", "inbox.two@example.com", "pc.inbox@example.com", "w.inbox@example.com", "t.inbox@example.com"]) assert.ok(!dump.includes(x), "not kept: " + x);
   });
 
   console.log("\nInterests: products added once (INTEREST_ADDS; the owner's request, 2026-11-12)");
