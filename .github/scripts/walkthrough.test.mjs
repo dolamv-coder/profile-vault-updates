@@ -267,7 +267,7 @@ try {
     await s.page.click(`${P} #pl-list .spick[data-pick="pokemoncenter"]`);
     const pc = s.page.locator(`${P} .ret-cfg[data-key="pokemoncenter"] .ret-imap`);
     assert.ok(await pc.isVisible(), "Own email's note shows");
-    assert.equal(await pc.textContent(), "FAFO sends your seller this email's IMAP access (the email and its app password) with your slots when you submit, so they can follow your orders. Save its inbox in FAFO, with its app password: Store logins, then Add inbox.");
+    assert.equal(await pc.textContent(), "FAFO sends your seller this email's IMAP access (the email and its app password) with your slots when you submit, so they can follow your orders. Save its inbox in FAFO, with its app password: Store logins, then Add inbox. If this email forwards to another inbox, send your seller that inbox's email and app password on Discord yourself.");
     await s.page.selectOption(`${P} select[name="m_pokemoncenter"]`, "seller");
     assert.match((await s.page.locator(`${P} .ret-cfg[data-key="pokemoncenter"] .note-seller`).textContent()).replace(/\s+/g, " "), /You won't have access to this account's email: you'll see your order updates in FAFO\./);
   });

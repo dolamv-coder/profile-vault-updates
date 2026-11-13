@@ -3963,6 +3963,26 @@ try {
     const s = await ySubmit([yFile("Target", "target", ["Yuri Seven", "Yuri Eight"]), yFile("Target", "target", null, "imap", text)]);
     yBatches.push(s.d.id);
     assert.deepEqual(s.files.filter((f) => f.name.endsWith("-imap.txt")).map((f) => f.text), [text]);
+    // Several at the end too, CRLF or LF, and lines as long as they may be (an address of 254, a password of 200).
+    const long = `${"a".repeat(242)}@example.com:${"p".repeat(200)}`, more = `${long}\r\ninbox.two@example.com:${Y_PW[2]}\n\r\n\n`;
+    assert.equal(long.length, 455);
+    const t = await ySubmit([yFile("Target", "target", ["Yuri Seven", "Yuri Eight"]), yFile("Target", "target", null, "imap", more)]);
+    yBatches.push(t.d.id);
+    assert.deepEqual(t.files.filter((f) => f.name.endsWith("-imap.txt")).map((f) => f.text), [more]);
+  });
+  await test("inbox access: a long text is refused at once, never read with a regex that backtracks (the review of 1.9.147)", async () => {
+    // The first version stripped line breaks at the end with /(\r?\n)+$/ and read each line with one regex, both before
+    // any length check: 160 KB of line breaks followed by a letter took 13 seconds, and a dotted domain with no colon 2
+    // seconds per 100 KB, each refused batch unrecorded so it could be sent again at once.
+    const tgt = yFile("Target", "target", ["Yuri Nine", "Yuri Ten"]);
+    for (const [what, text] of [["line breaks, then a letter", "\n".repeat(400000) + "x"], ["CRLFs, then a letter", "\r\n".repeat(200000) + "x"],
+      ["a dotted domain with no colon", "a@" + "a.".repeat(200000)], ["a long password", "a@b.co:" + " x".repeat(200000)],
+      ["many short lines", "a@b.co:p\r\n".repeat(40000)]]) {
+      const at = Date.now(), r = await ySend([tgt, yFile("Target", "target", null, "imap", text)]), ms = Date.now() - at;
+      assert.equal(r.status, 400, what);
+      assert.deepEqual(await r.json(), { error: "files" }, what);
+      assert.ok(ms < 3000, `${what}: refused in ${ms} ms`);
+    }
   });
   await test("inbox access: refused (400 files) with no store's profiles for it, two for a store, a line that isn't email:password, or more lines than the store's slots", async () => {
     const tgt = yFile("Target", "target", ["Yuri Nine", "Yuri Ten"]), im = (text, o = {}) => ({ ...yFile("Target", "target", null, "imap", text), ...o });

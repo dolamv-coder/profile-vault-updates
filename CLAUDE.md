@@ -101,11 +101,14 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   `-skus.txt`, counted in Discord's 10 a message and in the batch's `bytes`. The worker places it there whatever order it's
   sent in, and refuses the batch (400 `files`) for one with no profiles file of its store (by `store` and `storeKey`), a
   second for a store, a line that isn't an email-shaped address (254 characters at most), a colon and a password with
-  something but spaces in it (200 at most) (`IMAP_LINE`, `imapOk`; a line break at the end is fine), or more lines than
-  the store's slots. A batch takes 80 files now (`SUBMISSION_MAX_FILES`, four a store; 60 before). The message's
-  description adds ", and the inbox access for its slots on the buyer's own accounts (email:app password, .txt)" when one
-  went. Nothing of it is kept (no table gains it), and it's never in a message's text, a pull alert or the review page.
-  Older pages send none, and nothing changes for them.
+  something but spaces in it (200 at most) (`imapLineOk`, `imapOk`; line breaks at the end are fine), or more lines than
+  the store's slots. That's read in steps that each go over the text once, its length checked before it's split and each
+  line's before it's read, never with a regex that backtracks: the first version's `/(\r?\n)+$/` and one regex for a line
+  took 13 seconds over 160 KB of line breaks then a letter, from any license, as a refused batch isn't counted (the
+  review's repro; `e2e.mjs` sends such texts and wants 400 within 3 seconds). A batch takes 80 files now
+  (`SUBMISSION_MAX_FILES`, four a store; 60 before). The message's description adds ", and the inbox access for its slots
+  on the buyer's own accounts (email:app password, .txt)" when one went. Nothing of it is kept (no table gains it), and
+  it's never in a message's text, a pull alert or the review page. Older pages send none, and nothing changes for them.
   Since 2026-10-06 (the owner's requests) the owner approves or declines each batch: its message (the first, when there
   are several) ends with **Pending your approval · Approve or decline**, a link to `/submissions/review/:id?t=…` (D1
   `submission_reviews`, kept 90 days; its own table, since `db:init` can't add columns). Approve edits the message to
@@ -1448,8 +1451,8 @@ logins with no inbox (`!l.inboxId`) under **Needs an inbox** with a Set up inbox
 Only the desktop app signs in to an inbox, so its live status is per-device (`inbox.syncError`, `inbox.lastSync`, in
 `SYNC_DEVICE_FIELDS`): the desktop variant (`DESK`) shows Connected/Error with the last check and a Test button
 (`edit-inbox`, where the check lives), the web variant shows "Status shows in the desktop app", a disabled Test and a note
-that inbox passwords stay in the vault (from 1.9.147: that FAFO sends one only to the seller, with the slots submitted on
-its accounts). The sidebar item's badge counts the logins needing an inbox. The view is additive
+that inbox passwords stay in the vault (from 1.9.147: that they leave it only with the slots submitted on that inbox's
+accounts). The sidebar item's badge counts the logins needing an inbox. The view is additive
 and gated on `UI.view === "imap"`; nothing gains a field, and since desktop updates are paused the desktop variant is
 dormant until they resume (the web variant is what ships).
 
@@ -2224,31 +2227,50 @@ go"), where the buyer had sent it on Discord themselves (1.9.145's notes said so
   login's inbox (`inboxById(l.inboxId)`, or for a login with none linked, or one that's gone, the inbox saved for its email,
   `savedInboxFor`), or for Pokémon Center's own email (mode `email`, its checkout email, else the profile's, as `slotEmail`)
   the inbox saved for that address: the same address, else the same mailbox (`mailboxKey`: a +tag, a Gmail dot version).
+  A checkout email that forwards to another inbox (a Hide My Email alias, a catch-all domain) has nothing to link it to
+  that inbox, so the buyer sends that one on Discord (the review of 1.9.147; below).
+- **Never from the seller's own FAFO** (`imapOwnFafo`, as the setup guide knows it, `guideBuyer`: it sends order alerts,
+  or its `/premium` answer, billing or the Interests list says it's the owner's): its own batches bring no inbox access
+  (the review of 1.9.147: they posted the owner's own app passwords), its Submit window says nothing of it, and Store
+  logins, IMAP and Settings don't say a seller gets one. An answer that changes it redraws Settings, Store logins and IMAP
+  (`premiumApply`).
 - **The file** (`slotsFiles`): per store with a line, `{store, storeKey, kind:"imap", text}` after its logins file (or its
-  AYCD list), one `email:app password` line per inbox (`imapLineOf`: the inbox's own email, and its password as FAFO signs
-  in with it, `cleanAppPw`), CRLF between, in the order the store's slots go out, each inbox once by id and by mailbox
-  (`slotImapLines`). An inbox with no app password, or one that couldn't go on one line as the worker takes it, gives none.
-  The sealed code (a recipient set by hand) is unchanged.
+  AYCD list), one `email:app password` line per inbox (`imapLineOf`: the inbox's email without its +tag, `baseMailAddr`,
+  as a mail server takes it to sign in and as the login editor and inbox guide fill it in, since Add inbox keeps a tag
+  typed there; and its password as FAFO signs in with it, `cleanAppPw`), CRLF between, in the order the store's slots go
+  out, each inbox once by id and by mailbox (`slotImapLines`). An inbox with no app password, or one that couldn't go on one
+  line as the worker takes it (a line break, over 200 characters: the worker would refuse the whole batch), gives none. The
+  sealed code (a recipient set by hand) is unchanged, and still carries each login's inbox (`loginOut`).
 - **Submit's window** (`imapSubmitNote`, only when the slots go to the seller's channel, `viaCSV`): "Your inbox access for N
   of these slots (each inbox's email and app password) goes to your seller with them, so they can follow your orders."
   (`#ss-imap`; "this slot … with it", "these N slots"), and for own-account slots it has none for, a warning, never a
   refusal: "N slots have no inbox app password saved in FAFO (Pokémon Center: Sam P3; Target: Sam T3), so your seller can't
   follow those orders: add it in Store logins." (`#ss-imap-miss`; the stores' names only when the batch has more than one,
-  six names at most, then "and N more").
+  six names at most, then "and N more"), adding, when one of them is a checkout email, "If a checkout email forwards to
+  another inbox, send your seller that inbox's email and app password on Discord yourself."
 - **What says FAFO doesn't send it** now says it does: the profile editor's notes (`GUIDE_IMAP_NOTE` on a Store login, "It's
   the inbox saved on the store login: make sure it has its app password."; `GUIDE_IMAP_NOTE_EMAIL` on Pokémon Center's own
-  email, "Save its inbox in FAFO, with its app password: Store logins, then Add inbox."), the setup guide's step 1, and
-  where FAFO said an inbox password is never sent: IMAP's heading and its web note, Settings → Email import's lock line and
-  Store logins' Inboxes line.
+  email, "Save its inbox in FAFO, with its app password: Store logins, then Add inbox. If this email forwards to another
+  inbox, send your seller that inbox's email and app password on Discord yourself."), the setup guide's step 1, and where
+  FAFO said an inbox password is never sent: IMAP's heading (FAFO sends the seller the inboxes' email and app password with
+  the slots on your own accounts) and its web note (passwords "leave it only with the slots you submit on that inbox's
+  accounts"), Settings → Email import's lock line ("FAFO sends them to your email provider to sign in, and with the slots
+  you submit…"), and Store logins' Inboxes line; none of them says it goes nowhere else, as the desktop signs in with it
+  and a sealed code carries it (the review of 1.9.147). The web version's Email import says only Sync needs the desktop
+  app, and an inbox can be saved on Store logins with Add inbox. fafoaco.com's "Who can see my cards and passwords?" adds
+  that for slots on your own accounts the runner also gets each inbox's email and app password (`web-worker/src/site.js`).
 - **Store logins** has **Add inbox** (`new-inbox-only`, the inbox editor Settings → Email import had only in the desktop
   app; it saves without signing in on the web), and shows the saved inboxes in a vault with no store logins too, so a
   Pokémon Center own email's inbox can be saved anywhere.
 - **Tests:** `imap-submit.test.mjs` runs the page in Chromium against a pretend license server (in CI after the download's):
   the window's lines with and without missing ones, what `/submissions` gets (an imap file per store, its place, its lines
-  in order, deduped by id and by mailbox, a login with no inbox linked found by its mailbox, a Pokémon Center own email's
-  inbox found by its mailbox, an inbox with no app password left out, Use Assigned Account never), a batch of only Use
-  Assigned Account slots (no file, no line), one slot, one store with none saved, a recipient set by hand, and Store logins'
-  Add inbox. It fails if the newest page has no `kind:"imap"`. `walkthrough.test.mjs` checks the new notes.
+  in order, deduped by id and by mailbox, a login with no inbox linked, or linked to one that's gone, found by its mailbox,
+  a Pokémon Center own email's inbox found by its mailbox, an inbox with no app password left out, an address without its
+  +tag, app passwords with a line break or over 200 characters left out, Use Assigned Account never; the pretend worker
+  refuses a batch as the license worker would), a batch of only Use Assigned Account slots (no file, no line), one slot, one
+  store with none saved, a recipient set by hand, the seller's own FAFO (no file, no line, none of the words, back when the
+  answer changes), and what Store logins, IMAP and the web Settings say. It fails if the newest page has no `kind:"imap"`.
+  `walkthrough.test.mjs` checks the new notes.
 - Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the

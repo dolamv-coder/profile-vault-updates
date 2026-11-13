@@ -10128,9 +10128,10 @@ document.addEventListener("keydown", (e) => {
 // email and follow the orders in FAFO; on their own account the seller needs its IMAP access, which, from 1.9.147, FAFO
 // sends the seller with the slots (slotInbox), so it has to be saved in FAFO: the inbox on the store login, or for
 // Pokémon Center's own email an inbox saved with that address (Store logins, Add inbox). Until 1.9.147 the buyer sent it on
-// Discord themselves. Not in the seller's own FAFO, which keeps the editor as it was.
+// Discord themselves, as they still do for an email forwarded to another inbox (a Hide My Email alias, a catch-all domain:
+// nothing links it to that inbox). Not in the seller's own FAFO, which keeps the editor as it was.
 const GUIDE_IMAP_NOTE = "FAFO sends your seller this email's IMAP access (the email and its app password) with your slots when you submit, so they can follow your orders. It's the inbox saved on the store login: make sure it has its app password.";
-const GUIDE_IMAP_NOTE_EMAIL = "FAFO sends your seller this email's IMAP access (the email and its app password) with your slots when you submit, so they can follow your orders. Save its inbox in FAFO, with its app password: Store logins, then Add inbox.";
+const GUIDE_IMAP_NOTE_EMAIL = "FAFO sends your seller this email's IMAP access (the email and its app password) with your slots when you submit, so they can follow your orders. Save its inbox in FAFO, with its app password: Store logins, then Add inbox. If this email forwards to another inbox, send your seller that inbox's email and app password on Discord yourself.";
 const GUIDE_ASSIGNED_NOTE = "You won't have access to this account's email: you'll see your order updates in FAFO.";
 function retCfgHTML(o, e, pemail){
   const k = storeKeyOf(o), only = emailOnly(k), buyer = !isPremiumOwner();
@@ -10932,7 +10933,7 @@ function renderLogins(){
   const kpi = (color, label, n) => `<span class="p-kpi"><span class="p-kpi-dot" style="background:${color}"></span>${label} <strong>${n}</strong></span>`;
   const kpiStrip = S.logins.length ? `<div class="p-kpis">${kpi("var(--accent)", "Logins", S.logins.length)}${inboxKpis(kpi, loginInboxCounts())}${S.inboxes.length ? kpi("var(--info)", "Inboxes", S.inboxes.length) : ""}</div>` : "";
   // Saved inboxes, also in a vault with no store logins (one for Pokémon Center's own email: its seller gets it, 1.9.147).
-  const inboxBlock = inboxes.length ? `<h2 class="sub-title">Inboxes</h2><p class="view-sub" style="margin:-6px 0 12px">Saved IMAP inboxes. One inbox can serve several store logins. Your seller gets an inbox's email and app password with the slots you submit on its accounts, so they can follow your orders.</p>
+  const inboxBlock = inboxes.length ? `<h2 class="sub-title">Inboxes</h2><p class="view-sub" style="margin:-6px 0 12px">Saved IMAP inboxes. One inbox can serve several store logins.${imapOwnFafo() ? "" : " Your seller gets an inbox's email and app password with the slots you submit on its accounts, so they can follow your orders."}</p>
     <div class="grid">${inboxes.map(i => { const n = inboxUses(i.id); return `<article class="slip">
       <div class="slip-head"><div style="flex:1;min-width:0"><div class="item-title">${esc(i.email)}</div><div class="item-sub">${esc(providerName(i.provider))}${i.provider === "custom" ? ", " + esc(i.host) + ":" + esc(i.port) : ""}. ${n ? "Used by " + plural(n, "login") : "Not used yet"}</div></div>
       <div class="item-actions"><button class="icon-btn" data-act="copy-inbox-pw" data-id="${i.id}" aria-label="Copy IMAP password">${ic("copy")}</button><button class="icon-btn" data-act="edit-inbox" data-id="${i.id}" aria-label="Edit">${ic("edit")}</button><button class="icon-btn" data-act="delete-inbox" data-id="${i.id}" aria-label="Delete">${ic("trash")}</button></div></div>
@@ -11032,8 +11033,8 @@ function renderImap(){
   const inUse = slotsInUse(), allow = slotAllow();
   const kpi = (color, label, n) => `<span class="p-kpi"><span class="p-kpi-dot" style="background:${color}"></span>${label} <strong>${n}</strong></span>`;
   const kpiStrip = `<div class="p-kpis">${kpi(inUse > allow ? "var(--danger)" : "var(--violet)", "Slots", inUse + " / " + allow)}${S.logins.length ? kpi("var(--accent)", "Logins", S.logins.length) + inboxKpis(kpi, loginInboxCounts()) : ""}${inboxes.length ? kpi("var(--info)", "Inboxes", inboxes.length) : ""}</div>`;
-  const webNote = DESK ? "" : `<p class="note" style="margin:0 0 16px">You're on the web version. FAFO signs in to check an inbox only in the desktop app, so <strong>Connected / Error</strong> and <strong>Test</strong> show there. Open FAFO on your computer to pull your orders from your email automatically — the web version can't read email, so here you track orders by pasting their confirmation emails. Your inbox passwords are kept in your encrypted vault: FAFO sends one only to your seller, with the slots you submit on that inbox's accounts.</p>`;
-  return `<div class="view-head"><div><h1 class="view-title">IMAP</h1><p class="view-sub">Your slot limits, and the inbox each store login reads its sign-in code from. When you submit slots on your own accounts, FAFO sends your seller their inboxes' email and app password, so they can follow your orders, and sends an inbox password nowhere else.</p></div></div>
+  const webNote = DESK ? "" : `<p class="note" style="margin:0 0 16px">You're on the web version. FAFO signs in to check an inbox only in the desktop app, so <strong>Connected / Error</strong> and <strong>Test</strong> show there. Open FAFO on your computer to pull your orders from your email automatically — the web version can't read email, so here you track orders by pasting their confirmation emails. Your inbox passwords are kept in your encrypted vault${imapOwnFafo() ? "" : ", and leave it only with the slots you submit on that inbox's accounts"}.</p>`;
+  return `<div class="view-head"><div><h1 class="view-title">IMAP</h1><p class="view-sub">Your slot limits, and the inbox each store login reads its sign-in code from.${imapOwnFafo() ? "" : " When you submit slots on your own accounts, FAFO sends your seller their inboxes' email and app password, so they can follow your orders."}</p></div></div>
     ${kpiStrip}${webNote}${slots}${needBlock}
     <h2 class="sub-title">Inboxes</h2><p class="view-sub" style="margin:-6px 0 12px">One inbox can serve several store logins.${DESK ? " The desktop app signs in to read sign-in codes; the status is its last check." : ""}</p>
     ${inboxCards}`;
@@ -13958,7 +13959,7 @@ function emailSectionHTML(){
       <h2 class="set-title">Add orders from email</h2>
       <div class="where">
         <div class="where-badge">You're using the web version</div>
-        <p class="where-lead"><strong>Add inbox</strong> and <strong>Sync</strong> are in the FAFO desktop app for Windows. A web page isn't allowed to sign in to email, so they can't appear here.</p>
+        <p class="where-lead"><strong>Sync</strong> is in the FAFO desktop app for Windows. A web page isn't allowed to sign in to email, so it can't find your orders there. You can save an inbox here (<strong>Store logins</strong>, then <strong>Add inbox</strong>), but only the desktop app reads it.</p>
         <ol class="how" style="margin:0 0 4px">
           <li>Open <strong>FAFO.exe</strong> (from the FAFO-Windows zip).</li>
           <li>Go to <strong>Settings</strong>, then <strong>Email import</strong>.</li>
@@ -13984,7 +13985,7 @@ function emailSectionHTML(){
     </div>
     ${inboxes.length ? `<div class="ibx-head"><h3 class="set-sub" style="margin:0">Your inboxes</h3><button class="btn btn-sm" data-act="sync-all" ${anyBusy ? "disabled" : ""}>${ic("imp")}Sync all</button></div>
       <div class="ibx-list">${inboxes.map(inboxRowHTML).join("")}</div>` : ""}
-    <p class="set-note" style="margin-top:12px">${ic("lock").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px"')}App passwords are stored encrypted in your vault, and sent only to your email provider and, with the slots you submit on an inbox's accounts, to your seller, so they can follow your orders.</p>
+    <p class="set-note" style="margin-top:12px">${ic("lock").replace("<svg", '<svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px"')}App passwords are stored encrypted in your vault. FAFO sends them to your email provider to sign in${imapOwnFafo() ? "" : ", and with the slots you submit on an inbox's accounts, so your seller can follow your orders"}.</p>
     ${advanced}`;
 }
 
@@ -17712,7 +17713,8 @@ function slotsFiles(fresh){
 // emails reach, so the seller can follow its orders. That's a store login's inbox (or, for a login with none linked, the
 // inbox saved for its email's mailbox), or the inbox saved for Pokémon Center's own checkout email (savedInboxFor: the same
 // address, else the same mailbox, as 1.9.112's login editor finds one). Never Use Assigned Account: those accounts are the
-// seller's. {own:false}, or {own:true, inbox} with null when none is saved with an app password FAFO can send on one line.
+// seller's. Nor from the seller's own FAFO (imapOwnFafo, in slotImapLines and imapSubmitNote). {own:false}, or {own:true,
+// inbox} with null when none is saved with an app password FAFO can send on one line.
 function slotInbox(r){
   if (asksSeller(r.e)) return {own:false};
   const email = r.l ? r.l.email : modeOf(r.e) === "email" ? (r.e.email || r.p.email) : "";
@@ -17720,16 +17722,23 @@ function slotInbox(r){
   return {own:true, inbox:i && imapLineOf(i) ? i : null};
 }
 // One line, email:app password, as the license worker takes it: an address (254 characters at most) and a password (200 at
-// most, not only spaces), each on one line. The password as FAFO signs in with it (cleanAppPw).
+// most, not only spaces), each on one line. The address without its +tag (baseMailAddr: a mail server's username, as the
+// store login editor and the inbox guide fill it in; Add inbox keeps what's typed), the password as FAFO signs in with it
+// (cleanAppPw).
 function imapLineOf(i){
-  const email = String(i.email || "").trim(), pw = cleanAppPw(i.provider, i.password);
-  if (!/^[^\s@:]+@[^\s@:]+\.[^\s@:]+$/.test(email) || email.length > 254 || !/\S/.test(pw) || pw.length > 200 || /[\r\n\u2028\u2029]/.test(pw)) return "";
+  const email = baseMailAddr(i.email), pw = cleanAppPw(i.provider, i.password);
+  if (email.length > 254 || !/^[^\s@:]+@[^\s@:]+\.[^\s@:]+$/.test(email) || !/\S/.test(pw) || pw.length > 200 || /[\r\n\u2028\u2029]/.test(pw)) return "";
   return email + ":" + pw;
 }
+// The seller's own FAFO, as the setup guide knows it (guideBuyer): it sends order alerts, or its /premium answer, billing or
+// the Interests list says it's the owner's. Its own batches bring no inbox access (its inboxes are its own: the review of
+// 1.9.147), and nothing there says the seller gets one.
+function imapOwnFafo(){ return !!S && MODE === "vault" && (orderAlertsOn() || isPremiumOwner() || billOwner() || (interestRead() || {}).owner === true); }
 // A store's lines, in the order its slots go out, each inbox once however many slots share it (by id, and by mailbox for
 // two saved copies of one).
 function slotImapLines(rows){
   const ids = new Set(), boxes = new Set(), out = [];
+  if (imapOwnFafo()) return out;
   rows.forEach(r => {
     const i = slotInbox(r).inbox;
     if (!i || ids.has(i.id) || boxes.has(mailboxKey(i.email))) return;
@@ -17741,6 +17750,7 @@ function slotImapLines(rows){
 // the buyer's own accounts can't (no inbox saved for them, or none with an app password), so the seller can't follow those
 // orders. Submit still sends them.
 function imapSubmitNote(fresh){
+  if (imapOwnFafo()) return "";
   const own = fresh.filter(({r}) => slotInbox(r).own);
   if (!own.length) return "";
   const ok = own.filter(({r}) => slotInbox(r).inbox), miss = own.filter(({r}) => !slotInbox(r).inbox), n = ok.length, m = miss.length;
@@ -17753,7 +17763,10 @@ function imapSubmitNote(fresh){
   };
   const lines = [];
   if (n) lines.push(`<p class="note" id="ss-imap" style="margin:0 0 14px">Your inbox access for ${n === fresh.length ? (n === 1 ? "this slot" : `these ${n} slots`) : `${n} of these slots`} (each inbox's email and app password) goes to your seller with ${n === 1 ? "it" : "them"}, so they can follow your orders.</p>`);
-  if (m) lines.push(`<p class="note note-warn" id="ss-imap-miss" style="margin:0 0 14px">${m === 1 ? "1 slot has" : `${m} slots have`} no inbox app password saved in FAFO (${names(miss)}), so your seller can't follow ${m === 1 ? "its orders" : "those orders"}: add it in Store logins.</p>`);
+  // A checkout email (Pokémon Center's own) can only be matched to an inbox saved with its address: one that forwards to
+  // another inbox (a Hide My Email alias, a catch-all domain) can't be, so that one goes on Discord (the review of 1.9.147).
+  const fwd = miss.some(({r}) => !r.l && modeOf(r.e) === "email");
+  if (m) lines.push(`<p class="note note-warn" id="ss-imap-miss" style="margin:0 0 14px">${m === 1 ? "1 slot has" : `${m} slots have`} no inbox app password saved in FAFO (${names(miss)}), so your seller can't follow ${m === 1 ? "its orders" : "those orders"}: add it in Store logins.${fwd ? " If a checkout email forwards to another inbox, send your seller that inbox's email and app password on Discord yourself." : ""}</p>`);
   return lines.join("");
 }
 // The names of the slots still out on each store this batch asks accounts for (1.9.99+): a profile sent again whose slot
@@ -17849,8 +17862,9 @@ function premiumApply(){
   if (!S || premiumState() === premiumShown) return;
   if (leaveGenerate()){ render(); window.scrollTo(0, 0); return; }
   renderSide();
-  // Settings gains or loses Premium buyers; not while something typed there is unsaved.
-  if (UI.view === "settings-view" && !typedUnsaved()) renderMain();
+  // Settings gains or loses Premium buyers, and Settings, Store logins and IMAP the words on the seller getting a buyer's
+  // inbox access (imapOwnFafo); not while something typed there is unsaved.
+  if ((UI.view === "settings-view" || UI.view === "logins" || UI.view === "imap") && !typedUnsaved()) renderMain();
 }
 window.addEventListener("storage", (e) => {
   if (e.key !== PREMIUM_STORE) return;

@@ -813,12 +813,27 @@ const SUBMISSIONS_PER_HOUR = 30;
 const SUBMISSION_MAX_CHARS = 4_000_000;     // well under Discord's attachment limit
 const SUBMISSION_MAX_FILES = 80;            // four per store: profiles, AYCD, logins and inbox access (1.9.147)
 // A store's inbox access (page 1.9.147): one email:app password line per inbox, an address and a password as the
-// owner's accounts take them (an address at most 254 characters, a password at most 200, on one line).
-const IMAP_LINE = /^([^\s@:]+@[^\s@:]+\.[^\s@:]+):(.*\S.*)$/;
-const imapLines = (text) => text.replace(/(\r?\n)+$/, "").split(/\r?\n/);
+// owner's accounts take them (an address at most 254 characters, a password at most 200, on one line). The address is
+// what comes before the first colon: no spaces or colons, one @, and after it a dot with something on either side; the
+// password has something but spaces in it. Line breaks at the end are fine. All checked in steps that each read the text
+// once, never with a regex that backtracks: a request can carry megabytes, and the first version's
+// /(\r?\n)+$/ took 13 seconds over 160 KB of line breaks followed by a letter (the review of 1.9.147). The text's length
+// is checked before it's split, and each line's before it's read.
+const IMAP_EMAIL_MAX = 254, IMAP_PW_MAX = 200;
+const IMAP_EMAIL = /^[^\s@:]+@[^\s@:]+$/;
+const imapLineOk = (x) => {
+  const c = x.indexOf(":");
+  if (c < 1 || c > IMAP_EMAIL_MAX || x.length - c - 1 > IMAP_PW_MAX) return false;
+  const email = x.slice(0, c), pw = x.slice(c + 1), dot = email.indexOf(".", email.indexOf("@") + 2);
+  return IMAP_EMAIL.test(email) && dot > 0 && dot < email.length - 1 && /\S/.test(pw) && !/[\r\n\u2028\u2029]/.test(pw);
+};
 const imapOk = (text, slots) => {
-  const lines = imapLines(text);
-  return lines.length <= slots && lines.every((x) => { const m = IMAP_LINE.exec(x); return !!m && m[1].length <= 254 && m[2].length <= 200; });
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "\n") { end--; if (end > 0 && text[end - 1] === "\r") end--; }
+  // At most a line per slot, each at most an address, a colon and a password, with a CRLF between.
+  if (end > slots * (IMAP_EMAIL_MAX + IMAP_PW_MAX + 3)) return false;
+  const lines = text.slice(0, end).split(/\r?\n/);
+  return lines.length <= slots && lines.every(imapLineOk);
 };
 const SUBMIT_KEY_OFFERS_PER_DAY = 3;
 
