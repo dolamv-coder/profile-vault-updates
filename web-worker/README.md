@@ -41,7 +41,17 @@ Settings → Domains & Routes), not in `wrangler.toml`, so a deploy needs no acc
 are: `app.fafoaco.com` (the app), `fafoaco.com` (FAFO's front page, `src/site.js`, with `/download` going to the newest
 Windows download and `/app` to the app) and `www.fafoaco.com` (to `fafoaco.com`). Since 2026-10-13 (the owner's request)
 the front page's button is Login with Discord, which opens the app; it no longer offers the Windows download, and
-`/download` stays for links people already have. Its design (also 2026-10-13) is light with a dark theme, following the
+`/download` stays for links people already have, and for page 1.9.146+, which opens it for a new download. Since 1.9.146
+(the owner, 2026-11-13: "anytime a new update is available, can you have the version in the description") `/download`
+goes to the newest release's `FAFO-Windows-<version>.zip`, which a browser saves under that name, so downloads can be told
+apart; a release without it (v1.9.139 and older, until the "Release desktop app" Action's by-hand mode adds it) goes to
+GitHub's `releases/latest/download/FAFO-Windows.zip`, as before (`DOWNLOAD_URL`). It never uses GitHub's API (60
+unauthenticated requests an hour per address, shared with every worker on Cloudflare's): it asks github.com where
+`releases/latest/download/FAFO-Windows.zip` goes, which must be exactly `releases/download/v<X.Y.Z>/FAFO-Windows.zip` in
+this repo, then whether `releases/download/v<X.Y.Z>/FAFO-Windows-<X.Y.Z>.zip` is there (both `HEAD`, without following the
+redirect, 3 seconds in all). Each worker instance keeps an answer found 10 minutes and none, or a lookup that failed, 1
+minute, and requests meanwhile share one lookup. `RELEASES_URL`, `DOWNLOAD_FOUND_MS`, `DOWNLOAD_MISS_MS` and
+`DOWNLOAD_TIMEOUT_MS` in the environment change those (the tests point them at a pretend GitHub). Its design (also 2026-10-13) is light with a dark theme, following the
 system or the switch in its header (kept in the browser as `fafo-site-theme`). Its logo (2026-10-14, the owner's pick)
 is drawn inline from `src/brand.js` (`logoSVG`) in the theme's colours. Both addresses serve FAFO's icons from the same
 file, so the app's tab and home-screen icon come from the worker, not the page: `/favicon.svg` and `/favicon.ico` (16,
@@ -68,4 +78,7 @@ npm test
 Runs the worker in Wrangler's local runtime against a mock of GitHub, with a test publisher key.
 It checks signed pages are served with safe headers, and that a page that doesn't match, a release
 signed with another key, a signed field changed afterwards, and `update.json` being down all keep
-the last good page.
+the last good page. For `/download` it checks the newest release's versioned zip is given when it's there, GitHub's plain
+link when it isn't, when GitHub sends latest anywhere but this repo's `v<X.Y.Z>/FAFO-Windows.zip`, and when GitHub errs or
+is slower than the timeout, that an answer is kept (GitHub isn't asked again meanwhile) and a newer release followed after
+it, and that requests at once share one lookup.

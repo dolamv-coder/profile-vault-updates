@@ -8,7 +8,11 @@ import { logoSVG } from "./brand.js";
 
 export const SITE_HOST = "fafoaco.com";
 export const APP_URL = "https://app.fafoaco.com";
-// The newest Windows download (the "Release desktop app" Action attaches it to each GitHub release), for /download.
+// The newest Windows download (the "Release desktop app" Action attaches it to each GitHub release), for /download: the
+// newest release's FAFO-Windows-<version>.zip when it has one (since 1.9.146, so a browser names the file after its
+// version; index.js looks it up from RELEASES_URL), else DOWNLOAD_URL, GitHub's link to the latest release's
+// FAFO-Windows.zip, as every page before 1.9.146 links it.
+export const RELEASES_URL = "https://github.com/dolamv-coder/profile-vault-updates/releases";
 export const DOWNLOAD_URL = "https://github.com/dolamv-coder/profile-vault-updates/releases/latest/download/FAFO-Windows.zip";
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

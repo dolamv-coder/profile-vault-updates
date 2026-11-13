@@ -3,13 +3,29 @@ name: Release desktop app
 # Builds the Windows download, FAFO-Windows.zip, from desktop/ (see desktop/README.md) and tests it:
 # pull requests that touch desktop/ run the tests and the build. Run it by hand from the Actions tab on
 # main to publish the build as the GitHub release v<desktop/package.json version>, which becomes the
-# latest one that the app's download links point to (releases/latest/download/FAFO-Windows.zip, and
-# Orbit-Windows.zip and ProfileVault-Windows.zip, the same zip under the names older pages link to).
+# latest one that the app's download links point to. The zip goes up as FAFO-Windows-<version>.zip, so a
+# browser names the download after its version (the owner's request, 2026-11-13: "anytime a new update is
+# available, can you have the version in the description"; fafoaco.com/download and page 1.9.146+ link it),
+# and as FAFO-Windows.zip, Orbit-Windows.zip and ProfileVault-Windows.zip, the same zip under the names older
+# pages link to (releases/latest/download/FAFO-Windows.zip and the others).
 # The page of that version has to be published first (update.json), and the release mustn't exist yet.
+#
+# Run by hand with "Only add FAFO-Windows-<version>.zip to the latest release" ticked, it builds nothing: it
+# adds that name to the release that's out (one published before the versioned name, v1.9.139 and older),
+# downloading its FAFO-Windows.zip, checking its sha256 against the release's own (GitHub's digest of the
+# asset, else the notes' sha256 line), uploading the same bytes under the new name and naming it in the notes'
+# sha256 line. It changes nothing else about the release. Run again after one that stopped part way, it checks the name
+# that's there (fully uploaded, the same sha256) and finishes the notes; with both done, it does nothing.
 on:
   pull_request:
     paths: ["desktop/**", ".github/workflows/desktop-release.yml"]
   workflow_dispatch:
+    inputs:
+      name_latest:
+        description: "Only add FAFO-Windows-<version>.zip to the latest release (no build)"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: desktop-release-${{ github.ref }}
@@ -20,6 +36,8 @@ permissions:
 
 jobs:
   build:
+    # Not when only adding the versioned name to the latest release (on pull requests inputs is empty, so it runs).
+    if: ${{ !inputs.name_latest }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -61,7 +79,7 @@ jobs:
   # produced and tested.
   release:
     needs: build
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && !inputs.name_latest
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -76,18 +94,148 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           version="$(jq -r .version dist/build.json)"
           sha="$(jq -r .sha256 dist/build.json)"
           tag="v$version"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::The build's version, \"$version\", isn't a page version like 1.9.146."; exit 1; fi
           if [ "$(sha256sum dist/FAFO-Windows.zip | cut -d' ' -f1)" != "$sha" ]; then echo "::error::The zip isn't the one the build job checked."; exit 1; fi
           if gh release view "$tag" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "::error::Release $tag already exists. To publish another build, set desktop/package.json to a newer page's version."
             exit 1
           fi
-          # The same zip under the names older pages link to.
+          # The same zip with its version in the name (what a browser saves it as), and under the names older pages link to.
+          named="FAFO-Windows-$version.zip"
+          cp dist/FAFO-Windows.zip "dist/$named"
           cp dist/FAFO-Windows.zip dist/Orbit-Windows.zip
           cp dist/FAFO-Windows.zip dist/ProfileVault-Windows.zip
-          printf '\n\nsha256 of FAFO-Windows.zip (and the same zip as Orbit-Windows.zip and ProfileVault-Windows.zip): `%s`\n' "$sha" >> dist/notes.md
-          gh release create "$tag" dist/FAFO-Windows.zip dist/Orbit-Windows.zip dist/ProfileVault-Windows.zip -R "$GITHUB_REPOSITORY" \
+          printf '\n\nsha256 of %s (and the same zip as FAFO-Windows.zip, Orbit-Windows.zip and ProfileVault-Windows.zip): `%s`\n' "$named" "$sha" >> dist/notes.md
+          gh release create "$tag" "dist/$named" dist/FAFO-Windows.zip dist/Orbit-Windows.zip dist/ProfileVault-Windows.zip -R "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" --title "FAFO $version for Windows" --notes-file dist/notes.md --latest
           echo "Published https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag"
+
+  # Run by hand with name_latest: adds FAFO-Windows-<version>.zip to the latest release, a copy of its own
+  # FAFO-Windows.zip, checked against the sha256 the release gives for it. Builds nothing and runs no code from
+  # the repo (no checkout): only this shell, gh and jq. Never replaces an asset (no --clobber) and never changes
+  # which release is latest, its title, tag or other assets; of the notes, only the sha256 line changes. A run that
+  # stopped part way (after the upload, before the notes changed) is finished by running it again: a name already
+  # there is checked (fully uploaded, the same sha256) and the notes' line rewritten if it still has the old wording.
+  name-latest:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.name_latest
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - name: Add FAFO-Windows-<version>.zip to the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          repo="$GITHUB_REPOSITORY"
+          work="$(mktemp -d)"
+          gh api "repos/$repo/releases/latest" > "$work/release.json"
+          tag="$(jq -r '.tag_name // ""' "$work/release.json")"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::The latest release's tag, \"$tag\", isn't v<version> (like v1.9.139), so nothing was added."
+            exit 1
+          fi
+          version="${tag#v}"
+          named="FAFO-Windows-$version.zip"
+          again="Run this again to finish: it picks up where this one stopped."
+          if ! jq -e 'any(.assets[]?; .name == "FAFO-Windows.zip")' "$work/release.json" > /dev/null; then
+            echo "::error::Release $tag has no FAFO-Windows.zip to copy, so nothing was added."
+            exit 1
+          fi
+
+          # The sha256 the release gives for FAFO-Windows.zip: GitHub's digest of the asset, else the notes' line, in
+          # the wording from before (old) or the one naming the new file first (new, after a run or a newer release).
+          digest="$(jq -r '[.assets[] | select(.name == "FAFO-Windows.zip") | .digest // ""][0]' "$work/release.json")"
+          want=""
+          if [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then want="${digest#sha256:}"; fi
+          jq -j '.body // ""' "$work/release.json" > "$work/notes-before.md"
+          line='^sha256 of FAFO-Windows\.zip \(and the same zip as Orbit-Windows\.zip and ProfileVault-Windows\.zip\): `([0-9a-f]{64})`(\r?)$'
+          newline="^sha256 of FAFO-Windows-${version//./\\.}\\.zip \\(and the same zip as FAFO-Windows\\.zip, Orbit-Windows\\.zip and ProfileVault-Windows\\.zip\\): \`([0-9a-f]{64})\`(\\r?)\$"
+          old_noted="$(sed -nE "s/$line/\1/p" "$work/notes-before.md")"
+          new_noted="$(sed -nE "s/$newline/\1/p" "$work/notes-before.md")"
+          noted="$(printf '%s\n%s\n' "$old_noted" "$new_noted" | grep -v '^$' | sort -u || true)"
+          if [ "$(printf '%s' "$noted" | grep -c '' || true)" -gt 1 ]; then
+            echo "::error::Release $tag's notes give more than one sha256 for FAFO-Windows.zip, so nothing was added."
+            exit 1
+          fi
+          if [ -n "$want" ] && [ -n "$noted" ] && [ "$want" != "$noted" ]; then
+            echo "::error::Release $tag's notes give FAFO-Windows.zip's sha256 as $noted, but GitHub has $want for it, so nothing was added."
+            exit 1
+          fi
+          if [ -z "$want" ]; then want="$noted"; fi
+          if [ -z "$want" ]; then
+            echo "::error::Release $tag gives no sha256 for FAFO-Windows.zip (no digest on the asset, no sha256 line in its notes), so nothing was added."
+            exit 1
+          fi
+
+          if jq -e --arg n "$named" 'any(.assets[]?; .name == $n)' "$work/release.json" > /dev/null; then
+            # There already: from a run that stopped part way, or a release made with it. Only finish if it's whole and the same zip.
+            state="$(jq -r --arg n "$named" '[.assets[] | select(.name == $n) | (.state // "uploaded")][0]' "$work/release.json")"
+            if [ "$state" != uploaded ]; then
+              echo "::error::Release $tag has $named, but GitHub hasn't finished taking it (state \"$state\"). Delete it from the release by hand, then run this again."
+              exit 1
+            fi
+            have="$(jq -r --arg n "$named" '[.assets[] | select(.name == $n) | (.digest // "")][0]' "$work/release.json")"
+            if [[ "$have" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              have="${have#sha256:}"
+            else
+              # No digest from GitHub: download it and see.
+              mkdir "$work/have"
+              gh release download "$tag" -R "$repo" -p "$named" -D "$work/have"
+              have="$(sha256sum "$work/have/$named" | cut -d' ' -f1)"
+            fi
+            if [ "$have" != "$want" ]; then
+              echo "::error::Release $tag has $named with sha256 $have, not FAFO-Windows.zip's $want. Delete it from the release by hand, then run this again."
+              exit 1
+            fi
+            echo "Release $tag already has $named, the same zip as its FAFO-Windows.zip."
+            added=""
+          else
+            mkdir "$work/dl"
+            gh release download "$tag" -R "$repo" -p FAFO-Windows.zip -D "$work/dl"
+            got="$(sha256sum "$work/dl/FAFO-Windows.zip" | cut -d' ' -f1)"
+            if [ "$got" != "$want" ]; then
+              echo "::error::The FAFO-Windows.zip downloaded from $tag has sha256 $got, not $want, so nothing was added."
+              exit 1
+            fi
+            cp "$work/dl/FAFO-Windows.zip" "$work/$named"
+            if ! gh release upload "$tag" "$work/$named" -R "$repo"; then
+              echo "::error::Couldn't upload $named to release $tag. $again"
+              exit 1
+            fi
+
+            # It's there, whole, with the same bytes when GitHub gives a digest.
+            if ! gh api "repos/$repo/releases/tags/$tag" > "$work/after.json"; then
+              echo "::error::Uploaded $named to release $tag, but couldn't read the release back to check it. $again"
+              exit 1
+            fi
+            now="$(jq -r --arg n "$named" '[.assets[]? | select(.name == $n) | ((.state // "uploaded") + " " + (.digest // "-"))][0] // ""' "$work/after.json")"
+            if [ -z "$now" ]; then echo "::error::$named doesn't show on release $tag after uploading it. $again"; exit 1; fi
+            if [ "${now%% *}" != uploaded ]; then
+              echo "::error::GitHub hasn't finished taking $named on release $tag (state \"${now%% *}\"). $again"
+              exit 1
+            fi
+            now="${now#* }"
+            if [ "$now" != "-" ] && [ "$now" != "sha256:$want" ]; then
+              echo "::error::GitHub has $named as $now, not sha256:$want. Delete it from release $tag by hand, then run this again."
+              exit 1
+            fi
+            added=1
+          fi
+
+          # Only the notes' sha256 line changes: it names the new file first. Everything else stays byte for byte
+          # (GNU sed keeps a last line without a newline as it is, and a line's \r).
+          sed -E "s/$line/sha256 of $named (and the same zip as FAFO-Windows.zip, Orbit-Windows.zip and ProfileVault-Windows.zip): \`\\1\`\\2/" "$work/notes-before.md" > "$work/notes.md"
+          if cmp -s "$work/notes-before.md" "$work/notes.md"; then
+            if [ -z "$new_noted" ]; then echo "::notice::Release $tag's notes have no sha256 line to name $named in, so they're left as they are."; fi
+            if [ -z "$added" ]; then echo "Nothing to do."; exit 0; fi
+          elif ! gh release edit "$tag" -R "$repo" --notes-file "$work/notes.md"; then
+            echo "::error::$named is on release $tag, but its notes couldn't be changed. Run this again, or edit its sha256 line by hand to: sha256 of $named (and the same zip as FAFO-Windows.zip, Orbit-Windows.zip and ProfileVault-Windows.zip): \`$want\`"
+            exit 1
+          fi
+          if [ -n "$added" ]; then echo "Added $named to https://github.com/$repo/releases/tag/$tag"; else echo "Named $named in the notes of https://github.com/$repo/releases/tag/$tag"; fi

@@ -10,10 +10,12 @@
 // Since 2026-10-10 the owner's domain points here too (custom domains added in the Cloudflare dashboard, not in
 // wrangler.toml, so a deploy needs no access to the domain): app.fafoaco.com is the app, as app.orbit-app.workers.dev
 // still is for older pages and bookmarks; fafoaco.com is FAFO's front page (site.js), with /download for the newest
-// Windows download (since 2026-10-13 the page itself doesn't link it); www.fafoaco.com goes to fafoaco.com.
+// Windows download (since 2026-10-13 the page itself doesn't link it; page 1.9.146+ opens it for a new download): the
+// newest release's FAFO-Windows-<version>.zip, so the file a browser saves has its version in its name (the owner's
+// request, 2026-11-13), else GitHub's link to the latest FAFO-Windows.zip; www.fafoaco.com goes to fafoaco.com.
 // Both serve FAFO's icons (brand.js, since 2026-10-14): /favicon.ico, /favicon.svg and /apple-touch-icon.png, which
 // browsers ask for on their own, so the app's tab and home-screen icon need no new page.
-import { sitePage, SITE_HOST, DOWNLOAD_URL, APP_URL } from "./site.js";
+import { sitePage, SITE_HOST, DOWNLOAD_URL, RELEASES_URL, APP_URL } from "./site.js";
 import { FAVICON_SVG, FAVICON_ICO_B64, APPLE_ICON_B64 } from "./brand.js";
 
 const UPDATE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/web-update.json";
@@ -21,6 +23,10 @@ const UPDATE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault
 const PUBLISHER_KEY = "MCowBQYDK2VwAyEAjMqbFzE6HEjJ+PZAxJdcRPQutn4Eh6YjedtapiYe48o=";
 const SIG_CONTEXT = "profile-vault-update";
 const CHECK_EVERY_MS = 60 * 1000;
+// /download's lookup of the newest release's versioned zip: an answer found is kept 10 minutes, none (or a lookup that
+// failed) 1 minute, per worker instance; GitHub gets 3 seconds for both of its answers. The environment can change each
+// (DOWNLOAD_FOUND_MS, DOWNLOAD_MISS_MS, DOWNLOAD_TIMEOUT_MS: the tests do).
+const DOWNLOAD_FOUND_MS = 10 * 60 * 1000, DOWNLOAD_MISS_MS = 60 * 1000, DOWNLOAD_TIMEOUT_MS = 3000;
 
 const HEADERS = {
   "x-content-type-options": "nosniff",
@@ -41,6 +47,8 @@ const ICON_FILES = {
 };
 
 let current = null;   // {version, sha256, html, checkedAt}: the last page that checked out
+let download = null;  // {url, until}: where /download went last, kept until `until`
+let downloadLookup = null;   // the lookup under way, which every /download meanwhile waits for
 
 export default {
   async fetch(request, env, ctx) {
@@ -69,12 +77,12 @@ export default {
   },
 };
 
-// The front page (fafoaco.com): the page, /download (the newest Windows download), /app (the web version); anything
-// else goes to the front page. It shows the release the web version serves, when that's known: it waits for the feed at
-// most 800 ms (and lets it finish in the background), so a slow GitHub never holds up the page for its version line.
+// The front page (fafoaco.com): the page, /download (the newest Windows download, downloadUrl), /app (the web version);
+// anything else goes to the front page. It shows the release the web version serves, when that's known: it waits for the
+// feed at most 800 ms (and lets it finish in the background), so a slow GitHub never holds up the page for its version line.
 async function frontPage(request, env, url, ctx) {
   if (url.pathname === "/robots.txt") return text(200, "User-agent: *\nAllow: /\n");
-  if (url.pathname === "/download" || url.pathname === "/download/") return Response.redirect(DOWNLOAD_URL, 302);
+  if (url.pathname === "/download" || url.pathname === "/download/") return Response.redirect(await downloadUrl(env, ctx), 302);
   if (url.pathname === "/app" || url.pathname === "/app/") return Response.redirect((env.APP_URL || APP_URL) + "/", 302);
   if (url.pathname !== "/" && url.pathname !== "/index.html") return Response.redirect(url.origin + "/", 302);
   const r = refresh(env).catch((e) => console.error("refresh", e && e.message || e));
@@ -104,6 +112,55 @@ async function refresh(env) {
   if (hex(await crypto.subtle.digest("SHA-256", html)) !== m.sha256) throw new Error("the page doesn't match the feed");
   current = { version: m.version, sha256: m.sha256, html, checkedAt: now };
 }
+
+// Where /download goes (since 1.9.146): the newest release's FAFO-Windows-<version>.zip, which a browser saves under that
+// name (the owner, 2026-11-13: "anytime a new update is available, can you have the version in the description"), when
+// that release has it; releases before it only have FAFO-Windows.zip, so DOWNLOAD_URL, as before. Never through GitHub's
+// API, which allows 60 unauthenticated requests an hour per address, shared with every worker on Cloudflare's: github.com
+// answers which release is the latest with a redirect. The answer is kept a while (DOWNLOAD_FOUND_MS, DOWNLOAD_MISS_MS),
+// requests meanwhile share one lookup, and a lookup that fails or takes too long only means DOWNLOAD_URL: it never throws.
+async function downloadUrl(env, ctx) {
+  if (download && Date.now() < download.until) return download.url;
+  const timeout = envMs(env, "DOWNLOAD_TIMEOUT_MS", DOWNLOAD_TIMEOUT_MS);
+  if (!downloadLookup) {
+    const lookup = findDownload(env, timeout)
+      .catch((e) => { console.error("download", e && e.message || e); return ""; })
+      .then((found) => {
+        const keep = found ? envMs(env, "DOWNLOAD_FOUND_MS", DOWNLOAD_FOUND_MS) : envMs(env, "DOWNLOAD_MISS_MS", DOWNLOAD_MISS_MS);
+        download = { url: found || DOWNLOAD_URL, until: Date.now() + keep };
+        return download.url;
+      })
+      .finally(() => { if (downloadLookup === lookup) downloadLookup = null; });
+    downloadLookup = lookup;
+    // It goes on if this visitor leaves, for the others waiting on it.
+    if (ctx && ctx.waitUntil) ctx.waitUntil(lookup);
+  }
+  // A request never waits on a lookup longer than its own deadline (one started by a request that's gone, say).
+  let timer;
+  const late = new Promise((ok) => { timer = setTimeout(() => ok(DOWNLOAD_URL), timeout + 1000); });
+  try { return await Promise.race([downloadLookup, late]); }
+  catch { return DOWNLOAD_URL; }
+  finally { clearTimeout(timer); }
+}
+
+// The latest release's tag, from where github.com sends <base>/latest/download/FAFO-Windows.zip (exactly
+// <base>/download/v<X.Y.Z>/FAFO-Windows.zip: anything else, another repository, a query, another tag or no redirect, is
+// no answer), then whether that release has FAFO-Windows-<X.Y.Z>.zip (a redirect to the file, or the file). "" for none.
+async function findDownload(env, timeout) {
+  const base = String(env.RELEASES_URL || RELEASES_URL).replace(/\/+$/, "");
+  const signal = AbortSignal.timeout(timeout);
+  const head = (u) => fetch(u, { method: "HEAD", redirect: "manual", headers: { "cache-control": "no-cache" }, signal });
+  const latest = await head(base + "/latest/download/FAFO-Windows.zip");
+  const loc = latest.status >= 300 && latest.status < 400 ? latest.headers.get("location") || "" : "";
+  const at = base + "/download/v";
+  const m = loc.startsWith(at) ? /^(\d{1,6}\.\d{1,6}\.\d{1,6})\/FAFO-Windows\.zip$/.exec(loc.slice(at.length)) : null;
+  if (!m) return "";
+  const named = `${base}/download/v${m[1]}/FAFO-Windows-${m[1]}.zip`;
+  const there = await head(named);
+  return there.status === 200 || (there.status >= 300 && there.status < 400) ? named : "";
+}
+
+const envMs = (env, k, dflt) => env[k] != null && String(env[k]) !== "" && Number(env[k]) >= 0 ? Number(env[k]) : dflt;
 
 async function signed(env, m) {
   const der = Uint8Array.from(atob(env.PUBLISHER_KEY || PUBLISHER_KEY), (c) => c.charCodeAt(0));
