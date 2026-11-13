@@ -1329,7 +1329,8 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 /* The setup guide (1.9.145): a panel of its own in the bottom right corner (the bottom of a phone), never a window. Under
    windows (50), menus (60) and toasts (70), over the selection bar (30), and lifted above that bar while it shows
    (--guide-lift, pageRoom). Its highlight colour is --info (--accent is red or gold in four themes), darker in the light
-   theme, where --info is too pale on white. */
+   theme, where --info is too pale on white. Minimized, #guide is .guide-pill and holds the button .guide-pill-btn: the two
+   never share a class, or the container would take the button's padding and dot. */
 :root{--guide-ring:var(--info)}
 :root[data-theme="light"]{--guide-ring:color-mix(in srgb,var(--info) 62%,#000)}
 #guide{position:fixed;right:16px;bottom:calc(16px + var(--guide-lift,0px) + env(safe-area-inset-bottom,0px));z-index:40;width:360px;max-width:calc(100vw - 32px);
@@ -1363,11 +1364,14 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .guide-body ul{margin:0 0 8px;padding-left:18px;color:var(--ink-2)}
 .guide-body li{margin:0 0 6px}
 .guide-fin{padding:8px 16px 16px}
-.guide-pill{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:var(--panel-bg,var(--sheet));color:var(--ink);
+.guide-pill-btn{display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:var(--panel-bg,var(--sheet));color:var(--ink);
   font-weight:700;font-size:calc(14px*var(--fs));cursor:pointer;box-shadow:0 12px 30px -10px rgba(0,0,0,.5)}
-.guide-pill::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--guide-ring);flex:none}
+.guide-pill-btn::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--guide-ring);flex:none}
+/* On a phone it leaves at least 120px of the page showing under the top bar (two rows there: --guide-top, pageRoom), also
+   when it's lifted above the selection bar, and is never less than 160px tall. */
 @media (max-width:900px){
-  #guide{left:12px;right:12px;width:auto;max-width:none;bottom:calc(12px + var(--guide-lift,0px) + env(safe-area-inset-bottom,0px));max-height:min(60vh,520px,calc(100vh - 80px - var(--guide-lift,0px)))}
+  #guide{left:12px;right:12px;width:auto;max-width:none;bottom:calc(12px + var(--guide-lift,0px) + env(safe-area-inset-bottom,0px));
+    max-height:max(160px,min(60vh,520px,calc(100vh - var(--guide-top,64px) - 132px - var(--guide-lift,0px) - env(safe-area-inset-bottom,0px))))}
   #guide.guide-ask{width:auto}
   #guide.guide-pill{left:auto}
 }
@@ -1378,6 +1382,11 @@ html[data-guide-hl="submit"] #main [data-act="submit-slots"],
 html[data-guide-hl="plan"] #main [data-act="bill-plan-checkout"],
 html[data-guide-hl="slot"] #main .grid-slots > :nth-child(-n+3) [data-act="slot"] + .sw-track,
 html[data-guide-hl="interests"] #main .int-card:nth-child(-n+3) label.check{outline:2px solid var(--guide-ring);outline-offset:2px;animation:guide-pulse 1.6s ease-in-out infinite}
+/* The one of them with the keyboard's focus keeps a ring of its own colour, so it can be told from the others. */
+html[data-guide-hl="new-profile"] #main [data-act="new-profile"]:focus-visible,
+html[data-guide-hl="submit"] #main [data-act="submit-slots"]:focus-visible,
+html[data-guide-hl="plan"] #main [data-act="bill-plan-checkout"]:focus-visible,
+html[data-guide-hl="slot"] #main .grid-slots > :nth-child(-n+3) [data-act="slot"]:focus-visible + .sw-track{outline-color:var(--ink)}
 @media (prefers-reduced-motion:reduce){html[data-guide-hl] #main *{animation:none!important}}
 
 /* toasts */
@@ -4761,6 +4770,7 @@ function pageRoom(){
   const g = $("#guide");
   if (g){
     g.style.setProperty("--guide-lift", Math.ceil(h) + "px");
+    { const tb = $(".topbar"); g.style.setProperty("--guide-top", (tb ? Math.max(0, Math.ceil(tb.getBoundingClientRect().bottom)) : 0) + "px"); }
     if (!g.hidden){ const r = g.getBoundingClientRect(); if (r.height) room = Math.max(room, Math.ceil(window.innerHeight - r.top + 24)); }
   }
   main.style.paddingBottom = room > 120 ? room + "px" : "";
@@ -19866,6 +19876,9 @@ function guideNote(patch){
 }
 // A slot sent to the seller (not one an old web version marked and never sent: unsent).
 const guideSubbed = () => Object.values((S && S.subs) || {}).some(x => x && typeof x === "object" && !unsent(x));
+// Submitted at some point: a slot out now, or the name Submit's window asks for, which every Submit saves (S.submitName, synced;
+// Request more slots saves it too). A buyer who submitted before 1.9.145 and has pulled every slot since has no slot left.
+const guideSentBefore = () => guideSubbed() || !!(S && typeof S.submitName === "string" && S.submitName.trim());
 // true: a buyer; false: the seller's own FAFO; null: not known yet (a license /premium hasn't answered for on this device).
 function guideBuyer(){
   if (!S || MODE !== "vault" || orderAlertsOn()) return false;
@@ -19877,7 +19890,7 @@ function guideBuyer(){
 // What rules the question out: the seller, a no, finished, submitted, or Not now on this device in the last 24 hours.
 function guideAskOff(){
   const g = guideSet();
-  return guideBuyer() === false || !!(g.off || g.done || g.sent) || guideSubbed() || guideLocal().later > Date.now();
+  return guideBuyer() === false || !!(g.off || g.done || g.sent) || guideSentBefore() || guideLocal().later > Date.now();
 }
 // Asks once the first sync round is in (it may bring another device's answer or slots), as the invoice's notices wait.
 function guideAskNow(){
@@ -19903,10 +19916,12 @@ function guideState(){
     body:fix ? `<p><strong>${esc(fix.name || "Your profile")}</strong> isn't ready yet: ${esc(profileIssueWords(profileProblems(fix)).label)}. Open it, fix what's marked, and save. Profiles show <strong>Ready to submit</strong> when they're good to go.</p>`
       : `<p>Your profile shows <strong>Ready to submit</strong> on Profiles when it has everything it needs.</p>`,
     acts:fix ? go("ready", "Fix it") : ""});
-  // Interests, when the seller has a list (not one that's come back empty: nothing to tick there).
-  const L = interestsShown() ? interestRead() : null;
-  if (interestsShown() && !(L && !L.items.length)){
-    const ticked = interestBadge() > 0;
+  // Interests, when the seller has a list (not one that's come back empty: nothing to tick there). Optional and before
+  // Submit, so not once the buyer has submitted without it (a key typed in Submit's window only shows Interests then, and a
+  // seller may add products later): it would come back as the current step, ahead of the seller's approval.
+  const L = interestsShown() ? interestRead() : null, sent = !!g.sent || guideSentBefore();
+  const ticked = interestsShown() && interestBadge() > 0;
+  if (interestsShown() && !(L && !L.items.length) && (!sent || ticked || skip.interests)){
     steps.push({id:"interests", title:"Pick what your seller runs (optional)", done:ticked || !!skip.interests,
       body:`<p>On <strong>Interests</strong>, tick the products you'd like your seller to run on your profiles. Your ticks go to your seller with your next Submit.</p>`,
       acts:go("interests", "Open Interests") + (ticked || skip.interests ? "" : `<button type="button" class="btn btn-sm" data-act="guide-skip" data-id="interests">Skip</button>`)});
@@ -19919,20 +19934,19 @@ function guideState(){
       body:`<p>Your seller charges ${cents > 0 ? esc(billMoney(cents)) + " " : ""}for each checkout. On <strong>Invoice</strong>, choose <strong>Pay per checkout</strong>. Until you do, Submit stays off.</p>`,
       acts:go("pay", "Open Invoice")});
   }
-  const sent = !!g.sent || guideSubbed();
   steps.push({id:"submit", title:"Switch it on and submit", done:sent,
     body:`<p>On <strong>Submit</strong>, switch on the profiles you want your seller to run, then press <strong>Submit</strong>. They go to your seller's Discord to be approved.</p>${!sellerLic() ? `<p>The first time, Submit asks for your license key: the one you got with Continue with Discord (it starts with PVLT).</p>` : ""}`,
     acts:go("submit", "Go to Submit")});
   if (sent) steps.push({id:"wait", title:"Wait for your seller's approval", done:!!g.done || Object.values(S.subs || {}).some(x => subState(x) === "ok"),
     body:`<p>Your slots show <strong>Pending approval</strong> until your seller approves them, then <strong>Success</strong>. If one shows <strong>Declined</strong>, switch it off and on again to send it in a new batch, or ask your seller.</p>
-      <p>When your seller checks out on your profiles, the orders show up in <strong>Orders</strong>.</p>`,
+      <p>Orders your seller places on an assigned account show up in <strong>Orders</strong> on their own. On your own account, the store emails you: FAFO's desktop app adds those orders when it syncs that inbox.</p>`,
     acts:go("wait", "Go to Submit")});
   return {steps, cur:steps.find(s => !s.done) || null, n:steps.filter(s => s.done).length, m:steps.length};
 }
 const guideBtnHTML = () => S && MODE === "vault" ? `<button class="btn" data-act="guide-open" title="Step by step: make a profile, then send it to your seller">Setup guide</button>` : "";
 const guideAskHTML = () => `<div class="guide-ask-in"><h3>Need help setting up your profiles?</h3><p>FAFO can walk you through it, step by step: make a profile, then send it to your seller.</p>
   <div class="guide-acts"><button type="button" class="btn btn-sm btn-primary" data-act="guide-yes">Walk me through it</button><button type="button" class="btn btn-sm" data-act="guide-later">Not now</button><button type="button" class="btn btn-sm btn-quiet" data-act="guide-never">I know how</button></div></div>`;
-const guidePillHTML = (st) => `<button type="button" class="guide-pill" data-act="guide-open" aria-label="Open the setup guide, ${st.n} of ${st.m} done">Setup guide · ${st.n} of ${st.m}</button>`;
+const guidePillHTML = (st) => `<button type="button" class="guide-pill-btn" data-act="guide-open" aria-label="Open the setup guide, ${st.n} of ${st.m} done">Setup guide · ${st.n} of ${st.m}</button>`;
 // The open panel: every step as a row (a number, or a check once done), and one step's text and buttons: the current one,
 // or one the buyer opened (its row). The same on a phone, where the panel is only as tall as that.
 function guidePanelHTML(st){
@@ -19960,7 +19974,7 @@ function paintGuide(){
   let html = "", kind = "";
   if (S && MODE === "vault"){
     // Submitted once: the Submit step stays done after those slots are pulled. Not before the first sync round is in.
-    if (!SYNC.oneStoreDue && !SYNC.busy && !guideSet().sent && guideSubbed()) guideNote({sent:Date.now()});
+    if (!SYNC.oneStoreDue && !SYNC.busy && !guideSet().sent && guideSentBefore()) guideNote({sent:Date.now()});
     const L = guideLocal();
     if (GUIDE.ask && (L.open || guideAskOff())) GUIDE.ask = false;
     if (L.open){
@@ -19984,29 +19998,44 @@ function paintGuide(){
 }
 // The highlight: a name on <html> the CSS reads, since #main is drawn again on every change. It goes on the next click on
 // what it rings, when the current step changes (from the one current when it was set, so a step opened from its row keeps
-// its ring), or after 12 seconds. Switching a slot on moves it to the Submit button.
-function guideHl(name){
+// its ring), or after 12 seconds. Switching a slot on moves it to the Submit button, without scrolling (`still`): the buyer
+// may be switching on more.
+function guideHl(name, still){
   clearTimeout(GUIDE.hlTimer); GUIDE.hlTimer = 0;
-  GUIDE.hl = name || ""; GUIDE.hlStep = name ? GUIDE.now : ""; GUIDE.hlScrolled = false;
+  GUIDE.hl = name || ""; GUIDE.hlStep = name ? GUIDE.now : ""; GUIDE.hlScrolled = !!still;
   const root = document.documentElement;
   if (!GUIDE.hl){ delete root.dataset.guideHl; return; }
   root.dataset.guideHl = GUIDE.hl;
   GUIDE.hlTimer = setTimeout(() => { GUIDE.hlTimer = 0; guideHl(""); }, GUIDE_HL_MS);
   guideScroll();
 }
+// What it rings goes to the middle of what nothing covers: under the top bar (two rows on a phone), and above the guide
+// when it's beside them (a phone's is the screen's width) and the selection bar. In the middle of the screen they'd be under
+// a phone's guide. The first few (the CSS rings three) when they fit there together, a row of Interests' ticks say, else the
+// first; one taller than the room starts just under the top bar.
 function guideScroll(){
   if (!GUIDE.hl || GUIDE.hlScrolled) return;
-  const el = $$(GUIDE_HL[GUIDE.hl]).map(x => x.closest(".sw, .check") || x).find(x => x.getClientRects().length);
-  if (!el) return;   // not drawn yet (Invoice still checking): the next paint scrolls to it
+  const els = $$(GUIDE_HL[GUIDE.hl]).map(x => x.closest(".sw, .check") || x).filter(x => x.getClientRects().length).slice(0, 3);
+  if (!els.length) return;   // not drawn yet (Invoice still checking): the next paint scrolls to it
   GUIDE.hlScrolled = true;
-  try { el.scrollIntoView({block:"center"}); } catch(e){}
+  const rs = els.map(x => x.getBoundingClientRect()), tb = $(".topbar"), bar = $("#bulkbar");
+  const box = {top:Math.min(...rs.map(r => r.top)), bottom:Math.max(...rs.map(r => r.bottom)), left:Math.min(...rs.map(r => r.left)), right:Math.max(...rs.map(r => r.right))};
+  let top = tb ? Math.max(0, tb.getBoundingClientRect().bottom) : 0, bottom = window.innerHeight;
+  [$("#guide"), bar && !bar.hidden ? $(".bulk-inner", bar) : null].forEach(x => {
+    if (!x || x.hidden) return;
+    const b = x.getBoundingClientRect();
+    if (b.height && b.left < box.right && b.right > box.left) bottom = Math.min(bottom, b.top);
+  });
+  const room = bottom - top - 16, r = box.bottom - box.top <= room ? box : rs[0], h = r.bottom - r.top;
+  const dy = h <= room ? r.top + h / 2 - (top + bottom) / 2 : r.top - top - 8;
+  try { window.scrollBy(0, dy); } catch(e){}
 }
 function guideHlCheck(st){
   const cur = GUIDE.now = st.cur ? st.cur.id : "";
   if (GUIDE.hl && GUIDE.hlStep !== cur) guideHl("");
   if (!GUIDE.after) return;
   if (GUIDE.after < Date.now()) GUIDE.after = 0;
-  else if (st.steps.some(s => s.id === "submit" && !s.done) && UI.view === "submit" && storeGroups().some(g => g.fresh.length)){ GUIDE.after = 0; guideHl("submit"); }
+  else if (st.steps.some(s => s.id === "submit" && !s.done) && UI.view === "submit" && storeGroups().some(g => g.fresh.length)){ GUIDE.after = 0; guideHl("submit", true); }
 }
 document.addEventListener("click", (e) => {
   if (!GUIDE.hl || !e.target || !e.target.closest || !e.target.closest(GUIDE_HL[GUIDE.hl])) return;
