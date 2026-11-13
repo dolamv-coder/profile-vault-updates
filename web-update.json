@@ -1,10 +1,10 @@
 {
-  "version": "1.9.145",
-  "url": "index-1.9.145.html",
-  "sha256": "ea4059352cd9cb2fdacba638cda0b5744dfbc4f21c3ce7cd5b286c44bf50df6f",
-  "signature": "IrmuObdPCShIeqgLfR8yRgA8sQcnoP90DHJ8j3Rh9LsajO08+bPEt2C+KNcdwevfRpFdR2jtM6o7xaS6bqhuDg==",
+  "version": "1.9.146",
+  "url": "index-1.9.146.html",
+  "sha256": "342d111e1900c13f13c0f32f488485961e6f529bbb452d9acb30fbd806ba1231",
+  "signature": "b+0niv45/nWKyrguJWvVQEZb7D75wv/7oFxFEPTtxh5iJ5AE5LuwmBU3dcqsXahYrox/Q9/FYUVry2b9MhxlDQ==",
   "minAppVersion": "0",
-  "notes": "New to FAFO? A setup guide now walks you through making a profile and sending it to your seller, step by step, and explains the two ways a profile can check out. FAFO offers it when you open it until your first Submit, and you can open it any time from Profiles or Submit.",
+  "notes": "When FAFO needs a new Windows download, the file you get now has its version in its name, like FAFO-Windows-1.9.139.zip, so you can tell your downloads apart.",
   "installerUrl": "",
-  "publishedAt": "2026-11-13T06:05:17.223Z"
+  "publishedAt": "2026-11-13T07:51:32.696Z"
 }
