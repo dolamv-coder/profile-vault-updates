@@ -1,10 +1,10 @@
 {
-  "version": "1.9.144",
-  "url": "index-1.9.144.html",
-  "sha256": "80b829c4b2ac691d3166ed0c1fd1f0174dcb96b5d5ef8a92847777a4520073a8",
-  "signature": "6QyVGANFVK3H+tbh5RoZ2dIpx6VX09f5pDGpUt9aipcbaqi/399DAuhRQswXKUHA74F0APEU9u9+5bYePrG4DA==",
+  "version": "1.9.145",
+  "url": "index-1.9.145.html",
+  "sha256": "ea4059352cd9cb2fdacba638cda0b5744dfbc4f21c3ce7cd5b286c44bf50df6f",
+  "signature": "IrmuObdPCShIeqgLfR8yRgA8sQcnoP90DHJ8j3Rh9LsajO08+bPEt2C+KNcdwevfRpFdR2jtM6o7xaS6bqhuDg==",
   "minAppVersion": "0",
-  "notes": "Checkouts on your invoice are now due each Sunday, by 11:59 PM Eastern time, and Invoice shows the price your seller charges you per checkout.",
+  "notes": "New to FAFO? A setup guide now walks you through making a profile and sending it to your seller, step by step, and explains the two ways a profile can check out. FAFO offers it when you open it until your first Submit, and you can open it any time from Profiles or Submit.",
   "installerUrl": "",
-  "publishedAt": "2026-11-13T05:59:45.101Z"
+  "publishedAt": "2026-11-13T06:05:17.223Z"
 }
