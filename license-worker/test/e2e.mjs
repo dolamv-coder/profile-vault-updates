@@ -5102,6 +5102,34 @@ try {
     assert.deepEqual(await report([{ orderNo: "PASTE-1001", stage: "canceled" }, { orderNo: "OWN-9001", stage: "canceled" }]), { ok: true, added: 0, canceled: 1, ignored: 1 });
     assert.deepEqual([(await lineOf(umaKey, "PASTE-1001")).state, (await lineOf(umaKey, "OWN-9001")).state], ["canceled", "due"]);
   });
+  await test("Billing page: a Costco checkout (page 1.9.148: on the buyer's own Costco account) is pasted or added at Costco, never filed as Target", async () => {
+    // Uma's Costco slot on her own account, as a 1.9.148 page sends it: its own store's files, none assigned.
+    const costco = (f) => ({ ...f, store: "Costco", storeKey: "costco" });
+    assert.equal((await submit(umaKey, [costco(ownFile([["Uma Costco", "uma.costco@example.com"]])), { ...costco(loginsFile(["uma.costco@example.com"])), storeKey: undefined }],
+      { name: "Uma", on: 3 })).status, 200);
+    assert.deepEqual(dbRows(`SELECT store, store_name FROM billing_accounts WHERE key_hash = '${umaHash}' AND acct_hash = '${acctOf("uma.costco@example.com")}'`), [{ store: "costco", store_name: "Costco" }]);
+    const ub = umaHash.slice(0, 16);
+    const view = unescape(await (await fetchOnce(`${billLink}&b=${ub}`)).text()), list = unescape(await (await fetchOnce(billLink)).text());
+    for (const html of [view, list]) assert.ok(html.includes('<select name="store"><option value="target" selected>Target</option><option value="pokemoncenter">Pokémon Center</option><option value="costco">Costco</option></select>'), html.slice(0, 3000));
+    // A line naming Costco, one naming no store with Costco picked, and one naming no store with Target picked whose email
+    // only says costco: the email never names the store, so that one is looked for at Target, where nothing was out.
+    const paste = [`✅ Success | Costco | Sample Bundle | Order #CO-PASTE-1 | uma.costco@example.com | ${today}`, `CO-PASTE-2 uma.costco@example.com ${today}`].join("\n");
+    const pv = await billPost(billLink, { action: "paste-preview", paste, store: "costco", date: today });
+    assert.ok(/Costco · #CO-PASTE-1 · [^<]*<\/span><\/td>\s*<td>@uma · Uma<br><span[^>]*>Uma Costco<\/span><\/td>\s*<td style="color:#5fd39a">Will add<\/td>/.test(pv.text), pv.text.slice(-3000));
+    assert.ok(/Costco · #CO-PASTE-2 · [^<]*<\/span><\/td>\s*<td>@uma · Uma<br>/.test(pv.text));
+    assert.ok(pv.text.includes('<input type="hidden" name="store" value="costco">'));
+    const tgt = await billPost(billLink, { action: "paste-preview", paste: `CO-PASTE-3 uma.costco@example.com ${today}`, store: "target", date: today });
+    assert.ok(/Target · #CO-PASTE-3 · [^<]*<\/span><\/td>\s*<td><\/td>\s*<td>No slot out with this email on that date<\/td>/.test(tgt.text), tgt.text.slice(-2000));
+    const named = await billPost(billLink, { action: "paste-preview", paste: `Success Costco CO-PASTE-1 uma.costco@example.com ${today}`, store: "target", date: today });
+    assert.ok(/Costco · #CO-PASTE-1 · [^<]*<\/span><\/td>\s*<td>@uma · Uma<br>/.test(named.text), "a line naming Costco, with Target picked");
+    const add = await billPost(billLink, { action: "paste-add", paste, store: "costco", date: today });
+    assert.deepEqual([doneOf(add.location), errOf(add.location)], ["Added 2 checkouts.", null]);
+    assert.equal(doneOf((await billPost(billLink, { action: "add", key: umaHash, b: ub, store: "costco", order: "CO-ADD-1", date: today })).location), "Added Costco #CO-ADD-1 to their invoice.");
+    assert.deepEqual(dbRows("SELECT order_no, store, store_name, key_hash, source FROM billing_lines WHERE order_no LIKE 'CO-%' ORDER BY order_no"), ["CO-ADD-1", "CO-PASTE-1", "CO-PASTE-2"]
+      .map((no) => ({ order_no: no, store: "costco", store_name: "Costco", key_hash: umaHash, source: "owner" })));
+    assert.equal(errOf((await billPost(billLink, { action: "add", key: umaHash, b: ub, store: "walmart", order: "CO-ADD-2", date: today })).location), null, "another store's key is Target's, as before");
+    assert.deepEqual(dbRows("SELECT store FROM billing_lines WHERE order_no = 'CO-ADD-2'"), [{ store: "target" }]);
+  });
   await test("Billing page: the link lasts 24 hours, and 10 are asked a day; the admin summary", async () => {
     const d = await (await adminGet("/admin/billing")).json();
     assert.deepEqual([d.on, d.mode, d.alertsSeen.last4, typeof d.prices.live.base, d.plans.monthly, d.prices.checkout, d.prices.family, d.offered], [true, "live", bobKey.slice(-4), "string", 1, 1000, 500, ["checkout", "monthly"]]);
