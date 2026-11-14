@@ -1,10 +1,10 @@
 {
-  "version": "1.9.147",
-  "url": "index-1.9.147.html",
-  "sha256": "55831c2f50fe41dfc9a03ed366ab01bac2776fcb436164c1eed2589245972406",
-  "signature": "x/E0zgsN12N/eQBlw/qvnjtXPYvt/Iw/tSS9Rf0AcpmFZTx7iSRb8twLfx2D82a4LMUUr4cuuADqhI/UjHSIAA==",
+  "version": "1.9.148",
+  "url": "index-1.9.148.html",
+  "sha256": "92ca8900d3460d7a259d93b139167bc69eb74bd8efdd16bdb5367ca6e5f1405d",
+  "signature": "1YFdd+KWr6jqz4rVYnCMaiw0OslaJh1jS97rvT2PIZ6rpGnbjekAAO/+YlmijO0MNRcYhUU1pTV/5cNBbZOiBA==",
   "minAppVersion": "0",
-  "notes": "When you submit slots on your own accounts (a Target store login, or Pokémon Center with your own email), FAFO now sends your seller the inbox access they need to follow your orders (each inbox's email and app password) with your slots, so you no longer send it on Discord yourself. Submit says if a slot's inbox or its app password isn't saved yet, and Store logins has Add inbox for it.",
+  "notes": "Costco is now a store you can pick for a profile, next to Target and Pokémon Center. A Costco profile always checks out on your own Costco account: add its store login, as you would for Target. Use Assigned Account isn't offered for Costco.",
   "installerUrl": "",
-  "publishedAt": "2026-11-14T11:19:24.091Z"
+  "publishedAt": "2026-11-14T11:37:14.603Z"
 }
