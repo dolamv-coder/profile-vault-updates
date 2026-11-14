@@ -48,7 +48,11 @@
 //                              <buyer>-<store>-aycd.json, -shikari.csv or -logins.txt. Each store's profiles come as a
 //                              .csv in the owner's columns, which the Shikari CSV is made from (2026-10-06 to -09 it
 //                              wasn't posted). App 1.9.87+ sends the AYCD list (kind "aycd"); for older apps it's made
-//                              from the CSV.
+//                              from the CSV. Page 1.9.147+ also sends each store's `imap` file (2026-11-13: the owner's
+//                              "during submission only", "email - apppassword format", "same where all the slots go"):
+//                              one email:app password line per inbox of its slots on the buyer's own accounts (never Use
+//                              Assigned Account), posted as <buyer>-<store>-imap.txt after that store's logins file (or its
+//                              Shikari CSV when there's none, as at Pokémon Center), never stored here.
 //                              Each store in `stores`
 //                              may carry `seller`: how many of its slots ask the owner to assign an
 //                              account. App 1.9.52 sends {csv, ...}, one .csv; older apps {code, keyId, ...},
@@ -795,9 +799,11 @@ async function slotReview(request, env, ctx, url, id) {
 // store's logins as email:password lines in a .txt; 1.9.52 sends one .csv in Orbit's Export → CSV
 // columns. Since 2026-10-06 each store's profiles go out as AYCD JSON (the owner's choice), and since 2026-10-09
 // also as a Shikari CSV made from its .csv once accounts are assigned (shikariCsv); the .csv itself, read here to
-// give out accounts and make the AYCD list for apps before 1.9.87, isn't posted. Full card numbers, CVVs, and store
-// and email passwords pass through here and sit in the
-// channel. The owner chose this. Nothing is kept here but who sent how many slots.
+// give out accounts and make the AYCD list for apps before 1.9.87, isn't posted. Since 2026-11-13 (page 1.9.147, the
+// owner's request: buyers on their own accounts no longer send their inbox access on Discord themselves) each store's
+// slots on the buyer's own accounts also bring their inboxes' access, one email:app password line per inbox (kind
+// "imap"), posted as <buyer>-<store>-imap.txt. Full card numbers, CVVs, and store and email passwords pass through here
+// and sit in the channel. The owner chose this. Nothing is kept here but who sent how many slots.
 //
 // Older apps seal each batch with the owner's collecting key from Orbit (Settings → Password and
 // sharing), so for them the worker and Discord only see ciphertext. The owner downloads that .txt
@@ -805,7 +811,30 @@ async function slotReview(request, env, ctx, url, id) {
 
 const SUBMISSIONS_PER_HOUR = 30;
 const SUBMISSION_MAX_CHARS = 4_000_000;     // well under Discord's attachment limit
-const SUBMISSION_MAX_FILES = 60;            // three per store
+const SUBMISSION_MAX_FILES = 80;            // four per store: profiles, AYCD, logins and inbox access (1.9.147)
+// A store's inbox access (page 1.9.147): one email:app password line per inbox, an address and a password as the
+// owner's accounts take them (an address at most 254 characters, a password at most 200, on one line). The address is
+// what comes before the first colon: no spaces or colons, one @, and after it a dot with something on either side; the
+// password has something but spaces in it. Line breaks at the end are fine. All checked in steps that each read the text
+// once, never with a regex that backtracks: a request can carry megabytes, and the first version's
+// /(\r?\n)+$/ took 13 seconds over 160 KB of line breaks followed by a letter (the review of 1.9.147). The text's length
+// is checked before it's split, and each line's before it's read.
+const IMAP_EMAIL_MAX = 254, IMAP_PW_MAX = 200;
+const IMAP_EMAIL = /^[^\s@:]+@[^\s@:]+$/;
+const imapLineOk = (x) => {
+  const c = x.indexOf(":");
+  if (c < 1 || c > IMAP_EMAIL_MAX || x.length - c - 1 > IMAP_PW_MAX) return false;
+  const email = x.slice(0, c), pw = x.slice(c + 1), dot = email.indexOf(".", email.indexOf("@") + 2);
+  return IMAP_EMAIL.test(email) && dot > 0 && dot < email.length - 1 && /\S/.test(pw) && !/[\r\n\u2028\u2029]/.test(pw);
+};
+const imapOk = (text, slots) => {
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "\n") { end--; if (end > 0 && text[end - 1] === "\r") end--; }
+  // At most a line per slot, each at most an address, a colon and a password, with a CRLF between.
+  if (end > slots * (IMAP_EMAIL_MAX + IMAP_PW_MAX + 3)) return false;
+  const lines = text.slice(0, end).split(/\r?\n/);
+  return lines.length <= slots && lines.every(imapLineOk);
+};
 const SUBMIT_KEY_OFFERS_PER_DAY = 3;
 
 const fromB64u = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
@@ -953,8 +982,8 @@ async function submission(request, env, url, ctx) {
   if (text.length > SUBMISSION_MAX_CHARS + 20000) return json({ error: "too large" }, 413);
   let b; try { b = JSON.parse(text) || {}; } catch { b = {}; }
   // App 1.9.53 and later send `files`: each store's profiles as CSV in the owner's columns, and its
-  // logins (email:password lines). 1.9.52 sends one `csv`; older apps send a sealed code. The first
-  // two need no key.
+  // logins (email:password lines); page 1.9.147+ also its inbox access (`imap`, email:app password lines). 1.9.52 sends
+  // one `csv`; older apps send a sealed code. The first two need no key.
   const given = Array.isArray(b.files) ? b.files : null;
   const csv = given === null && typeof b.csv === "string" ? b.csv : null;
   let code = "", keyId, files = null;
@@ -964,7 +993,7 @@ async function submission(request, env, url, ctx) {
     for (const f of given) {
       const store = String(f && f.store || "").replace(/\s+/g, " ").trim().slice(0, 40);
       const kind = f && f.kind, t = f && typeof f.text === "string" ? f.text : "";
-      if (!store || !t.trim() || (kind !== "profiles" && kind !== "logins" && kind !== "aycd")) return json({ error: "files" }, 400);
+      if (!store || !t.trim() || (kind !== "profiles" && kind !== "logins" && kind !== "aycd" && kind !== "imap")) return json({ error: "files" }, 400);
       if (kind === "profiles" && !/^\uFEFF?profile_name,/.test(t)) return json({ error: "that isn't a slots CSV" }, 400);
       // App 1.9.58+: the store's key, and how many of its slots (the rows right after the ones with a
       // login) are on Use Assigned Account, to get accounts from the owner's list.
@@ -976,11 +1005,20 @@ async function submission(request, env, url, ctx) {
     if (files.reduce((n, f) => n + f.text.length, 0) > SUBMISSION_MAX_CHARS) return json({ error: "too large" }, 413);
     // Each store's AYCD list goes just before its CSV: the app's (1.9.87+), when it has an entry for every
     // row, or one made from the CSV.
-    const out = [], same = (x, f) => x.store === f.store && x.storeKey === f.storeKey;
+    const out = [], imap = [], same = (x, f) => x.store === f.store && x.storeKey === f.storeKey;
     for (const f of files) {
       const twins = (kind) => files.filter((x) => x.kind === kind && same(x, f)).length;
       if (f.kind === "aycd") {
         if (twins("aycd") > 1 || twins("profiles") !== 1) return json({ error: "files" }, 400);
+        continue;
+      }
+      // A store's inbox access (page 1.9.147): one at most, for a store the batch has profiles for, every line
+      // email:app password, no more lines than that store's slots (one per inbox, however many slots share it).
+      if (f.kind === "imap") {
+        if (twins("imap") > 1 || twins("profiles") !== 1) return json({ error: "files" }, 400);
+        const p = files.find((x) => x.kind === "profiles" && same(x, f));
+        if (!imapOk(f.text, parseCsv(p.text).length - 1)) return json({ error: "files" }, 400);
+        imap.push(f);
         continue;
       }
       if (f.kind === "profiles") {
@@ -991,6 +1029,13 @@ async function submission(request, env, url, ctx) {
         out.push({ store: f.store, kind: "aycd", list, storeKey: f.storeKey, assigned: 0 });
       }
       out.push(f);
+    }
+    // Each inbox access file goes right after its store's profiles CSV and the logins file that follows it, so the store's
+    // files stay together (and a logins file assignAccounts adds goes before it, right after the CSV).
+    for (const f of imap) {
+      let at = out.findIndex((x) => x.kind === "profiles" && same(x, f)) + 1;
+      if (out[at] && out[at].kind === "logins" && out[at].store === f.store) at++;
+      out.splice(at, 0, f);
     }
     files = out;
     keyId = "CSV";
@@ -1063,7 +1108,7 @@ async function submission(request, env, url, ctx) {
     throw e;
   }
   // What goes to the channel: each store's AYCD list, its Shikari CSV (made from its slots CSV) and its logins file, with
-  // no logins file for Pokémon Center.
+  // no logins file for Pokémon Center, then its inbox access (page 1.9.147), Pokémon Center's too.
   const posted = files !== null ? files.filter((f) => !(f.kind === "logins" && isPokemonCenterFile(f, files))) : [];
   const pokemonCenter = files !== null && files.some((f) => f.kind === "profiles" && isPokemonCenterFile(f, files));
   const stamp = new Date(now).toISOString().slice(0, 16).replace("T", "-").replace(":", "");
@@ -1084,7 +1129,7 @@ async function submission(request, env, url, ctx) {
   const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
   const plainStores = stores.map((x) => `${x.name} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
   const tail = files !== null
-    ? `-# Per store: its profiles for AYCD (.json) and Shikari (.csv)${posted.some((f) => f.kind === "logins") ? `, with its logins (email:password, .txt) in the same order${pokemonCenter ? " (none for Pokémon Center)" : ""}` : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
+    ? `-# Per store: its profiles for AYCD (.json) and Shikari (.csv)${posted.some((f) => f.kind === "logins") ? `, with its logins (email:password, .txt) in the same order${pokemonCenter ? " (none for Pokémon Center)" : ""}` : ""}${posted.some((f) => f.kind === "imap") ? ", and the inbox access for its slots on the buyer's own accounts (email:app password, .txt)" : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
     : csv !== null ? "-# CSV attached." : `-# Encrypted for key ${keyId}. To open: download the file, then in FAFO choose **Import** and drop it in.`;
   const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n${tail}`;
   const base = `orbit-slots-${stamp}${slug ? "-" + slug : ""}`;
@@ -1096,7 +1141,8 @@ async function submission(request, env, url, ctx) {
   if (files !== null) {
     // Each file is labeled with the buyer and the store (the owner's request, 2026-10-09): Kim-target-aycd.json,
     // Kim-target-shikari.csv and Kim-target-logins.txt; the name they sent with, or their Discord name. No logins
-    // for Pokémon Center (2026-10-07). The slots CSV itself goes out only as Shikari's.
+    // for Pokémon Center (2026-10-07). The slots CSV itself goes out only as Shikari's. Then Kim-target-imap.txt, the
+    // inbox access for the store's slots on the buyer's own accounts (page 1.9.147), Pokémon Center's too.
     const ascii = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
     const buyer = ascii(s.name).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30)
       || ascii(s.username).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || `license-${s.key_last4}`;
@@ -1109,14 +1155,15 @@ async function submission(request, env, url, ctx) {
     // A store's ticked SKUs, one per line, go right after its last file (Kim-target-skus.txt), so its files stay together
     // however many messages the batch takes. A file's store is its group's key, as batchSkus has them, not its name, which
     // two groups can share (a store typed as "Target" before 1.9.94, beside Target); a logins file carries no key, and is
-    // the group of the profiles file before it.
+    // the group of the profiles file before it, as an inbox access file is (it comes after them).
     const skusSent = new Set();
     let cur = "";
-    const keys = posted.map((f) => (f.kind === "logins" ? cur : (cur = f.storeKey)));
+    const keys = posted.map((f) => (f.kind === "logins" || f.kind === "imap" ? cur : (cur = f.storeKey)));
     attach = posted.flatMap((f, i) => {
       const one = f.kind === "aycd"
         ? { name: `${buyer}-${label(f.store)}-aycd.json`, text: aycdText(f.list), type: "application/json" }
         : f.kind === "profiles" ? { name: `${buyer}-${label(f.store)}-shikari.csv`, text: shikariCsv(f.text), type: "text/csv" }
+        : f.kind === "imap" ? { name: `${buyer}-${label(f.store)}-imap.txt`, text: f.text, type: "text/plain" }
         : { name: `${buyer}-${label(f.store)}-logins.txt`, text: f.text };
       const key = !keys.slice(i + 1).includes(keys[i]) && keys[i];
       if (!key || !skus.has(key) || skusSent.has(key)) return [one];

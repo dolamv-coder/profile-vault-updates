@@ -239,7 +239,9 @@ try {
     const t = await s.text("#guide");
     assert.match(t, /Make your profile Go to Profiles and press New profile\. Pick Target or Pokémon Center/);
     assert.match(t, /Use Assigned Account \(easiest\): your seller gives you the account\. You don't add a login, an email or an inbox\. You won't have access to that account's email; you'll see your order updates here in FAFO\./);
-    assert.match(t, /Your own account \(Target: Store login; Pokémon Center: Own email\): your seller needs that email's IMAP access \(the email and its app password\) to follow your orders\. Send it to your seller on Discord yourself: FAFO doesn't send it for you\./);
+    // From 1.9.147 FAFO sends it with Submit (the owner's request, 2026-11-13), where the buyer sent it on Discord.
+    assert.match(t, /Your own account \(Target: Store login; Pokémon Center: Own email\): your seller needs that email's IMAP access \(the email and its app password\) to follow your orders\. FAFO sends it to your seller with your slots when you submit, so save that email's inbox in FAFO with its app password: on the store login, or on Store logins with Add inbox\./);
+    assert.doesNotMatch(t, /Discord yourself|doesn't send it/);
     assert.equal(await s.page.$$eval("#guide .guide-body", (els) => els.length), 1, "one step's text");
     const r = await s.page.$eval("#guide", (e) => e.getBoundingClientRect().toJSON());
     assert.ok(Math.abs(r.width - 360) < 1 && Math.abs(1280 - r.right - 16) < 1 && Math.abs(900 - r.bottom - 16) < 1 && r.height <= 560, JSON.stringify(r));
@@ -256,7 +258,7 @@ try {
     const imap = s.page.locator(`${P} .ret-cfg .ret-imap`);
     assert.equal(await imap.count(), 1);
     assert.ok(await imap.isVisible(), "Store login's note shows");
-    assert.equal(await imap.textContent(), "Your seller needs this email's IMAP access (the email and its app password) to follow your orders. Send it to your seller on Discord yourself: FAFO doesn't send it.");
+    assert.equal(await imap.textContent(), "FAFO sends your seller this email's IMAP access (the email and its app password) with your slots when you submit, so they can follow your orders. It's the inbox saved on the store login: make sure it has its app password.");
     await s.page.selectOption(`${P} select[name="m_target"]`, "seller");
     assert.ok(!(await imap.isVisible()), "not on Use Assigned Account");
     const seller = s.page.locator(`${P} .ret-cfg .note-seller`);
@@ -265,6 +267,7 @@ try {
     await s.page.click(`${P} #pl-list .spick[data-pick="pokemoncenter"]`);
     const pc = s.page.locator(`${P} .ret-cfg[data-key="pokemoncenter"] .ret-imap`);
     assert.ok(await pc.isVisible(), "Own email's note shows");
+    assert.equal(await pc.textContent(), "FAFO sends your seller this email's IMAP access (the email and its app password) with your slots when you submit, so they can follow your orders. Save its inbox in FAFO, with its app password: Store logins, then Add inbox. If this email forwards to another inbox, send your seller that inbox's email and app password on Discord yourself.");
     await s.page.selectOption(`${P} select[name="m_pokemoncenter"]`, "seller");
     assert.match((await s.page.locator(`${P} .ret-cfg[data-key="pokemoncenter"] .note-seller`).textContent()).replace(/\s+/g, " "), /You won't have access to this account's email: you'll see your order updates in FAFO\./);
   });
