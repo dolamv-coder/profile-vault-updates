@@ -237,10 +237,10 @@ try {
     assert.deepEqual(await s.steps(), [{ id: "make", done: false, cur: true }, { id: "ready", done: false, cur: false }, { id: "submit", done: false, cur: false }]);
     assert.ok(JSON.parse(await s.ev(() => localStorage.getItem("orbit-guide"))).open);
     const t = await s.text("#guide");
-    assert.match(t, /Make your profile Go to Profiles and press New profile\. Pick Target or Pokémon Center/);
-    assert.match(t, /Use Assigned Account \(easiest\): your seller gives you the account\. You don't add a login, an email or an inbox\. You won't have access to that account's email; you'll see your order updates here in FAFO\./);
+    assert.match(t, /Make your profile Go to Profiles and press New profile\. Pick Target, Pokémon Center or Costco/);
+    assert.match(t, /Use Assigned Account \(easiest; Target and Pokémon Center only\): your seller gives you the account\. You don't add a login, an email or an inbox\. You won't have access to that account's email; you'll see your order updates here in FAFO\./);
     // From 1.9.147 FAFO sends it with Submit (the owner's request, 2026-11-13), where the buyer sent it on Discord.
-    assert.match(t, /Your own account \(Target: Store login; Pokémon Center: Own email\): your seller needs that email's IMAP access \(the email and its app password\) to follow your orders\. FAFO sends it to your seller with your slots when you submit, so save that email's inbox in FAFO with its app password: on the store login, or on Store logins with Add inbox\./);
+    assert.match(t, /Your own account \(Target or Costco: Store login; Pokémon Center: Own email\): your seller needs that email's IMAP access \(the email and its app password\) to follow your orders\. FAFO sends it to your seller with your slots when you submit, so save that email's inbox in FAFO with its app password: on the store login, or on Store logins with Add inbox\./);
     assert.doesNotMatch(t, /Discord yourself|doesn't send it/);
     assert.equal(await s.page.$$eval("#guide .guide-body", (els) => els.length), 1, "one step's text");
     const r = await s.page.$eval("#guide", (e) => e.getBoundingClientRect().toJSON());

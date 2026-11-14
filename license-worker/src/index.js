@@ -5422,18 +5422,22 @@ async function billingListAsk(request, env, ctx, url) {
   if (!id) { await env.DB.prepare("DELETE FROM billing_lists WHERE id = ?").bind(o.id).run(); return json({ error: "couldn't post to the channel" }, 502, NO_STORE); }
   return json({ status: "sent" }, 200, NO_STORE);
 }
+// The stores the Billing page adds checkouts at: Target and Pokémon Center, and Costco (page 1.9.148: a profile there checks out
+// on the buyer's own Costco account, whose slots the worker records in billing_accounts as any store's).
+const BILL_STORES = ["target", "pokemoncenter", "costco"];
 // A line of the bot's success log, pasted on the Billing page: an email, an order number (a word with a digit, 6 to 25 long,
-// that isn't the email or the date), a store's name (else the store picked), and a date (YYYY-MM-DD, M/D or M/D/YY, else the
-// date picked).
+// that isn't the email or the date), a store's name outside the email (else the store picked), and a date (YYYY-MM-DD, M/D or
+// M/D/YY, else the date picked).
 function pasteLine(line, store, date) {
-  const text = String(line).replace(/\s+/g, " ").trim(), plain = text.normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const text = String(line).replace(/\s+/g, " ").trim();
   const email = (text.match(/[^\s@<>()"',;:|]+@[^\s@<>()"',;:|]+\.[A-Za-z]{2,}/) || [""])[0];
   let rest = email ? text.replace(email, " ") : text, d = date;
+  const plain = rest.normalize("NFD").replace(/[̀-ͯ]/g, "");
   const iso = rest.match(/\b\d{4}-\d{2}-\d{2}\b/), us = !iso && rest.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{4}|\d{2}))?\b/);
   if (iso) { d = iso[0]; rest = rest.replace(iso[0], " "); }
   else if (us) { d = `${us[3] ? (us[3].length === 2 ? "20" + us[3] : us[3]) : date.slice(0, 4)}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`; rest = rest.replace(us[0], " "); }
   const order = rest.split(/[\s,;|]+/).map((x) => x.replace(/^[#(\[]+|[)\].:]+$/g, "")).find((x) => /\d/.test(x) && x.length >= 6 && x.length <= 25 && /^[A-Za-z0-9-]+$/.test(x)) || "";
-  return { text: text.slice(0, 300), email: email.toLowerCase(), store: /pokemon/i.test(plain) ? "pokemoncenter" : /\btarget\b/i.test(plain) ? "target" : store,
+  return { text: text.slice(0, 300), email: email.toLowerCase(), store: /pokemon/i.test(plain) ? "pokemoncenter" : /\btarget\b/i.test(plain) ? "target" : /\bcostco\b/i.test(plain) ? "costco" : store,
     date: realDay(d) ? d : "", orderNo: orderNoOf(order) };
 }
 // The buyers who had that email out at that store that day: as their own account (a slot's login or checkout email) or as an
@@ -5501,7 +5505,7 @@ async function billingListPage(request, env, ctx, url, id) {
   const get = (k) => String((form ? form.get(k) : url.searchParams.get(k)) ?? "");
   const action = form ? get("action") : "", bq = get("b").replace(/[^0-9a-f]/g, "").slice(0, 16);
   const key = /^[0-9a-f]{64}$/.test(get("key")) ? get("key") : "", lineId = get("line").slice(0, 40);
-  const today = day(now), date = realDay(get("date")) ? get("date") : today, pickStore = get("store") === "pokemoncenter" ? "pokemoncenter" : "target";
+  const today = day(now), date = realDay(get("date")) ? get("date") : today, pickStore = BILL_STORES.includes(get("store")) ? get("store") : "target";
   let done = "", err = "", preview = null;
   const lineOf = async () => lineId ? env.DB.prepare("SELECT * FROM billing_lines WHERE id = ? AND mode = ?").bind(lineId, c.mode).first() : null;
   const known = async (h) => !!h && !!(await env.DB.prepare(`SELECT 1 AS k FROM licenses WHERE key_hash = ?1 AND revoked_at IS NULL UNION ALL SELECT 1 FROM billing_people WHERE key_hash = ?1
@@ -5668,7 +5672,7 @@ async function billingListPage(request, env, ctx, url, id) {
   const base = `${url.pathname}?t=${encodeURIComponent(t)}`;
   const btn = (fields, action, text, cls = "ed") => `<form method="post" action="${esc(url.pathname)}">${hidden}${bq ? `<input type="hidden" name="b" value="${esc(bq)}">` : ""}${Object.entries(fields).map(([k, v]) => `<input type="hidden" name="${k}" value="${esc(v)}">`).join("")}<button class="${cls}" type="submit" name="action" value="${action}">${esc(text)}</button></form>`;
   const msgs = `${done ? `<p class="hint" style="color:#5fd39a;font-weight:600">${esc(done)}</p>` : ""}${err ? `<p class="hint err">${esc(err)}</p>` : ""}`;
-  const storeSelect = (cur) => `<select name="store"><option value="target"${cur === "target" ? " selected" : ""}>Target</option><option value="pokemoncenter"${cur === "pokemoncenter" ? " selected" : ""}>Pokémon Center</option></select>`;
+  const storeSelect = (cur) => `<select name="store">${BILL_STORES.map((k) => `<option value="${k}"${cur === k ? " selected" : ""}>${esc(accountStoreName(k))}</option>`).join("")}</select>`;
 
   const one = bq.length === 16 ? buyers.find((x) => x.h.startsWith(bq)) : null;
   if (one) {

@@ -1005,13 +1005,14 @@ them too, so a Spam only scan left the owner's Inbox uncleaned. Changing them lo
 Logins gain `groupId` and settings gain `loginGroups`, so the paused web version is unaffected.
 
 From 1.9.94 the store pickers offer only Pokémon Center and Target (`PICK_STORES`, the owner's request: "remove other
-retailers except Pokémon Center and Target"), with no Another store (`storePillsHTML` shows it only with `allowNew`,
-which nothing passes). `STORES` keeps the rest for what's already saved: an item's own stores still show in its picker
-(`extra`, and they stay offered while its editor is open, so one taken off can go back on), Mass edit's Remove offers the
-stores the selected profiles have, Put in profiles' Limit to a store the stores profiles use, and the filters on Profiles,
-Orders and Submit list every store the data uses (`allStoreOptions`). Target's mark is its red bullseye (`bullseyeSVG`,
-`isTarget`; `drawBullseye` in the share image), as Pokémon Center's is a Pokéball: the owner's request, where it was a red
-tile with a T. The relay's phone page still shows T. Nothing gains a field, so the paused web version is unaffected.
+retailers except Pokémon Center and Target"; Costco is back from 1.9.148, on a store login only: below), with no Another
+store (`storePillsHTML` shows it only with `allowNew`, which nothing passes). `STORES` keeps the rest for what's already
+saved: an item's own stores still show in its picker (`extra`, and they stay offered while its editor is open, so one taken
+off can go back on), Mass edit's Remove offers the stores the selected profiles have, Put in profiles' Limit to a store the
+stores profiles use, and the filters on Profiles, Orders and Submit list every store the data uses (`allStoreOptions`).
+Target's mark is its red bullseye (`bullseyeSVG`, `isTarget`; `drawBullseye` in the share image), as Pokémon Center's is a
+Pokéball: the owner's request, where it was a red tile with a T. The relay's phone page still shows T. Nothing gains a
+field, so the paused web version is unaffected.
 
 From 1.9.95 selected store logins can be copied (the owner's request): the right-click menu on one of several selected
 and the selection bar's Copy (`logins-copy`) offer Copy N emails and Copy N email:password (`loginCopyItems`,
@@ -2272,6 +2273,67 @@ go"), where the buyer had sent it on Discord themselves (1.9.145's notes said so
   answer changes), and what Store logins, IMAP and the web Settings say. It fails if the newest page has no `kind:"imap"`.
   `walkthrough.test.mjs` checks the new notes.
 - Nothing gains a field.
+
+From 1.9.148 **Costco** is a store for profiles again, on the buyer's own account only (the owner's request, 2026-11-13: "in
+Profile, create another store for Costco. Do not give option for "use assigned account" this is specifically personal
+account base."). `STORES` always had it (`STORE_TINT.costco`, and the C tile `storeMark` draws: never Costco's logo, which
+is a trademark), and 1.9.94 had taken it off the pickers.
+- **Pickers:** `PICK_STORES` is Pokémon Center, Target, Costco, so every picker offers it: the profile editor's Store pills,
+  Mass edit's Store, Import profiles, Generate's Import, the store login editor, the order and checkout editors and Put in
+  profiles' Limit to a store; Duplicate's menu has Duplicate for Costco after Target and Pokémon Center (`osRank`). Send
+  accounts (the seller's accounts to assign) never offers it (`skip:loginOnly`). The words by the pickers count three
+  stores: the profile editor's "For another store, use Duplicate", Import profiles' and Generate's Import's "or more than
+  one" (they said "the other store" and "or both"), and Generate's Import says Target and Costco use your store login.
+- **Store login only:** `LOGIN_ONLY = ["costco"]`, `loginOnly(k)` (a store typed as Costco, `other:costco`, too) and
+  `wayFor(k, m)`, the mode store k gets when m is asked for. Every place a mode is picked or set goes through it:
+  - The profile editor (`retCfgHTML`) has no "How this store checks out" and no Use Assigned Account for Costco: a line
+    ("Costco checks out on your own Costco account: pick its store login."), then the store login picker, New and the IMAP
+    note as for Target's store login (`GUIDE_IMAP_NOTE`, buyers only). `readStores` reads it as `login`. A Costco slot on
+    its login brings that login's inbox access with Submit, as Target's does (1.9.147, `slotInbox`).
+  - Mass edit: Costco picked under Store hides "Checks out with" (`#pm-way-row`) and says why (`#pm-way-own`), and `pmPlan`
+    puts Costco on `login` whatever was picked: each profile gets the saved Costco login with its email, or waits for one.
+  - `fixMode` puts Costco saved on `seller` or `email` on `login` (`loginId`, `email` and `verified` cleared: it waits for a
+    login; one on `login` keeps its login), on every way data comes in: unlocking (`sanitizeState`), an online copy merged
+    or opened (`syncUnits(sanitizeState(…))`, `syncStartFrom`), Import profiles and codes (`planImport`), and Paste and
+    Duplicate group (`copyProfile`'s copies on their own store go through `fixMode` now). Duplicate for Costco
+    (`storeEntryFor`) from a profile on Use Assigned Account is on Store login, with the saved Costco login that has the
+    profile's email, or waiting for one. Generate's Import onto Costco (`planDraftImport`, through `wayFor` too): Store
+    login, linked by email (`linkByEmail`).
+  - `asksSeller` is never true at Costco, so Submit never counts a Costco slot as assigned (`slotsFiles`' `assigned`, the
+    `stores` line's `seller`, `slotsOut`'s `active`): its slots go as Costco's own AYCD list, slots CSV and logins file,
+    like Target's, under its own cap (`capOf`). A page before 1.9.148 can still put a Costco profile on Use Assigned Account
+    in its editor (an item's own store stays offered there); 1.9.148 reads it as Store login when it syncs in, and only
+    that device would send it as assigned.
+  - Submit's window (`imapSubmitNote`) tells a slot waiting for its store login (none linked, or the one linked is gone; a
+    Costco one left on Use Assigned Account by an older device too) apart: "1 slot has no store login linked (Sam C3), so
+    your seller gets no login or inbox access for it: link its store login in Store logins." (`#ss-imap-nologin`, named as
+    `#ss-imap-miss` names them). 1.9.147 counted it among the slots with no inbox app password saved, sending the buyer to
+    add an inbox that may be saved already, which waiting Costco profiles made common (the review of 1.9.148). The
+    app-password warning keeps the rest.
+  - The readiness pill: a Costco profile without its login says Needs a login, as Target's does (with no email yet, as after
+    Use Assigned Account, Email to fix comes first, as for Target).
+- **Looks:** Profiles' counts strip gives Costco a violet dot (`storeDot`: not Target's red or Pokémon Center's blue; its
+  tint `#005DAA` is a blue too). The share image draws its C tile, as for other stores.
+- **Setup guide:** step 1 says to pick Target, Pokémon Center or Costco and that Costco is always your own account, with Use
+  Assigned Account "(easiest; Target and Pokémon Center only)" and Your own account "(Target or Costco: Store login; Pokémon
+  Center: Own email)". Store logins' empty page names Costco accounts too.
+- **License worker:** `/submissions` takes the `costco` key as any store's: run in a scratch copy with every port shifted, a
+  Costco slot with its login posted `<buyer>-costco-aycd.json`, `-shikari.csv` and `-logins.txt`, and no accounts were asked
+  for (`assigned` 0); its own account goes in `billing_accounts` at `costco`, as Target's do. The owner's Billing page now
+  adds checkouts there too (the review of 1.9.148: a pasted Costco line was filed as Target, where no buyer had it out):
+  `BILL_STORES` (Target, Pokémon Center, Costco) is what Add a checkout's and Paste checkouts' Store offer and take (any
+  other value is Target, as before), and `pasteLine` reads Costco in a line as it reads the other two, the store's name
+  only outside the line's email (`sam.costco@…` names no store). The e2e test pastes and adds Costco checkouts.
+- **Tests:** `costco.test.mjs` runs the page in Chromium (in CI after the inbox access's) against a pretend license worker:
+  the editor's pills and Costco's line, picker and IMAP note, saving with and without a login, the pill, a saved vault, an
+  import and an online copy merged in (`syncMergeIn`) with Costco on Use Assigned Account or an email, Duplicate for Costco,
+  Paste, Mass edit, Generate's Import, the counts strip's dot, the share image, Send accounts, the guide's and pickers'
+  words and Submit's files (also with a Costco profile left on Use Assigned Account in memory: `asksSeller` is false for it,
+  so it goes as a slot without a login, never assigned), and Submit's window for slots waiting for a login (a Costco one
+  whose inbox is saved, a Target one linked to a login that's gone) beside a real missing app password, then that Costco
+  slot's inbox access once its login is linked. It fails if the newest page has no Costco in `PICK_STORES`.
+  `walkthrough.test.mjs` checks the guide's new words.
+- Nothing gains a field: Costco and its modes were already in the data, and no store mode is new.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

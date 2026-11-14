@@ -859,7 +859,8 @@ A buyer's **Details** has:
 - **Add a checkout**, and their recent batches to match your bot's log against.
 
 **Paste checkouts** takes your bot's success log, one checkout per line: each line needs the account's email and the
-order number (a store's name and a date are read too, else the ones you pick). You see who each one goes to first (the
+order number (a store's name, Target, Pokémon Center or Costco, outside the email, and a date are read too, else the ones
+you pick; Add a checkout offers the same three stores). You see who each one goes to first (the
 buyer who had that email out as a slot that day, or a list to pick from when two did) and whether it would be billed;
 **Add** writes them. Pasted emails are only matched, never kept. If the store cancels one you added on a buyer's own
 account, their FAFO says so and it's free, as for the checkouts it reports itself (you can charge it again).
