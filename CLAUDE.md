@@ -2335,6 +2335,45 @@ is a trademark), and 1.9.94 had taken it off the pickers.
   `walkthrough.test.mjs` checks the guide's new words.
 - Nothing gains a field: Costco and its modes were already in the data, and no store mode is new.
 
+From 1.9.149 a **license key pasted where an invite code goes** says so, and where it goes (the owner, 2026-11-14, with a
+screenshot of the web version's "Fill in profiles for someone": their key in "Code from the person who asked" got
+"Couldn't find a code starting with PVKEY1. Paste the whole message you were sent.", and "why am I getting this message on
+the website? This is my actual desktop key"; offered a message for license keys there: "yes add that message for license
+keys").
+- **Recognising one** (`licKeyIn`, beside `licFormat`): the whole text as the license screen reads its box (`licFormat`,
+  then the same `/^PVLT(-[A-Z0-9]{4}){4}$/`), so case, spaces and dashes count as they do there, or else a word of it (split
+  at anything but a letter, digit or dash), for a key in a sentence. No second format. An invite code (`PVKEY1.`) anywhere
+  in the text still wins, and text that's neither keeps the old message exactly.
+- **I was sent a code** (`openSubmitStart`): a note under the box (`#ss-lic-note`, `note-warn`, `role="alert"`; `#ss-err`
+  stays empty and Continue off), from `licPastedHTML("start", key)`: "That's a FAFO license key, not an invite code. This
+  window is for filling in profiles for someone who sent you an invite code (it starts with PVKEY1.).", then where it goes:
+  - a browser with no vault: "Your license key goes on FAFO's first screen: close this and choose Enter it instead, or open
+    it from here." (on Use this browser only's screen, "…opens your synced vault: close this and choose Open my synced
+    vault…"), with **Open FAFO with this key**, which closes the window and opens `openSyncSignIn({key})`: its key box
+    filled in as `licFormat` writes it, the cursor in Master password, and the dialog otherwise as it was (`o` counts only
+    when it isn't the click event the lock screen's listeners pass, and only in a dialog with a key box);
+  - a browser with a vault: close this and unlock it with your master password, and Submit asks for the key if it needs it;
+  - claude.ai (`ON_CLAUDE`): open FAFO at app.fafoaco.com and choose Enter it instead on its first screen;
+  - the desktop app, with no button: this computer's own key ("so there's nothing to paste: close this and unlock FAFO with
+    your master password", or "create your master password" before there's a vault, then "You'll find the key under
+    Settings, then License."), another key (Settings, then License, Remove from this computer, then enter it when FAFO asks
+    for a license key), or none saved (its license screen, when it starts).
+- **Submit's Send somewhere else** (`openSubmitTo`): `#st-lic-note` (`licPastedHTML("to")`): "This box is for an invite code
+  from someone else (it starts with PVKEY1.).", then, while `canSendToSeller()`, that with the box left empty the slots go
+  straight to the seller's Discord channel ("with the license key FAFO already has", or "Submit asks for your license key
+  when you send them, and this vault keeps it"). Save with the key in the box saves nothing and adds no "Paste a valid
+  invite code." under the note.
+- The key is never in the words (it's in the box already) and never logged.
+- **Tests:** `license-paste.test.mjs` runs the page in Chromium (in CI after Costco's) against a pretend license worker:
+  `licKeyIn`'s readings (alone, spaces and line breaks around it, lower case, spaces for dashes, in a sentence; not a short
+  or long one, nor its words spread through a sentence), I was sent a code on the first screen (the note, its button, the
+  key box filled in, Continue asking `/vault/info` with that key, Enter it instead still empty), on Use this browser only's
+  screen, and in a browser with a vault (no button), an invite code winning over a key and still starting to fill in
+  profiles, other text's old message, Send somewhere else with no key kept and with one (Save, the old message, an invite
+  code saved and removed), and the desktop app with `window.pvDesktop` stubbed (its own key before and after there's a
+  vault, another key, none saved, Send somewhere else). It fails if the newest page has no `licKeyIn`.
+- Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

@@ -1,0 +1,1 @@
+If you paste your FAFO license key where an invite code goes (I was sent a code, or Submit's Send somewhere else), FAFO now tells you it's a license key, not an invite code, and where it goes. In the web version, Open FAFO with this key takes you straight to opening your synced vault with it filled in.
