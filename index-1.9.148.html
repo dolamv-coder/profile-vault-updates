@@ -17768,13 +17768,17 @@ function slotImapLines(rows){
   return out;
 }
 // What Submit's window says about it (1.9.147): how many of the batch's slots bring their inbox access, and which slots on
-// the buyer's own accounts can't (no inbox saved for them, or none with an app password), so the seller can't follow those
-// orders. Submit still sends them.
+// the buyer's own accounts can't (no inbox saved for them, or none with an app password, or no store login linked: said
+// apart), so the seller can't follow those orders. Submit still sends them.
 function imapSubmitNote(fresh){
   if (imapOwnFafo()) return "";
   const own = fresh.filter(({r}) => slotInbox(r).own);
   if (!own.length) return "";
-  const ok = own.filter(({r}) => slotInbox(r).inbox), miss = own.filter(({r}) => !slotInbox(r).inbox), n = ok.length, m = miss.length;
+  const ok = own.filter(({r}) => slotInbox(r).inbox), lost = own.filter(({r}) => !slotInbox(r).inbox), n = ok.length;
+  // A slot waiting for its store login (none linked, or the one linked is gone; a Costco slot left on Use Assigned Account by
+  // an older device too) is missing the login, not the inbox: said apart (the review of 1.9.148), so the buyer isn't sent to
+  // add an inbox that may be saved already.
+  const nolog = lost.filter(({r}) => !r.l && modeOf(r.e) !== "email"), miss = lost.filter(x => !nolog.includes(x)), m = miss.length, k = nolog.length;
   // The slots it can't send one for, by name (six at most), under their store's name when the batch has more than one.
   const stores = new Set(fresh.map(({g}) => g.key)).size > 1;
   const names = (list) => {
@@ -17788,6 +17792,7 @@ function imapSubmitNote(fresh){
   // another inbox (a Hide My Email alias, a catch-all domain) can't be, so that one goes on Discord (the review of 1.9.147).
   const fwd = miss.some(({r}) => !r.l && modeOf(r.e) === "email");
   if (m) lines.push(`<p class="note note-warn" id="ss-imap-miss" style="margin:0 0 14px">${m === 1 ? "1 slot has" : `${m} slots have`} no inbox app password saved in FAFO (${names(miss)}), so your seller can't follow ${m === 1 ? "its orders" : "those orders"}: add it in Store logins.${fwd ? " If a checkout email forwards to another inbox, send your seller that inbox's email and app password on Discord yourself." : ""}</p>`);
+  if (k) lines.push(`<p class="note note-warn" id="ss-imap-nologin" style="margin:0 0 14px">${k === 1 ? "1 slot has" : `${k} slots have`} no store login linked (${names(nolog)}), so your seller gets no login or inbox access for ${k === 1 ? "it" : "them"}: link ${k === 1 ? "its store login" : "their store logins"} in Store logins.</p>`);
   return lines.join("");
 }
 // The names of the slots still out on each store this batch asks accounts for (1.9.99+): a profile sent again whose slot

@@ -2304,6 +2304,12 @@ is a trademark), and 1.9.94 had taken it off the pickers.
     like Target's, under its own cap (`capOf`). A page before 1.9.148 can still put a Costco profile on Use Assigned Account
     in its editor (an item's own store stays offered there); 1.9.148 reads it as Store login when it syncs in, and only
     that device would send it as assigned.
+  - Submit's window (`imapSubmitNote`) tells a slot waiting for its store login (none linked, or the one linked is gone; a
+    Costco one left on Use Assigned Account by an older device too) apart: "1 slot has no store login linked (Sam C3), so
+    your seller gets no login or inbox access for it: link its store login in Store logins." (`#ss-imap-nologin`, named as
+    `#ss-imap-miss` names them). 1.9.147 counted it among the slots with no inbox app password saved, sending the buyer to
+    add an inbox that may be saved already, which waiting Costco profiles made common (the review of 1.9.148). The
+    app-password warning keeps the rest.
   - The readiness pill: a Costco profile without its login says Needs a login, as Target's does (with no email yet, as after
     Use Assigned Account, Email to fix comes first, as for Target).
 - **Looks:** Profiles' counts strip gives Costco a violet dot (`storeDot`: not Target's red or Pokémon Center's blue; its
@@ -2318,12 +2324,14 @@ is a trademark), and 1.9.94 had taken it off the pickers.
   `BILL_STORES` (Target, Pokémon Center, Costco) is what Add a checkout's and Paste checkouts' Store offer and take (any
   other value is Target, as before), and `pasteLine` reads Costco in a line as it reads the other two, the store's name
   only outside the line's email (`sam.costco@…` names no store). The e2e test pastes and adds Costco checkouts.
-- **Tests:** `costco.test.mjs` runs the page in Chromium (in CI after the download's) against a pretend license worker: the
-  editor's pills and Costco's line, picker and IMAP note, saving with and without a login, the pill, a saved vault, an
+- **Tests:** `costco.test.mjs` runs the page in Chromium (in CI after the inbox access's) against a pretend license worker:
+  the editor's pills and Costco's line, picker and IMAP note, saving with and without a login, the pill, a saved vault, an
   import and an online copy merged in (`syncMergeIn`) with Costco on Use Assigned Account or an email, Duplicate for Costco,
   Paste, Mass edit, Generate's Import, the counts strip's dot, the share image, Send accounts, the guide's and pickers'
   words and Submit's files (also with a Costco profile left on Use Assigned Account in memory: `asksSeller` is false for it,
-  so it goes as a slot without a login, never assigned). It fails if the newest page has no Costco in `PICK_STORES`.
+  so it goes as a slot without a login, never assigned), and Submit's window for slots waiting for a login (a Costco one
+  whose inbox is saved, a Target one linked to a login that's gone) beside a real missing app password, then that Costco
+  slot's inbox access once its login is linked. It fails if the newest page has no Costco in `PICK_STORES`.
   `walkthrough.test.mjs` checks the guide's new words.
 - Nothing gains a field: Costco and its modes were already in the data, and no store mode is new.
 

@@ -8,8 +8,9 @@
 // vault, an import and an online copy merged in with Costco on Use Assigned Account or an email (fixMode: Store login, waiting
 // for a login), Duplicate for Costco from a profile on Use Assigned Account, Paste, Mass edit to Costco never giving
 // Use Assigned Account, Generate's Import onto Costco (Store login, linked by email), Submit's files for a Costco slot (its
-// own AYCD list, slots CSV and logins, never assigned, also one left on Use Assigned Account in memory: asksSeller), the
-// Profiles counts strip's dot, the share image, Send accounts (no Costco) and the setup guide's words. Sample data only.
+// own AYCD list, slots CSV and logins, never assigned, also one left on Use Assigned Account in memory: asksSeller), what
+// Submit's window says of a slot waiting for its store login (none linked, not a missing inbox) and its inbox once linked,
+// the Profiles counts strip's dot, the share image, Send accounts (no Costco) and the setup guide's words. Sample data only.
 //   node .github/scripts/costco.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must offer Costco in PICK_STORES; a page named on the command line that doesn't is skipped.
 import { readFileSync, readdirSync } from "node:fs";
@@ -422,6 +423,10 @@ try {
     await s.page.click('#main [data-act="submit-slots"]');
     await s.page.fill("#ss-from", "Sam Sample");
     assert.match(await s.text(`${P} .note`), /^Costco: Costco One, Costco Stale Sub Target: Submit Target 1 slot uses an assigned account, so the seller provides the login\.$/);
+    // Costco One's login has no inbox saved (that's what it lacks); Costco Stale Sub has no store login at all, which the
+    // window says apart (the review of 1.9.148).
+    assert.equal(await s.text("#ss-imap-miss"), "1 slot has no inbox app password saved in FAFO (Costco: Costco One), so your seller can't follow its orders: add it in Store logins.");
+    assert.equal(await s.text("#ss-imap-nologin"), "1 slot has no store login linked (Costco: Costco Stale Sub), so your seller gets no login or inbox access for it: link its store login in Store logins.");
     await s.page.click("#ss-go");
     await s.page.waitForFunction(() => document.querySelector("#ss-sent") && !document.querySelector("#ss-sent").hidden);
     await s.page.click("#layers [data-close]");
@@ -442,6 +447,53 @@ try {
     assert.equal(subs[one.id + "@costco"].acct, "sam.costco@example.com");
     assert.equal(subs["pss@costco"].acct, undefined, "never \"Assigned account\"");
     assert.equal(subs["st@target"].acct, "Assigned account");
+  });
+
+  await test("Submit: a slot waiting for its store login says it has none linked, never that its inbox is missing; linked, its inbox goes with it", async () => {
+    // The review of 1.9.148: Costco profiles often wait for a login (fixMode, Duplicate for Costco, Mass edit, Generate's
+    // Import, when no Costco login has their email), and the window told the buyer to add an inbox that was saved already.
+    // "Target Gone" is linked to a login that's gone; "Target No Pw" has an inbox without its app password (a real miss).
+    await s.ev(() => {
+      const { S, persist, render } = window.__t;
+      S.inboxes.push({ id: "ibw", email: "wait.sample@example.com", password: "Sample-Wait-Pw", provider: "custom", host: "imap.example.com", port: "993" },
+        { id: "ibn", email: "nopw.sample@example.com", password: "", provider: "custom", host: "imap.example.com", port: "993" });
+      S.logins.push({ id: "ltn", store: "target", storeName: "", label: "", email: "nopw.sample@example.com", password: "pw-ltn", inboxId: "ibn" });
+      persist(); render();
+    });
+    await addProfiles(s, [{ id: "pcw", name: "Costco Waits", email: "wait.sample@example.com", stores: [entry("costco", "login")] },
+      { id: "ptg", name: "Target Gone", stores: [entry("target", "login", { loginId: "lgone" })] },
+      { id: "ptn", name: "Target No Pw", stores: [entry("target", "login", { loginId: "ltn" })] }]);
+    const open = async (ids) => {
+      await s.page.click('#side [data-id="submit"]');
+      for (const id of ids) {
+        await s.page.click(`#main [data-act="slot"][data-id="${id}"] + .sw-track`);
+        await s.page.waitForFunction((id) => window.__t.S.slots.some((k) => k.startsWith(id + "@")), id);
+      }
+      await s.page.click('#main [data-act="submit-slots"]');
+      await s.page.fill("#ss-from", "Sam Sample");
+      const t = async (sel) => await s.page.$(sel) ? s.text(sel) : "";
+      return { ok: await t("#ss-imap"), miss: await t("#ss-imap-miss"), nologin: await t("#ss-imap-nologin") };
+    };
+    const send = async () => {
+      const n = W.subs.length;
+      await s.page.click("#ss-go");
+      await s.page.waitForFunction(() => document.querySelector("#ss-sent") && !document.querySelector("#ss-sent").hidden);
+      await s.page.click("#layers [data-close]");
+      await s.page.waitForFunction(() => !document.querySelector("#ss-go"));
+      assert.equal(W.subs.length, n + 1);
+      return W.subs.at(-1);
+    };
+    assert.deepEqual(await open(["pcw", "ptg", "ptn"]), { ok: "",
+      miss: "1 slot has no inbox app password saved in FAFO (Target: Target No Pw), so your seller can't follow its orders: add it in Store logins.",
+      nologin: "2 slots have no store login linked (Costco: Costco Waits; Target: Target Gone), so your seller gets no login or inbox access for them: link their store logins in Store logins." });
+    let b = await send();
+    assert.deepEqual(b.files.filter((f) => f.kind === "imap"), [], "no inbox access without a login");
+    // Its Costco login added and linked (no inbox linked on it: the one saved for its email's mailbox), and sent again.
+    await addLogins(s, [costcoLogin("lcw", "wait.sample@example.com")]);
+    await s.ev(() => { const { S, persist, render } = window.__t; S.profiles.find((p) => p.id === "pcw").stores[0].loginId = "lcw"; delete S.subs["pcw@costco"]; persist(); render(); });
+    assert.deepEqual(await open([]), { ok: "Your inbox access for this slot (each inbox's email and app password) goes to your seller with it, so they can follow your orders.", miss: "", nologin: "" });
+    b = await send();
+    assert.deepEqual(b.files.filter((f) => f.kind === "imap").map((f) => [f.storeKey, f.text]), [["costco", "wait.sample@example.com:Sample-Wait-Pw"]]);
   });
   await s.close();
 
