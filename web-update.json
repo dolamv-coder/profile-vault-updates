@@ -1,10 +1,10 @@
 {
-  "version": "1.9.146",
-  "url": "index-1.9.146.html",
-  "sha256": "342d111e1900c13f13c0f32f488485961e6f529bbb452d9acb30fbd806ba1231",
-  "signature": "b+0niv45/nWKyrguJWvVQEZb7D75wv/7oFxFEPTtxh5iJ5AE5LuwmBU3dcqsXahYrox/Q9/FYUVry2b9MhxlDQ==",
+  "version": "1.9.147",
+  "url": "index-1.9.147.html",
+  "sha256": "55831c2f50fe41dfc9a03ed366ab01bac2776fcb436164c1eed2589245972406",
+  "signature": "x/E0zgsN12N/eQBlw/qvnjtXPYvt/Iw/tSS9Rf0AcpmFZTx7iSRb8twLfx2D82a4LMUUr4cuuADqhI/UjHSIAA==",
   "minAppVersion": "0",
-  "notes": "When FAFO needs a new Windows download, the file you get now has its version in its name, like FAFO-Windows-1.9.139.zip, so you can tell your downloads apart.",
+  "notes": "When you submit slots on your own accounts (a Target store login, or Pokémon Center with your own email), FAFO now sends your seller the inbox access they need to follow your orders (each inbox's email and app password) with your slots, so you no longer send it on Discord yourself. Submit says if a slot's inbox or its app password isn't saved yet, and Store logins has Add inbox for it.",
   "installerUrl": "",
-  "publishedAt": "2026-11-13T07:51:32.696Z"
+  "publishedAt": "2026-11-14T11:19:24.091Z"
 }
