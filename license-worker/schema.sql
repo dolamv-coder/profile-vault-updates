@@ -643,3 +643,15 @@ CREATE TABLE IF NOT EXISTS interest_adds (
   id TEXT PRIMARY KEY,                          -- the addition's id, as "2026-11-13-friday"
   at INTEGER NOT NULL
 );
+
+-- Inbox tests from the web version (page 1.9.149; 2026-11-14, the owner: "how come I can't test the connection while on the
+-- website?"): per license, how many it made today (UTC), how many failed to sign in, and the hold of the one running
+-- (busy_until, released by its own value), for the limits; the day's sum of n is the cap across every license. Nothing
+-- about the inbox is kept. A table of its own, as db:init can't add columns.
+CREATE TABLE IF NOT EXISTS inbox_tests (
+  key_hash   TEXT PRIMARY KEY,
+  day        TEXT NOT NULL,                     -- YYYY-MM-DD, UTC
+  n          INTEGER NOT NULL,
+  fails      INTEGER NOT NULL DEFAULT 0,
+  busy_until INTEGER NOT NULL DEFAULT 0
+);

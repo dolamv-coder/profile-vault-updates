@@ -3985,7 +3985,7 @@ function writeStore(rec){
   catch(e){ STORAGE_OK = false; return false; }
 }
 // Erase vault: the vault, and what this device noted about its items (the picture finder's list, hashes of item names).
-function clearStore(){ premiumMem = null; billMem = null; interestMem = null; guideMem = null; guideMemOnly = false; try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(AUTO_PIC_STORE); localStorage.removeItem(PREMIUM_STORE); localStorage.removeItem(BILL_STORE); localStorage.removeItem(CLEAN_CODE_STORE); localStorage.removeItem(INTEREST_STORE); localStorage.removeItem(GUIDE_STORE); } catch(e){} cleanCodeMem = {}; cleanCodeGen++; }
+function clearStore(){ premiumMem = null; billMem = null; interestMem = null; guideMem = null; guideMemOnly = false; try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(AUTO_PIC_STORE); localStorage.removeItem(PREMIUM_STORE); localStorage.removeItem(BILL_STORE); localStorage.removeItem(CLEAN_CODE_STORE); localStorage.removeItem(INTEREST_STORE); localStorage.removeItem(GUIDE_STORE); localStorage.removeItem(INBOX_TEST_OK); } catch(e){} cleanCodeMem = {}; cleanCodeGen++; inboxTestMem = false; }
 
 // The vault key and the sync token (1.9.65+) come from one PBKDF2 run: the key is its 256 bits, the
 // same key deriveKey made before, and the token an HMAC of them, which the sync service can check
@@ -4285,6 +4285,7 @@ function lock(msg){
   SPAM_MOVES_AT.clear();   // when each mailbox's saved searches last ran (1.9.137)
   BILL.d = null; BILL.shown = ""; BILL.watch = 0; BILL.wait = null; BILL.names.clear(); ACCT_HASH.clear();   // the invoice and emails stay unlocked only
   guideReset();   // the setup guide's question, highlight and open step (1.9.145)
+  INBOX_TESTING.clear();   // inbox tests from the web version (1.9.149): a run that outlives the lock notes nothing
   renderLock(msg || "Locked.");
   setTimeout(webReloadOnLock, 400);   // the web version, with a newer release out (1.9.108)
 }
@@ -10212,7 +10213,7 @@ function retailerList(p, pemail, keep){
 
 // A new inbox (requirePw) starts with the box that opens the step-by-step setup (1.9.112), and #i-ready says what it filled in.
 function imapFields(i, requirePw){
-  return `${requirePw ? `<div class="ig-start"><p><strong>Not sure how?</strong> FAFO walks you through it one step at a time: which inbox, the app password your provider wants${DESK && window.pvDesktop.testInbox ? ", and a check that it signs in" : ""}.</p><button type="button" class="btn btn-sm btn-primary" data-ig-start>Set it up step by step</button></div>
+  return `${requirePw ? `<div class="ig-start"><p><strong>Not sure how?</strong> FAFO walks you through it one step at a time: which inbox, the app password your provider wants${(DESK && window.pvDesktop.testInbox) || inboxTestOn() ? ", and a check that it signs in" : ""}.</p><button type="button" class="btn btn-sm btn-primary" data-ig-start>Set it up step by step</button></div>
   <p class="note ig-ready" id="i-ready" hidden></p>` : ""}<div class="form-grid">
     ${fieldHTML({name:"i_email", label:"Email", value:i.email, type:"email", placeholder:"you@gmail.com", showOpt:false, attrs:'inputmode="email"'})}
     ${fieldHTML({name:"i_password", label:"App password", type:"password", ac:"new-password", placeholder:requirePw ? ((APP_PW[i.provider] || {}).placeholder || "App password") : "Leave blank to keep the current one", showOpt:false, hint:"Gmail, Yahoo, iCloud and AOL need an app password here, not your normal password."})}
@@ -10271,7 +10272,7 @@ function wireImap(panel, o = {}){
       if (r.provider === "custom"){ $('[name="i_host"]', panel).value = r.host; $('[name="i_port"]', panel).value = r.port; }
       ["i_email", "i_password", "i_provider", "i_host", "i_port"].forEach(n => setErr(panel, n, ""));
       showGuide();
-      ready.innerHTML = `${ic("check")}<span>Inbox ready: <strong>${esc(r.email)}</strong> (${esc(r.provider === "custom" ? r.host : providerName(r.provider))})${r.checked ? ". FAFO signed in to it" : ""}. Save to keep it.</span>`;
+      ready.innerHTML = `${ic("check")}<span>Inbox ready: <strong>${esc(r.email)}</strong> (${esc(r.provider === "custom" ? r.host : providerName(r.provider))})${r.checked ? (DESK ? ". FAFO signed in to it" : ". FAFO's server signed in to it") : ""}. Save to keep it.</span>`;
       ready.hidden = false;
       if (o.filled) o.filled(r);
     }
@@ -10301,7 +10302,8 @@ function readImap(panel, existingPw, say = {}){
 // login editor), and is refused otherwise (Add inbox). o.done(r) gets {email, provider, password, host, port, checked},
 // or {saved} for a saved inbox.
 function openInboxGuide(o){
-  const canTest = !!(DESK && window.pvDesktop.testInbox);
+  // In the web version with a license key (1.9.149), Check and use signs in from FAFO's server.
+  const canTest = !!(DESK && window.pvDesktop.testInbox) || inboxTestOn();
   const detect = (email) => PROVIDER_BY_DOMAIN[(String(email).split("@")[1] || "").toLowerCase().trim()] || "";
   const g = {email:baseMailAddr(o.email), provider:o.provider || "", password:"", host:o.host || "", port:o.port || "993"};
   if (!g.provider) g.provider = detect(g.email);
@@ -10335,7 +10337,7 @@ function openInboxGuide(o){
       </div>
       <p class="note note-warn" id="ig-warn" hidden style="margin:10px 0 0"></p>
       <p class="note" id="ig-out" hidden style="margin:12px 0 0"></p>
-      ${canTest ? "" : `<p class="item-sub" style="margin:12px 0 0">A browser can't sign in to email, so it isn't checked here. The FAFO desktop app signs in with it when it syncs your email.</p>`}`;
+      ${!canTest ? `<p class="item-sub" style="margin:12px 0 0">A browser can't sign in to email, so it isn't checked here. The FAFO desktop app signs in with it when it syncs your email.</p>` : DESK ? "" : `<p class="item-sub" style="margin:12px 0 0">Check and use signs in from FAFO's server to check it, then signs out. FAFO keeps nothing there.</p>`}`;
   };
   const footHTML = () => {
     const back = step ? `<button type="button" class="btn" data-ig="back">Back</button>` : `<button type="button" class="btn" data-close>Cancel</button>`;
@@ -10403,9 +10405,11 @@ function openInboxGuide(o){
         if (step === 0){ g.email = val(panel, "g_email"); g.provider = val(panel, "g_provider"); if (mailboxKey(g.email) + "|" + g.provider !== pwFor) g.password = ""; }
         if (step === 2){ g.password = $('[name="g_password"]', panel).value; pwFor = mailboxKey(g.email) + "|" + g.provider; if (g.provider === "custom"){ g.host = val(panel, "g_host"); g.port = val(panel, "g_port"); } }
       };
-      const finish = (checked) => {
+      // res: the web version's result (1.9.149), when it signed in, so the inbox's card has it once it's saved.
+      const finish = (checked, res) => {
         const p = PROVIDERS.find(x => x[0] === g.provider);
         const r = {email:g.email, provider:g.provider, password:cleanAppPw(g.provider, g.password), host:g.provider === "custom" ? g.host : (p ? p[2] : ""), port:g.provider === "custom" ? g.port : "993", checked, provHand};
+        if (res) r.res = res;
         close(); o.done(r);
       };
       const next = async () => {
@@ -10434,15 +10438,38 @@ function openInboxGuide(o){
         if (!canTest){ finish(false); return; }
         const p = PROVIDERS.find(x => x[0] === g.provider);
         const out = $("#ig-out", panel);
+        // The web version (1.9.149): the page's own checks, then the caveat (busy first, so a double tap runs one test).
+        const cred = {email:g.email, password:pw, provider:g.provider, host:g.provider === "custom" ? g.host : (p ? p[2] : ""), port:g.provider === "custom" ? g.port : "993"};
+        if (!DESK){
+          const pre = webTestPre(cred);
+          if (pre){ out.hidden = false; out.className = "note note-warn"; out.textContent = pre; failed = true; foot.innerHTML = footHTML(); out.scrollIntoView({block:"nearest"}); return; }
+          busy = true; foot.innerHTML = footHTML();
+          const S0 = S;
+          if (!(await inboxTestFirst())){
+            busy = false;
+            if (!document.contains(panel)) return;
+            out.hidden = false; out.className = "note"; out.textContent = "Not checked."; failed = true; foot.innerHTML = footHTML();
+            return;
+          }
+          if (!document.contains(panel) || S !== S0 || !inboxTestOn()){ busy = false; return; }
+        }
         busy = true; foot.innerHTML = footHTML();
         out.hidden = false; out.className = "note"; out.textContent = `Signing in to ${g.email}…`;
+        if (!DESK) out.textContent = `Signing in to ${g.email} from FAFO's server…`;
         let res;
-        try { res = await window.pvDesktop.testInbox({email:g.email, password:pw, host:g.provider === "custom" ? g.host : (p ? p[2] : ""), port:g.provider === "custom" ? g.port : "993"}); }
+        try { res = DESK ? await window.pvDesktop.testInbox({email:g.email, password:pw, host:g.provider === "custom" ? g.host : (p ? p[2] : ""), port:g.provider === "custom" ? g.port : "993"}) : await webInboxTest(cred); }
         catch (err){ res = {ok:false, error:String(err && err.message || err)}; }
         busy = false;
         if (!document.contains(panel)) return;
-        if (res && res.ok){ finish(true); return; }
+        if (res && res.ok){ finish(true, DESK ? null : res); return; }
         failed = true;
+        if (!DESK){
+          out.className = "note note-warn";
+          out.textContent = webTestText(cred, res) + (res.why === "auth" ? " Back shows the steps again." : "");
+          foot.innerHTML = footHTML();
+          out.scrollIntoView({block:"nearest"});
+          return;
+        }
         const m = mailError(g.provider, res && res.error, g.email);
         out.className = "note note-warn";
         out.textContent = m.text + (m.kind === "auth" ? " Back shows the steps again." : "") + (m.text !== m.raw && m.raw && m.kind !== "cert" ? ` (Details: ${m.raw})` : "");
@@ -10528,7 +10555,7 @@ function openLoginEditor(existing, onSaved, opts){
       // A new inbox typed (or set up) by hand isn't swapped for a saved one afterwards. Saved inboxes match by mailbox
       // (mailboxKey: a Gmail address's dot and +tag versions are the same inbox), so those don't become a second copy.
       const iEm = $('[name="i_email"]', panel), ibxSel = $('[name="inboxId"]', panel), ibxAuto = $("#l-ibx-auto", panel);
-      let ibxHand = false, usHand = !!inbox0, usAuto = false;
+      let ibxHand = false, usHand = !!inbox0, usAuto = false, last = null;   // last: the setup's check from FAFO's server (1.9.149)
       const showSaved = (on) => { if (us) us.checked = on; $("#l-saved", panel).hidden = !on; $("#l-new", panel).hidden = on; };
       const followEmail = () => {
         const em = val(panel, "email");
@@ -10547,7 +10574,7 @@ function openLoginEditor(existing, onSaved, opts){
       if (ibxSel) ibxSel.addEventListener("change", (e) => { if (e.isTrusted){ usHand = true; usAuto = false; ibxAuto.hidden = true; } });
       wireImap(panel, {account:() => val(panel, "email"),
         useSaved: us ? (inbox) => { ibxSel.value = inbox.id; showSaved(true); usHand = true; usAuto = false; ibxAuto.hidden = true; setErr(panel, "inboxId", ""); } : null,
-        filled: () => { ibxHand = true; }});
+        filled: (r) => { ibxHand = true; if (r.res) last = {cred:r, res:r.res}; }});
       const sName = $('[name="storeName"]', panel), pills = $("#l-pills", panel);
       // A profile waiting for a login at this store whose email is this login's is ticked for you;
       // one you tick or untick yourself stays as you left it.
@@ -10623,6 +10650,8 @@ function openLoginEditor(existing, onSaved, opts){
           if (newInbox.update) Object.assign(newInbox.update, newInbox.data);
           else { const i = Object.assign({id:uid(), createdAt:Date.now()}, newInbox.data); S.inboxes.push(i); inboxId = i.id; }
         }
+        // The setup's check from FAFO's server (1.9.149) goes with the inbox it checked: the new one, or the saved one linked.
+        if (!DESK && last && !(us && us.checked) && inboxId){ const ib = inboxById(inboxId); if (ib && ibxFp(last.cred) === ibxFp(ib)) ibxNote(ib.id, last.cred, last.res); }
         const rec = existing || Object.assign(l, {id:uid(), createdAt:Date.now()});
         Object.assign(rec, d, {inboxId, updatedAt:Date.now()});
         if (pw) rec.password = pw;
@@ -10646,10 +10675,11 @@ function openInboxEditor(existing){
   const isNew = existing._new;
   openLayer({
     title: isNew ? "Add inbox" : "Edit inbox", small:false, dismiss:false,
-    body:`<p style="margin:0 0 16px;color:var(--ink-2)">${isNew ? "Enter your email and an app password. Your provider is detected from the address." : "Leave the password blank to keep the current one."}</p>${!isNew && existing.syncError ? `<p class="note note-warn" style="margin:0 0 16px">${esc(mailError(existing.provider, existing.syncError, existing.email).text)}</p>` : ""}<form id="i-form" novalidate>${imapFields(isNew ? {} : existing, isNew)}</form><p class="note" id="i-test-out" hidden style="margin:12px 0 0"></p>`,
-    foot:`<button class="btn" data-close>Cancel</button>${DESK ? `<button class="btn" id="i-test">Test</button>` : ""}<button class="btn btn-primary" id="i-save">${isNew && DESK ? "Save and sync" : "Save inbox"}</button>`,
+    body:`<p style="margin:0 0 16px;color:var(--ink-2)">${isNew ? "Enter your email and an app password. Your provider is detected from the address." : "Leave the password blank to keep the current one."}</p>${!isNew && existing.syncError ? `<p class="note note-warn" style="margin:0 0 16px">${esc(mailError(existing.provider, existing.syncError, existing.email).text)}</p>` : ""}${!DESK && !isNew && (r => r && !r.ok)(ibxResult(existing)) ? `<p class="note note-warn" style="margin:0 0 16px">${esc(webTestText(existing, ibxResult(existing)))}</p>` : ""}<form id="i-form" novalidate>${imapFields(isNew ? {} : existing, isNew)}</form><p class="note" id="i-test-out" hidden style="margin:12px 0 0"></p>`,
+    foot:`<button class="btn" data-close>Cancel</button>${DESK || inboxTestOn() ? `<button class="btn" id="i-test">Test</button>` : ""}<button class="btn btn-primary" id="i-save">${isNew && DESK ? "Save and sync" : "Save inbox"}</button>`,
     mount:(panel, close) => {
-      wireImap(panel);
+      let last = null;   // the web version's last check from FAFO's server (1.9.149), kept for the inbox saved with it
+      wireImap(panel, {filled: (r) => { if (r.res) last = {cred:r, res:r.res}; }});
       const save = () => {
         const r = readImap(panel, existing.password);
         if (!r.inbox){ setErr(panel,"i_email","Enter the IMAP email."); return; }
@@ -10659,12 +10689,32 @@ function openInboxEditor(existing){
         let saved;
         const newPw = !isNew && r.inbox.password !== existing.password;
         if (isNew){ saved = Object.assign({id:uid(), createdAt:Date.now(), auto:true}, r.inbox); S.inboxes.push(saved); } else { Object.assign(existing, r.inbox, {syncError:""}); saved = existing; }
+        if (!DESK && last && ibxFp(last.cred) === ibxFp(saved)) ibxNote(saved.id, last.cred, last.res);
         persist(); render(); toast(isNew ? "Inbox added" : "Inbox saved"); close();
         if (DESK && (isNew || newPw)) syncOneInbox(saved, false);
       };
       const tb = $("#i-test", panel);
       if (tb) tb.addEventListener("click", async () => {
         const r = readImap(panel, existing.password); if (!r.inbox || r.bad) return;
+        if (!DESK){
+          // The web version (1.9.149): from FAFO's server. The button is off from the click, so a double click runs one test.
+          const o = $("#i-test-out", panel), say = (cls, t) => { o.hidden = false; o.className = cls; o.textContent = t; o.scrollIntoView({block:"nearest"}); };
+          const pre = webTestPre(r.inbox);
+          if (pre){ say("note note-warn", pre); return; }
+          tb.disabled = true;
+          const S0 = S;
+          if (!(await inboxTestFirst()) || !document.contains(panel) || S !== S0 || !inboxTestOn()){ tb.disabled = false; return; }
+          say("note", "Signing in from FAFO's server…");
+          const res = await webInboxTest(r.inbox);
+          if (!document.contains(panel) || S !== S0) return;   // locking closed it: nothing shown or noted
+          say(res.ok ? "note" : "note note-warn", webTestText(r.inbox, res));
+          tb.disabled = false;
+          if (!["refused", "offline", "slow"].includes(res.why)){
+            last = {cred:Object.assign({}, r.inbox), res};
+            if (!isNew && ibxFp(r.inbox) === ibxFp(existing)){ ibxNote(existing.id, r.inbox, res); inboxViews(); }
+          }
+          return;
+        }
         const out = $("#i-test-out", panel); out.hidden = false; out.className = "note"; out.textContent = "Signing in…"; tb.disabled = true;
         out.scrollIntoView({block:"nearest"});
         const res = await window.pvDesktop.testInbox({email:r.inbox.email, password:r.inbox.password, host:r.inbox.host, port:r.inbox.port});
@@ -10972,10 +11022,11 @@ function renderLogins(){
 }
 
 
-// IMAP (sidebar, 1.9.117): a read-only view of your slot limits and the inbox each store login reads its sign-in code
-// from. Display only — nothing is sent anywhere and no inbox password leaves the vault. Only the desktop app signs in to
-// an inbox, so the live Connected/Error status (per-device: inbox.syncError, inbox.lastSync) shows there; the web version
-// shows the structure (which logins still need an inbox, the slot counts) and says the status is in the app.
+// IMAP (sidebar, 1.9.117): a view of your slot limits and the inbox each store login reads its sign-in code from. Only the
+// desktop app reads an inbox, so its live Connected/Error status (per-device: inbox.syncError, inbox.lastSync) shows there.
+// From 1.9.149 the web version's Test, with the vault's license key, sends the inbox's email and app password to the license
+// worker, which signs in for it (below); without a key the web version shows the structure (which logins still need an
+// inbox, the slot counts) and says the status is in the app.
 function imapAgo(t){
   if (!t) return "not checked yet";
   const m = Math.round((Date.now() - t) / 60000);
@@ -10984,10 +11035,155 @@ function imapAgo(t){
   const h = Math.round(m / 60);
   return h < 48 ? `checked ${h}h ago` : `checked ${Math.round(h / 24)}d ago`;
 }
+// 1.9.149 (the owner, 2026-11-14: "how come I can't test the connection while on the website?"): the license worker signs
+// in for the web version's Test. A browser can't open an IMAP connection, so in the web version with the vault's license key
+// (inboxTestOn) Test sends the inbox's email (without its +tag) and app password (cleaned), as Submit's inbox access does
+// (imapLineOf), to POST /inbox/test, which signs in from FAFO's server over TLS on port 993, opens INBOX read-only, signs
+// out and keeps nothing. It runs from IMAP's cards (in place), the inbox editor and the step-by-step setup's Check and use,
+// one at a time (INBOX_TESTING, marked before the caveat window; the editor's button and the setup's `busy` before anything
+// is awaited), after webTestPre's own checks, and once per device after the caveat (inboxTestFirst: the sign-in comes from
+// FAFO's server, so a provider may send a new-sign-in alert or block it). Results are kept on this device only
+// (S._local.ibx, never synced) for the credentials tested (ibxFp), and only one that says the inbox itself is wrong
+// (ibxBad) counts as an Inbox error. The desktop app is unchanged.
+const inboxTestOn = () => !DESK && WEB_SELF && !!S && MODE === "vault" && !!sellerLic();
+const INBOX_TESTING = new Map();   // inbox id → the run's token ({asking} while the caveat window is open)
+const INBOX_TEST_OK = "orbit-inbox-test-ok";   // "1" once the caveat was said on this device
+let inboxTestMem = false, inboxTestAsk = null;
+const LIC_LIST_DOWN = "the list of keys made by hand can't be read just now";   // the license worker's GH_LIST_DOWN
+const webTestSix = (c) => c.provider !== "custom" && PROVIDERS.some(p => p[0] === c.provider);
+const webTestHost = (c) => c.provider === "custom" ? String(c.host || "").trim().toLowerCase() : ((PROVIDERS.find(p => p[0] === c.provider) || [])[2] || String(c.host || ""));
+// The email, server, port and password a result belongs to.
+const ibxFp = (c) => syncHash([norm(baseMailAddr(c.email)), webTestHost(c), String(c.port || "993").trim(), cleanAppPw(c.provider, c.password)].join("|"));
+function ibxResult(i){
+  const all = S && S._local && S._local.ibx && typeof S._local.ibx === "object" ? S._local.ibx : null, r = all && all[i.id];
+  return r && r.f === ibxFp(i) ? r : null;
+}
+// A result that says the inbox is wrong, not that FAFO's server couldn't check it: a blocked, temporary, timed-out or
+// unreachable check of one of the six providers is about the sign-in coming from FAFO's server, and the desktop may sign
+// in fine. A custom server FAFO's server can't connect to securely is the inbox's (its name, its certificate, STARTTLS).
+const ibxBad = (r, c) => !!r && !r.ok && (["auth", "account", "method", "not-imap"].includes(r.why) || (r.why === "connect" && !webTestSix(c)));
+// Keeps a result on this device (never creating _local, which says the vault has a key kept), for inboxes that still exist.
+function ibxNote(id, cred, res){
+  if (!S || !S._local || !inboxById(id)) return;
+  const old = S._local.ibx && typeof S._local.ibx === "object" ? S._local.ibx : {}, ibx = {};
+  for (const k of Object.keys(old)) if (inboxById(k)) ibx[k] = old[k];
+  ibx[id] = {f:ibxFp(cred), ok:!!res.ok, at:Date.now(), n:typeof res.messages === "number" ? res.messages : null, why:res.ok ? "" : String(res.why || ""), text:String(res.text || "").slice(0, 300)};
+  S._local.ibx = ibx;
+  persist();
+}
+// What the page says itself, before sending anything (as the license worker refuses, and as imapLineOf sends).
+function webTestPre(c){
+  const email = baseMailAddr(c.email), pw = cleanAppPw(c.provider, c.password);
+  if (!/\S/.test(pw)) return "Add this inbox's app password first.";
+  if (email.length > 254 || !/^[^\s@:]+@[^\s@:]+\.[^\s@:]+$/.test(email)) return "Check this inbox's email address.";
+  if (pw.length > 200 || /[\r\n\u2028\u2029\0]/.test(pw)) return "FAFO's server can't send that app password to the mail server as it is. Test this inbox in the desktop app.";
+  if (!webTestHost(c)) return "Add its IMAP server first.";
+  if (String(c.port || "993").trim() !== "993") return "FAFO's server only tests port 993 (SSL/TLS). Test this inbox in the desktop app.";
+  return "";
+}
+// The license worker's answer: {ok, messages}, {ok:false, why, text}, or the page's own why: refused (a status other than
+// 200, with the worker's error and limit), slow (no answer in 30 seconds) or offline.
+async function webInboxTest(c){
+  const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 30000);
+  try {
+    const r = await alertApi("/inbox/test", {method:"POST", signal:ac.signal,
+      body:JSON.stringify({email:baseMailAddr(c.email), password:cleanAppPw(c.provider, c.password), host:webTestHost(c), port:"993"})});
+    let d = null;
+    try { d = await r.json(); } catch(e){}
+    const obj = !!d && typeof d === "object" && !Array.isArray(d);
+    if (r.status === 200 && obj) return d.ok === true ? (typeof d.messages === "number" ? {ok:true, messages:d.messages} : {ok:true}) : {ok:false, why:String(d.why || ""), text:String(d.text || "")};
+    return {ok:false, why:"refused", status:r.status, error:obj && typeof d.error === "string" ? d.error : "", limit:obj && typeof d.limit === "number" ? d.limit : null};
+  } catch(e){
+    return {ok:false, why:ac.signal.aborted ? "slow" : "offline"};
+  } finally { clearTimeout(timer); }
+}
+// The words for a result. The server's own words (Details) are only ever drawn escaped, or as textContent, never as a link.
+function webTestText(c, res){
+  if (!res) return "";
+  const six = webTestSix(c), name = six ? providerName(c.provider) : "The mail server", host = webTestHost(c), email = c.email;
+  const det = (t) => t ? ` (Details: ${t})` : "";
+  if (res.ok) return typeof res.messages === "number" ? `Signed in from FAFO's server. Your inbox has ${res.messages.toLocaleString()} emails.` : "Signed in from FAFO's server.";
+  const why = res.why;
+  if (why === "auth" || why === "account"){
+    // mailError's other kinds (a network, a certificate) are about this computer's connection, not FAFO's server's sign-in.
+    const m = mailError(c.provider, res.text, c.email);
+    if (m.kind === "auth") return m.text + (m.raw && m.text !== m.raw ? det(m.raw) : "");
+    return (why === "auth" ? `${name} didn't accept the email or app password for ${email}.` : `FAFO's server signed in to ${email}, but ${name} wouldn't open its inbox.`) + det(res.text);
+  }
+  if (why === "blocked") return `${name} stopped this sign-in because it came from FAFO's server, not your computer. Sign in to ${email} in your browser, confirm it was you if it asks, then test again. The desktop app signs in from your computer.`;
+  if (why === "server") return `${name} had a temporary problem or is limiting sign-ins. Try again in a few minutes.` + det(res.text);
+  if (why === "connect") return six ? `FAFO's server couldn't reach ${name} just now. Try again in a few minutes.`
+    : `FAFO's server couldn't connect securely to ${host} on port 993. Check the server name. FAFO's server only connects with SSL/TLS on port 993, to a server whose certificate is valid for that name, so a server that only offers STARTTLS, or uses its own certificate, has to be tested in the desktop app.`;
+  if (why === "timeout") return `${name} didn't answer in time. Try again in a few minutes.` + (six ? "" : " Check the server name.");
+  if (why === "not-imap") return `${host} didn't answer like a mail server. Check the server name.`;
+  if (why === "method") return "That mail server won't take a password from mail apps, so FAFO can't sign in to it.";
+  if (why === "slow") return "FAFO's server didn't answer in time. Try again in a few minutes.";
+  if (why === "offline") return "Couldn't reach FAFO's server. Check your internet connection and try again.";
+  if (why === "refused"){
+    const st = res.status, e = res.error;
+    if (st === 429) return e === "busy" ? "FAFO's server is already testing an inbox for you. Try again in a moment."
+      : e === "fails" ? "Too many sign-ins failed today, so FAFO's server won't try again until tomorrow (that keeps your provider from locking the account). Check the app password, then test again tomorrow or in the desktop app."
+      : e === "everyone" ? "FAFO's server has tested as many inboxes as it can today. Try again tomorrow, or test it in the desktop app."
+      : `That's today's ${e === "limit" && typeof res.limit === "number" ? res.limit + " " : ""}inbox tests from FAFO's server. Try again tomorrow, or test it in the desktop app.`;
+    if (st === 401) return "FAFO's server didn't recognize your license key, so it can't test inboxes.";
+    if (st === 503 && e === LIC_LIST_DOWN) return "FAFO's server can't check license keys just now. Try again in a few minutes.";
+    if (st === 404) return "FAFO's server can't test inboxes yet. Try again later.";
+    if (st === 400 && e === "host") return "FAFO's server only tests a mail server on the internet, by its name (like imap.example.com). Test this one in the desktop app.";
+    if (st === 400 && e === "port") return "FAFO's server only tests port 993 (SSL/TLS). Test this inbox in the desktop app.";
+    if (st === 400) return "FAFO's server couldn't read that email or app password. Check both and try again.";
+    return "FAFO's server couldn't test it just now. Try again in a few minutes.";
+  }
+  return `FAFO's server couldn't sign in to ${email}.` + det(res.text);   // a kind a newer worker answers
+}
+// The caveat, said once per device: true to go on. One window at a time (a double click, or Test on a card and then in the
+// editor, gets the same answer); locking closes it, which answers null.
+function inboxTestFirst(){
+  let seen = inboxTestMem;
+  if (!seen) try { seen = localStorage.getItem(INBOX_TEST_OK) === "1"; } catch(e){}
+  if (seen) return Promise.resolve(true);
+  if (inboxTestAsk) return inboxTestAsk;
+  inboxTestAsk = confirmDialog({title:"Test from FAFO's server?", confirm:"Test it", cancel:"Not now",
+    body:"A browser can't sign in to email, so FAFO's server does it for this test: it signs in with the inbox's email and app password, checks the inbox opens, then signs out. It keeps nothing. Because the sign-in comes from FAFO's server, not your computer, your email provider may email you a security alert about a new sign-in, or now and then block it and ask you to sign in in your browser. That alert is this test."
+  }).then((yes) => {
+    inboxTestAsk = null;
+    if (yes !== true) return false;
+    inboxTestMem = true;
+    try { localStorage.setItem(INBOX_TEST_OK, "1"); } catch(e){}
+    return true;
+  });
+  return inboxTestAsk;
+}
+const inboxViews = () => { if (S && (UI.view === "imap" || UI.view === "logins")) renderMain(); };
+// IMAP's card Test, in place.
+async function testInboxHere(i){
+  if (!inboxTestOn()) return;
+  if (INBOX_TESTING.size){ toast("Another inbox is being tested. Try again in a moment."); return; }
+  const pre = webTestPre(i);
+  if (pre){ toast(pre, "err"); return; }
+  // Marked before the caveat window, so a second click can't pass the check above meanwhile.
+  const S0 = S, id = i.id, tok = {asking:true};
+  const unmark = () => { if (INBOX_TESTING.get(id) === tok) INBOX_TESTING.delete(id); };
+  INBOX_TESTING.set(id, tok); inboxViews();
+  const yes = await inboxTestFirst();
+  if (!yes || S !== S0 || !inboxTestOn()){ unmark(); inboxViews(); return; }
+  const cur = inboxById(id), cred = cur ? {email:cur.email, password:cur.password, provider:cur.provider, host:cur.host, port:cur.port} : null;
+  const pre2 = cred ? webTestPre(cred) : "";
+  if (!cred || pre2){ unmark(); inboxViews(); if (pre2) toast(pre2, "err"); return; }
+  tok.asking = false; inboxViews();
+  const res = await webInboxTest(cred);
+  unmark();
+  if (S !== S0) return;   // locked meanwhile
+  if (!["refused", "offline", "slow"].includes(res.why)) ibxNote(id, cred, res);
+  if (res.ok) toast(`${cred.email}: signed in from FAFO's server.`);
+  else if (ibxBad(res, cred)) toast(`Couldn't sign in to ${cred.email} from FAFO's server. Its card says why.`, "err");
+  else toast(webTestText(cred, res), "err");
+  inboxViews();
+}
 // An inbox's last check on this computer (1.9.126): in the desktop app "connected" means its sign-in worked, as on Settings
 // and IMAP's inbox cards ("err" after a failed sync, "new" before the first one here; `syncError` and `lastSync` are per
-// device). The web version can't sign in to email, so there a login with a saved inbox counts as connected.
-const inboxCheck = (i) => !DESK ? "ok" : i.syncError ? "err" : i.lastSync ? "ok" : "new";
+// device). The web version doesn't read email, so there a login with a saved inbox counts as connected, unless this
+// browser's last test of its current email and app password from FAFO's server (1.9.149) says the inbox is wrong (ibxBad).
+const inboxCheck = (i) => !DESK ? ((r => r && ibxBad(r, i))(ibxResult(i)) ? "err" : "ok") : i.syncError ? "err" : i.lastSync ? "ok" : "new";
 function loginInboxCounts(){
   const c = {ok:0, err:0, new:0, need:0};
   S.logins.forEach(l => { const i = inboxById(l.inboxId); c[i ? inboxCheck(i) : "need"]++; });
@@ -10999,17 +11195,25 @@ const inboxKpis = (kpi, c) => kpi("var(--ok)", "Inbox connected", c.ok) + (c.err
 // The same, short, in Compact and the List, so the counts can be matched to rows in every layout; nothing on the web.
 function loginInboxMark(inb){
   const st = inboxCheck(inb);
-  return st === "err" ? `<span class="lst lst-err" title="${esc("The desktop app couldn't sign in: " + inb.syncError)}">Error</span>`
+  return st === "err" ? `<span class="lst lst-err" title="${esc(DESK ? "The desktop app couldn't sign in: " + inb.syncError : "FAFO's server couldn't sign in (Test on IMAP): " + webTestText(inb, ibxResult(inb)))}">Error</span>`
     : st === "new" ? `<span class="lst" title="The desktop app hasn't checked this inbox yet">Not checked</span>` : "";
 }
 function loginInboxPill(inb){
   const st = inboxCheck(inb);
-  return st === "err" ? `<span class="ppill ppill-bad" title="${esc("The desktop app couldn't sign in: " + inb.syncError)}">Inbox error</span>`
+  return st === "err" ? `<span class="ppill ppill-bad" title="${esc(DESK ? "The desktop app couldn't sign in: " + inb.syncError : "FAFO's server couldn't sign in (Test on IMAP): " + webTestText(inb, ibxResult(inb)))}">Inbox error</span>`
     : st === "new" ? `<span class="ppill" title="The desktop app hasn't checked this inbox yet">Not checked yet</span>`
     : `<span class="ppill ppill-ok">Inbox connected</span>`;
 }
 function imapInboxStatus(i){
-  if (!DESK) return `<span class="item-sub">Status shows in the desktop app</span>`;
+  if (!DESK){
+    // The web version (1.9.149): this browser's last test from FAFO's server, for the inbox's current email and password.
+    const t = INBOX_TESTING.get(i.id), r = ibxResult(i);
+    if (t && !t.asking) return `<span class="item-sub" style="display:inline-flex;align-items:center;gap:6px"><span class="spin" aria-hidden="true"></span><span>Signing in from FAFO's server…</span></span>`;
+    if (r && ibxBad(r, i)) return `<span style="color:var(--danger);font-weight:600"><span class="imap-dot" style="background:var(--danger)"></span>Error</span> <span class="item-sub">· ${esc(imapAgo(r.at))}</span><div class="item-sub" style="color:var(--danger)">${esc(webTestText(i, r))}</div>`;
+    if (r && !r.ok) return `<span class="item-sub">Couldn't check from FAFO's server · ${esc(imapAgo(r.at))}</span><div class="item-sub">${esc(webTestText(i, r))}</div>`;
+    if (r) return `<span style="color:var(--ok);font-weight:600"><span class="imap-dot" style="background:var(--ok)"></span>Connected</span> <span class="item-sub">· ${esc(imapAgo(r.at))}</span>`;
+    return inboxTestOn() ? `<span class="item-sub">Not checked here yet</span>` : `<span class="item-sub">Status shows in the desktop app</span>`;
+  }
   // While the desktop app signs in (1.9.126), as Settings' inbox rows show it; onSyncProgress fills in its progress.
   const busy = SYNCING.get(i.id);
   if (busy) return `<span class="item-sub" style="display:inline-flex;align-items:center;gap:6px"><span class="spin" aria-hidden="true"></span><span data-sync-status="${i.id}">${esc(busy)}</span></span>`;
@@ -11047,17 +11251,19 @@ function renderImap(){
     <div class="item-title">${esc(i.email)}</div>
     <div class="item-sub">${esc(providerName(i.provider))} · ${n ? "Used by " + plural(n, "login") : "Not used yet"}</div>
     <div style="margin-top:8px">${imapInboxStatus(i)}</div></div>
-    <div class="item-actions">${DESK ? `<button class="btn" style="padding:4px 12px" data-act="edit-inbox" data-id="${i.id}">Test</button>` : `<button class="btn" style="padding:4px 12px;opacity:.5" disabled title="Test in the desktop app">Test</button>`}</div></div></article>`; }).join("")}</div>`
+    <div class="item-actions">${DESK ? `<button class="btn" style="padding:4px 12px" data-act="edit-inbox" data-id="${i.id}">Test</button>` : inboxTestOn() ? `<button class="btn" style="padding:4px 12px" data-act="test-inbox" data-id="${i.id}" ${INBOX_TESTING.size ? "disabled" : ""}>${INBOX_TESTING.has(i.id) && !INBOX_TESTING.get(i.id).asking ? "Testing…" : "Test"}</button>` : `<button class="btn" style="padding:4px 12px;opacity:.5" disabled title="${esc(WEB_SELF && MODE === "vault" ? "Test needs your license key in this browser: Settings, then Web version & sync, then Turn on sync. Or test it in the desktop app." : "Test in the desktop app")}">Test</button>`}</div></div></article>`; }).join("")}</div>`
     : `<p class="item-sub">No inboxes saved yet. Add a store login and set up the inbox it reads sign-in codes from.</p>`;
   // KPI strip (1.9.125), as on Store logins (the same counts, which add up to Logins; on the desktop, 1.9.126, by each
   // inbox's last check there), led by the slots in use of the license's limit, red once over it.
   const inUse = slotsInUse(), allow = slotAllow();
   const kpi = (color, label, n) => `<span class="p-kpi"><span class="p-kpi-dot" style="background:${color}"></span>${label} <strong>${n}</strong></span>`;
   const kpiStrip = `<div class="p-kpis">${kpi(inUse > allow ? "var(--danger)" : "var(--violet)", "Slots", inUse + " / " + allow)}${S.logins.length ? kpi("var(--accent)", "Logins", S.logins.length) + inboxKpis(kpi, loginInboxCounts()) : ""}${inboxes.length ? kpi("var(--info)", "Inboxes", inboxes.length) : ""}</div>`;
-  const webNote = DESK ? "" : `<p class="note" style="margin:0 0 16px">You're on the web version. FAFO signs in to check an inbox only in the desktop app, so <strong>Connected / Error</strong> and <strong>Test</strong> show there. Open FAFO on your computer to pull your orders from your email automatically — the web version can't read email, so here you track orders by pasting their confirmation emails. Your inbox passwords are kept in your encrypted vault${imapOwnFafo() ? "" : ", and leave it only with the slots you submit on that inbox's accounts"}.</p>`;
+  // The web version (1.9.149): with the vault's license key, Test signs in from FAFO's server; without one, as before, and how to add it.
+  const webNote = DESK ? "" : inboxTestOn() ? `<p class="note" style="margin:0 0 16px">You're on the web version. <strong>Test</strong> checks an inbox by signing in to it from FAFO's server, then signing out. Reading your email to pull in your orders happens only in the desktop app — the web version can't read email, so here you track orders by pasting their confirmation emails. Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test (FAFO's server signs in with it and keeps nothing)${imapOwnFafo() ? "" : " and with the slots you submit on that inbox's accounts"}.</p>`
+    : `<p class="note" style="margin:0 0 16px">You're on the web version. FAFO signs in to check an inbox only in the desktop app, so <strong>Connected / Error</strong> and <strong>Test</strong> show there. Open FAFO on your computer to pull your orders from your email automatically — the web version can't read email, so here you track orders by pasting their confirmation emails. Your inbox passwords are kept in your encrypted vault${imapOwnFafo() ? "" : ", and leave it only with the slots you submit on that inbox's accounts"}.${WEB_SELF && MODE === "vault" ? " To test an inbox here, add your license key: Settings, then Web version &amp; sync, then Turn on sync." : ""}</p>`;
   return `<div class="view-head"><div><h1 class="view-title">IMAP</h1><p class="view-sub">Your slot limits, and the inbox each store login reads its sign-in code from.${imapOwnFafo() ? "" : " When you submit slots on your own accounts, FAFO sends your seller their inboxes' email and app password, so they can follow your orders."}</p></div></div>
     ${kpiStrip}${webNote}${slots}${needBlock}
-    <h2 class="sub-title">Inboxes</h2><p class="view-sub" style="margin:-6px 0 12px">One inbox can serve several store logins.${DESK ? " The desktop app signs in to read sign-in codes; the status is its last check." : ""}</p>
+    <h2 class="sub-title">Inboxes</h2><p class="view-sub" style="margin:-6px 0 12px">One inbox can serve several store logins.${DESK ? " The desktop app signs in to read sign-in codes; the status is its last check." : ""}${inboxTestOn() ? " Test signs in from FAFO's server; the status is this browser's last test." : ""}</p>
     ${inboxCards}`;
 }
 
@@ -20383,6 +20589,7 @@ document.addEventListener("click", async (e) => {
     case "copy-login-pw": { const l = loginById(id); if (l && l.password) copyText(l.password, "password"); break; }
     case "delete-login": deleteLogin(id); break;
     case "edit-inbox": { const i = inboxById(id); if (i) openInboxEditor(i); break; }
+    case "test-inbox": { const i = inboxById(id); if (i) testInboxHere(i); break; }
     case "copy-inbox-pw": { const i = inboxById(id); if (i && i.password) copyText(i.password, "IMAP password"); break; }
     case "delete-inbox": { const i = inboxById(id); if (!i) break; const n = inboxUses(id);
       if (await confirmDialog({title:"Delete inbox?", body: n ? `${plural(n, "store login")} will be left without an inbox.` : `${i.email} will be removed.`, confirm:"Delete inbox", danger:true})){

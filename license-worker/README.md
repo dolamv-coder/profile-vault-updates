@@ -961,6 +961,41 @@ curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" "https://orbit-license.orbi
 
 It shows the name's words, the groups searched, every product that fit and the answer.
 
+## Testing an inbox from the web version
+
+From FAFO 1.9.149 (you asked on 2026-11-14: "how come I can't test the connection while on the
+website?"), the web version's **Test** on the IMAP page, in the inbox editor and in the step-by-step
+setup works too. A browser can't sign in to email, so the page sends the inbox's email (without any
++tag) and app password to `POST /inbox/test` with its license key, and this worker signs in for it:
+it connects to the mail server over SSL/TLS on port 993, signs in as the desktop app does, opens the
+inbox read-only, signs out, and answers Connected (with how many emails the inbox has) or what the
+server said. It only happens when someone presses Test, and the page asks them first, once per
+computer.
+
+It keeps nothing about the inbox: the address and password are never stored or logged, only used for
+that one sign-in. It only connects to a mail server on the internet by its name (like
+`imap.gmail.com`), on port 993: never an IP address, a local or private name, or another port. A
+server that only offers STARTTLS, or uses a certificate of its own, has to be tested in the desktop
+app.
+
+Things your buyers may see, which they were told before their first test:
+
+- The sign-in comes from Cloudflare's network, not their computer, so their email provider may email
+  them a security alert about a new sign-in, or now and then block it and ask them to sign in in
+  their browser. FAFO then says that, and it doesn't count as an inbox error.
+- Outlook.com may refuse password sign-ins for mail apps (Microsoft moved them to modern
+  authentication in 2024); the desktop app gets the same answer.
+
+Limits: one test at a time per license, 30 a day and 10 failed sign-ins a day per license (so it
+can't be used to guess a password: a refusal that's temporary, throttled or blocked doesn't count),
+and 500 a day across every license together, in case keys ever stop needing your approval. The
+`inbox_tests` table keeps, per license, only today's count, its failed sign-ins and the running
+test's hold; `npm run db:init` (and the deploy Action) adds it.
+
+`INBOX_TEST_CONNECT`, `INBOX_TEST_TIMEOUT_MS`, `INBOX_TESTS_PER_DAY`, `INBOX_TEST_FAILS_PER_DAY` and
+`INBOX_TESTS_ALL_PER_DAY` are for the tests only (they point them at pretend mail servers and
+shorten the limits). Never put them in `wrangler.toml`: the tests check it has none of them.
+
 ## Limiting who gets a key
 
 By default, any Discord account except bots gets a key. To limit it, edit `[vars]` in
@@ -1019,4 +1054,5 @@ synced vaults (revisions, two devices saving at once, large vaults, a new passwo
 after wrong passwords), and payments against a stand-in Stripe (plans, invoices, Submit refused and allowed, sessions,
 signed webhooks, refunds, the monthly plan's states with `BILLING_MONTHLY` on and what's left of it with it off,
 disputes, the Billing page and its price per checkout (moved to $10 once), Friends and Family's $5, test mode, and that
-the tables a database from the last release gets are the same as a new one's).
+the tables a database from the last release gets are the same as a new one's), and inbox tests against pretend IMAP
+servers (they need openssl, to make a throwaway certificate authority).
