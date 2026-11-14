@@ -19523,7 +19523,7 @@ function openSubmitTo(){
       const check = async () => {
         const my = ++seq; err.textContent = ""; idp.hidden = true; found = null; keyed = false; note.hidden = true; note.innerHTML = "";
         const m = ta.value.match(/PVKEY1\.([A-Za-z0-9_-]{40,})/);
-        // A license key, not an invite code (1.9.149): it says so, and that the box left empty sends to the seller.
+        // A license key, not an invite code (1.9.149): it says so, and what the box left empty does.
         if (!m && licKeyIn(ta.value)){ keyed = true; note.hidden = false; note.innerHTML = licPastedHTML("to"); return; }
         if (!m){ if (ta.value.trim()) err.textContent = "Couldn't find a code starting with PVKEY1."; return; }
         try { await importOwnerPub(m[1]); const id = await keyIdOf(m[1]); if (my !== seq) return; found = {pub:m[1], keyId:id}; idp.hidden = false; idp.textContent = `Key ID ${id}. Check it matches the one in their invite.`; }
@@ -19901,19 +19901,21 @@ function licPastedHTML(where, key){
   if (where === "to"){
     const there = canSendToSeller()
       ? `Leave this box empty and your slots go straight to the seller's Discord channel${sellerLic() ? ", with the license key FAFO already has." : ": Submit asks for your license key when you send them, and this vault keeps it."}`
-      : DESK ? "FAFO on this computer takes its license key on its license screen, when it starts." : "Submit asks for your license key when it needs it.";
+      : DESK ? "FAFO on this computer takes its license key on its license screen, when it starts."
+      : "While you fill in profiles for someone, FAFO doesn't use a license key: leave this box empty to download a plain file instead.";
     return `<p style="margin:0">${head} This box is for an invite code from someone else (it starts with PVKEY1.). ${there}</p>`;
   }
   const what = "This window is for filling in profiles for someone who sent you an invite code (it starts with PVKEY1.).";
   const vault = validRecord(readStore());
   let there, btn = false;
   if (DESK){
-    const L = licRead() || {}, open = vault ? "unlock FAFO with your master password" : "create your master password";
+    const L = licRead() || {}, open = vault ? "unlock FAFO with your master password"
+      : "create your master password, or, if you already use FAFO in a browser or on another computer, choose Open my synced vault";
     there = L.key && licFormat(L.key) === key ? `It's the license key FAFO on this computer already uses, so there's nothing to paste: close this and ${open}. You'll find the key under Settings, then License.`
       : L.key ? "FAFO on this computer uses another license key. To switch, unlock FAFO, go to Settings, then License, choose Remove from this computer, and enter this one when FAFO asks for a license key."
       : "FAFO on this computer takes its license key on its license screen, when it starts.";
   } else if (ON_CLAUDE){
-    there = `This copy of FAFO doesn't take a license key: open FAFO at ${WEB_HOST} and choose Enter it instead on its first screen.`;
+    there = `This copy of FAFO can't reach FAFO's license server, so your license key can't be used here: open FAFO at ${WEB_HOST} and choose Enter it instead on its first screen.`;
   } else if (vault){
     there = "This browser already has a FAFO vault: close this and unlock it with your master password. If Submit needs your license key, it asks for it.";
   } else {

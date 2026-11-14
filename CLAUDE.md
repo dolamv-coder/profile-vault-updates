@@ -2353,25 +2353,31 @@ keys").
     filled in as `licFormat` writes it, the cursor in Master password, and the dialog otherwise as it was (`o` counts only
     when it isn't the click event the lock screen's listeners pass, and only in a dialog with a key box);
   - a browser with a vault: close this and unlock it with your master password, and Submit asks for the key if it needs it;
-  - claude.ai (`ON_CLAUDE`): open FAFO at app.fafoaco.com and choose Enter it instead on its first screen;
+  - claude.ai (`ON_CLAUDE`), with no button: that copy can't reach FAFO's license server, so the key can't be used there:
+    open FAFO at app.fafoaco.com and choose Enter it instead on its first screen;
   - the desktop app, with no button: this computer's own key ("so there's nothing to paste: close this and unlock FAFO with
-    your master password", or "create your master password" before there's a vault, then "You'll find the key under
-    Settings, then License."), another key (Settings, then License, Remove from this computer, then enter it when FAFO asks
-    for a license key), or none saved (its license screen, when it starts).
+    your master password", or before there's a vault "create your master password, or, if you already use FAFO in a browser
+    or on another computer, choose Open my synced vault", which the lock screen offers beside Create vault and which opens
+    or makes the license's synced vault, then "You'll find the key under Settings, then License."), another key (Settings,
+    then License, Remove from this computer, then enter it when FAFO asks for a license key), or none saved (its license
+    screen, when it starts).
 - **Submit's Send somewhere else** (`openSubmitTo`): `#st-lic-note` (`licPastedHTML("to")`): "This box is for an invite code
   from someone else (it starts with PVKEY1.).", then, while `canSendToSeller()`, that with the box left empty the slots go
   straight to the seller's Discord channel ("with the license key FAFO already has", or "Submit asks for your license key
-  when you send them, and this vault keeps it"). Save with the key in the box saves nothing and adds no "Paste a valid
-  invite code." under the note.
+  when you send them, and this vault keeps it"); while filling in profiles for someone in a browser (`MODE` "submit", so
+  no `canSendToSeller()`), "While you fill in profiles for someone, FAFO doesn't use a license key: leave this box empty to
+  download a plain file instead.", as the window's own line says. Save with the key in the box saves nothing and adds no
+  "Paste a valid invite code." under the note.
 - The key is never in the words (it's in the box already) and never logged.
 - **Tests:** `license-paste.test.mjs` runs the page in Chromium (in CI after Costco's) against a pretend license worker:
   `licKeyIn`'s readings (alone, spaces and line breaks around it, lower case, spaces for dashes, in a sentence; not a short
   or long one, nor its words spread through a sentence), I was sent a code on the first screen (the note, its button, the
   key box filled in, Continue asking `/vault/info` with that key, Enter it instead still empty), on Use this browser only's
   screen, and in a browser with a vault (no button), an invite code winning over a key and still starting to fill in
-  profiles, other text's old message, Send somewhere else with no key kept and with one (Save, the old message, an invite
-  code saved and removed), and the desktop app with `window.pvDesktop` stubbed (its own key before and after there's a
-  vault, another key, none saved, Send somewhere else). It fails if the newest page has no `licKeyIn`.
+  profiles (and Send somewhere else there), other text's old message, Send somewhere else with no key kept and with one
+  (Save, the old message, an invite code saved and removed), a copy on claude.ai (`window.claude` set: no button), and the
+  desktop app with `window.pvDesktop` stubbed (its own key before and after there's a vault, another key, none saved, Send
+  somewhere else). It fails if the newest page has no `licKeyIn`.
 - Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the

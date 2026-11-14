@@ -6,8 +6,8 @@
 // with a key (alone, with spaces and line breaks around it, in lower case, with spaces for its dashes, in a sentence) says
 // it's a license key and where it goes, and in a browser with no vault Open FAFO with this key opens the sync sign-in with
 // the key filled in; an invite code (PVKEY1.) anywhere in the text still wins; other text keeps the old message; Submit's
-// Send somewhere else with a key; and the desktop's own words, with no button. The key never shows in the words. Sample keys
-// only (PVLT-TEST-…).
+// Send somewhere else with a key (also while filling in profiles for someone); a copy on claude.ai; and the desktop's own
+// words, with no button. The key never shows in the words. Sample keys only (PVLT-TEST-…).
 //   node .github/scripts/license-paste.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must recognise a key (licKeyIn); a page named on the command line that doesn't is skipped.
 import { readFileSync, readdirSync } from "node:fs";
@@ -205,6 +205,13 @@ try {
     await paste("#ss-code", `${KEY} ${INVITE}`);
     await page.click("#layers .layer:last-child #ss-go");
     await page.waitForFunction(() => window.__t.MODE === "submit");
+    // There, Send somewhere else with a key: this FAFO uses no license key, and the box left empty downloads a plain file.
+    await addProfile(); await openTo();
+    const r = await paste("#st-code", KEY);
+    assert.equal(r.note, `${HEAD} This box is for an invite code from someone else (it starts with PVKEY1.). While you fill in profiles for someone, FAFO doesn't use a license key: leave this box empty to download a plain file instead.`);
+    assert.deepEqual([r.button, r.err], ["", ""]);
+    noKey(await text("#st-lic-note"));
+    await closeTop();
     await page.goto("https://app.fafoaco.com/");
     await page.waitForSelector("#lock-key");
   });
@@ -278,6 +285,20 @@ try {
   });
   await page.context().close();
 
+  // ======== A copy on claude.ai (window.claude: it can't reach the license server, so no button) ========
+  page = await context(() => { window.claude = {}; });
+  await page.goto("https://app.fafoaco.com/");
+  await page.waitForSelector("#lock-submit");
+  await test("a copy on claude.ai: the key can't be used here, open FAFO at app.fafoaco.com, with no button", async () => {
+    await openStart();
+    const r = await paste("#ss-code", KEY);
+    assert.equal(r.note, `${HEAD} ${WHAT} This copy of FAFO can't reach FAFO's license server, so your license key can't be used here: open FAFO at app.fafoaco.com and choose Enter it instead on its first screen.`);
+    assert.deepEqual([r.button, r.err, r.go], ["", "", false]);
+    noKey(await text("#ss-lic-note"));
+    await closeTop();
+  });
+  await page.context().close();
+
   // ======== The desktop app (window.pvDesktop stubbed; its license screen, then the lock screen) ========
   page = await context(() => {
     const none = async () => null, noop = () => {};
@@ -294,10 +315,11 @@ try {
   await ev(() => window.__t.renderLock());
   await page.waitForSelector("#lock-submit");
 
-  await test("desktop, no vault yet: this computer's own key (create your master password), another key (Settings, then License), no button", async () => {
+  await test("desktop, no vault yet: this computer's own key (create your master password, or Open my synced vault), another key (Settings, then License), no button", async () => {
     await openStart();
     let r = await paste("#ss-code", `\n${KEY.toLowerCase()} `);
-    assert.equal(r.note, `${HEAD} ${WHAT} It's the license key FAFO on this computer already uses, so there's nothing to paste: close this and create your master password. You'll find the key under Settings, then License.`);
+    assert.equal(r.note, `${HEAD} ${WHAT} It's the license key FAFO on this computer already uses, so there's nothing to paste: close this and create your master password, or, if you already use FAFO in a browser or on another computer, choose Open my synced vault. You'll find the key under Settings, then License.`);
+    assert.ok(await page.isVisible("#lock-sync"), "Open my synced vault is on the lock screen behind it");
     assert.deepEqual([r.button, r.err, r.go], ["", "", false]);
     noKey(await text("#ss-lic-note"));
     r = await paste("#ss-code", OTHER);
