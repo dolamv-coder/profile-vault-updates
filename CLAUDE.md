@@ -571,20 +571,23 @@ alone (every store's rows of one account) from reading the whole table. Only
   - **The answer:** `{ok:true, messages}`, or `{ok:false, why, text}`.
     - `why` is one of auth, blocked, account, server, connect, timeout, not-imap and method. A NO with a temporary code or
       words ("Too many simultaneous connections", "try again later") is `server`, not `auth`.
-    - `text` is the server's answer without control characters, 200 characters at most, never its greeting (Gmail's names
-      the client's address).
+    - `text` is the server's answer without control characters, 200 characters at most, never an OK greeting's (Gmail's
+      names the client's address; a BYE greeting's words are kept).
   - **Nothing about the inbox is kept or logged.** D1 `inbox_tests` (a new table) holds per license the day's count, its
     failed sign-ins and the running test's hold (`busy_until`, released by its own value). Limits: one at a time (429
-    `busy`), 30 a day (`limit`), 10 failed sign-ins a day (`fails`, so it can't be used to guess a password; blocked,
-    temporary and throttled refusals, timeouts and connection failures don't count), and 500 a day across every license
-    (`everyone`, the day's sum of the counts, in the same statement: a bound if keys ever stop needing approval).
+    `busy`, also when its other test's hold was released between that statement and the read after it), 30 a day
+    (`limit`), 10 failed sign-ins a day (`fails`, so it can't be used to guess a password; blocked, temporary and throttled
+    refusals, timeouts and connection failures don't count), and 500 a day across every license (`everyone`, the day's sum
+    of the counts, in the same statement: a bound if keys ever stop needing approval; a refusal under every other cap
+    answers it only when that sum is at the cap, else `busy`).
   - **Caveats:** the sign-in comes from Cloudflare's network, so a provider may email a new-sign-in alert or now and then
     block it (`blocked`). Outlook.com may refuse password sign-ins over IMAP (Microsoft moved it to modern authentication in
     2024); the desktop meets the same answer.
   - **Test-only settings:** `INBOX_TEST_CONNECT` (`host=localhost:port` pairs), `INBOX_TEST_TIMEOUT_MS`,
     `INBOX_TESTS_PER_DAY`, `INBOX_TEST_FAILS_PER_DAY` and `INBOX_TESTS_ALL_PER_DAY` are for `test/e2e.mjs`, which checks
     `wrangler.toml` sets none of them. It runs the route against pretend IMAP servers, with a CA it makes with openssl and
-    trusts through `NODE_EXTRA_CA_CERTS`.
+    trusts through `NODE_EXTRA_CA_CERTS`, and sends bursts of tests on one license, which must answer `busy`, never
+    `everyone` (the review's repro: about 4 keys in 10 got one before).
 
   Page 1.9.149 below.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
@@ -1486,9 +1489,10 @@ Only the desktop app signs in to an inbox, so its live status is per-device (`in
 `SYNC_DEVICE_FIELDS`): the desktop variant (`DESK`) shows Connected/Error with the last check and a Test button
 (`edit-inbox`, where the check lives), the web variant shows "Status shows in the desktop app", a disabled Test and a note
 that inbox passwords stay in the vault (from 1.9.147: that they leave it only with the slots submitted on that inbox's
-accounts). The sidebar item's badge counts the logins needing an inbox. The view is additive
-and gated on `UI.view === "imap"`; nothing gains a field, and since desktop updates are paused the desktop variant is
-dormant until they resume (the web variant is what ships).
+accounts; from 1.9.149, with the vault's license key, also on Test, which signs in from FAFO's server: below). The
+sidebar item's badge counts the logins needing an inbox. The view is additive and gated on `UI.view === "imap"`; nothing
+gains a field, and since desktop updates are paused the desktop variant is dormant until they resume (the web variant is
+what ships).
 
 From 1.9.118 the IMAP tab's web note (`renderImap`'s `webNote`, web only) also says that pulling orders from your email
 happens in the desktop app and that the web version tracks orders by pasting confirmation emails, so a web buyer who saves
@@ -2427,7 +2431,9 @@ the website?"; offered a test from the license worker, with its caveats: "put it
 - **The caveat**, said once per device before the first test (`inboxTestFirst`, a `confirmDialog`: the sign-in comes from
   FAFO's server, so the provider may send a security alert about a new sign-in, or now and then block it; Test it, Not now),
   kept as `orbit-inbox-test-ok` in localStorage (and in memory), cleared by Erase vault (`clearStore`). One window at a time
-  (`inboxTestAsk`), which locking closes.
+  (`inboxTestAsk`), which locking closes. Test it takes a press only 600 ms after the window opens (`confirmDialog`'s
+  `hold`), with the cursor on Not now, so a double tap (a phone's sheet puts Test it where Check and use was) or a second
+  Enter can't press it unread and mark the caveat as said.
 - **Three places Test runs:** IMAP's cards (`data-act="test-inbox"`, `testInboxHere`, in place: "Testing…" and a spinner
   with "Signing in from FAFO's server…", then a toast), the inbox editor (`#i-test`, on the web too), and the step-by-step
   setup's Check and use (`openInboxGuide`'s `canTest`, with "Check and use signs in from FAFO's server to check it, then
@@ -2446,9 +2452,10 @@ the website?"; offered a test from the license worker, with its caveats: "put it
   and forgets them (a cache: not carried through). They feed IMAP's card (Connected · checked …, Error with the words, or
   "Couldn't check from FAFO's server" with them, not red) and Inbox error on Store logins' and IMAP's counts, pills and
   marks (`inboxCheck`, whose titles then say "FAFO's server couldn't sign in (Test on IMAP): …"), but only a result that
-  says the inbox is wrong (`ibxBad(r, inbox)`: auth, account, method, not-imap, or connect for a custom server); blocked,
-  temporary, timed-out and unreachable checks of the six providers change no count. An inbox not tested still counts as
-  connected on the web, as before.
+  says the inbox is wrong (`ibxBad(r, inbox)`: auth, account, method, or connect or not-imap for a custom server);
+  blocked, temporary, timed-out and unreachable checks of the six providers (a connection closed before its greeting
+  too: their names are FAFO's own, so "check the server name" can't apply) change no count. An inbox not tested still
+  counts as connected on the web, as before. The card's words wrap anywhere, as a long address has no break point.
 - **A new inbox's result is kept on Save**: from Add inbox's Test or its setup (`wireImap`'s `filled`, `r.res`), and from
   the store login editor's setup when Save login makes or links that inbox.
 - **With no key** (a vault made with Use this browser only, never synced), IMAP's Test is off with "Test needs your license
@@ -2464,11 +2471,16 @@ the website?"; offered a test from the license worker, with its caveats: "put it
   download. Settings → Email import's web text, Store logins' inbox cards and the store login editor's words stay as they
   were. The release note doesn't mention it: only desktop users read notes.
 - **Tests:** `web-inbox-test.test.mjs` runs the page in Chromium (in CI after the license key's) against a pretend license
-  worker that answers by the inbox's address: no key, the caveat (Not now sends nothing), the exact body, every kind of
-  answer's words and where they show (escaped), which count as Inbox error, one at a time from all three places (double
+  worker that answers by the inbox's address: no key, the caveat (Not now sends nothing; a double tap on a phone or Enter
+  twice can't press it), the exact body, every kind of answer's words and where they show (the server's words escaped on
+  the card, both kinds of status line, the pill's title, the editor's note and Test, and the setup), which count as Inbox
+  error (not-imap only for a custom server), a long address wrapping on a phone, one at a time from all three places (double
   clicks, the caveat open), locking and deleting mid-test, results across a lock and a reload and out of what sync sends,
   changed credentials, a new inbox's result kept on Save from Add inbox and a new store login, the seller's own FAFO, and
-  the desktop's code as 1.9.148 had it. `imap-submit.test.mjs`'s two assertions on the web note follow the new words.
+  the desktop's code as 1.9.148 had it (`imapInboxStatus` line by line, and the desktop arms of `inboxCheck`, the card's
+  Test, the pill's and mark's titles, the editor's and the setup's words). It waits for a window's first focus before
+  typing in it, as a late one moves the cursor mid-fill. `imap-submit.test.mjs`'s two assertions on the web note follow
+  the new words.
 - Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the

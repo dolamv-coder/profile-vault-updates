@@ -970,7 +970,7 @@ setup works too. A browser can't sign in to email, so the page sends the inbox's
 it connects to the mail server over SSL/TLS on port 993, signs in as the desktop app does, opens the
 inbox read-only, signs out, and answers Connected (with how many emails the inbox has) or what the
 server said. It only happens when someone presses Test, and the page asks them first, once per
-computer.
+browser.
 
 It keeps nothing about the inbox: the address and password are never stored or logged, only used for
 that one sign-in. It only connects to a mail server on the internet by its name (like
@@ -978,7 +978,7 @@ that one sign-in. It only connects to a mail server on the internet by its name 
 server that only offers STARTTLS, or uses a certificate of its own, has to be tested in the desktop
 app.
 
-Things your buyers may see, which they were told before their first test:
+Things your buyers may see (they're told the first before their first test):
 
 - The sign-in comes from Cloudflare's network, not their computer, so their email provider may email
   them a security alert about a new sign-in, or now and then block it and ask them to sign in in

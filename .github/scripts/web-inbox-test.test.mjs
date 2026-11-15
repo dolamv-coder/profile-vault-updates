@@ -5,8 +5,9 @@
 // worker whose POST /inbox/test answers by the inbox's address (its first word: ok, bad, blocked…), as imap-submit.test.mjs
 // runs it: a vault made with Use this browser only, then a license key kept as Submit keeps one typed there. It checks no key
 // (no Test, no request), the caveat once per device, what's sent (the address without its +tag, the app password cleaned,
-// port 993), the cards' statuses and words (the server's words escaped), which results count as an Inbox error on Store
-// logins and IMAP, one test at a time from IMAP's cards, the inbox editor and the setup's Check and use, locking or deleting
+// port 993), the cards' statuses and words (the server's words escaped wherever they show), which results count as an Inbox
+// error on Store logins and IMAP, a long address wrapping on a phone, a caveat that a double tap or a second Enter can't
+// press, one test at a time from IMAP's cards, the inbox editor and the setup's Check and use, locking or deleting
 // an inbox mid-test, results kept on this device only (never synced, never on the inboxes), changed credentials, the
 // editor's and the setup's results kept on Save, the seller's own FAFO, and the desktop's code left as it was. Sample
 // addresses, made-up app passwords and keys only.
@@ -56,7 +57,12 @@ const ANSWERS = {
   throttle: [200, { ok: false, why: "server", text: "[ALERT] Too many simultaneous connections. (Failure)" }],
   far: [200, { ok: false, why: "connect", text: "" }],
   net: [200, { ok: false, why: "auth", text: "Temporary network problem, sample" }],
-  xss: [200, { ok: false, why: "auth", text: "<img src=x onerror=window.__xss=1>LOGIN failed." }],
+  // The server's words with markup, starting with a double quote (which would break out of a title attribute).
+  xss: [200, { ok: false, why: "auth", text: '"><img src=x onerror=window.__xss=1>LOGIN failed.' }],
+  xsss: [200, { ok: false, why: "server", text: '"><img src=x onerror=window.__xss=1>Try again later' }],
+  // A connection closed after TLS and before the greeting (src/imap.js: not-imap), and a mailbox that won't open.
+  notimap: [200, { ok: false, why: "not-imap", text: "" }],
+  acct: [200, { ok: false, why: "account", text: "Mailbox does not exist" }],
   everyone: [429, { error: "everyone", retryAfter: 3600 }],
   newer: [200, { ok: false, why: "later-kind", text: "sample" }],
 };
@@ -145,6 +151,31 @@ async function cardTest(id) {
   await page.waitForFunction((x) => { const b = document.querySelector(`#main [data-act="test-inbox"][data-id="${x}"]`); return b && !b.disabled; }, id);
   return W.tests.at(-1);
 }
+// Waits for the top window's first focus (openLayer's, 60 ms after it opens): under load it can come while a box is being
+// filled (Playwright focuses it, then types), and then the text goes into another box.
+const settled = () => page.waitForFunction(() => {
+  const ls = [...document.querySelectorAll("#layers .layer:not([inert])")], top = ls[ls.length - 1];
+  return !!top && top.contains(document.activeElement);
+});
+// Waits for the top window's sheet to stop moving (it slides in, and changes shape when the screen does).
+const sheetStill = () => page.waitForFunction(() => {
+  const ls = [...document.querySelectorAll("#layers .layer:not([inert])")], top = ls[ls.length - 1], p = top && top.querySelector(".panel");
+  return !!p && top.classList.contains("is-open") && p.getAnimations().length === 0;
+});
+// The step-by-step setup from Add inbox (or `open`), up to its Paste it step with the app password typed.
+async function setupToPassword(email, open = async () => { await page.click('#main .view-tools [data-act="new-inbox-only"]'); }) {
+  await open();
+  await settled();
+  await page.click("#layers [data-ig-start]");
+  await page.waitForSelector('#layers [name="g_email"]');
+  await settled();
+  if (email) await page.fill('#layers [name="g_email"]', email);
+  await page.waitForTimeout(450); await page.click("#layers #ig-go");
+  await page.waitForTimeout(450); await page.click("#layers #ig-go");
+  await page.waitForSelector('#layers [name="g_password"]');
+  await page.fill('#layers [name="g_password"]', "abcdefghijklmnop");
+  await page.waitForTimeout(450);
+}
 const INBOX = (id, email, extra = {}) => Object.assign({ id, email, password: "qrstuvwxyzabcdef", provider: "gmail", host: "imap.gmail.com", port: "993" }, extra);
 
 console.log(`Testing an inbox from the web version in ${file.split(/[\\/]/).pop()}`);
@@ -159,7 +190,8 @@ try {
     const T = window.__t, S = T.S;
     S.inboxes.push(...INB);
     for (const [id, email, inboxId] of [["l-ok", "ok.login@example.com", "ib-ok"], ["l-bad", "bad.login@example.com", "ib-bad"], ["l-blocked", "blocked.login@example.com", "ib-blocked"],
-      ["l-throttle", "throttle.login@example.com", "ib-throttle"], ["l-far", "far.login@example.com", "ib-far"], ["l-xss", "xss.login@example.com", "ib-xss"]]) {
+      ["l-throttle", "throttle.login@example.com", "ib-throttle"], ["l-far", "far.login@example.com", "ib-far"], ["l-xss", "xss.login@example.com", "ib-xss"],
+      ["l-notimap", "notimap.login@example.com", "ib-notimap"]]) {
       S.logins.push({ id, store: "target", email, password: "Store-Pw-Sample", inboxId });
     }
     T.persist(); T.render();
@@ -172,6 +204,12 @@ try {
     INBOX("ib-throttle", "throttle.sample@gmail.com"), INBOX("ib-far", "far.sample@gmail.com"), INBOX("ib-net", "net.sample@gmail.com"),
     INBOX("ib-xss", "xss.sample@example.com", { provider: "custom", host: "mail.example.com", password: "Sample-Xss-Pw" }),
     INBOX("ib-everyone", "everyone.sample@gmail.com"), INBOX("ib-newer", "newer.sample@gmail.com"),
+    INBOX("ib-xsss", "xsss.sample@example.com", { provider: "custom", host: "mail.example.com", password: "Sample-Xsss-Pw" }),
+    INBOX("ib-notimap", "notimap.sample@gmail.com"),
+    INBOX("ib-notimapc", "notimap.custom@example.com", { provider: "custom", host: "mail.example.com", password: "Sample-Notimap-Pw" }),
+    INBOX("ib-acct", "acct.sample@example.com", { provider: "custom", host: "mail.example.com", password: "Sample-Acct-Pw" }),
+    // An address too long to fit beside Test on a phone, with no place to break.
+    INBOX("ib-long", "bad.firstname.middlename.lastname1987@gmail.com"),
     // Saved with a +tag, as Add inbox keeps one: a mail server's username has none.
     INBOX("ib-tag", "tag.sample+box@gmail.com"),
   ] });
@@ -191,11 +229,13 @@ try {
     await view("logins");
     await page.click('#main .view-tools [data-act="new-inbox-only"]');
     await page.waitForSelector("#layers #i-save");
+    await settled();
     assert.ok(!(await page.$("#layers #i-test")), "Add inbox has no Test");
     assert.doesNotMatch(await text("#layers .panel"), /a check that it signs in/);
     // The setup's Paste it step, as before.
     await page.click("#layers [data-ig-start]");
     await page.waitForSelector('#layers [name="g_email"]');
+    await settled();
     await page.fill('#layers [name="g_email"]', "fresh0.setup@gmail.com");
     await page.waitForTimeout(450); await page.click("#layers #ig-go");
     await page.waitForTimeout(450); await page.click("#layers #ig-go");
@@ -226,6 +266,13 @@ try {
     assert.equal(W.tests.length, 0, "Not now: no request");
     assert.ok((await testBtns()).every((b) => !b.disabled && b.text === "Test"), "nothing left marked");
     await page.click('#main [data-act="test-inbox"][data-id="ib-ok"]');
+    // Test it takes no press in its first 600 ms (a double tap or a second Enter on what opened it), then one.
+    await page.waitForFunction(() => { const b = document.querySelector("#layers #cf-go"); if (b) b.click(); return !!b; });
+    await page.waitForTimeout(300);
+    assert.equal(await caveatOpen(), true, "a press at once leaves the caveat open");
+    assert.equal(W.tests.length, 0, "and sends nothing");
+    assert.equal(await page.$eval("#layers .layer:not([inert]) [data-cf-no]", (b) => b === document.activeElement), true, "the cursor is on Not now");
+    await page.waitForTimeout(400);
     await page.click("#layers #cf-go");
     await until(() => W.tests.length === 1, "the request");
     assert.deepEqual(W.tests[0], { body: { email: "ok.sample@gmail.com", password: "abcdefghijklmnop", host: "imap.gmail.com", port: "993" }, auth: "Bearer " + LIC });
@@ -288,21 +335,91 @@ try {
     }
     await view("imap");
   });
+  await test("not-imap is FAFO's server's for the six providers (no Inbox error), and the inbox's for a custom server; a custom server that won't open the inbox", async () => {
+    await cardTest("ib-notimap");
+    assert.match(await cardOf("ib-notimap"), /Couldn't check from FAFO's server · checked just now FAFO's server couldn't reach Gmail just now\. Try again in a few minutes\./);
+    assert.doesNotMatch(await cardOf("ib-notimap"), /Error|server name/);
+    assert.equal(await page.$$eval('#main article:has([data-id="ib-notimap"]) [style*="danger"]', (es) => es.length), 0);
+    await cardTest("ib-notimapc");
+    assert.match(await cardOf("ib-notimapc"), /Error · checked just now mail\.example\.com didn't answer like a mail server\. Check the server name\./);
+    await cardTest("ib-acct");
+    assert.match(await cardOf("ib-acct"), /Error · checked just now FAFO's server signed in to acct\.sample@example\.com, but the mail server wouldn't open its inbox\. \(Details: Mailbox does not exist\)/);
+    assert.match(await kpis(), /Inbox error 1/);
+    await view("logins");
+    assert.match(await kpis(), /Inbox error 1/);
+    assert.equal(await page.$eval('#main .slip:has-text("notimap.login@example.com") .l-inbox-line .ppill', (e) => e.textContent), "Inbox connected");
+    await view("imap");
+  });
   await test("mailError's network words never show for FAFO's server's sign-in; the server's words are text, never markup", async () => {
     await cardTest("ib-net");
     const net = await cardOf("ib-net");
     assert.match(net, /Gmail didn't accept the email or app password for net\.sample@gmail\.com\. \(Details: Temporary network problem, sample\)/);
     assert.doesNotMatch(net, /internet connection|antivirus|FAFO\.exe/);
+    const none = async (where) => {
+      assert.equal(await page.$('img[src="x"]'), null, where);
+      assert.equal(await ev(() => window.__xss), undefined, where);
+    };
     await cardTest("ib-xss");
-    assert.match(await cardOf("ib-xss"), /\(Details: <img src=x onerror=window\.__xss=1>LOGIN failed\.\)/);
-    assert.equal(await page.$('#main img[src="x"]'), null);
-    assert.equal(await ev(() => window.__xss), undefined);
+    assert.match(await cardOf("ib-xss"), /\(Details: "><img src=x onerror=window\.__xss=1>LOGIN failed\.\)/);
+    await none("an Error card");
+    await cardTest("ib-xsss");
+    assert.match(await cardOf("ib-xsss"), /Couldn't check from FAFO's server · checked just now The mail server had a temporary problem or is limiting sign-ins\. Try again in a few minutes\. \(Details: "><img src=x onerror=window\.__xss=1>Try again later\)/);
+    await none("a Couldn't check card");
     await view("logins");
     const t = await page.$eval('#main .slip:has-text("xss.login@example.com") .ppill-bad', (e) => e.title);
-    assert.ok(t.includes("<img src=x onerror=window.__xss=1>LOGIN failed."), t);
-    assert.equal(await page.$('#main img[src="x"]'), null);
-    assert.equal(await ev(() => window.__xss), undefined);
+    assert.ok(t.includes('"><img src=x onerror=window.__xss=1>LOGIN failed.'), t);
+    await none("the pill's title");
+    for (const v of ["compact", "list"]) {
+      await page.click(`#main [data-act="login-view"][data-id="${v}"]`);
+      assert.ok((await page.$$eval("#main .lst-err", (es) => es.map((e) => e.title))).some((t) => t.includes('"><img src=x onerror=window.__xss=1>')), v);
+      await none("the mark's title, " + v);
+    }
+    await page.click('#main [data-act="login-view"][data-id="comfortable"]');
+    // The inbox editor: its note on the last test, then its own Test.
+    for (const id of ["ib-xss", "ib-xsss"]) {
+      await page.click(`#main [data-act="edit-inbox"][data-id="${id}"]`);
+      await page.waitForSelector("#layers #i-test");
+      assert.ok((await text("#layers .panel")).includes('"><img src=x onerror=window.__xss=1>'), id);
+      await none("the editor's note, " + id);
+      if (id === "ib-xss") {
+        await page.click("#layers #i-test");
+        await page.waitForFunction(() => { const o = document.querySelector("#i-test-out"); return o && !o.hidden && !/Signing in/.test(o.textContent); });
+        assert.ok((await text("#i-test-out")).includes('"><img src=x onerror=window.__xss=1>LOGIN failed.'));
+        await none("the editor's Test");
+      }
+      await closeLayers();
+    }
+    // The setup's Check and use.
+    await setupToPassword("xss.setup@gmail.com");
+    await page.click("#layers #ig-go");
+    await page.waitForFunction(() => { const o = document.querySelector("#ig-out"); return o && !o.hidden && !/Signing in/.test(o.textContent); });
+    assert.ok((await text("#ig-out")).includes('"><img src=x onerror=window.__xss=1>LOGIN failed.'));
+    await none("the setup");
+    await closeLayers();
     await view("imap");
+  });
+  await test("a long address in the advice wraps on a phone: nothing under Test or past the card", async () => {
+    await cardTest("ib-long");
+    await page.setViewportSize({ width: 375, height: 667 });
+    try {
+      await ev(() => document.querySelectorAll(".toast").forEach((t) => t.remove()));
+      await page.waitForTimeout(200);
+      const m = await page.$eval('#main article:has([data-act="test-inbox"][data-id="ib-long"])', (art) => {
+        const card = art.getBoundingClientRect(), btn = art.querySelector('[data-act="test-inbox"]').getBoundingClientRect();
+        const div = [...art.querySelectorAll(".item-sub")].find((d) => d.textContent.includes("didn't accept"));
+        const range = document.createRange(); range.selectNodeContents(div);
+        const rs = [...range.getClientRects()];
+        return { lines: rs.length, past: rs.some((r) => r.right > card.right + 0.5),
+          under: rs.some((r) => r.left < btn.right && r.right > btn.left && r.top < btn.bottom && r.bottom > btn.top),
+          sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth };
+      });
+      assert.ok(m.lines > 1, JSON.stringify(m));
+      assert.equal(m.past, false, "past the card");
+      assert.equal(m.under, false, "under Test");
+      assert.equal(m.sw, m.cw, "no sideways scroll");
+    } finally {
+      await page.setViewportSize({ width: 1280, height: 900 });
+    }
   });
   await test("a kind of answer this page doesn't know, and the cap across every license (a toast, nothing kept)", async () => {
     await cardTest("ib-newer");
@@ -334,7 +451,11 @@ try {
     await closeLayers();
     n = W.tests.length;
     await page.click('#main .view-tools [data-act="new-inbox-only"]');
+    await page.waitForSelector("#layers [data-ig-start]");
+    await settled();
     await page.click("#layers [data-ig-start]");
+    await page.waitForSelector('#layers [name="g_email"]');
+    await settled();
     await page.fill('#layers [name="g_email"]', "slow.setup@gmail.com");
     await page.waitForTimeout(450); await page.click("#layers #ig-go");
     await page.waitForTimeout(450); await page.click("#layers #ig-go");
@@ -349,7 +470,10 @@ try {
   await test("one at a time with the caveat still to say: a double click opens one window, the other Tests are off but none says Testing…, and Not now leaves nothing marked", async () => {
     await ev(() => { localStorage.removeItem("orbit-inbox-test-ok"); window.__t.inboxTestMem = false; });
     const n = W.tests.length;
-    await page.dblclick('#main [data-act="test-inbox"][data-id="ib-slow4"]');
+    // The window opens in the middle of the screen, and the second click lands on it there (on the scrim, beside it, it
+    // would close it): the first card (the left column, under the window), scrolled to the middle.
+    const id = await page.$eval('#main [data-act="test-inbox"]', (b) => { b.scrollIntoView({ block: "center" }); return b.dataset.id; });
+    await page.dblclick(`#main [data-act="test-inbox"][data-id="${id}"]`);
     await page.waitForSelector("#layers #cf-go");
     await page.waitForTimeout(300);
     assert.equal(await page.$$eval("#layers .panel", (ps) => ps.length), 1, "one window");
@@ -360,6 +484,53 @@ try {
     await page.waitForFunction(() => !document.querySelector("#layers .panel"));
     assert.ok((await testBtns()).every((b) => !b.disabled && b.text === "Test"));
     assert.equal(W.tests.length, n);
+  });
+
+  await test("the caveat can't be pressed unread: a double tap on Check and use on a phone, or Enter twice, sends nothing and leaves it unsaid", async () => {
+    const n = W.tests.length;
+    const unsaid = async () => assert.deepEqual(await ev(() => [localStorage.getItem("orbit-inbox-test-ok"), window.__t.inboxTestMem]), [null, false]);
+    await view("logins");
+    await setupToPassword("ok.tap@gmail.com");
+    await page.setViewportSize({ width: 375, height: 667 });
+    try {
+      // The tests before leave toasts at the bottom, over the buttons; and the setup's sheet has to be where it stops.
+      await ev(() => document.querySelectorAll(".toast").forEach((t) => t.remove()));
+      await sheetStill();
+      // Near Check and use's right end, where the caveat's sheet puts Test it.
+      const at = await page.$eval("#layers #ig-go", (b) => { const r = b.getBoundingClientRect(); return { x: r.right - 12, y: r.top + r.height / 2 }; });
+      const t0 = Date.now();
+      await page.mouse.click(at.x, at.y);
+      // The second tap as soon as the caveat's sheet is in place (about 250 ms), where it lands on Test it, within the 600 ms
+      // Test it holds.
+      await page.waitForSelector("#layers #cf-go");
+      await sheetStill();
+      assert.equal(await ev(({ x, y }) => { const e = document.elementFromPoint(x, y); return !!(e && e.closest("#cf-go")); }, at), true, "Test it is where Check and use was");
+      await page.mouse.click(at.x, at.y);
+      const ms = Date.now() - t0;
+      assert.ok(ms < 550, `the second tap came ${ms} ms after the first: too late to show that Test it holds`);
+      await page.waitForTimeout(400);
+      assert.equal(await caveatOpen(), true, "the caveat stays open");
+      assert.equal(W.tests.length, n, "a double tap sends nothing");
+      await unsaid();
+      await page.click("#layers [data-cf-no]");
+      await page.waitForFunction(() => !document.querySelector("#cf-go") && /Not checked\./.test((document.querySelector("#ig-out") || {}).textContent || ""));
+    } finally {
+      await page.setViewportSize({ width: 1280, height: 900 });
+    }
+    await closeLayers();
+    await setupToPassword("ok.enter@gmail.com");
+    await page.press('#layers [name="g_password"]', "Enter");
+    await page.waitForTimeout(150);
+    await page.keyboard.press("Enter");
+    // And once more after Test it takes presses (a key held down): the cursor was never on it.
+    await page.waitForTimeout(550);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(500);
+    assert.equal(W.tests.length, n, "Enter twice sends nothing");
+    await unsaid();
+    if (await caveatOpen()) await page.click("#layers [data-cf-no]");
+    await closeLayers();
+    await view("imap");
   });
 
   await test("locking mid-test: no toast, nothing noted; locking with the caveat open sends nothing; an inbox deleted mid-test gets no entry", async () => {
@@ -395,7 +566,7 @@ try {
 
   await test("results stay on this device: across a lock and a reload, in the vault's own bookkeeping, never on the inboxes or in what sync sends", async () => {
     const before = await ibx();
-    assert.deepEqual(Object.keys(before).sort(), ["ib-bad", "ib-blocked", "ib-far", "ib-net", "ib-newer", "ib-ok", "ib-slow", "ib-slow2", "ib-tag", "ib-throttle", "ib-xss"]);
+    assert.deepEqual(Object.keys(before).sort(), ["ib-acct", "ib-bad", "ib-blocked", "ib-far", "ib-long", "ib-net", "ib-newer", "ib-notimap", "ib-notimapc", "ib-ok", "ib-slow", "ib-slow2", "ib-tag", "ib-throttle", "ib-xss", "ib-xsss"]);
     for (const r of Object.values(before)) assert.deepEqual(Object.keys(r).sort(), ["at", "f", "n", "ok", "text", "why"]);
     await relock();
     assert.deepEqual(await ibx(), before);
@@ -422,6 +593,7 @@ try {
     await view("logins");
     await page.click('#main [data-act="edit-inbox"][data-id="ib-bad"]');
     await page.waitForSelector("#layers #i-save");
+    await settled();
     assert.match(await text("#layers .panel"), /Gmail didn't accept the password for bad\.sample@gmail\.com/, "the editor shows the last test's words");
     await page.fill('#layers [name="i_password"]', "zyxwvutsrqponmlk");
     await page.click("#layers #i-save");
@@ -456,6 +628,7 @@ try {
     const addSays = async (f) => {
       await page.click('#main .view-tools [data-act="new-inbox-only"]');
       await page.waitForSelector("#layers #i-test");
+      await settled();
       await page.fill('#layers [name="i_email"]', f.email);
       await page.selectOption('#layers [name="i_provider"]', f.provider || "custom");
       await page.fill('#layers [name="i_password"]', f.password || "Sample-Pw-Custom");
@@ -482,18 +655,11 @@ try {
 
   await test("the step-by-step setup: Check and use from FAFO's server, its words, Use it anyway, and the result kept on Save, from Add inbox and from a new store login", async () => {
     await view("logins");
-    const setup = async (email, open = async () => { await page.click('#main .view-tools [data-act="new-inbox-only"]'); }) => {
-      await open();
-      await page.click("#layers [data-ig-start]");
-      await page.waitForSelector('#layers [name="g_email"]');
-      if (email) await page.fill('#layers [name="g_email"]', email);
-      await page.waitForTimeout(450); await page.click("#layers #ig-go");
-      await page.waitForTimeout(450); await page.click("#layers #ig-go");
-      await page.waitForSelector('#layers [name="g_password"]');
+    const setup = async (email, open) => {
+      await setupToPassword(email, open);
       assert.match(await text("#layers #ig-body"), /Check and use signs in from FAFO's server to check it, then signs out\. FAFO keeps nothing there\./);
       assert.equal(await text("#layers #ig-go"), "Check and use");
-      await page.fill('#layers [name="g_password"]', "abcdefghijklmnop");
-      await page.waitForTimeout(450); await page.click("#layers #ig-go");
+      await page.click("#layers #ig-go");
       await page.waitForFunction(() => { const o = document.querySelector("#ig-out"); return !o || (!o.hidden && !/Signing in/.test(o.textContent)); });
     };
     await setup("bad.setup@gmail.com");
@@ -517,6 +683,7 @@ try {
     await setup("", async () => {
       await page.click('#main .view-tools [data-act="new-login"]');
       await page.waitForSelector('#layers [name="email"]');
+      await settled();
       await page.fill('#layers [name="email"]', "ok.newlogin@gmail.com");
       await page.fill('#layers [name="password"]', "Store-Pw-Sample-2");
     });
@@ -557,6 +724,19 @@ try {
     const now = slice(HTML);
     assert.ok(old.length >= 6, "the desktop's lines");
     for (const l of old) assert.ok(now.includes(l), "unchanged: " + l.slice(0, 100));
+    // The desktop arms of the other lines 1.9.149 changed, each as 1.9.148 had it: inboxCheck, the card's Test, the
+    // pill's and the mark's titles, the setup's and the editor's words.
+    const PREV = readFileSync(prev, "utf8"), count = (h, l) => h.split(l).length - 1;
+    for (const l of ['i.syncError ? "err" : i.lastSync ? "ok" : "new";',
+      '${DESK ? `<button class="btn" style="padding:4px 12px" data-act="edit-inbox" data-id="${i.id}">Test</button>`',
+      'out.textContent = `Signing in to ${g.email}…`;', '". FAFO signed in to it"', 'out.textContent = "Signing in…"; tb.disabled = true;',
+      '<span class="ppill" title="The desktop app hasn\'t checked this inbox yet">Not checked yet</span>',
+      '<span class="lst" title="The desktop app hasn\'t checked this inbox yet">Not checked</span>']) {
+      assert.ok(count(PREV, l) >= 1, "1.9.148 has " + l.slice(0, 80));
+      assert.equal(count(HTML, l), count(PREV, l), "as 1.9.148 had it: " + l.slice(0, 80));
+    }
+    assert.equal(count(HTML, '"The desktop app couldn\'t sign in: " + inb.syncError'), 2);
+    assert.equal(count(PREV, '"The desktop app couldn\'t sign in: " + inb.syncError'), 2);
     // And the desktop's own words in the editor and the setup.
     for (const l of ['out.textContent = res.ok ? `Signed in. Your inbox has ${res.messages.toLocaleString()} emails.` : m.text + (m.text !== m.raw && m.raw && m.kind !== "cert" ? ` (Details: ${m.raw})` : "");',
       'out.textContent = m.text + (m.kind === "auth" ? " Back shows the steps again." : "") + (m.text !== m.raw && m.raw && m.kind !== "cert" ? ` (Details: ${m.raw})` : "");']) assert.ok(HTML.includes(l), l.slice(0, 80));

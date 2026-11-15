@@ -6560,7 +6560,11 @@ async function inboxTestPost(request, env, ctx) {
       if (row && row.busy_until > now) return json({ error: "busy" }, 429, { ...NO_STORE, "retry-after": "15" });
       if (row && row.day === today && row.fails >= failCap) return json({ error: "fails", limit: failCap, retryAfter }, 429, NO_STORE);
       if (row && row.day === today && row.n >= perDay) return json({ error: "limit", limit: perDay, retryAfter }, 429, NO_STORE);
-      return json({ error: "everyone", retryAfter }, 429, NO_STORE);
+      // Under its own caps and not busy now: either every license together is at the cap, or its other test's hold was
+      // released between the two statements (it was busy). Today's sum never goes down, so it tells them apart.
+      const all = await env.DB.prepare("SELECT COALESCE(SUM(n), 0) AS s FROM inbox_tests WHERE day = ?").bind(today).first();
+      if (all && all.s >= allCap) return json({ error: "everyone", retryAfter }, 429, NO_STORE);
+      return json({ error: "busy" }, 429, { ...NO_STORE, "retry-after": "15" });
     }
     held = hold;
     if (Math.random() < 0.05) {

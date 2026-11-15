@@ -4928,18 +4928,21 @@ function closeAllLayers(){ while (stack.length) stack[stack.length-1].close(); c
 
 function confirmDialog(o){
   return new Promise((resolve) => {
+    // o.hold: ms before its confirm takes a press, with the cursor on the cancel button, so a double tap or a second Enter
+    // on what opened it (a phone's sheet puts its confirm there) can't press it unread (1.9.149's inbox test caveat).
     let done = false, no = false;
+    const t0 = performance.now();
     openLayer({
       title:o.title, small:true,
       body:`<p style="margin:0 0 ${o.typeWord ? "14px" : "0"};color:var(--ink-2)">${esc(o.body)}</p>${o.typeWord ? `<div class="field"><label for="cw">Type ${esc(o.typeWord)} to confirm</label><input id="cw" autocomplete="off"></div>` : ""}`,
-      foot:`<button class="btn" data-close data-cf-no>${esc(o.cancel || "Cancel")}</button><button class="btn ${o.danger ? "btn-danger-solid" : "btn-primary"}" id="cf-go" ${o.typeWord ? "disabled" : ""}>${esc(o.confirm || "Confirm")}</button>`,
+      foot:`<button class="btn" data-close data-cf-no${o.hold ? " autofocus" : ""}>${esc(o.cancel || "Cancel")}</button><button class="btn ${o.danger ? "btn-danger-solid" : "btn-primary"}" id="cf-go" ${o.typeWord ? "disabled" : ""}>${esc(o.confirm || "Confirm")}</button>`,
       // false for the cancel button, null for closing it another way (both falsy)
       onClose:() => { if (!done) resolve(no ? false : null); },
       mount:(panel, close) => {
         const go = $("#cf-go", panel), cw = $("#cw", panel);
         $("[data-cf-no]", panel).addEventListener("click", () => { no = true; });
         if (cw) cw.addEventListener("input", () => { go.disabled = cw.value.trim() !== o.typeWord; });
-        go.addEventListener("click", () => { done = true; resolve(true); close(); });
+        go.addEventListener("click", () => { if (o.hold && performance.now() - t0 < o.hold) return; done = true; resolve(true); close(); });
       }
     });
   });
@@ -11060,8 +11063,9 @@ function ibxResult(i){
 }
 // A result that says the inbox is wrong, not that FAFO's server couldn't check it: a blocked, temporary, timed-out or
 // unreachable check of one of the six providers is about the sign-in coming from FAFO's server, and the desktop may sign
-// in fine. A custom server FAFO's server can't connect to securely is the inbox's (its name, its certificate, STARTTLS).
-const ibxBad = (r, c) => !!r && !r.ok && (["auth", "account", "method", "not-imap"].includes(r.why) || (r.why === "connect" && !webTestSix(c)));
+// in fine (also one that closed before its greeting: those six names are FAFO's own). A custom server FAFO's server can't
+// connect to securely, or that doesn't answer like a mail server, is the inbox's (its name, its certificate, STARTTLS).
+const ibxBad = (r, c) => !!r && !r.ok && (["auth", "account", "method"].includes(r.why) || (["connect", "not-imap"].includes(r.why) && !webTestSix(c)));
 // Keeps a result on this device (never creating _local, which says the vault has a key kept), for inboxes that still exist.
 function ibxNote(id, cred, res){
   if (!S || !S._local || !inboxById(id)) return;
@@ -11108,14 +11112,14 @@ function webTestText(c, res){
     // mailError's other kinds (a network, a certificate) are about this computer's connection, not FAFO's server's sign-in.
     const m = mailError(c.provider, res.text, c.email);
     if (m.kind === "auth") return m.text + (m.raw && m.text !== m.raw ? det(m.raw) : "");
-    return (why === "auth" ? `${name} didn't accept the email or app password for ${email}.` : `FAFO's server signed in to ${email}, but ${name} wouldn't open its inbox.`) + det(res.text);
+    return (why === "auth" ? `${name} didn't accept the email or app password for ${email}.` : `FAFO's server signed in to ${email}, but ${six ? name : "the mail server"} wouldn't open its inbox.`) + det(res.text);
   }
   if (why === "blocked") return `${name} stopped this sign-in because it came from FAFO's server, not your computer. Sign in to ${email} in your browser, confirm it was you if it asks, then test again. The desktop app signs in from your computer.`;
   if (why === "server") return `${name} had a temporary problem or is limiting sign-ins. Try again in a few minutes.` + det(res.text);
   if (why === "connect") return six ? `FAFO's server couldn't reach ${name} just now. Try again in a few minutes.`
     : `FAFO's server couldn't connect securely to ${host} on port 993. Check the server name. FAFO's server only connects with SSL/TLS on port 993, to a server whose certificate is valid for that name, so a server that only offers STARTTLS, or uses its own certificate, has to be tested in the desktop app.`;
   if (why === "timeout") return `${name} didn't answer in time. Try again in a few minutes.` + (six ? "" : " Check the server name.");
-  if (why === "not-imap") return `${host} didn't answer like a mail server. Check the server name.`;
+  if (why === "not-imap") return six ? `FAFO's server couldn't reach ${name} just now. Try again in a few minutes.` : `${host} didn't answer like a mail server. Check the server name.`;
   if (why === "method") return "That mail server won't take a password from mail apps, so FAFO can't sign in to it.";
   if (why === "slow") return "FAFO's server didn't answer in time. Try again in a few minutes.";
   if (why === "offline") return "Couldn't reach FAFO's server. Check your internet connection and try again.";
@@ -11142,7 +11146,7 @@ function inboxTestFirst(){
   if (!seen) try { seen = localStorage.getItem(INBOX_TEST_OK) === "1"; } catch(e){}
   if (seen) return Promise.resolve(true);
   if (inboxTestAsk) return inboxTestAsk;
-  inboxTestAsk = confirmDialog({title:"Test from FAFO's server?", confirm:"Test it", cancel:"Not now",
+  inboxTestAsk = confirmDialog({title:"Test from FAFO's server?", confirm:"Test it", cancel:"Not now", hold:600,
     body:"A browser can't sign in to email, so FAFO's server does it for this test: it signs in with the inbox's email and app password, checks the inbox opens, then signs out. It keeps nothing. Because the sign-in comes from FAFO's server, not your computer, your email provider may email you a security alert about a new sign-in, or now and then block it and ask you to sign in in your browser. That alert is this test."
   }).then((yes) => {
     inboxTestAsk = null;
@@ -11209,8 +11213,8 @@ function imapInboxStatus(i){
     // The web version (1.9.149): this browser's last test from FAFO's server, for the inbox's current email and password.
     const t = INBOX_TESTING.get(i.id), r = ibxResult(i);
     if (t && !t.asking) return `<span class="item-sub" style="display:inline-flex;align-items:center;gap:6px"><span class="spin" aria-hidden="true"></span><span>Signing in from FAFO's server…</span></span>`;
-    if (r && ibxBad(r, i)) return `<span style="color:var(--danger);font-weight:600"><span class="imap-dot" style="background:var(--danger)"></span>Error</span> <span class="item-sub">· ${esc(imapAgo(r.at))}</span><div class="item-sub" style="color:var(--danger)">${esc(webTestText(i, r))}</div>`;
-    if (r && !r.ok) return `<span class="item-sub">Couldn't check from FAFO's server · ${esc(imapAgo(r.at))}</span><div class="item-sub">${esc(webTestText(i, r))}</div>`;
+    if (r && ibxBad(r, i)) return `<span style="color:var(--danger);font-weight:600"><span class="imap-dot" style="background:var(--danger)"></span>Error</span> <span class="item-sub">· ${esc(imapAgo(r.at))}</span><div class="item-sub" style="color:var(--danger);overflow-wrap:anywhere">${esc(webTestText(i, r))}</div>`;
+    if (r && !r.ok) return `<span class="item-sub">Couldn't check from FAFO's server · ${esc(imapAgo(r.at))}</span><div class="item-sub" style="overflow-wrap:anywhere">${esc(webTestText(i, r))}</div>`;
     if (r) return `<span style="color:var(--ok);font-weight:600"><span class="imap-dot" style="background:var(--ok)"></span>Connected</span> <span class="item-sub">· ${esc(imapAgo(r.at))}</span>`;
     return inboxTestOn() ? `<span class="item-sub">Not checked here yet</span>` : `<span class="item-sub">Status shows in the desktop app</span>`;
   }

@@ -8,8 +8,9 @@
 // why: auth (a NO to the sign-in), blocked (the provider wants a sign-in in a browser), server (* BYE, a temporary or
 // throttling NO, BAD, the connection dropped after the greeting), account (signed in, INBOX won't open), connect (no TLS
 // connection), timeout, not-imap (not an IMAP greeting, PREAUTH, or past the size caps) and method (no password sign-in).
-// text: a NO or BAD's words (or a BYE's), without control characters, 200 characters at most; never the greeting's (Gmail's
-// names the client's address). It never throws, and never puts the email or password in an error, a result or a log.
+// text: a NO or BAD's words (or a BYE's), without control characters, 200 characters at most; never an OK greeting's
+// (Gmail's names the client's address; a BYE greeting's words are kept). It never throws, and never puts the email or
+// password in an error, a result or a log.
 import { connect } from "cloudflare:sockets";
 
 const enc = new TextEncoder();

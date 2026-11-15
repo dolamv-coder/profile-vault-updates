@@ -6061,7 +6061,9 @@ try {
       if (oldExtra === undefined) delete env.NODE_EXTRA_CA_CERTS; else env.NODE_EXTRA_CA_CERTS = oldExtra;
     }
     // A Discord account per key, so no key reaches the day's cap of 8 but in the tests of the caps.
-    const IBX_USERS = ["ibx3", "ibx4", "ibx5a", "ibx5b", "ibx5c", "ibx6", "ibx7a", "ibx7b", "ibx8", "ibx9", "ibx10", "ibx11a", "ibx11b"];
+    // Six more for the bursts: with the 13 above that's 19 sign-ins, under the 20 an hour from one address.
+    const IBX_RACE = ["ibx12a", "ibx12b", "ibx12c", "ibx12d", "ibx12e", "ibx12f"];
+    const IBX_USERS = ["ibx3", "ibx4", "ibx5a", "ibx5b", "ibx5c", "ibx6", "ibx7a", "ibx7b", "ibx8", "ibx9", "ibx10", "ibx11a", "ibx11b", ...IBX_RACE];
     IBX_USERS.forEach((n, i) => { USERS[n] = { id: snowflake(Date.parse("2023-01-01") + i * 86400000), username: n, guilds: [] }; });
     const K = {};
     const ibx = async (key, body, init = {}) => {
@@ -6225,6 +6227,20 @@ try {
       gateRelease();
       assert.deepEqual((await a).body, { ok: true, messages: 42 });
       assert.deepEqual((await ibx(K["7a"], good("imap.gmail.com"))).body, { ok: true, messages: 42 }, "free again once A answered");
+    });
+    await test("inbox test: tests sent while the license's own test runs are busy, never \"everyone\" (that test's hold released between the two statements)", async () => {
+      // A refused test reads the license's row again in a second statement, and its other test can release its hold in
+      // between: that used to answer "everyone" (the cap across every license) far below it. The moment can't be timed
+      // from outside, so this sends bursts, as the review's repro did (about 4 keys in 10 got one): two on each key, each
+      // counting a test or two of its 8 a day.
+      const tally = {};
+      for (const k of [...IBX_RACE, ...IBX_RACE].map((n) => K[n.slice(3)])) {
+        const all = [ibx(k, good("imap.gmail.com"))];
+        for (let i = 0; i < 12; i++) { await new Promise((r) => setTimeout(r, 2)); all.push(ibx(k, good("imap.gmail.com"))); }
+        for (const r of await Promise.all(all)) { const x = r.status + " " + (r.body.error || (r.body.ok ? "ok" : r.body.why)); tally[x] = (tally[x] || 0) + 1; }
+      }
+      assert.deepEqual(Object.keys(tally).filter((x) => x !== "200 ok" && x !== "429 busy"), [], JSON.stringify(tally));
+      assert.ok(tally["200 ok"] >= 2 * IBX_RACE.length && tally["429 busy"] > 0, JSON.stringify(tally));
     });
     await test("inbox test: a hold left by a request that died, and a late release never frees another request's hold", async () => {
       const k = K["8"], h = await keyHash(k);
