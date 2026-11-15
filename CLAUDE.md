@@ -1699,18 +1699,18 @@ warning when order alerts aren't on there. Orders gain `billTold` and `atGuess`,
 
 From 1.9.131 Export profiles has **Valor JSON** (the owner's request, 2026-10-20, with an export from Valor AIO), between
 AYCD JSON and CSV (`toValor`, `profiles-<date>-valor.json`). It's laid out as Valor's own export of a profile group: one
-object keyed by each profile's id, a new v4 UUID per export (`valorId`; key and `id` the same), each profile with
-`name, email, phoneNumber, billingSameAsShipping, oneCheckout, quickTask, card {holder, number, expiration, cvv, type},
-shipping, billing, id, totalSpent` in that order, and each address `firstName, lastName, addressLine1, addressLine2, city,
-countryName, countryCode, state, zipCode`. The owner's file showed: billing written out even when it's the shipping
-address, the card number in fours (`valorNumber`; an Amex 4-6-5, a guess), the expiry MM/YY (`valorExp`; Valor's docs say
-so too), the phone 555-010-1234 (`valorPhone`: 10 digits, or 11 starting with 1, for a profile shipping to the US or
-Canada, or with no country, and not a `+` number of another country; anything else as typed), the state and country
-written out (`aycdState`, `aycdCountry`), `quickTask` false and `totalSpent` 0. Card types: visa (the owner's file), and
-mastercard, amex and discover from converters that write Valor files (no Valor source for those), else `unknown` (as
-Profile Builder writes), none for a card with no number. A card with no name gets the billing name. Store logins and groups aren't in
-Valor's profile, and the note says to import the file into a profile group (Valor's separate Profile Groups import takes
-another shape). Nothing gains a field.
+object keyed by each profile's id, a new v4 UUID per export (`valorId`; key and `id` the same), each profile with `name,
+email, phoneNumber, billingSameAsShipping, oneCheckout, quickTask, card {holder, number, expiration, cvv, type}, shipping,
+billing, id, totalSpent` in that order, and each address `firstName, lastName, addressLine1, addressLine2, city,
+countryName, countryCode, state, zipCode`. The owner's file showed: billing written out even when it's the shipping address,
+the card number in fours (`valorNumber`; an Amex 4-6-5, as the owner's Valor export of 2026-11-15 confirms), the expiry
+MM/YY (`valorExp`; Valor's docs say so too), the phone 555-010-1234 (`valorPhone`: 10 digits, or 11 starting with 1, for a
+profile shipping to the US or Canada, or with no country, and not a `+` number of another country; anything else as typed),
+the state and country written out (`aycdState`, `aycdCountry`), `quickTask` false and `totalSpent` 0. Card types: visa (the
+owner's file), and mastercard, amex and discover from converters that write Valor files (no Valor source for those), else
+`unknown` (as Profile Builder writes), none for a card with no number. A card with no name gets the billing name. Store
+logins and groups aren't in Valor's profile, and the note says to import the file into a profile group (Valor's separate
+Profile Groups import takes another shape). Nothing gains a field.
 
 From 1.9.132 Export profiles also has **Stellar JSON** and **Hidden JSON** (the owner's request, 2026-10-20, with an
 export from each bot), after Valor JSON (`toStellar`, `toHidden`, `profiles-<date>-stellar.json` and `-hidden.json`). Both
@@ -2481,6 +2481,80 @@ the website?"; offered a test from the license worker, with its caveats: "put it
   Test, the pill's and mark's titles, the editor's and the setup's words). It waits for a window's first focus before
   typing in it, as a late one moves the cursor mid-fill. `imap-submit.test.mjs`'s two assertions on the web note follow
   the new words.
+- Nothing gains a field.
+
+From 1.9.150 **Export profiles picks its formats from a list**, as profile converters do (the owner, 2026-11-15, with the
+export files of several bots and a screenshot of a converter's "Export Profiles Using Format" window: "These are all bots
+export's format. Create something similar when I want to export a profile in Fafo. Give me an option to choose what I want
+to export as. Something like in the picture", then, with Stellar's and Valor's exports: "include these 2 formats too.").
+- **The formats** (`EXPORT_FORMATS`, each `{id, name, hint, poss, bot, groups, file(date), make(flat)}`), in the converter's
+  order, the bots alphabetically, then AYCD's two, then FAFO's own: HayhaAIO 2.0 (`toHayha`, `profiles-<date>-hayha.Hayha`),
+  Hidden AIO (`toHidden`), Refract (`toRefract`), Shikari (`toShikari`, `-shikari.csv`), StellarAIO (`toStellar`), Valor
+  (`toValor`), AYCD (`toAycd`), CSV/Google Sheet/Form (`toGoogleSheet`, `-googlesheet.csv`), FAFO CSV (`toCSV`) and FAFO
+  backup (JSON). File names from before stay, and the formats there before write the same bytes as 1.9.149's.
+- **What the owner's files showed** (one profile each, the same person; they hold a real person's details, so they're not in
+  this repo: a check outside it built a profile with each file's values in the page and compared FAFO's export with the file
+  byte for byte, random ids and times swapped in, and all seven match). All are UTF-8 with no BOM.
+  - HayhaAIO 2.0 (a `.Hayha` file): a JSON list, 2-space indent and no newline at the end, of `{name, shipping, cardInfo,
+    oneCheckout, sameAsBilling, billing, groupId, id}`, each address `{firstName, lastName, email, phone, address, address2,
+    country, state:{shortCode, name}, city, zipCode}`: the country written out, the state as `{shortCode:"TX",
+    name:"Texas"}`, the phone's digits, the profile's email on both, `cardInfo {cardNumber, holder, expMonth, expYear,
+    cvv}` with `expMonth` "07" and `expYear` 2031 a number (null with no year), billing written out even when it's the
+    shipping address, `groupId` and `id` v4 UUIDs. `groupId` is our choice (the file has one profile): one new id per FAFO
+    group in that export, profiles with no group sharing one, so a group stays together in Hayha.
+  - Refract: `{name, email, oneTimeUse, shipping, billing, payment:{name, num, year, month, cvv}, id, createdAt,
+    updatedAt}`, the province and country written out, the phone's digits on the address, `oneTimeUse` for Only one
+    checkout, `year` "2031" and `month` "07" as strings, no card type, `id` "prf-" and a v4 UUID, `createdAt` a second
+    before `updatedAt` (now). Billing to the shipping address is exactly the file's `{sameAsShipping:true, firstName:"",
+    lastName:"", address1:"", address2:"", city:"", postalCode:"", phone:""}` (`REFRACT_SAME`, no province or country); a
+    billing address of its own has no sample: a guess, `sameAsShipping:false` and the address written out as shipping is,
+    with the profile's phone.
+  - Shikari: the license worker's Shikari CSV exactly (`shikariCsv`, `SHIKARI_COLS`, `csvCell`, 2026-10-09), ported to the
+    page (`toShikari`, `SLOT_COLS`, `SHIKARI_COUNTRY`) from the values a slots CSV row has (`slotRow`), but the profile's
+    own email: keep the two the same. The test runs the worker's own `shikariCsv` on a slots CSV of the same profiles.
+  - CSV/Google Sheet/Form: AYCD's Google Sheet template, its 29 columns (`GSHEET_COLS`, "Email Address" to "Size
+    (Optional)"), a row per profile with Hidden's values (`toHidden`: true and false, AmericanExpress and a RedCard as Visa,
+    the card number's digits, 07 and 2031, the phone's digits, the state and country written out), billing written out even
+    when it's the shipping address, Address 3 empty, the size last; quoted only for `" , CR LF`, CRLF after every line.
+  - Hidden AIO, StellarAIO and Valor: 1.9.132's and 1.9.131's exports match as they are. Valor's confirms the Amex number in
+    4-6-5.
+  - Every format: the card's own name, else the billing name, and the phone as `plainPhone` (Shikari's as the worker's).
+- **The window** (`openExport`, from Profiles' selection bar and the right-click menu of selected profiles; Profiles has no
+  Export button of its own), in FAFO's look, laid out as the converter's:
+  - Which profiles, and Skip profiles missing an address or card, as before.
+  - **Export formats**: "Pick one or more. Each one downloads as its own file.", a Search box (`#ex-find`, labelled Search
+    formats for screen readers; every word typed in a format's name or hint, case and accents ignored, `exportFold`; "No
+    format matches."; a row it hides keeps its tick), then the list (`#ex-fmts`, about 7 rows high with its own scroll,
+    `.ex-row` with `input[name="fmt"]`, the name and its hint).
+  - The note (`#ex-note`): "N profiles ready (M skipped). The files include full card numbers and CVVs in plain text, so
+    delete them once you're done." ("The file…it" with one format), then for the formats picked (`exportNotes`): one
+    sentence on what the bots' formats leave out, naming them (`poss`: "Store logins aren't part of HayhaAIO 2.0's,
+    Refract's and AYCD's profile formats, and groups aren't part of Refract's, so they're left out."; Hayha and AYCD keep
+    groups), Valor's import, Stellar's card types and RedCard PIN (as before), and "In Excel, import card columns as text so
+    numbers aren't rounded." for FAFO CSV and the Google Sheet. None picked: "Pick a format to export.", and Download and
+    Copy are off.
+  - Copy only with one format picked (else off, titled "Copy works with one format at a time"); Download, or "Download N
+    files" (hidden where downloads aren't available, as before).
+- **Several files** save one after another in the list's order, each through `saveFile` (its new `quiet`: no toast), 700 ms
+  apart where the browser or the desktop app takes them (`blobSave`), so a browser's "download multiple files" prompt comes
+  once. The desktop app's save window takes the focus from FAFO's and the page can't await it, so there the next file also
+  waits for the focus to come back (2 minutes at most; not tried in Electron). One that fails or is declined (claude.ai's)
+  stops the rest and the window stays, saying which went (`#ex-out`, "Downloaded HayhaAIO 2.0 and Hidden AIO. Refract and
+  Shikari weren't downloaded."); all of them close it with one toast ("Downloaded 3 files"). `blobSave` gives a name it
+  doesn't know (`.Hayha`) the type application/octet-stream, so no browser adds an extension (`.txt` is still text/plain).
+- **The picks** start as this device's last export's (`orbit-export-fmts` in localStorage, read and written in try/catch,
+  also in memory, `exportPicks`, `exportPicksSave`; unknown ids dropped; never synced; Erase vault's `clearStore` clears
+  it), else FAFO backup (JSON) alone, as before; saved when a file is copied or downloaded.
+- **Tests:** `export-formats.test.mjs` runs the page in Chromium (in CI after the web inbox test's), as the web version, on
+  a vault of made-up profiles (an Amex billing to its shipping address, a Visa with a billing address of its own and no name
+  on the card, a Canadian one, a RedCard with no PIN, a JCB whose names and city start with `+ - = @` and whose street has a
+  comma and quotes, two groups and none, one skipped): the list's order, names and hints, the search, the notes, Copy, every
+  format's exact text from its downloaded file and name against fixtures written in the test (ids and Refract's times
+  checked by shape, then swapped), Hayha's numeric `expYear` and one `groupId` per group, Shikari equal to the worker's
+  `shikariCsv` (read from `license-worker/src/index.js`, which doesn't load in node), CRLF and no BOM in both CSVs, ten
+  files in order with one toast, one failing, the picks across opening again, a reload, unknown ids, storage that throws and
+  Erase vault, and a 375 × 667 phone where the list scrolls and every row can be ticked. It fails if the newest page has no
+  `EXPORT_FORMATS`.
 - Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
