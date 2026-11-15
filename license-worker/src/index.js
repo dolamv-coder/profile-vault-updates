@@ -33,6 +33,12 @@
 //   GET  /interests/pic/REF    a picture the list shows, with no license (an <img> can't send one)
 //   POST /submissions takes `interests` too: {storeKey: [sku]}, the products ticked; each store's go with the batch as
 //                              <buyer>-<store>-skus.txt, after that store's other files
+// Inbox test (page 1.9.149; the owner, 2026-11-14: "how come I can't test the connection while on the website?"):
+//   POST /inbox/test           {email, password, host, port} (license Bearer): signs in to that inbox over IMAP (TLS, port
+//                              993 only), opens INBOX read-only (EXAMINE) and signs out, as the desktop's Test does:
+//                              {ok:true, messages} or {ok:false, why, text}. Keeps and logs nothing about the inbox. One at
+//                              a time, 30 a day and 10 failed sign-ins a day per license, and 500 a day across every license
+//                              (429 busy / limit / fails / everyone)
 // Slots (app sends "Authorization: Bearer <license key>"):
 //   GET  /slots/limit          {limit, request}: how many slots this license can have on at once
 //   POST /slots/request        {requested, name, note}: ask for more; posted to DISCORD_WEBHOOK_URL
@@ -179,6 +185,7 @@
 //   POST /admin/accounts/remove {email, store?}: take it off the list
 
 import { INTEREST_SEED, INTEREST_ADDS } from "./interest-seed.js";
+import { imapSignIn } from "./imap.js";
 
 const DISCORD_AUTHORIZE = "https://discord.com/oauth2/authorize";
 const REQUEST_TTL_MS = 15 * 60 * 1000;          // matches how long the app waits for a sign-in
@@ -264,6 +271,7 @@ export default {
       if (path === "/billing/list" && request.method === "POST") return await billingListAsk(request, env, ctx, url);
       if (path.startsWith("/billing/list/")) return await billingListPage(request, env, ctx, url, path.slice("/billing/list/".length));
       if (path === "/stripe/webhook" && request.method === "POST") return await stripeWebhook(request, env);
+      if (path === "/inbox/test" && request.method === "POST") return await inboxTestPost(request, env, ctx);
       if (path === "/vault/info" && request.method === "GET") return await vaultInfo(request, env);
       if (path === "/vault" && request.method === "GET") return await vaultGet(request, env, url);
       if (path === "/vault" && request.method === "PUT") return await vaultPut(request, env, url);
@@ -821,11 +829,19 @@ const SUBMISSION_MAX_FILES = 80;            // four per store: profiles, AYCD, l
 // is checked before it's split, and each line's before it's read.
 const IMAP_EMAIL_MAX = 254, IMAP_PW_MAX = 200;
 const IMAP_EMAIL = /^[^\s@:]+@[^\s@:]+$/;
+// An inbox's address, as a mail server takes it to sign in: no spaces or colons, one @, and after it a dot with something
+// on either side, 254 characters at most (POST /inbox/test checks it too, 1.9.149). Its length is checked first, by the
+// caller here and by itself there.
+const imapAddrOk = (email) => {
+  if (email.length < 3 || email.length > IMAP_EMAIL_MAX) return false;
+  const dot = email.indexOf(".", email.indexOf("@") + 2);
+  return IMAP_EMAIL.test(email) && dot > 0 && dot < email.length - 1;
+};
 const imapLineOk = (x) => {
   const c = x.indexOf(":");
   if (c < 1 || c > IMAP_EMAIL_MAX || x.length - c - 1 > IMAP_PW_MAX) return false;
-  const email = x.slice(0, c), pw = x.slice(c + 1), dot = email.indexOf(".", email.indexOf("@") + 2);
-  return IMAP_EMAIL.test(email) && dot > 0 && dot < email.length - 1 && /\S/.test(pw) && !/[\r\n\u2028\u2029]/.test(pw);
+  const email = x.slice(0, c), pw = x.slice(c + 1);
+  return imapAddrOk(email) && /\S/.test(pw) && !/[\r\n\u2028\u2029]/.test(pw);
 };
 const imapOk = (text, slots) => {
   let end = text.length;
@@ -6433,6 +6449,142 @@ async function batchSkus(env, files, sent) {
     if (skus.length) out.set(f.storeKey, skus);
   }
   return out;
+}
+
+// ---- inbox test (page 1.9.149) -------------------------------------------------------------------
+// The owner (2026-11-14), with a screenshot of the web version's saved inboxes, each with a disabled Test and "Status shows
+// in the desktop app": "how come I can't test the connection while on the website?"; offered a test from this worker, with
+// its caveats: "put it in 1.9.149". A browser can't open an IMAP connection, so the web version's Test sends the inbox's
+// email and app password here, and this worker signs in for it (src/imap.js): TLS to port 993 only, on a mail server's
+// public name, then INBOX opened read-only and a sign-out. Nothing about the inbox is kept or logged: the body is read with
+// a cap, parsed in a try that never logs (V8 quotes the input in a parse error, and the router logs uncaught errors'
+// stacks), and errors here log only their name. D1 inbox_tests keeps per license the day's count, its failed sign-ins and
+// the running test's hold, for the limits: one at a time, INBOX_TESTS_PER_DAY a day and INBOX_TEST_FAILS_PER_DAY failed
+// sign-ins a day (so it can't be used to guess a password), and INBOX_TESTS_ALL_PER_DAY across every license (a bound if
+// keys ever stop needing the owner's approval: REQUIRE_APPROVAL = ""). The env's INBOX_TEST_* settings are for
+// test/e2e.mjs only, which checks wrangler.toml sets none of them.
+const INBOX_TEST_MS = 15000, INBOX_TESTS_PER_DAY = 30, INBOX_TEST_FAILS_PER_DAY = 10, INBOX_TESTS_ALL_PER_DAY = 500;
+const INBOX_BODY_MAX = 2000;            // characters of JSON: an address, a password, a server's name and a port
+const envOver = (v, dflt) => Number(v) > 0 ? Number(v) : dflt;   // a test setting, taken only when greater than 0
+// Names that are never a mail server on the internet: local, private, reserved, and FAFO's own.
+const INBOX_HOST_NOT = ["localhost", "local", "internal", "intranet", "lan", "home", "corp", "home.arpa", "arpa", "test", "example",
+  "invalid", "onion", "fafoaco.com", "workers.dev"];
+// A mail server's DNS name (lower case, no trailing dot): at most 253 characters of letters, digits, dots and hyphens, two
+// labels or more, each 1 to 63 characters not starting or ending with a hyphen, and a top-level label of letters (or an
+// xn-- one), so never an IP address, written dotted, as a number or in hex (IPv6 has colons). What this can't stop: a
+// public name whose DNS points at a private address, and DNS rebinding; only the runtime can refuse those after DNS.
+const imapHostOk = (h) => {
+  if (h.length > 253 || !/^[a-z0-9.-]+$/.test(h)) return false;
+  const labels = h.split(".");
+  if (labels.length < 2 || !labels.every((l) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(l))) return false;
+  if (!/^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/.test(labels[labels.length - 1])) return false;
+  return !INBOX_HOST_NOT.some((x) => h === x || h.endsWith("." + x));
+};
+// Where to connect: the name asked for, on port 993. Tests only (INBOX_TEST_CONNECT, "host=target" pairs, * for any other
+// host) send a host that passed every check to a pretend server, and only to localhost or 127.0.0.1.
+function inboxTestTarget(env, host) {
+  let exact = null, any = null;
+  for (const pair of String(env.INBOX_TEST_CONNECT || "").split(",")) {
+    const i = pair.indexOf("=");
+    if (i < 1) continue;
+    const from = pair.slice(0, i).trim().toLowerCase(), to = pair.slice(i + 1).trim();
+    if (from === host && exact === null) exact = to;
+    else if (from === "*" && any === null) any = to;
+  }
+  const m = /^(localhost|127\.0\.0\.1):(\d{1,5})$/.exec(exact !== null ? exact : any !== null ? any : "");
+  if (m && Number(m[2]) >= 1 && Number(m[2]) <= 65535) return { hostname: m[1], port: Number(m[2]) };
+  return { hostname: host, port: 993 };
+}
+// The request's body, read with a cap (a chunked upload has no content-length): null when it's too large.
+async function inboxBody(request) {
+  const len = request.headers.get("content-length");
+  if (len !== null && Number(len) > INBOX_BODY_MAX) return null;
+  if (!request.body) return "";
+  const reader = request.body.getReader(), parts = [];
+  let size = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > 2 * INBOX_BODY_MAX) { reader.cancel().catch(() => {}); return null; }
+    parts.push(value);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  const text = new TextDecoder().decode(all);
+  return text.length > INBOX_BODY_MAX ? null : text;
+}
+const INBOX_PW_BAD = /[\0\r\n\u2028\u2029]/;
+const untilMidnight = (now) => Math.max(1, Math.ceil((Math.floor(now / 86400000) * 86400000 + 86400000 - now) / 1000));
+// POST /inbox/test {email, password, host, port} (license Bearer): {ok:true, messages} or {ok:false, why, text}, as
+// src/imap.js answers. A wrong mailbox password is a 200 too: 401 is the license's.
+async function inboxTestPost(request, env, ctx) {
+  const lic = await readLicense(request, env);
+  if (lic === "unknown") return json({ error: GH_LIST_DOWN }, 503, NO_STORE);
+  if (!lic) return json({ error: "license not recognized" }, 401, NO_STORE);
+  let held = 0, r = null;
+  try {
+    const text = await inboxBody(request);
+    if (text === null) return json({ error: "too large" }, 413, NO_STORE);
+    let body;
+    try { body = JSON.parse(text); } catch { body = undefined; }   // never logged or thrown on: its message quotes the input
+    if (!body || typeof body !== "object" || Array.isArray(body)) return json({ error: "bad request" }, 400, NO_STORE);
+    const email = typeof body.email === "string" ? body.email.trim() : "";
+    if (!imapAddrOk(email)) return json({ error: "email" }, 400, NO_STORE);
+    const password = body.password;
+    if (typeof password !== "string" || password.length < 1 || password.length > IMAP_PW_MAX || !/\S/.test(password) || INBOX_PW_BAD.test(password)) {
+      return json({ error: "password" }, 400, NO_STORE);
+    }
+    if (String(body.port).trim() !== "993") return json({ error: "port" }, 400, NO_STORE);
+    const host = typeof body.host === "string" ? body.host.toLowerCase().replace(/\.$/, "") : "";
+    if (!imapHostOk(host)) return json({ error: "host" }, 400, NO_STORE);
+
+    // The limits, in one statement: it counts the test and takes the hold (its value is the hold's token), unless this
+    // license is busy or at a cap, or every license together is. When the SELECT yields no row there's neither an insert
+    // nor a conflict, so nothing changes.
+    const now = Date.now(), ms = envOver(env.INBOX_TEST_TIMEOUT_MS, INBOX_TEST_MS), today = day(now), hold = now + ms + 15000;
+    const perDay = envOver(env.INBOX_TESTS_PER_DAY, INBOX_TESTS_PER_DAY), failCap = envOver(env.INBOX_TEST_FAILS_PER_DAY, INBOX_TEST_FAILS_PER_DAY);
+    const allCap = envOver(env.INBOX_TESTS_ALL_PER_DAY, INBOX_TESTS_ALL_PER_DAY);
+    const got = await env.DB.prepare(`INSERT INTO inbox_tests (key_hash, day, n, fails, busy_until)
+      SELECT ?1, ?2, 1, 0, ?4 WHERE (SELECT COALESCE(SUM(n), 0) FROM inbox_tests WHERE day = ?2) < ?7
+      ON CONFLICT (key_hash) DO UPDATE SET
+        n = CASE WHEN inbox_tests.day = excluded.day THEN inbox_tests.n + 1 ELSE 1 END,
+        fails = CASE WHEN inbox_tests.day = excluded.day THEN inbox_tests.fails ELSE 0 END,
+        day = excluded.day, busy_until = excluded.busy_until
+      WHERE inbox_tests.busy_until <= ?3 AND (inbox_tests.day <> excluded.day OR (inbox_tests.n < ?5 AND inbox_tests.fails < ?6))
+      RETURNING n`).bind(lic.hash, today, now, hold, perDay, failCap, allCap).first();
+    if (!got) {
+      const row = await env.DB.prepare("SELECT day, n, fails, busy_until FROM inbox_tests WHERE key_hash = ?").bind(lic.hash).first();
+      const retryAfter = untilMidnight(now);
+      if (row && row.busy_until > now) return json({ error: "busy" }, 429, { ...NO_STORE, "retry-after": "15" });
+      if (row && row.day === today && row.fails >= failCap) return json({ error: "fails", limit: failCap, retryAfter }, 429, NO_STORE);
+      if (row && row.day === today && row.n >= perDay) return json({ error: "limit", limit: perDay, retryAfter }, 429, NO_STORE);
+      // Under its own caps and not busy now: either every license together is at the cap, or its other test's hold was
+      // released between the two statements (it was busy). Today's sum never goes down, so it tells them apart.
+      const all = await env.DB.prepare("SELECT COALESCE(SUM(n), 0) AS s FROM inbox_tests WHERE day = ?").bind(today).first();
+      if (all && all.s >= allCap) return json({ error: "everyone", retryAfter }, 429, NO_STORE);
+      return json({ error: "busy" }, 429, { ...NO_STORE, "retry-after": "15" });
+    }
+    held = hold;
+    if (Math.random() < 0.05) {
+      ctx.waitUntil(env.DB.prepare("DELETE FROM inbox_tests WHERE day < ? AND busy_until < ?").bind(day(now - 2 * 86400000), now).run()
+        .catch((e) => console.error("inbox test purge", e && e.message)));
+    }
+    r = await imapSignIn({ to: inboxTestTarget(env, host), email, password, ms });
+    return json(r.ok ? (typeof r.messages === "number" ? { ok: true, messages: r.messages } : { ok: true }) : { ok: false, why: r.why, text: r.text }, 200, NO_STORE);
+  } catch (e) {
+    console.error("inbox test", e && e.name);   // never its message or stack: they could hold the body
+    return json({ error: "server error" }, 500, NO_STORE);
+  } finally {
+    // The hold goes before the answer does, so a result never leaves without its failed sign-in counted; by its own
+    // value, so a late release never frees a hold another request took. A request whose client went away may be cancelled
+    // before this: its hold then runs out by itself.
+    if (held) {
+      await env.DB.prepare("UPDATE inbox_tests SET busy_until = 0, fails = fails + ?3 WHERE key_hash = ?1 AND busy_until = ?2")
+        .bind(lic.hash, held, r && r.why === "auth" ? 1 : 0).run().catch((e) => console.error("inbox test release", e && e.message));
+    }
+  }
 }
 
 // ---- responses -----------------------------------------------------------------------

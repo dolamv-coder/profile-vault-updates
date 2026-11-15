@@ -554,6 +554,42 @@ alone (every store's rows of one account) from reading the whole table. Only
   and Family / Charge, Tester, Clear dispute hold, the invoice with Waive, Undo waive, Mark paid, Charge again and the
   dispute answers, Add a checkout, and Paste checkouts (preview, then Add). `/billing/done` is Stripe's return page (Back
   to FAFO for the web). `/admin/billing` sums it up. Tables `billing_*` (12, new only). Page 1.9.130 below.
+  Since 2026-11-14 (the owner, with a screenshot of the web version's saved inboxes, each with a disabled Test and "Status
+  shows in the desktop app": "how come I can't test the connection while on the website?"; offered a test from this worker,
+  with its caveats: "put it in 1.9.149") it **signs in to an inbox for the web version's Test**.
+  - **The route:** `POST /inbox/test {email, password, host, port}` (license Bearer; 401; 503 while GitHub's list can't be
+    read; the body at most 2 KB, read with a cap, never in the URL; its JSON parsed in a `try` that never logs, since V8
+    quotes the input in a parse error and the router logs uncaught errors' stacks).
+  - **Where it connects:** `cloudflare:sockets` over TLS to port 993 only (400 `port`), on a DNS name that isn't local,
+    private, reserved or ours (`imapHostOk`; 400 `host`). Everything is checked before any connection. A public name that
+    points at a private address is left to Cloudflare's runtime, which by its documentation can't reach those; wrangler's
+    local runtime can (it allows private addresses), so the e2e can't show it.
+  - **How it signs in:** only after a `* OK` greeting, as the desktop's imapflow does (`src/imap.js`, `imapSignIn`:
+    AUTHENTICATE PLAIN when offered, else AUTH=LOGIN, else the LOGIN command with quoted strings or byte-counted literals,
+    unless LOGINDISABLED). Then it opens INBOX read-only (EXAMINE), signs out, and closes without waiting (a close can hang
+    on a TLS handshake never answered), all within 15 seconds.
+  - **The answer:** `{ok:true, messages}`, or `{ok:false, why, text}`.
+    - `why` is one of auth, blocked, account, server, connect, timeout, not-imap and method. A NO with a temporary code or
+      words ("Too many simultaneous connections", "try again later") is `server`, not `auth`.
+    - `text` is the server's answer without control characters, 200 characters at most, never an OK greeting's (Gmail's
+      names the client's address; a BYE greeting's words are kept).
+  - **Nothing about the inbox is kept or logged.** D1 `inbox_tests` (a new table) holds per license the day's count, its
+    failed sign-ins and the running test's hold (`busy_until`, released by its own value). Limits: one at a time (429
+    `busy`, also when its other test's hold was released between that statement and the read after it), 30 a day
+    (`limit`), 10 failed sign-ins a day (`fails`, so it can't be used to guess a password; blocked, temporary and throttled
+    refusals, timeouts and connection failures don't count), and 500 a day across every license (`everyone`, the day's sum
+    of the counts, in the same statement: a bound if keys ever stop needing approval; a refusal under every other cap
+    answers it only when that sum is at the cap, else `busy`).
+  - **Caveats:** the sign-in comes from Cloudflare's network, so a provider may email a new-sign-in alert or now and then
+    block it (`blocked`). Outlook.com may refuse password sign-ins over IMAP (Microsoft moved it to modern authentication in
+    2024); the desktop meets the same answer.
+  - **Test-only settings:** `INBOX_TEST_CONNECT` (`host=localhost:port` pairs), `INBOX_TEST_TIMEOUT_MS`,
+    `INBOX_TESTS_PER_DAY`, `INBOX_TEST_FAILS_PER_DAY` and `INBOX_TESTS_ALL_PER_DAY` are for `test/e2e.mjs`, which checks
+    `wrangler.toml` sets none of them. It runs the route against pretend IMAP servers, with a CA it makes with openssl and
+    trusts through `NODE_EXTRA_CA_CERTS`, and sends bursts of tests on one license, which must answer `busy`, never
+    `everyone` (the review's repro: about 4 keys in 10 got one before).
+
+  Page 1.9.149 below.
   Setup and admin commands are in `license-worker/README.md`; `npm test` there
   runs it end to end in Wrangler's local runtime.
 
@@ -1453,9 +1489,10 @@ Only the desktop app signs in to an inbox, so its live status is per-device (`in
 `SYNC_DEVICE_FIELDS`): the desktop variant (`DESK`) shows Connected/Error with the last check and a Test button
 (`edit-inbox`, where the check lives), the web variant shows "Status shows in the desktop app", a disabled Test and a note
 that inbox passwords stay in the vault (from 1.9.147: that they leave it only with the slots submitted on that inbox's
-accounts). The sidebar item's badge counts the logins needing an inbox. The view is additive
-and gated on `UI.view === "imap"`; nothing gains a field, and since desktop updates are paused the desktop variant is
-dormant until they resume (the web variant is what ships).
+accounts; from 1.9.149, with the vault's license key, also on Test, which signs in from FAFO's server: below). The
+sidebar item's badge counts the logins needing an inbox. The view is additive and gated on `UI.view === "imap"`; nothing
+gains a field, and since desktop updates are paused the desktop variant is dormant until they resume (the web variant is
+what ships).
 
 From 1.9.118 the IMAP tab's web note (`renderImap`'s `webNote`, web only) also says that pulling orders from your email
 happens in the desktop app and that the web version tracks orders by pasting confirmation emails, so a web buyer who saves
@@ -2334,6 +2371,117 @@ is a trademark), and 1.9.94 had taken it off the pickers.
   slot's inbox access once its login is linked. It fails if the newest page has no Costco in `PICK_STORES`.
   `walkthrough.test.mjs` checks the guide's new words.
 - Nothing gains a field: Costco and its modes were already in the data, and no store mode is new.
+
+From 1.9.149 a **license key pasted where an invite code goes** says so, and where it goes (the owner, 2026-11-14, with a
+screenshot of the web version's "Fill in profiles for someone": their key in "Code from the person who asked" got
+"Couldn't find a code starting with PVKEY1. Paste the whole message you were sent.", and "why am I getting this message on
+the website? This is my actual desktop key"; offered a message for license keys there: "yes add that message for license
+keys").
+- **Recognising one** (`licKeyIn`, beside `licFormat`): the whole text as the license screen reads its box (`licFormat`,
+  then the same `/^PVLT(-[A-Z0-9]{4}){4}$/`), so case, spaces and dashes count as they do there, or else a word of it (split
+  at anything but a letter, digit or dash), for a key in a sentence. No second format. An invite code (`PVKEY1.`) anywhere
+  in the text still wins, and text that's neither keeps the old message exactly.
+- **I was sent a code** (`openSubmitStart`): a note under the box (`#ss-lic-note`, `note-warn`, `role="alert"`; `#ss-err`
+  stays empty and Continue off), from `licPastedHTML("start", key)`: "That's a FAFO license key, not an invite code. This
+  window is for filling in profiles for someone who sent you an invite code (it starts with PVKEY1.).", then where it goes:
+  - a browser with no vault: "Your license key goes on FAFO's first screen: close this and choose Enter it instead, or open
+    it from here." (on Use this browser only's screen, "…opens your synced vault: close this and choose Open my synced
+    vault…"), with **Open FAFO with this key**, which closes the window and opens `openSyncSignIn({key})`: its key box
+    filled in as `licFormat` writes it, the cursor in Master password, and the dialog otherwise as it was (`o` counts only
+    when it isn't the click event the lock screen's listeners pass, and only in a dialog with a key box);
+  - a browser with a vault: close this and unlock it with your master password, and Submit asks for the key if it needs it;
+  - claude.ai (`ON_CLAUDE`), with no button: that copy can't reach FAFO's license server, so the key can't be used there:
+    open FAFO at app.fafoaco.com and choose Enter it instead on its first screen;
+  - the desktop app, with no button: this computer's own key ("so there's nothing to paste: close this and unlock FAFO with
+    your master password", or before there's a vault "create your master password, or, if you already use FAFO in a browser
+    or on another computer, choose Open my synced vault", which the lock screen offers beside Create vault and which opens
+    or makes the license's synced vault, then "You'll find the key under Settings, then License."), another key (Settings,
+    then License, Remove from this computer, then enter it when FAFO asks for a license key), or none saved (its license
+    screen, when it starts).
+- **Submit's Send somewhere else** (`openSubmitTo`): `#st-lic-note` (`licPastedHTML("to")`): "This box is for an invite code
+  from someone else (it starts with PVKEY1.).", then, while `canSendToSeller()`, that with the box left empty the slots go
+  straight to the seller's Discord channel ("with the license key FAFO already has", or "Submit asks for your license key
+  when you send them, and this vault keeps it"); while filling in profiles for someone in a browser (`MODE` "submit", so
+  no `canSendToSeller()`), "While you fill in profiles for someone, FAFO doesn't use a license key: leave this box empty to
+  download a plain file instead.", as the window's own line says. Save with the key in the box saves nothing and adds no
+  "Paste a valid invite code." under the note.
+- The key is never in the words (it's in the box already) and never logged.
+- **Tests:** `license-paste.test.mjs` runs the page in Chromium (in CI after Costco's) against a pretend license worker:
+  `licKeyIn`'s readings (alone, spaces and line breaks around it, lower case, spaces for dashes, in a sentence; not a short
+  or long one, nor its words spread through a sentence), I was sent a code on the first screen (the note, its button, the
+  key box filled in, Continue asking `/vault/info` with that key, Enter it instead still empty), on Use this browser only's
+  screen, and in a browser with a vault (no button), an invite code winning over a key and still starting to fill in
+  profiles (and Send somewhere else there), other text's old message, Send somewhere else with no key kept and with one
+  (Save, the old message, an invite code saved and removed), a copy on claude.ai (`window.claude` set: no button), and the
+  desktop app with `window.pvDesktop` stubbed (its own key before and after there's a vault, another key, none saved, Send
+  somewhere else). It fails if the newest page has no `licKeyIn`.
+- Nothing gains a field.
+
+Also from 1.9.149 the web version can **test an inbox** (the owner, 2026-11-14, with a screenshot of the web version's saved
+inboxes, each with a disabled Test and "Status shows in the desktop app": "how come I can't test the connection while on
+the website?"; offered a test from the license worker, with its caveats: "put it in 1.9.149"; the worker section above).
+- **The gate:** `inboxTestOn()`: not the desktop app (`!DESK`), on FAFO's own address (`WEB_SELF`, so not claude.ai or a
+  file), in the vault itself (`MODE`), with its license key (`sellerLic()`).
+- **The request** (`webInboxTest`): through `alertApi` (the Bearer key), `POST /inbox/test` with the address without its
+  +tag (`baseMailAddr`), the password cleaned (`cleanAppPw`), the provider's server (`webTestHost`; a custom one's as typed,
+  lower-cased) and port 993, as Submit's inbox access sends them (`imapLineOf`). The page's own checks come first and are
+  never sent (`webTestPre`: an app password, an address the worker takes, a password on one line of 200 characters at most,
+  a server, port 993). It gives up after 30 seconds (`slow`); a status other than 200 is `refused` (with the worker's
+  `error` and `limit`), no connection `offline`.
+- **The caveat**, said once per device before the first test (`inboxTestFirst`, a `confirmDialog`: the sign-in comes from
+  FAFO's server, so the provider may send a security alert about a new sign-in, or now and then block it; Test it, Not now),
+  kept as `orbit-inbox-test-ok` in localStorage (and in memory), cleared by Erase vault (`clearStore`). One window at a time
+  (`inboxTestAsk`), which locking closes. Test it takes a press only 600 ms after the window opens (`confirmDialog`'s
+  `hold`), with the cursor on Not now, so a double tap (a phone's sheet puts Test it where Check and use was) or a second
+  Enter can't press it unread and mark the caveat as said.
+- **Three places Test runs:** IMAP's cards (`data-act="test-inbox"`, `testInboxHere`, in place: "Testing…" and a spinner
+  with "Signing in from FAFO's server…", then a toast), the inbox editor (`#i-test`, on the web too), and the step-by-step
+  setup's Check and use (`openInboxGuide`'s `canTest`, with "Check and use signs in from FAFO's server to check it, then
+  signs out. FAFO keeps nothing there."). One at a time: a card's test is marked in `INBOX_TESTING` before the caveat
+  window (every card's Test is off meanwhile; only a running one says Testing…), and the editor's button and the setup's
+  `busy` are set before anything is awaited, so a double click sends one request. Locking clears the marks, and a test the
+  vault locked during, or whose window closed, shows and notes nothing.
+- **The words** (`webTestText`): `mailError`'s for the server's own answer only when it reads it as a password problem
+  (its network and certificate words are about this computer, not FAFO's server's sign-in), and words naming FAFO's server
+  for the rest (blocked: sign in to it in your browser; temporary; can't connect securely to a custom server; the limits;
+  a kind of answer a newer worker gives). The server's words are always escaped or `textContent`, never a link.
+- **Where results go:** `S._local.ibx` (`ibxNote`: `{f, ok, at, n, why, text}` per inbox id, for inboxes that still exist;
+  per device, never synced, and never on the inboxes). A result counts only for the credentials tested (`ibxFp`, a hash of
+  the address, server, port and app password; `ibxResult`), so a changed password reads Not checked here yet again.
+  Refused, offline and slow tests aren't kept. Turning sync on, or the online copy replaced or deleted, rebuilds `_local`
+  and forgets them (a cache: not carried through). They feed IMAP's card (Connected · checked …, Error with the words, or
+  "Couldn't check from FAFO's server" with them, not red) and Inbox error on Store logins' and IMAP's counts, pills and
+  marks (`inboxCheck`, whose titles then say "FAFO's server couldn't sign in (Test on IMAP): …"), but only a result that
+  says the inbox is wrong (`ibxBad(r, inbox)`: auth, account, method, or connect or not-imap for a custom server);
+  blocked, temporary, timed-out and unreachable checks of the six providers (a connection closed before its greeting
+  too: their names are FAFO's own, so "check the server name" can't apply) change no count. An inbox not tested still
+  counts as connected on the web, as before. The card's words wrap anywhere, as a long address has no break point.
+- **A new inbox's result is kept on Save**: from Add inbox's Test or its setup (`wireImap`'s `filled`, `r.res`), and from
+  the store login editor's setup when Save login makes or links that inbox.
+- **With no key** (a vault made with Use this browser only, never synced), IMAP's Test is off with "Test needs your license
+  key in this browser: Settings, then Web version & sync, then Turn on sync. Or test it in the desktop app.", its web note
+  adds how to add the key, the cards say Status shows in the desktop app, and the editor and the setup have no Test, as
+  1.9.148 had. On claude.ai and from a file, as 1.9.148.
+- **The web note** with a key: "You're on the web version. Test checks an inbox by signing in to it from FAFO's server, then
+  signing out. Reading your email to pull in your orders happens only in the desktop app … Your inbox passwords are kept in
+  your encrypted vault, and leave it only when you press Test (FAFO's server signs in with it and keeps nothing) and with
+  the slots you submit on that inbox's accounts." (the seller's own FAFO without the slots), and the Inboxes line adds
+  "Test signs in from FAFO's server; the status is this browser's last test."
+- **The desktop app is unchanged**: every `DESK` branch is as it was, `inboxTestOn()` is false there, and there's no new
+  download. Settings → Email import's web text, Store logins' inbox cards and the store login editor's words stay as they
+  were. The release note doesn't mention it: only desktop users read notes.
+- **Tests:** `web-inbox-test.test.mjs` runs the page in Chromium (in CI after the license key's) against a pretend license
+  worker that answers by the inbox's address: no key, the caveat (Not now sends nothing; a double tap on a phone or Enter
+  twice can't press it), the exact body, every kind of answer's words and where they show (the server's words escaped on
+  the card, both kinds of status line, the pill's title, the editor's note and Test, and the setup), which count as Inbox
+  error (not-imap only for a custom server), a long address wrapping on a phone, one at a time from all three places (double
+  clicks, the caveat open), locking and deleting mid-test, results across a lock and a reload and out of what sync sends,
+  changed credentials, a new inbox's result kept on Save from Add inbox and a new store login, the seller's own FAFO, and
+  the desktop's code as 1.9.148 had it (`imapInboxStatus` line by line, and the desktop arms of `inboxCheck`, the card's
+  Test, the pill's and mark's titles, the editor's and the setup's words). It waits for a window's first focus before
+  typing in it, as a late one moves the cursor mid-fill. `imap-submit.test.mjs`'s two assertions on the web note follow
+  the new words.
+- Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

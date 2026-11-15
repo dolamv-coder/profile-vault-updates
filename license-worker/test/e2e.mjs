@@ -1,10 +1,12 @@
 // End-to-end test: runs the worker in wrangler's local runtime (real D1, real WebCrypto)
 // against a mock Discord API, then checks the whole "Continue with Discord" flow.
 //   npm test
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFile, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { createHmac } from "node:crypto";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import net from "node:net";
+import tls from "node:tls";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -318,6 +320,7 @@ const env = { ...process.env, NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.
 // Run wrangler's JS entry with this Node, so it works the same on Windows (where .bin/wrangler is a shell script).
 const wrangler = [join(root, "node_modules", "wrangler", "bin", "wrangler.js")];
 const workers = [];
+const imapServers = [];   // the pretend IMAP servers of the inbox tests (1.9.149), closed at the end
 let workerLog = () => "";   // the running worker's output, shown when a test fails
 // Starts a worker with its own empty database, or on an earlier run's database (`db`).
 // `vars` override wrangler.toml's [vars].
@@ -5893,6 +5896,446 @@ try {
     assert.equal(before, created1, "the other license's vault keeps its id");
   });
 
+  console.log("\nTesting an inbox from the web version (1.9.149)");
+  // The web version's Test (the owner, 2026-11-14: "how come I can't test the connection while on the website?"): POST
+  // /inbox/test signs in to the inbox over IMAP from this worker (src/imap.js), against pretend IMAP servers on 127.0.0.1
+  // (INBOX_TEST_CONNECT sends a name that passed every check to one of them). Their certificates are made here with openssl,
+  // signed by a throwaway CA that wrangler's runtime trusts through NODE_EXTRA_CA_CERTS (added to the browsers' CAs, so the
+  // self-signed one stays untrusted). Sample addresses and made-up app passwords only.
+  let haveSsl = true;
+  try { execFileSync("openssl", ["version"], { stdio: "pipe" }); } catch { haveSsl = false; }
+  if (!haveSsl && process.env.GITHUB_ACTIONS) throw new Error("the inbox tests need openssl");
+  if (!haveSsl) console.log("  skip  inbox tests: openssl not found");
+  else {
+    const certs = join(tmp, "imap-certs");
+    mkdirSync(certs, { recursive: true });
+    const ssl = (...args) => execFileSync("openssl", args, { cwd: certs, stdio: ["ignore", "ignore", "pipe"] });
+    ssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "30", "-subj", "/O=FAFO e2e/CN=FAFO e2e test CA",
+      "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign");
+    const leafCert = (name, san) => {
+      writeFileSync(join(certs, name + ".ext"), `subjectAltName=${san}\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n`);
+      ssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", name + ".key", "-out", name + ".csr", "-subj", "/CN=" + san.split(",")[0].replace(/^\w+:/, ""));
+      ssl("x509", "-req", "-in", name + ".csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial", "-out", name + ".pem", "-days", "30", "-extfile", name + ".ext");
+    };
+    leafCert("good", "DNS:localhost,IP:127.0.0.1");
+    leafCert("wrongname", "DNS:other.sample.com");
+    ssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "self.key", "-out", "self.pem", "-days", "30", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost");
+    const bundle = join(certs, "bundle.pem");
+    let extra = "";
+    try { if (process.env.NODE_EXTRA_CA_CERTS) extra = readFileSync(process.env.NODE_EXTRA_CA_CERTS, "utf8"); } catch {}
+    writeFileSync(bundle, (extra && !extra.endsWith("\n") ? extra + "\n" : extra) + readFileSync(join(certs, "ca.pem"), "utf8"));
+    const certOf = (name) => ({ key: readFileSync(join(certs, name + ".key")), cert: readFileSync(join(certs, name + ".pem")) });
+
+    // The pretend servers. Each counts its connections and keeps what it was sent (raw), and the IMAP ones log each
+    // command ({port, cmd, args, forms}: each argument an atom, quoted or a literal).
+    const IMAP_USERS = new Map([["sam.sample@gmail.com", "abcdefghijklmnop"], ["quote.sample@example.com", 'pa"ss\\word'], ["utf.sample@example.com", "pässwörd"]]);
+    const SAM = { email: "sam.sample@gmail.com", password: "abcdefghijklmnop" };
+    const imapLog = [], imapConns = {}, imapRaw = {};
+    const gate = { open: false, held: [] };
+    const CAPS = { gmail: "IMAP4rev1 SASL-IR AUTH=PLAIN", outlook: "IMAP4rev1", nologin: "IMAP4rev1 LOGINDISABLED", authlogin: "IMAP4rev1 AUTH=LOGIN LOGINDISABLED" };
+    const GMAIL_NO = {
+      "webalert.sample@gmail.com": "NO [WEBALERT https://accounts.google.com/sample] Web login required.",
+      "browser.sample@gmail.com": "NO [ALERT] Please log in via your web browser: https://support.google.com/mail/sample (Failure)",
+      "busy.sample@gmail.com": "NO [UNAVAILABLE] Temporary authentication failure",
+      "throttle.sample@gmail.com": "NO [ALERT] Too many simultaneous connections. (Failure)",
+    };
+    const imapSession = (sock, port, kind) => {
+      let buf = Buffer.alloc(0), want = null, pending = null, authed = false, saslLogin = null;
+      const send = (s) => { try { sock.write(s); } catch {} };
+      send(kind === "gmail" ? "* OK Gimap ready for requests from 127.0.0.1 sample\r\n"
+        : kind === "outlook" ? "* OK The Microsoft Exchange IMAP4 service is ready.\r\n" : `* OK [CAPABILITY ${CAPS[kind]}] Sample IMAP ready\r\n`);
+      const signIn = (tag, email, pw) => {
+        if (kind === "gmail" && GMAIL_NO[email]) return send(`${tag} ${GMAIL_NO[email]}\r\n`);
+        if ((kind === "gmail" && email === "noinbox.sample@gmail.com") || IMAP_USERS.get(email) === pw) { authed = email; return send(`${tag} OK Signed in (Success)\r\n`); }
+        send(`${tag} ${kind === "outlook" ? "NO LOGIN failed." : kind === "authlogin" ? "NO [AUTHENTICATIONFAILED] AUTHENTICATE failed." : "NO [AUTHENTICATIONFAILED] Invalid credentials (Failure)"}\r\n`);
+      };
+      const run = ({ tag, cmd, args, forms }) => {
+        if (cmd === "AUTHENTICATE" && /AUTH=LOGIN/.test(CAPS[kind]) && String(args[0]).toUpperCase() === "LOGIN") {
+          saslLogin = { tag, args: [args[0]] };   // logged once the user name and password have come
+          return send("+ VXNlcm5hbWU6\r\n");
+        }
+        imapLog.push({ port, cmd, args, forms });
+        if (cmd === "CAPABILITY") return send(`* CAPABILITY ${CAPS[kind]}\r\n${tag} OK CAPABILITY completed\r\n`);
+        if (cmd === "LOGOUT") { send(`* BYE Logging out\r\n${tag} OK LOGOUT completed\r\n`); return sock.end(); }
+        if (cmd === "LOGIN") return /LOGINDISABLED/.test(CAPS[kind]) ? send(`${tag} NO [PRIVACYREQUIRED] LOGIN is disabled\r\n`) : signIn(tag, args[0], args[1]);
+        if (cmd === "AUTHENTICATE" && /PLAIN/.test(CAPS[kind]) && String(args[0]).toUpperCase() === "PLAIN" && args[1]) {
+          const [, u, pw] = Buffer.from(args[1], "base64").toString("utf8").split("\0");
+          return signIn(tag, u, pw);
+        }
+        if ((cmd === "EXAMINE" || cmd === "SELECT") && authed) {
+          if (authed === "noinbox.sample@gmail.com") return send(`${tag} NO User is authenticated but not connected.\r\n`);
+          return send(`* OK [ALERT] sample notice\r\n* ${kind === "gmail" ? 42 : 7} EXISTS\r\n* 0 RECENT\r\n${tag} OK [READ-ONLY] EXAMINE completed\r\n`);
+        }
+        send(`${tag} BAD Unknown or bad command\r\n`);
+      };
+      sock.on("data", (d) => {
+        buf = Buffer.concat([buf, d]);
+        for (;;) {
+          if (want !== null) {
+            if (buf.length < want) return;
+            pending.args.push(buf.subarray(0, want).toString("utf8")); pending.forms.push("literal");
+            buf = buf.subarray(want); want = null;
+          }
+          const i = buf.indexOf("\r\n");
+          if (i < 0) return;
+          const line = buf.subarray(0, i).toString("utf8"); buf = buf.subarray(i + 2);
+          if (saslLogin) {   // AUTHENTICATE LOGIN: the base64 user name, then the base64 password
+            saslLogin.args.push(line);
+            if (saslLogin.args.length === 2) { send("+ UGFzc3dvcmQ6\r\n"); continue; }
+            const s = saslLogin; saslLogin = null;
+            imapLog.push({ port, cmd: "AUTHENTICATE", args: s.args, forms: [] });
+            signIn(s.tag, Buffer.from(s.args[1], "base64").toString("utf8"), Buffer.from(s.args[2], "base64").toString("utf8"));
+            continue;
+          }
+          if (!pending) {
+            const m = /^(\S+) (\S+) ?(.*)$/.exec(line);
+            if (!m) { send("* BAD what\r\n"); continue; }
+            pending = { tag: m[1], cmd: m[2].toUpperCase(), args: [], forms: [], rest: m[3] };
+          } else pending.rest = line;
+          let s = pending.rest, lit = null;
+          while (s.length) {
+            s = s.replace(/^ +/, "");
+            if (!s) break;
+            if (s[0] === '"') {
+              let out = "", j = 1;
+              for (; j < s.length && s[j] !== '"'; j++) { if (s[j] === "\\") j++; out += s[j]; }
+              pending.args.push(out); pending.forms.push("quoted"); s = s.slice(j + 1);
+            } else if (/^\{\d+\+?\}$/.test(s)) {
+              const m = /^\{(\d+)(\+?)\}$/.exec(s);
+              lit = Number(m[1]); if (!m[2]) send("+ Ready for literal data\r\n"); s = "";
+            } else { const m = /^(\S+)(.*)$/.exec(s); pending.args.push(m[1]); pending.forms.push("atom"); s = m[2]; }
+          }
+          if (lit !== null) { want = lit; continue; }
+          const p = pending; pending = null;
+          run(p);
+          if (p.cmd === "LOGOUT") return;
+        }
+      });
+    };
+    const SERVERS = {
+      8830: { cert: "good", kind: "gmail" }, 8831: { cert: "good", kind: "outlook" }, 8832: { cert: "good", bye: true }, 8833: { cert: "good" },
+      8834: { cert: "good", huge: true }, 8835: { cert: "good", smtp: true }, 8836: { cert: "self", kind: "gmail" }, 8837: { cert: "wrongname", kind: "gmail" },
+      8838: {}, 8840: { cert: "good", kind: "nologin" }, 8841: { cert: "good", kind: "authlogin" }, 8842: { greet: true }, 8843: { cert: "good", kind: "gmail", gate: true },
+    };
+    const sockets = new Set();
+    const begin = (sock, port, o) => {
+      if (o.bye) { sock.write("* BYE Too many connections\r\n"); return sock.end(); }
+      if (o.huge) return sock.write("* OK " + "x".repeat(200000));
+      if (o.smtp) return sock.write("220 smtp.sample ESMTP\r\n");
+      if (o.kind) return imapSession(sock, port, o.kind);
+    };
+    for (const [p, o] of Object.entries(SERVERS)) {
+      const port = Number(p);
+      imapConns[port] = 0; imapRaw[port] = "";
+      const onSock = (sock) => {
+        sockets.add(sock); sock.on("close", () => sockets.delete(sock)); sock.on("error", () => {});
+        sock.on("data", (d) => { if (imapRaw[port].length < 100000) imapRaw[port] += d.toString("latin1"); });
+        if (o.greet) return sock.write("* OK [CAPABILITY IMAP4rev1 STARTTLS LOGINDISABLED] ready\r\n");
+        if (!o.cert) return;   // 8838: never answers the ClientHello
+        if (o.gate && !gate.open) return gate.held.push(sock);
+        begin(sock, port, o);
+      };
+      const srv = o.cert ? tls.createServer(certOf(o.cert), onSock) : net.createServer(onSock);
+      srv.on("connection", (s) => { imapConns[port]++; sockets.add(s); s.on("close", () => sockets.delete(s)); s.on("error", () => {}); });
+      srv.on("tlsClientError", () => {});
+      await new Promise((ok, no) => { srv.once("error", no); srv.listen(port, "127.0.0.1", ok); });
+      imapServers.push({ srv, sockets });
+    }
+    const gateRelease = () => { gate.open = true; for (const s of gate.held.splice(0)) begin(s, 8843, SERVERS[8843]); };
+    const gateArm = () => { gate.open = false; };
+    const allConns = () => Object.values(imapConns).reduce((a, b) => a + b, 0);
+    const until = async (cond, what, ms = 15000) => {
+      for (const t0 = Date.now(); !cond();) { if (Date.now() - t0 > ms) throw new Error("waited too long for " + what); await new Promise((r) => setTimeout(r, 25)); }
+    };
+    const logOf = (port) => imapLog.filter((x) => x.port === port).map(({ cmd, args, forms }) => ({ cmd, args, forms }));
+
+    const oldExtra = env.NODE_EXTRA_CA_CERTS;
+    env.NODE_EXTRA_CA_CERTS = bundle;
+    try {
+      await startWorker("inbox", APPROVAL_PORT + 22, [
+        "REQUIRE_APPROVAL=", "REQUIRED_GUILD_ID=", "MIN_ACCOUNT_AGE_DAYS=0",
+        "INBOX_TEST_TIMEOUT_MS=6000", "INBOX_TESTS_PER_DAY=8", "INBOX_TEST_FAILS_PER_DAY=3", "INBOX_TESTS_ALL_PER_DAY=200",
+        "INBOX_TEST_CONNECT=imap.gmail.com=localhost:8830,outlook.office365.com=localhost:8831,mail.bye-sample.com=localhost:8832,mail.silent-sample.com=localhost:8833,mail.huge-sample.com=localhost:8834,mail.smtp-sample.com=localhost:8835,mail.self-sample.com=localhost:8836,mail.wrongname-sample.com=localhost:8837,mail.notls-sample.com=localhost:8838,mail.nologin-sample.com=localhost:8840,mail.authlogin-sample.com=localhost:8841,mail.plain-sample.com=localhost:8842,mail.gate-sample.com=localhost:8843,*=localhost:8839",
+      ]);
+    } finally {
+      if (oldExtra === undefined) delete env.NODE_EXTRA_CA_CERTS; else env.NODE_EXTRA_CA_CERTS = oldExtra;
+    }
+    // A Discord account per key, so no key reaches the day's cap of 8 but in the tests of the caps.
+    // Six more for the bursts: with the 13 above that's 19 sign-ins, under the 20 an hour from one address.
+    const IBX_RACE = ["ibx12a", "ibx12b", "ibx12c", "ibx12d", "ibx12e", "ibx12f"];
+    const IBX_USERS = ["ibx3", "ibx4", "ibx5a", "ibx5b", "ibx5c", "ibx6", "ibx7a", "ibx7b", "ibx8", "ibx9", "ibx10", "ibx11a", "ibx11b", ...IBX_RACE];
+    IBX_USERS.forEach((n, i) => { USERS[n] = { id: snowflake(Date.parse("2023-01-01") + i * 86400000), username: n, guilds: [] }; });
+    const K = {};
+    const ibx = async (key, body, init = {}) => {
+      const r = await fetchOnce(BASE + "/inbox/test", { method: "POST", signal: AbortSignal.timeout(20000), ...init,
+        headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json", ...(init.headers || {}) },
+        body: typeof body === "string" || body instanceof ReadableStream ? body : JSON.stringify(body) });
+      const text = await r.text();
+      let parsed; try { parsed = JSON.parse(text); } catch { parsed = text; }
+      return { status: r.status, headers: r.headers, body: parsed };
+    };
+    const good = (host, who = SAM, port = "993") => ({ email: who.email, password: who.password, host, port });
+    const as = (email, password = "abcdefghijklmnop") => ({ email, password });
+    // The inbox worker's database, read while it runs (asynchronously, so the pretend servers and requests in flight go on).
+    const execFileP = (cmd, args, opts) => new Promise((ok, no) => execFile(cmd, args, opts, (e, out, err) => e ? no(Object.assign(e, { stdout: out, stderr: err })) : ok(out)));
+    const ibxSql = async (sql, tries = 5) => {
+      try { return await execFileP(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "inbox"), "--command", sql, "--json"], { cwd: root, env }); }
+      catch (e) {
+        if (tries > 1 && /SQLITE_BUSY|database is locked/.test(String(e.stderr || "") + String(e.stdout || ""))) { await new Promise((r) => setTimeout(r, 1000)); return ibxSql(sql, tries - 1); }
+        throw e;
+      }
+    };
+    const ibxRows = async (sql) => JSON.parse(await ibxSql(sql))[0].results;
+    const rowOf = async (key) => (await ibxRows(`SELECT * FROM inbox_tests WHERE key_hash = '${await keyHash(key)}'`))[0] || null;
+    const today = () => new Date().toISOString().slice(0, 10);
+    const NOT_JSON = "secret.sample.pw-do-not-log", CUT_SHORT = '{"password":"secret.sample.pw2"';
+
+    await test("inbox test: keys for these tests", async () => { for (const n of IBX_USERS) K[n.slice(3)] = await newKey(n); });
+    await test("inbox test: refused before any connection: no key, a bad body, an email, password, port or server name that can't be tested", async () => {
+      const before = allConns();
+      assert.equal((await ibx(null, good("imap.gmail.com"))).status, 401);
+      assert.equal((await ibx("PVLT-AAAA-BBBB-CCCC-DDDD", good("imap.gmail.com"))).status, 401);
+      const big = await ibx(GH_KEY, { ...good("imap.gmail.com"), pad: "x".repeat(2100) });
+      assert.deepEqual([big.status, big.body], [413, { error: "too large" }], "with a content-length");
+      // About 1 MB sent chunked, with no content-length: the worker stops reading once more than 4000 bytes have come.
+      let pulled = 0;
+      const chunk = new TextEncoder().encode('{"pad":"' + "y".repeat(16000));
+      const stream = new ReadableStream({ pull(c) { if (pulled >= 1024 * 1024) return c.close(); pulled += chunk.length; c.enqueue(chunk); } });
+      const chunked = await ibx(GH_KEY, stream, { duplex: "half" });
+      assert.deepEqual([chunked.status, chunked.body], [413, { error: "too large" }], "sent chunked");
+      // The local runtime's proxy reads the rest of that upload itself, and now and then the next request through it is
+      // answered "Network connection lost" (its own 500, which never reaches the worker): a few requests that don't count
+      // take that, before the tests go on.
+      for (let i = 0, ok = 0; ok < 2; i++) {
+        if ((await fetchOnce(BASE + "/discord/ready")).status === 200) ok++;
+        else if (i > 8) throw new Error("the local runtime didn't recover after the chunked upload");
+      }
+      for (const [body, why] of [[NOT_JSON, "not JSON"], [CUT_SHORT, "cut short"], ["[1,2]", "an array"], ["null", "null"], ['"text"', "a string"]]) {
+        const r = await ibx(GH_KEY, body);
+        assert.deepEqual([r.status, r.body], [400, { error: "bad request" }], why);
+      }
+      const no = async (body, error) => { const r = await ibx(GH_KEY, body); assert.deepEqual([r.status, r.body], [400, { error }], JSON.stringify(body).slice(0, 120)); };
+      for (const email of ["", "nope", "a@b", 42]) await no({ ...good("imap.gmail.com"), email }, "email");
+      for (const password of ["", "   ", "a\r\nb", "a\0b", "a\u2028b", "p".repeat(201), 12345]) await no({ ...good("imap.gmail.com"), password }, "password");
+      for (const port of [143, "995", undefined, "", "993x"]) await no({ ...good("imap.gmail.com"), port }, "port");
+      for (const host of ["", "localhost", "127.0.0.1", "10.0.0.1", "[::1]", "::1", "2130706433", "0x7f.0x1", "mail.local", "printer.lan", "mail.fafoaco.com",
+        "x.orbit-app.workers.dev", "imap.test", "a b.com", "-bad.com", "bad-.com", "mail.example", "mail.internal", "router.home.arpa", "x".repeat(250) + ".com", undefined]) {
+        await no({ ...good("imap.gmail.com"), host }, "host");
+      }
+      assert.equal(allConns(), before, "the pretend servers saw no connection");
+      for (const res of [big, chunked]) assert.deepEqual([res.headers.get("access-control-allow-origin"), res.headers.get("cache-control")], ["*", "no-store"]);
+    });
+    await test("inbox test: a port of 993 as a number is fine", async () => {
+      assert.deepEqual((await ibx(GH_KEY, { ...good("imap.gmail.com"), port: 993 })).body, { ok: true, messages: 42 });
+    });
+    await test("inbox test: a good sign-in (a key made by hand): connected, with how many emails INBOX has, as the desktop's imapflow signs in", async () => {
+      imapLog.length = 0;
+      const r = await ibx(GH_KEY, good("imap.gmail.com"));
+      assert.deepEqual([r.status, r.body], [200, { ok: true, messages: 42 }]);
+      assert.equal(r.headers.get("access-control-allow-origin"), "*");
+      assert.equal(r.headers.get("cache-control"), "no-store");
+      const plain = Buffer.from("\0sam.sample@gmail.com\0abcdefghijklmnop", "utf8").toString("base64");
+      const want = [{ cmd: "CAPABILITY", args: [], forms: [] }, { cmd: "AUTHENTICATE", args: ["PLAIN", plain], forms: ["atom", "atom"] },
+        { cmd: "EXAMINE", args: ["INBOX"], forms: ["atom"] }, { cmd: "LOGOUT", args: [], forms: [] }];
+      assert.deepEqual(logOf(8830), want, "CAPABILITY (Gmail greets without them), AUTHENTICATE PLAIN with SASL-IR, EXAMINE INBOX, LOGOUT");
+      imapLog.length = 0;
+      const again = await ibx(GH_KEY, good("IMAP.GMAIL.COM."));
+      assert.deepEqual([again.status, again.body], [200, { ok: true, messages: 42 }], "upper case and a trailing dot");
+      assert.deepEqual(logOf(8830), want, "the same server");
+    });
+    await test("inbox test: a wrong password is a 200 that says auth, with the server's words, and it still signs out", async () => {
+      imapLog.length = 0;
+      const r = await ibx(K["3"], good("imap.gmail.com", as("sam.sample@gmail.com", "wrongwrongwrong1")));
+      assert.deepEqual([r.status, r.body], [200, { ok: false, why: "auth", text: "[AUTHENTICATIONFAILED] Invalid credentials (Failure)" }]);
+      assert.deepEqual(logOf(8830).map((x) => x.cmd), ["CAPABILITY", "AUTHENTICATE", "LOGOUT"]);
+    });
+    await test("inbox test: a server with only the LOGIN command (Outlook-like): quoted strings, and a literal counted in UTF-8 bytes", async () => {
+      imapLog.length = 0;
+      const wrong = await ibx(K["4"], good("outlook.office365.com", as("sam.sample@gmail.com", "nope-nope")));
+      assert.deepEqual(wrong.body, { ok: false, why: "auth", text: "LOGIN failed." });
+      const quote = await ibx(K["4"], good("outlook.office365.com", as("quote.sample@example.com", 'pa"ss\\word')));
+      assert.deepEqual(quote.body, { ok: true, messages: 7 });
+      const utf = await ibx(K["4"], good("outlook.office365.com", as("utf.sample@example.com", "pässwörd")));
+      assert.deepEqual(utf.body, { ok: true, messages: 7 }, "the server read exactly {10} bytes (a client counting 8 characters would leave it waiting)");
+      const logins = logOf(8831).filter((x) => x.cmd === "LOGIN");
+      assert.deepEqual(logins, [
+        { cmd: "LOGIN", args: ["sam.sample@gmail.com", "nope-nope"], forms: ["quoted", "quoted"] },
+        { cmd: "LOGIN", args: ["quote.sample@example.com", 'pa"ss\\word'], forms: ["quoted", "quoted"] },
+        { cmd: "LOGIN", args: ["utf.sample@example.com", "pässwörd"], forms: ["quoted", "literal"] },
+      ]);
+      assert.ok(logOf(8831).every((x) => x.cmd !== "AUTHENTICATE"));
+    });
+    await test("inbox test: blocked, temporary and throttled refusals, an INBOX that won't open, and a BYE (none a failed sign-in)", async () => {
+      imapLog.length = 0;
+      for (const p of Object.keys(imapRaw)) imapRaw[p] = "";
+      const k = K["5a"];
+      const cases = [["webalert.sample@gmail.com", "blocked", "[WEBALERT https://accounts.google.com/sample] Web login required."],
+        ["browser.sample@gmail.com", "blocked", "[ALERT] Please log in via your web browser: https://support.google.com/mail/sample (Failure)"],
+        ["busy.sample@gmail.com", "server", "[UNAVAILABLE] Temporary authentication failure"],
+        ["throttle.sample@gmail.com", "server", "[ALERT] Too many simultaneous connections. (Failure)"],
+        ["noinbox.sample@gmail.com", "account", "User is authenticated but not connected."]];
+      for (const [email, why, text] of cases) {
+        const r = await ibx(k, good("imap.gmail.com", as(email, "anything-sample")));
+        assert.deepEqual([r.status, r.body], [200, { ok: false, why, text }], email);
+      }
+      assert.deepEqual((await ibx(k, good("mail.bye-sample.com"))).body, { ok: false, why: "server", text: "Too many connections" });
+      assert.deepEqual(await rowOf(k), { key_hash: await keyHash(k), day: today(), n: 6, fails: 0, busy_until: 0 });
+    });
+    let plainWhy;
+    await test("inbox test: not a mail server, too much, a certificate that isn't trusted or isn't for the name, nothing listening, a STARTTLS-only server, no password sign-in, and SASL LOGIN", async () => {
+      const k = K["5b"];
+      assert.deepEqual((await ibx(k, good("mail.smtp-sample.com"))).body, { ok: false, why: "not-imap", text: "" });
+      assert.deepEqual((await ibx(k, good("mail.huge-sample.com"))).body, { ok: false, why: "not-imap", text: "" });
+      assert.deepEqual((await ibx(k, good("mail.self-sample.com"))).body, { ok: false, why: "connect", text: "" }, "self-signed");
+      assert.deepEqual((await ibx(k, good("mail.wrongname-sample.com"))).body, { ok: false, why: "connect", text: "" }, "for another name");
+      const c = K["5c"];
+      assert.deepEqual((await ibx(c, good("mail.nothing-sample.com"))).body, { ok: false, why: "connect", text: "" }, "nothing listening (the * target)");
+      const t0 = Date.now(), plain = (await ibx(c, good("mail.plain-sample.com"))).body;
+      plainWhy = plain.why;
+      assert.ok(["connect", "timeout"].includes(plain.why) && plain.ok === false && plain.text === "", JSON.stringify(plain));
+      assert.ok(Date.now() - t0 < 6000 + 2500, "within the deadline");
+      console.log(`    (a plaintext server on 993 gives ${plain.why} in this runtime)`);
+      assert.deepEqual((await ibx(c, good("mail.nologin-sample.com"))).body, { ok: false, why: "method", text: "" });
+      assert.deepEqual((await ibx(c, good("mail.authlogin-sample.com"))).body, { ok: true, messages: 7 }, "AUTHENTICATE LOGIN");
+      const b64 = (s) => Buffer.from(s, "utf8").toString("base64");
+      assert.deepEqual(logOf(8841).filter((x) => x.cmd === "AUTHENTICATE"), [{ cmd: "AUTHENTICATE", args: ["LOGIN", b64(SAM.email), b64(SAM.password)], forms: [] }]);
+      for (const port of [8832, 8834, 8835, 8836, 8837, 8840, 8842]) {
+        assert.ok(!logOf(port).some((x) => /^(LOGIN|AUTHENTICATE)$/.test(x.cmd)) && !/LOGIN|AUTHENTICATE|sam\.sample|abcdefghijklmnop/i.test(imapRaw[port]), "nothing of the sign-in sent to " + port);
+      }
+      for (const key of [K["5a"], k, c]) assert.equal((await rowOf(key)).fails, 0, "no failed sign-in counted");
+    });
+    await test("inbox test: a server that never greets, and one that never answers the TLS handshake, time out within the deadline", async () => {
+      for (const host of ["mail.silent-sample.com", "mail.notls-sample.com"]) {
+        // A client that gives up first: a worker that waited on the socket's close() would never answer.
+        const t0 = Date.now(), r = await ibx(K["6"], good(host), { signal: AbortSignal.timeout(6000 + 2500) });
+        assert.deepEqual([r.status, r.body], [200, { ok: false, why: "timeout", text: "" }], host);
+        assert.ok(Date.now() - t0 < 6000 + 2500, `${host} answered in ${Date.now() - t0} ms`);
+      }
+      for (const port of [8833, 8838]) assert.ok(!logOf(port).length && !/LOGIN|AUTHENTICATE|sam\.sample|abcdefghijklmnop/i.test(imapRaw[port]), "nothing of the sign-in sent to " + port);
+    });
+    await test("inbox test: one at a time per license (429 busy), while another license's test goes on", async () => {
+      gateArm();
+      const n0 = imapConns[8843];
+      let aDone = false;
+      const a = ibx(K["7a"], good("mail.gate-sample.com")).finally(() => { aDone = true; });
+      await until(() => imapConns[8843] > n0, "the gate's connection");
+      const b = await ibx(K["7a"], good("imap.gmail.com"));
+      assert.deepEqual([b.status, b.body, b.headers.get("retry-after"), b.headers.get("cache-control")], [429, { error: "busy" }, "15", "no-store"]);
+      const c = await ibx(K["7b"], good("imap.gmail.com"));
+      assert.deepEqual([c.status, c.body], [200, { ok: true, messages: 42 }]);
+      assert.equal(aDone, false, "A still waits");
+      gateRelease();
+      assert.deepEqual((await a).body, { ok: true, messages: 42 });
+      assert.deepEqual((await ibx(K["7a"], good("imap.gmail.com"))).body, { ok: true, messages: 42 }, "free again once A answered");
+    });
+    await test("inbox test: tests sent while the license's own test runs are busy, never \"everyone\" (that test's hold released between the two statements)", async () => {
+      // A refused test reads the license's row again in a second statement, and its other test can release its hold in
+      // between: that used to answer "everyone" (the cap across every license) far below it. The moment can't be timed
+      // from outside, so this sends bursts, as the review's repro did (about 4 keys in 10 got one): two on each key, each
+      // counting a test or two of its 8 a day.
+      const tally = {};
+      for (const k of [...IBX_RACE, ...IBX_RACE].map((n) => K[n.slice(3)])) {
+        const all = [ibx(k, good("imap.gmail.com"))];
+        for (let i = 0; i < 12; i++) { await new Promise((r) => setTimeout(r, 2)); all.push(ibx(k, good("imap.gmail.com"))); }
+        for (const r of await Promise.all(all)) { const x = r.status + " " + (r.body.error || (r.body.ok ? "ok" : r.body.why)); tally[x] = (tally[x] || 0) + 1; }
+      }
+      assert.deepEqual(Object.keys(tally).filter((x) => x !== "200 ok" && x !== "429 busy"), [], JSON.stringify(tally));
+      assert.ok(tally["200 ok"] >= 2 * IBX_RACE.length && tally["429 busy"] > 0, JSON.stringify(tally));
+    });
+    await test("inbox test: a hold left by a request that died, and a late release never frees another request's hold", async () => {
+      const k = K["8"], h = await keyHash(k);
+      assert.equal((await ibx(k, good("imap.gmail.com"))).status, 200);
+      await ibxSql(`UPDATE inbox_tests SET busy_until = ${Date.now() + 60000} WHERE key_hash = '${h}'`);
+      assert.deepEqual((await ibx(k, good("imap.gmail.com"))).body, { error: "busy" });
+      await ibxSql(`UPDATE inbox_tests SET busy_until = ${Date.now() - 1} WHERE key_hash = '${h}'`);
+      assert.deepEqual((await ibx(k, good("imap.gmail.com"))).body, { ok: true, messages: 42 }, "an expired hold");
+      gateArm();
+      const n0 = imapConns[8843];
+      let aDone = false;
+      const a = ibx(k, good("mail.gate-sample.com")).finally(() => { aDone = true; });
+      try {
+        await until(() => imapConns[8843] > n0, "the gate's connection");
+        const other = Date.now() + 120000;
+        await ibxSql(`UPDATE inbox_tests SET busy_until = ${other} WHERE key_hash = '${h}'`);
+        if (aDone) throw new Error("too slow: the request answered before the database was changed");
+        gateRelease();
+        assert.deepEqual((await a).body, { ok: true, messages: 42 });
+        assert.equal((await rowOf(k)).busy_until, other, "A's release left the other hold");
+        assert.deepEqual((await ibx(k, good("imap.gmail.com"))).body, { error: "busy" });
+      } finally {
+        gateRelease();
+        await a.catch(() => {});
+        await ibxSql(`UPDATE inbox_tests SET busy_until = 0 WHERE key_hash = '${h}'`);
+      }
+    });
+    await test("inbox test: 8 a day per license here (30 in production); refusals before the limits don't count; a new day starts over", async () => {
+      const k = K["9"];
+      for (const body of [{ ...good("imap.gmail.com"), port: 143 }, { ...good("imap.gmail.com"), host: "localhost" }, NOT_JSON]) assert.equal((await ibx(k, body)).status, 400);
+      assert.equal(await rowOf(k), null, "the 400s never reached the limits");
+      for (let i = 1; i <= 8; i++) assert.deepEqual((await ibx(k, good("imap.gmail.com"))).body, { ok: true, messages: 42 }, "test " + i);
+      const ninth = await ibx(k, good("imap.gmail.com"));
+      assert.equal(ninth.status, 429);
+      assert.deepEqual([ninth.body.error, ninth.body.limit], ["limit", 8]);
+      assert.ok(ninth.body.retryAfter > 0 && ninth.body.retryAfter <= 86400, "seconds to midnight UTC");
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      await ibxSql(`UPDATE inbox_tests SET day = '${yesterday}' WHERE key_hash = '${await keyHash(k)}'`);
+      assert.deepEqual((await ibx(k, good("imap.gmail.com"))).body, { ok: true, messages: 42 }, "a new day");
+      const row = await rowOf(k);
+      assert.deepEqual([row.day, row.n, row.fails], [today(), 1, 0]);
+    });
+    await test("inbox test: 3 failed sign-ins a day per license here (10 in production); only a wrong password counts", async () => {
+      const k = K["10"];
+      for (const email of ["busy.sample@gmail.com", "busy.sample@gmail.com", "throttle.sample@gmail.com"]) {
+        assert.equal((await ibx(k, good("imap.gmail.com", as(email)))).body.why, "server", email);
+      }
+      assert.equal((await ibx(k, good("mail.silent-sample.com"))).body.why, "timeout");
+      assert.equal((await rowOf(k)).fails, 0, "temporary, throttled and timed out: none counted");
+      for (let i = 0; i < 3; i++) assert.equal((await ibx(k, good("imap.gmail.com", as(SAM.email, "wrong-sample-" + i)))).body.why, "auth");
+      const row = await rowOf(k);
+      assert.deepEqual([row.fails, row.n], [3, 7]);
+      const r = await ibx(k, good("imap.gmail.com"));
+      assert.equal(r.status, 429);
+      assert.deepEqual([r.body.error, r.body.limit], ["fails", 3]);
+      assert.ok(r.body.retryAfter > 0);
+    });
+    await test("inbox test: 200 a day across every license here (500 in production), counted in the same statement", async () => {
+      assert.deepEqual((await ibx(K["11b"], good("imap.gmail.com"))).body, { ok: true, messages: 42 });
+      await ibxSql(`INSERT INTO inbox_tests VALUES ('filler', '${today()}', 200, 0, 0)`);
+      try {
+        for (const k of [K["11a"], K["11b"]]) {
+          const r = await ibx(k, good("imap.gmail.com"));
+          assert.equal(r.status, 429);
+          assert.equal(r.body.error, "everyone", "not limit: under its own cap");
+          assert.ok(r.body.retryAfter > 0);
+        }
+        assert.equal(await rowOf(K["11a"]), null, "nothing written for the key never used");
+        assert.equal((await rowOf(K["11b"])).n, 1, "nor counted for the other");
+      } finally { await ibxSql("DELETE FROM inbox_tests WHERE key_hash = 'filler'"); }
+      for (const k of [K["11a"], K["11b"]]) assert.deepEqual((await ibx(k, good("imap.gmail.com"))).body, { ok: true, messages: 42 });
+    });
+    await test("inbox test: nothing about the inbox is kept or logged, and wrangler.toml sets none of the test settings", async () => {
+      const tables = (await ibxRows("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' AND name NOT LIKE 'd1_%'")).map((x) => x.name);
+      assert.ok(tables.includes("inbox_tests") && tables.includes("licenses"), tables.join(","));
+      const dump = JSON.stringify(JSON.parse(await ibxSql(tables.map((t) => `SELECT * FROM "${t}"`).join("; "))).map((x) => x.results));
+      const secrets = ["sam.sample", "quote.sample", "utf.sample", "webalert.sample", "browser.sample", "busy.sample", "throttle.sample", "noinbox.sample",
+        "abcdefghijklmnop", 'pa"ss', "pässwörd", "wrongwrongwrong1", "nope-nope", "anything-sample", "wrong-sample-", "secret.sample.pw"];
+      for (const x of secrets) assert.ok(!dump.includes(x) && !dump.includes(JSON.stringify(x).slice(1, -1)), "not kept: " + x);
+      const log = workerLog();
+      assert.ok(log.includes("/inbox/test"), "the log is the inbox worker's");
+      // V8 quotes the first 10 characters of a longer input in a parse error ("secret.sam"...).
+      for (const x of [...secrets, "secret.sample.pw-do-not-log", "secret.sample.pw2", "secret.sam", Buffer.from("\0sam.sample@gmail.com\0abcdefghijklmnop").toString("base64")]) {
+        assert.ok(!log.includes(x), "not logged: " + x);
+      }
+      assert.deepEqual((await ibxRows("SELECT name FROM pragma_table_info('inbox_tests') ORDER BY cid")).map((x) => x.name), ["key_hash", "day", "n", "fails", "busy_until"]);
+      const toml = readFileSync(join(root, "wrangler.toml"), "utf8");
+      for (const v of ["INBOX_TEST_CONNECT", "INBOX_TEST_TIMEOUT_MS", "INBOX_TESTS_PER_DAY", "INBOX_TEST_FAILS_PER_DAY", "INBOX_TESTS_ALL_PER_DAY"]) {
+        assert.ok(!new RegExp("^\\s*" + v + "\\s*=", "m").test(toml), v + " isn't set in wrangler.toml");
+      }
+    });
+    stopWorker(workers.pop());
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+
   console.log("\nInterests while the list of keys made by hand can't be read (1.9.142)");
   // A worker that hasn't read GitHub's list yet can't tell a key made by hand from none. GET /interests (and the owner's
   // routes) answer 503 then, as GET /premium does, so the page keeps the list it has: a 401 reads as no list there, and a
@@ -5909,6 +6352,15 @@ try {
     assert.equal((await ask(GH_KEY, { method: "PUT", body: JSON.stringify({ rev: 0, items: [] }) })).status, 503, "the owner's routes too");
     assert.equal((await ask("PVLT-NOPE-NOPE-NOPE-NOPE")).status, 503, "a key on neither list can't be told from one made by hand yet");
     assert.equal((await getAuth("/premium", GH_KEY)).status, 503, "as GET /premium");
+    // Testing an inbox (1.9.149): refused at the license, before anything else (this worker has no INBOX_TEST_CONNECT).
+    const inboxAsk = async (key) => {
+      const r = await fetch(BASE + "/inbox/test", { method: "POST", headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" },
+        body: JSON.stringify({ email: "sam.sample@gmail.com", password: "abcdefghijklmnop", host: "imap.gmail.com", port: "993" }) });
+      return { status: r.status, body: await r.json(), cc: r.headers.get("cache-control") };
+    };
+    assert.deepEqual(await inboxAsk(GH_KEY), { status: 503, body: { error: "the list of keys made by hand can't be read just now" }, cc: "no-store" }, "POST /inbox/test too");
+    assert.equal((await inboxAsk("PVLT-NOPE-NOPE-NOPE-NOPE")).status, 503, "and with a key on neither list");
+    assert.equal((await inboxAsk(null)).status, 401, "401 still means no key");
     assert.equal((await ask(null)).status, 401);
     assert.equal((await ask("not a key")).status, 401);
     const key = await newKey("gina");
@@ -5924,6 +6376,7 @@ try {
   console.log(`\n${passed} passed`);
 } finally {
   for (const w of workers) stopWorker(w);
+  for (const s of imapServers) { s.srv.close(); for (const x of s.sockets) x.destroy(); }
   discord.close();
   // Windows can hold on to the database files for a few seconds after the workers stop.
   for (let i = 0; i < 20; i++) {

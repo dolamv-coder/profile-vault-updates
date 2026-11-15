@@ -264,7 +264,8 @@ try {
     await page.click('#side [data-id="imap"]');
     assert.doesNotMatch(await text("#main"), /never sends an inbox password|never sent to the server|nowhere else|only to your seller/);
     assert.match(await text("#main"), /When you submit slots on your own accounts, FAFO sends your seller their inboxes' email and app password, so they can follow your orders\./);
-    assert.match(await text("#main"), /Your inbox passwords are kept in your encrypted vault, and leave it only with the slots you submit on that inbox's accounts\./);
+    // 1.9.149: with the license key, Test sends an inbox's password to FAFO's server too (web-inbox-test.test.mjs).
+    assert.match(await text("#main"), /Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test \(FAFO's server signs in with it and keeps nothing\) and with the slots you submit on that inbox's accounts\./);
     // Settings → Email import on the web: Add inbox is on Store logins; only Sync needs the desktop app.
     const set = await ev(() => { const d = document.createElement("div"); d.innerHTML = window.__t.emailSectionHTML(); return d.textContent.replace(/\s+/g, " "); });
     assert.match(set, /Sync is in the FAFO desktop app for Windows\. A web page isn't allowed to sign in to email, so it can't find your orders there\. You can save an inbox here \(Store logins, then Add inbox\), but only the desktop app reads it\./);
@@ -284,7 +285,7 @@ try {
     assert.doesNotMatch(await text("#main"), /Your seller gets/);
     await page.click('#side [data-id="imap"]');
     assert.doesNotMatch(await text("#main"), /FAFO sends your seller|leave it only with the slots/);
-    assert.match(await text("#main"), /Your inbox passwords are kept in your encrypted vault\./);
+    assert.match(await text("#main"), /Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test \(FAFO's server signs in with it and keeps nothing\)\./);
     W.owner = false;
     await ev(() => window.__t.refreshPremium(true));
     await page.waitForFunction(() => !window.__t.isPremiumOwner());
