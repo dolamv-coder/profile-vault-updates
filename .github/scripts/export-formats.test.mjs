@@ -8,8 +8,9 @@
 // Erase vault), the note for the formats picked, Copy (one format only), and every format's exact text (each file
 // downloaded, with its name, against fixtures written here; Hayha's, Refract's and Valor's ids and Refract's times checked
 // by shape, then swapped for fixed ones), Shikari's as the license worker's own shikariCsv writes it, CRLF and no BOM in
-// both CSVs, several formats as several files in the list's order, one that fails stopping the rest, and a 375 × 667 phone
-// where the list scrolls and every row can be ticked. Sample data only (Sam Sample, test card numbers).
+// both CSVs, several formats as several files in the list's order, one that fails stopping the rest (its line in view), the
+// note in view on opening at a laptop's size, a double click on Download pressing nothing under the window, and a 375 × 667
+// phone where the list scrolls and every row can be ticked. Sample data only (Sam Sample, test card numbers).
 //   node .github/scripts/export-formats.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must have EXPORT_FORMATS; a page named on the command line that doesn't is skipped.
 import { readFileSync, readdirSync } from "node:fs";
@@ -344,6 +345,9 @@ async function session(name, viewport) {
   return s;
 }
 const layers = (s) => s.page.$$eval("#layers .layer.is-open", (l) => l.length);
+// How far an element is inside its window's visible area (its .panel-body), top and bottom: both 0 or more when it's in view.
+const inBody = (s, sel) => s.page.$eval(sel, (e) => { const b = e.closest(".panel-body").getBoundingClientRect(), r = e.getBoundingClientRect();
+  return { top: Math.round(r.top - b.top), bottom: Math.round(b.bottom - r.bottom) }; });
 const today = (s) => s.ev(() => new Date().toISOString().slice(0, 10));
 const READY = "5 profiles ready (1 skipped).";
 const ONE = " The file includes full card numbers and CVVs in plain text, so delete it once you're done.";
@@ -424,6 +428,53 @@ try {
     await s.page.uncheck("#ex-skip");
     assert.equal(await s.note(), "6 profiles ready." + ONE + " Store logins and groups aren't part of Shikari's profile format, so they're left out.");
     await s.page.check("#ex-skip");
+  });
+
+  // The review of 1.9.150: at a laptop's size the list pushed the note (the card warning, and why Download is off with
+  // nothing picked) out of the window's view on opening. Wider than a phone, the list gives up height first.
+  await test("a laptop's window (1366 × 768, 1280 × 860, 1440 × 900): the note shows on opening, the list keeps 3 rows or more", async () => {
+    for (const [width, height] of [[1366, 768], [1280, 860], [1440, 900]]) {
+      for (const ids of [[], ["hayha", "refract", "valor", "aycd"]]) {
+        const at = `${width} × ${height}, ${ids.length} picked`;
+        await s.ev(() => window.__t.closeAllLayers());
+        await s.page.setViewportSize({ width, height });
+        await s.ev((v) => localStorage.setItem("orbit-export-fmts", JSON.stringify(v)), ids.length ? ids : ["json"]);
+        await s.open();
+        if (!ids.length) await s.page.$eval('#ex-fmts input[value="json"]', (b) => b.click());   // no scrolling, as Playwright's click might
+        assert.deepEqual(await s.picks(), ids, at);
+        assert.match(await s.note(), ids.length ? /^5 profiles ready \(1 skipped\)\. The files .* In Valor, import its file/ : /^Pick a format to export\.$/, at);
+        assert.equal(await s.page.$eval(".panel-body", (b) => b.scrollTop), 0, at + ": the window's body isn't scrolled");
+        const v = await inBody(s, "#ex-note");
+        assert.ok(v.top >= 0 && v.bottom >= 0, `${at}: the note is in view (${JSON.stringify(v)})`);
+        const rows = await s.page.$eval("#ex-fmts", (e) => e.clientHeight / e.querySelector(".ex-row").offsetHeight);
+        assert.ok(rows >= 2.9, `${at}: the list shows 3 rows or more (${rows.toFixed(1)})`);
+      }
+    }
+    await s.ev(() => window.__t.closeAllLayers());
+    await s.page.setViewportSize({ width: 1280, height: 900 });
+  });
+
+  // One format: Download saves and closes the window, which is inert while it fades, so a double click's second click
+  // used to press what's under Download, at 1280 × 900 the selection bar's Delete ("Delete 6 profiles?").
+  await test("a double click on Download saves one file and presses nothing under it; a click right after still goes through", async () => {
+    await s.open();
+    await s.pick(["shikari"]);
+    const n = s.downloads.length;
+    const at = await s.page.$eval("#ex-dl", (b) => { const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+    await s.page.mouse.dblclick(at.x, at.y);
+    await s.page.waitForTimeout(50);
+    // What's under Download outside the windows, and what the second click opened.
+    const { under, opened } = await s.page.evaluate(({ x, y }) => { const e = document.elementsFromPoint(x, y).find((x) => !x.closest("#layers")), a = e && e.closest("[data-act]");
+      return { under: a ? a.dataset.act : e && e.tagName, opened: [...document.querySelectorAll("#layers .layer h2")].map((h) => h.textContent).filter((t) => t !== "Export profiles") }; }, at);
+    assert.deepEqual(opened, [], `nothing under Download was pressed (under it: ${under}; opened: ${opened.join(", ")})`);
+    await s.page.click('#bulkbar [data-act="bulk-export"]', { timeout: 5000 });   // at once: a click on its own isn't dropped
+    await s.page.waitForFunction(() => document.querySelectorAll("#ex-fmts").length === 1 && document.querySelector("#layers .layer.is-open #ex-fmts"));
+    await s.page.waitForTimeout(400);
+    assert.equal(s.downloads.length, n + 1, "one file");
+    assert.equal(s.downloads[n].suggestedFilename(), fileName("shikari", await today(s)));
+    assert.equal(await layers(s), 1, "only Export profiles again");
+    assert.equal(await s.text("#layers .layer.is-open .panel-head h2"), "Export profiles");
+    assert.deepEqual(await s.picks(), ["shikari"]);
   });
 
   await test("Copy: one format's exact text, then the window closes and remembers the pick", async () => {
@@ -526,7 +577,7 @@ try {
   });
   await s.close();
 
-  s = await session("failing");
+  s = await session("failing", { width: 1280, height: 720 });   // short enough that the window's body scrolls once the line shows
   await s.create();
   await fill(s);
   await test("several formats: one that fails stops the rest, and the window says which went", async () => {
@@ -537,6 +588,8 @@ try {
     await s.page.waitForFunction(() => { const o = document.querySelector("#ex-out"); return o && !o.hidden; }, null, { timeout: 15000 });
     assert.equal(await s.text("#ex-out"), "Downloaded HayhaAIO 2.0 and Hidden AIO. Refract and Shikari weren't downloaded.");
     assert.equal(await s.page.$eval("#ex-out", (e) => e.getAttribute("role")), "status");
+    const v = await inBody(s, "#ex-out");
+    assert.ok(v.top >= 0 && v.bottom >= 0, `the line is scrolled into view (${JSON.stringify(v)})`);
     await s.page.waitForTimeout(300);
     assert.deepEqual(s.downloads.map((d) => d.suggestedFilename()), [fileName("hayha", await today(s)), fileName("hidden", await today(s))]);
     assert.equal(await s.page.$eval("#ex-dl", (b) => b.disabled), false, "Download can be pressed again");

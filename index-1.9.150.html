@@ -810,6 +810,14 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .ex-nm{font-weight:600;color:var(--ink);font-size:calc(14px*var(--fs))}
 .ex-hint{color:var(--ink-3);font-size:calc(12.5px*var(--fs))}
 .ex-none{padding:12px;color:var(--ink-3);font-size:calc(13px*var(--fs))}
+/* On a desktop the list gives up height (down to about three rows) before the note under it leaves the window's view. */
+@media (min-width:901px){
+  .ex-win .panel-body{display:flex;flex-direction:column}
+  .ex-win .panel-body>*{flex:none}
+  .ex-win .panel-body>.ex-sec{flex:0 1 auto;min-height:calc(220px*var(--fs));display:flex;flex-direction:column}
+  .ex-win .ex-sec>*{flex:none}
+  .ex-win .ex-sec>.ex-list{flex:0 1 auto;min-height:0}
+}
 /* Searching a store's logins in the profile editor (1.9.86+) */
 .search.l-find{max-width:none}
 .search.l-find input{height:36px}
@@ -6829,7 +6837,7 @@ function openExport(preset){
   const nSel = UI.selected.size;
   let scope = preset || (nSel ? "selected" : "all");
   const picks = exportPicks();
-  let busy = false, closed = false;
+  let busy = false, closed = false, clickAt = -1e9;
   openLayer({
     title:"Export profiles",
     body:`<div class="section"><div class="flabel" style="margin-bottom:8px">Which profiles</div><div class="radios">
@@ -6837,7 +6845,7 @@ function openExport(preset){
         ${nSel ? `<label class="radio"><input type="radio" name="scope" value="selected" ${scope==="selected"?"checked autofocus":""}>Selected profiles<small>${nSel}</small></label>` : ""}
         ${groups.length ? `<label class="radio"><input type="radio" name="scope" value="group" ${scope==="group"?"checked autofocus":""}>One group <select id="ex-group" style="margin-left:auto;min-height:32px;border:1px solid var(--line);border-radius:6px;background:var(--sheet);padding:0 8px">${groups.map(g=>`<option value="${esc(g.id)}">${esc(g.name)} (${countIn(g.id)})</option>`).join("")}</select></label>` : ""}
       </div></div>
-      <div class="section"><div class="flabel" id="ex-fmts-l" style="margin-bottom:2px">Export formats</div>
+      <div class="section ex-sec"><div class="flabel" id="ex-fmts-l" style="margin-bottom:2px">Export formats</div>
         <p class="ex-sub" id="ex-fmts-d">Pick one or more. Each one downloads as its own file.</p>
         <div class="search ex-find">${ic("search")}<label class="sr" for="ex-find">Search formats</label><input id="ex-find" type="search" placeholder="Search" autocomplete="off"></div>
         <div class="ex-list" id="ex-fmts" role="group" aria-labelledby="ex-fmts-l" aria-describedby="ex-fmts-d">
@@ -6849,9 +6857,16 @@ function openExport(preset){
       <p class="note note-warn" style="margin:0" id="ex-note"></p>
       <p class="note" style="margin:10px 0 0" id="ex-out" role="status" hidden></p>`,
     foot:`<button class="btn" data-close>Cancel</button><button class="btn" id="ex-copy">${ic("copy")}Copy</button><button class="btn btn-primary" id="ex-dl">${ic("exp")}<span id="ex-dl-t">Download</span></button>`,
-    onClose:() => { closed = true; },
+    // A closing window is inert while it fades, so a double click's second click on Download or Copy would press what's
+    // under it: on a laptop, the selection bar's Delete. Closed by a click, it drops a second click (detail 2 or more) for
+    // 400 ms, as the inbox guide drops the next click (1.9.112); a click on its own still goes through.
+    onClose:() => { closed = true; if (performance.now() - clickAt > 100) return;
+      const t0 = performance.now(), eat = (e) => { if (e.detail > 1 && performance.now() - t0 < 400){ e.stopPropagation(); e.preventDefault(); } };
+      document.addEventListener("click", eat, true); setTimeout(() => document.removeEventListener("click", eat, true), 450); },
     mount:(panel, close) => {
       const dl = $("#ex-dl", panel), copy = $("#ex-copy", panel), out = $("#ex-out", panel), find = $("#ex-find", panel);
+      panel.classList.add("ex-win");
+      panel.addEventListener("click", () => { clickAt = performance.now(); }, true);
       const picked = () => EXPORT_FORMATS.filter(f => { const b = $(`input[name="fmt"][value="${f.id}"]`, panel); return b && b.checked; });
       const build = () => {
         const sc = ($('input[name="scope"]:checked', panel) || {}).value || "all";
@@ -6908,7 +6923,7 @@ function openExport(preset){
         if (closed){ if (went.length) toast(`Downloaded ${went.length} of ${fmts.length} files`); return; }
         const rest = fmts.slice(went.length).map(f => f.name);
         out.textContent = `${went.length ? `Downloaded ${exportJoin(went.map(f => f.name))}. ` : ""}${exportJoin(rest)} ${rest.length === 1 ? "wasn't" : "weren't"} downloaded.`;
-        out.hidden = false; note();
+        out.hidden = false; note(); out.scrollIntoView({block:"nearest"});
       });
       copy.addEventListener("click", async () => {
         const fmts = picked(), r = build();
@@ -7189,9 +7204,10 @@ function toHidden(list){
   });
 }
 // The owner's other bots' profile files (1.9.150, the owner's request, 2026-11-15, with each bot's export): laid out as each
-// bot exports a profile, from the same flat profiles as the others (flatProfile). Like Valor, Stellar and Hidden: the card's
-// own name, else the billing name; the phone as plainPhone (a US or Canadian number's 10 digits, else its digits), but for
-// Shikari's, which is the license worker's; billing written out even when it's the shipping address (but for Refract's).
+// bot exports a profile, from the same flat profiles as the others (flatProfile). As Stellar and Hidden (not Valor, whose
+// phone is valorPhone's 512-555-0100): the card's own name, else the billing name; the phone as plainPhone (a US or Canadian
+// number's 10 digits, else its digits), but for Shikari's, which is the license worker's (with no name on card); billing
+// written out even when it's the shipping address (but for Refract's).
 const yyyy = (y) => { y = digits(y); return y.length === 2 ? "20" + y : y; };
 const fullName = (a) => [a.firstName, a.lastName].filter(Boolean).join(" ");
 const flatPhone = (f) => plainPhone(f.phone, (f.shipping || f.billing || {}).country);

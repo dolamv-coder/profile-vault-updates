@@ -89,9 +89,11 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   the same 23 columns (`SHIKARI_COLS`, `SLOT_COLS`), with the values as Shikari writes them (the month without a leading 0,
   a 4-digit year, the phone's 10 digits, the card number's digits, state and country codes, CRLF after every line), no
   `="…"` Excel text, and a cell that would start with `= + - @` losing those characters. The owner's Shikari file comes
-  out of it byte for byte. And the files are named after the buyer (the name sent with the batch, else their Discord
-  name, accents taken off) and the store: `<buyer>-<store>-aycd.json`, `-shikari.csv` and `-logins.txt`, in that order
-  per store, where they were `orbit-slots-<time>-<name>-<store>-…`; 1.9.101 says "AYCD and Shikari files".
+  out of it byte for byte. Export profiles' Shikari (`toShikari`, page 1.9.150) is a copy of it, kept the same by
+  `export-formats.test.mjs`, which runs this `shikariCsv`. And the files are named after the buyer (the name sent with the
+  batch, else their Discord name, accents taken off) and the store: `<buyer>-<store>-aycd.json`, `-shikari.csv` and
+  `-logins.txt`, in that order per store, where they were `orbit-slots-<time>-<name>-<store>-…`; 1.9.101 says "AYCD and
+  Shikari files".
   Since 2026-11-13 (the owner: "What method can buyer input their imap so it can be sent to my private discord?", then
   "during submission only", "email - apppassword format" and "same where all the slots go") each store's slots on the
   buyer's own accounts also bring their **inbox access**: page 1.9.147+ sends a file of kind `imap` per store
@@ -1707,10 +1709,10 @@ the card number in fours (`valorNumber`; an Amex 4-6-5, as the owner's Valor exp
 MM/YY (`valorExp`; Valor's docs say so too), the phone 555-010-1234 (`valorPhone`: 10 digits, or 11 starting with 1, for a
 profile shipping to the US or Canada, or with no country, and not a `+` number of another country; anything else as typed),
 the state and country written out (`aycdState`, `aycdCountry`), `quickTask` false and `totalSpent` 0. Card types: visa (the
-owner's file), and mastercard, amex and discover from converters that write Valor files (no Valor source for those), else
-`unknown` (as Profile Builder writes), none for a card with no number. A card with no name gets the billing name. Store
-logins and groups aren't in Valor's profile, and the note says to import the file into a profile group (Valor's separate
-Profile Groups import takes another shape). Nothing gains a field.
+owner's file), amex (the owner's export of 2026-11-15), and mastercard and discover from converters that write Valor files
+(no Valor source for those), else `unknown` (as Profile Builder writes), none for a card with no number. A card with no name
+gets the billing name. Store logins and groups aren't in Valor's profile, and the note says to import the file into a
+profile group (Valor's separate Profile Groups import takes another shape). Nothing gains a field.
 
 From 1.9.132 Export profiles also has **Stellar JSON** and **Hidden JSON** (the owner's request, 2026-10-20, with an
 export from each bot), after Valor JSON (`toStellar`, `toHidden`, `profiles-<date>-stellar.json` and `-hidden.json`). Both
@@ -1720,10 +1722,11 @@ Canadian one's 10: `plainPhone`, on `phone10`, which `valorPhone` now uses too).
 shipping, billingAsShipping, oneCheckoutPerProfile, billing, payment {cardName, cardType, cardNumber, cardMonth, cardYear,
 cardCvv}`, each address `firstName, lastName, country, address, address2, state, city, zipcode` with the country and state
 as codes (`stateCode` turns a written-out US state or Canadian province into its code), the expiry 07 and 31, and the card
-type Visa (the owner's file), MasterCard, Amex or Discover, the only four Stellar's guide says it takes (`STELLAR_TYPE`;
-MasterCard as The Profile Builder writes it, though Stellar's guide spells it both ways). A Target RedCard is Visa, its PIN
-as the CVV, as Stellar's Target guide says; the note counts RedCards with no PIN (`stellarNoPin`), since the card editor allows
-one. Any other card gets no type, and the note counts them (`stellarCardless`).
+type Visa (the owner's file), MasterCard, Amex (the owner's export of 2026-11-15) or Discover, the only four Stellar's guide
+says it takes (`STELLAR_TYPE`; MasterCard as The Profile Builder writes it, though Stellar's guide spells it both ways). A
+Target RedCard is Visa, its PIN as the CVV, as Stellar's Target guide says; the note counts RedCards with no PIN
+(`stellarNoPin`), since the card editor allows one. Any other card gets no type, and the note counts them
+(`stellarCardless`).
 **Hidden** (Hidden AIO) is AYCD's published profile layout, as `slotAycd` sends the seller's channel (FAFO's AYCD JSON export
 has `size` and `profileGroup` instead of `notes`): `name, notes, billingAddress, shippingAddress, paymentDetails
 {nameOnCard, cardType, cardNumber, cardExpMonth, cardExpYear, cardCvv}, sameBillingAndShippingAddress, onlyCheckoutOnce,
@@ -1732,8 +1735,8 @@ the state and country written out (AYCD's spec: long form; `HIDDEN_COUNTRY` has 
 FAFO's list says Czechia and Türkiye), the expiry 07 and 2031, the card types AYCD's spec names
 (`HIDDEN_TYPE`: Visa, MasterCard, AmericanExpress, Discover, JCB; a RedCard as Visa; others none; FAFO's own AYCD files
 have written Amex since 1.9.87 and still do), and `matchNameOnCardAndAddress` true when the card's name is the billing
-name (the spec's meaning). No Hidden docs were found, so beyond Visa its card types are AYCD's. Store logins and groups are
-left out, and the note says so. Nothing gains a field.
+name (the spec's meaning). No Hidden docs were found, so beyond Visa and AmericanExpress (the owner's export of 2026-11-15)
+its card types are AYCD's. Store logins and groups are left out, and the note says so. Nothing gains a field.
 
 From 1.9.133 Profiles has **Copy and Paste** (the owner's request, 2026-10-20, with a screenshot of 121 selected
 profiles: "copy everything in Jigless and pasting into another group without losing data in Jigless group"). Copy is on
@@ -2516,16 +2519,20 @@ to export as. Something like in the picture", then, with Stellar's and Valor's e
     (Optional)"), a row per profile with Hidden's values (`toHidden`: true and false, AmericanExpress and a RedCard as Visa,
     the card number's digits, 07 and 2031, the phone's digits, the state and country written out), billing written out even
     when it's the shipping address, Address 3 empty, the size last; quoted only for `" , CR LF`, CRLF after every line.
-  - Hidden AIO, StellarAIO and Valor: 1.9.132's and 1.9.131's exports match as they are. Valor's confirms the Amex number in
-    4-6-5.
-  - Every format: the card's own name, else the billing name, and the phone as `plainPhone` (Shikari's as the worker's).
+  - Hidden AIO, StellarAIO and Valor: 1.9.132's and 1.9.131's exports match as they are. They confirm the Amex card types
+    (Valor's amex, Stellar's Amex, Hidden's AmericanExpress) and Valor's Amex number in 4-6-5.
+  - The new formats, as Stellar and Hidden: the card's own name, else the billing name (Shikari has no name on card), and
+    the phone as `plainPhone`; Valor's phone is `valorPhone`'s (512-555-0100) and Shikari's the worker's. AYCD, FAFO CSV and
+    FAFO backup keep the card's name and the phone as saved, as before.
 - **The window** (`openExport`, from Profiles' selection bar and the right-click menu of selected profiles; Profiles has no
   Export button of its own), in FAFO's look, laid out as the converter's:
   - Which profiles, and Skip profiles missing an address or card, as before.
   - **Export formats**: "Pick one or more. Each one downloads as its own file.", a Search box (`#ex-find`, labelled Search
     formats for screen readers; every word typed in a format's name or hint, case and accents ignored, `exportFold`; "No
     format matches."; a row it hides keeps its tick), then the list (`#ex-fmts`, about 7 rows high with its own scroll,
-    `.ex-row` with `input[name="fmt"]`, the name and its hint).
+    `.ex-row` with `input[name="fmt"]`, the name and its hint). Wider than a phone, the list gives up height, down to about
+    3 rows, before the note under it leaves the window's view (`.ex-win`, `.ex-sec`), so a laptop's window (1366 × 768,
+    1440 × 900, the desktop app's 1280 × 860) shows the note on opening.
   - The note (`#ex-note`): "N profiles ready (M skipped). The files include full card numbers and CVVs in plain text, so
     delete them once you're done." ("The file…it" with one format), then for the formats picked (`exportNotes`): one
     sentence on what the bots' formats leave out, naming them (`poss`: "Store logins aren't part of HayhaAIO 2.0's,
@@ -2540,8 +2547,13 @@ to export as. Something like in the picture", then, with Stellar's and Valor's e
   once. The desktop app's save window takes the focus from FAFO's and the page can't await it, so there the next file also
   waits for the focus to come back (2 minutes at most; not tried in Electron). One that fails or is declined (claude.ai's)
   stops the rest and the window stays, saying which went (`#ex-out`, "Downloaded HayhaAIO 2.0 and Hidden AIO. Refract and
-  Shikari weren't downloaded."); all of them close it with one toast ("Downloaded 3 files"). `blobSave` gives a name it
-  doesn't know (`.Hayha`) the type application/octet-stream, so no browser adds an extension (`.txt` is still text/plain).
+  Shikari weren't downloaded.", scrolled into view); all of them close it with one toast ("Downloaded 3 files"). `blobSave`
+  gives a name it doesn't know (`.Hayha`) the type application/octet-stream, so no browser adds an extension (`.txt` is
+  still text/plain).
+- **A double click** on Download or Copy: a closing window is inert while it fades, so the second click would press what's
+  under it (on a laptop, the selection bar's Delete, which asked "Delete N profiles?"). Closed by a click, the window drops
+  a click with `detail` 2 or more for 400 ms (`onClose`, as the inbox guide's `eatClick`); a click on its own still goes
+  through.
 - **The picks** start as this device's last export's (`orbit-export-fmts` in localStorage, read and written in try/catch,
   also in memory, `exportPicks`, `exportPicksSave`; unknown ids dropped; never synced; Erase vault's `clearStore` clears
   it), else FAFO backup (JSON) alone, as before; saved when a file is copied or downloaded.
@@ -2552,9 +2564,11 @@ to export as. Something like in the picture", then, with Stellar's and Valor's e
   format's exact text from its downloaded file and name against fixtures written in the test (ids and Refract's times
   checked by shape, then swapped), Hayha's numeric `expYear` and one `groupId` per group, Shikari equal to the worker's
   `shikariCsv` (read from `license-worker/src/index.js`, which doesn't load in node), CRLF and no BOM in both CSVs, ten
-  files in order with one toast, one failing, the picks across opening again, a reload, unknown ids, storage that throws and
-  Erase vault, and a 375 × 667 phone where the list scrolls and every row can be ticked. It fails if the newest page has no
-  `EXPORT_FORMATS`.
+  files in order with one toast, one failing (at 1280 × 720, its line scrolled into view), the picks across opening again, a
+  reload, unknown ids, storage that throws and Erase vault, the note in view on opening at 1366 × 768, 1280 × 860 and
+  1440 × 900 (with nothing and four formats picked), a double click on Download (one file, nothing pressed under it, a click
+  right after it still goes through), and a 375 × 667 phone where the list scrolls and every row can be ticked. It fails if
+  the newest page has no `EXPORT_FORMATS`. CI runs it on pull requests that change `license-worker/src/index.js` too.
 - Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
