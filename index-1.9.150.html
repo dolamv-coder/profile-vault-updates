@@ -6885,8 +6885,12 @@ function openExport(preset){
         $("#ex-dl-t", panel).textContent = n > 1 ? `Download ${n} files` : "Download";
       };
       // The search narrows the list by name and hint (case and accents ignored); a row it hides keeps its tick.
+      // While something is typed the list keeps the height it had, so the window (centred on a desktop) doesn't shrink
+      // and move the search box from under the cursor with each letter.
+      const fmtList = $("#ex-fmts", panel);
       const filter = () => {
         const words = exportFold(find.value).split(/\s+/).filter(Boolean);
+        if (!words.length) fmtList.style.height = ""; else if (!fmtList.style.height) fmtList.style.height = fmtList.offsetHeight + "px";
         let shown = 0;
         $$(".ex-row", panel).forEach(row => { const f = EXPORT_FORMATS.find(x => x.id === row.dataset.fmt), hay = exportFold(f.name + " " + f.hint);
           row.hidden = !words.every(w => hay.includes(w)); if (!row.hidden) shown++; });

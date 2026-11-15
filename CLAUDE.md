@@ -2529,10 +2529,11 @@ to export as. Something like in the picture", then, with Stellar's and Valor's e
   - Which profiles, and Skip profiles missing an address or card, as before.
   - **Export formats**: "Pick one or more. Each one downloads as its own file.", a Search box (`#ex-find`, labelled Search
     formats for screen readers; every word typed in a format's name or hint, case and accents ignored, `exportFold`; "No
-    format matches."; a row it hides keeps its tick), then the list (`#ex-fmts`, about 7 rows high with its own scroll,
-    `.ex-row` with `input[name="fmt"]`, the name and its hint). Wider than a phone, the list gives up height, down to about
-    3 rows, before the note under it leaves the window's view (`.ex-win`, `.ex-sec`), so a laptop's window (1366 × 768,
-    1440 × 900, the desktop app's 1280 × 860) shows the note on opening.
+    format matches."; a row it hides keeps its tick; while something is typed the list keeps the height it had, so the
+    window, centred on a desktop, doesn't shrink and move the box from under the cursor), then the list (`#ex-fmts`,
+    about 7 rows high with its own scroll, `.ex-row` with `input[name="fmt"]`, the name and its hint). Wider than a phone,
+    the list gives up height, down to about 3 rows, before the note under it leaves the window's view (`.ex-win`,
+    `.ex-sec`), so a laptop's window (1366 × 768, 1440 × 900, the desktop app's 1280 × 860) shows the note on opening.
   - The note (`#ex-note`): "N profiles ready (M skipped). The files include full card numbers and CVVs in plain text, so
     delete them once you're done." ("The file…it" with one format), then for the formats picked (`exportNotes`): one
     sentence on what the bots' formats leave out, naming them (`poss`: "Store logins aren't part of HayhaAIO 2.0's,
@@ -2560,7 +2561,8 @@ to export as. Something like in the picture", then, with Stellar's and Valor's e
 - **Tests:** `export-formats.test.mjs` runs the page in Chromium (in CI after the web inbox test's), as the web version, on
   a vault of made-up profiles (an Amex billing to its shipping address, a Visa with a billing address of its own and no name
   on the card, a Canadian one, a RedCard with no PIN, a JCB whose names and city start with `+ - = @` and whose street has a
-  comma and quotes, two groups and none, one skipped): the list's order, names and hints, the search, the notes, Copy, every
+  comma and quotes, two groups and none, one skipped): the list's order, names and hints, the search (the box staying put
+  as it narrows the list), the notes, Copy, every
   format's exact text from its downloaded file and name against fixtures written in the test (ids and Refract's times
   checked by shape, then swapped), Hayha's numeric `expYear` and one `groupId` per group, Shikari equal to the worker's
   `shikariCsv` (read from `license-worker/src/index.js`, which doesn't load in node), CRLF and no BOM in both CSVs, ten

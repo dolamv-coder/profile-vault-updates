@@ -396,6 +396,18 @@ try {
     assert.deepEqual(await s.picks(), ["refract", "json"]);
     assert.equal(await s.text("#ex-dl"), "Download 2 files");
     assert.deepEqual(await find(""), FORMATS.map((f) => f[0]));
+    // Typing doesn't move the search box: the list keeps its height while a search is typed, and gives it back when cleared.
+    const at = () => s.page.$eval("#ex-find", (i) => Math.round(i.getBoundingClientRect().top));
+    const tall = () => s.page.$eval("#ex-fmts", (l) => Math.round(l.getBoundingClientRect().height));
+    const top0 = await at(), h0 = await tall();
+    for (const q of ["s", "sh", "shi", "shikari", "zzz"]) {
+      await find(q);
+      assert.equal(await at(), top0, `the search box stays put with "${q}" typed`);
+      assert.equal(await tall(), h0, `the list keeps its height with "${q}" typed`);
+    }
+    await find("");
+    assert.equal(await s.page.$eval("#ex-fmts", (l) => l.style.height), "", "cleared: the list's height is its own again");
+    assert.equal(await at(), top0);
   });
 
   await test("the note names what the picked formats leave out; Copy only with one format; none picked: nothing to do", async () => {
