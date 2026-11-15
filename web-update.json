@@ -1,10 +1,10 @@
 {
-  "version": "1.9.148",
-  "url": "index-1.9.148.html",
-  "sha256": "92ca8900d3460d7a259d93b139167bc69eb74bd8efdd16bdb5367ca6e5f1405d",
-  "signature": "1YFdd+KWr6jqz4rVYnCMaiw0OslaJh1jS97rvT2PIZ6rpGnbjekAAO/+YlmijO0MNRcYhUU1pTV/5cNBbZOiBA==",
+  "version": "1.9.149",
+  "url": "index-1.9.149.html",
+  "sha256": "1793446f5b66cb7f2073cc3063daaaba55081d135f100267b9f8e846dd714c26",
+  "signature": "Ycm7YklHavvJQLkNRIdZb7JXavzSV4GSQ3L7gB6O+dCY+bAVDi9PqbE+sxLaUpldDDT8w+T3zWWvjyGA0mjTAA==",
   "minAppVersion": "0",
-  "notes": "Costco is now a store you can pick for a profile, next to Target and Pokémon Center. A Costco profile always checks out on your own Costco account: add its store login, as you would for Target. Use Assigned Account isn't offered for Costco.",
+  "notes": "If you paste your FAFO license key where an invite code goes (I was sent a code, or Submit's Send somewhere else), FAFO now tells you it's a license key, not an invite code, and where it goes.",
   "installerUrl": "",
-  "publishedAt": "2026-11-14T11:37:14.603Z"
+  "publishedAt": "2026-11-15T05:51:15.452Z"
 }
