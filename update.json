@@ -1,10 +1,10 @@
 {
-  "version": "1.9.149",
-  "url": "index-1.9.149.html",
-  "sha256": "1793446f5b66cb7f2073cc3063daaaba55081d135f100267b9f8e846dd714c26",
-  "signature": "Ycm7YklHavvJQLkNRIdZb7JXavzSV4GSQ3L7gB6O+dCY+bAVDi9PqbE+sxLaUpldDDT8w+T3zWWvjyGA0mjTAA==",
+  "version": "1.9.150",
+  "url": "index-1.9.150.html",
+  "sha256": "4f32f3a418496f8274ab686ecf28e5814dbf86f5d7d4a241e573e719548b1d7b",
+  "signature": "yjvy78FWsJMfN6VjDJswO4wlg5dYuD0ZecWRiBYO8+p7GMRTb8cJ19oQiBgw7kytfDIZe3ieDDEUBueo8aASAA==",
   "minAppVersion": "0",
-  "notes": "If you paste your FAFO license key where an invite code goes (I was sent a code, or Submit's Send somewhere else), FAFO now tells you it's a license key, not an invite code, and where it goes.",
+  "notes": "Export profiles now has a list of formats to pick from, with a search: tick one or more and each downloads as its own file. New: HayhaAIO 2.0, Refract, Shikari and AYCD's Google Sheet CSV, beside Hidden AIO, StellarAIO, Valor and AYCD. In HayhaAIO 2.0, Hidden AIO, Refract, Shikari, StellarAIO and Valor files, card numbers, expiry dates, phone numbers, states and countries are written the way each bot's own export writes them.",
   "installerUrl": "",
-  "publishedAt": "2026-11-15T05:51:15.452Z"
+  "publishedAt": "2026-11-15T08:51:42.560Z"
 }
