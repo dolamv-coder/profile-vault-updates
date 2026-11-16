@@ -115,8 +115,9 @@
 //                              Billing page, $10 to start (also prices.unknown), or for Friends and Family their $5
 //                              (prices.family, fixed); from 2026-11-16 a checkout with a known amount takes its tier,
 //                              prices.tiers [{below, price}] by the order's amount before tax (below null: the last), and
-//                              each line has basis (cents or null), basisFrom (sub | total | owner | null) and basisTotal
-//                              ("$64.18", for total), what it was priced on; Friends and Family always pay $5; plans is
+//                              each line has basis (cents or null), basisFrom (sub | total | owner | family | null) and
+//                              basisTotal ("$64.18", for total), what it was priced on (family: Friends and Family's $5,
+//                              whatever the amount, kept in basis); Friends and Family always pay $5; plans is
 //                              ["checkout"], with "monthly" only while BILLING_MONTHLY is "on", never for Friends and
 //                              Family; each line's dueAt is the end of
 //                              the Sunday after it, US Eastern: prices.dueRule "sunday", dueTz; exempt is "owner" or null,
@@ -4149,7 +4150,8 @@ const STRIPE_VERSION = "2026-09-30.endive";
 const stripeApi = (env) => String(env.STRIPE_API_BASE || "https://api.stripe.com").replace(/\/+$/, "");   // tests set it
 // cents, usd. The checkout was 1000 ($10) until 2026-11-12, 500 ($5) to start from then until 2026-11-13 (PRICE_BEFORE, for
 // priceTen), and 1000 again since. Each billing_lines row keeps its own amount, so a line already on an invoice keeps what
-// it was billed at (lineStmt's upsert never changes it), and paying groups lines by amount.
+// it was billed at (lineStmt's upsert changes it only when an alert or the owner takes over a buyer's report that had no
+// amount and isn't being paid), and paying groups lines by amount.
 const PRICE_CHECKOUT = 1000, PRICE_BEFORE = 500, PRICE_MONTHLY = 2500, PRICE_EXTRA = 2500;
 const MONTHLY_SLOTS = 10, EXTRA_SLOTS = 15, EXTRA_MAX = 1;
 // The price per checkout, in cents, by the buyer's kind (`key`, "checkout" or "family", never anything typed). Everyone
@@ -4176,8 +4178,10 @@ const checkoutPrice = async (env, key = "checkout") => key === "family" ? PRICE_
 // else an amount the owner typed in Add a checkout or found on a pasted line ("owner", the amount before tax). With none,
 // the line is at the price when the amount isn't known: the Billing page's box (billing_config price:checkout, priceSql;
 // $10 to start), which was the price per checkout until then. A line keeps the amount it was written with (lineStmt's
-// upsert never changes it), and its basis goes in billing_line_basis (a new table: db:init can't add columns), written in
-// the batch of the line's INSERT, only when that INSERT made the line.
+// upsert changes it only for a buyer's report with no amount, not being paid, that an alert or the owner takes over with
+// one), and its basis goes in billing_line_basis (a new table: db:init can't add columns), written in the batch of the
+// line's INSERT, only for the line that INSERT made or re-priced. Friends and Family's is "family" (their $5, whatever the
+// amount, which is kept for information).
 const PRICE_TIERS = Object.freeze([{ below: 5000, price: 500 }, { below: 10000, price: 1000 }, { below: 15000, price: 1500 },
   { below: 20000, price: 2000 }, { below: null, price: 2500 }].map((t) => Object.freeze(t)));
 const TAX_MAX = 0.115, MONEY_MAX = 10000000;   // 11.5%; an amount over $100,000 is no amount
@@ -4205,9 +4209,10 @@ function lineBasis(x) {
 }
 // An order's amount with its cents and thousands commas ("$1,234.50"): money() leaves cents off whole dollars, for prices.
 const usd = (c) => "$" + String(Math.floor(c / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",") + "." + String(c % 100).padStart(2, "0");
-// What a line was priced on, in words: "on $59.98 before tax", "on about $57.56 before tax (from the $64.18 total)", or
+// What a line was priced on, in words: "on $59.98 before tax", "on about $57.56 before tax (from the $64.18 total)",
+// "Friends and Family price" (their $5 whatever the amount: a line from while they were, after the owner charges them), or
 // "amount not known".
-const basisNote = (basis, from, total) => basis == null ? "amount not known"
+const basisNote = (basis, from, total) => basis == null ? "amount not known" : from === "family" ? "Friends and Family price"
   : from === "total" ? `on about ${usd(basis)} before tax${total ? ` (from the ${total} total)` : ""}` : `on ${usd(basis)} before tax`;
 // "$5 under $50, $10 from $50, $15 from $100, $20 from $150 and $25 from $200, by the order's amount before tax"
 const tierWords = () => PRICE_TIERS.map((t, i) => i === 0 ? `${money(t.price)} under ${money(t.below)}`
@@ -4411,7 +4416,8 @@ async function priceTen(env, now) {
   ]);
   priceDone = true;
   const before = was.results[0].p, mine = !!mark.results[0] && mark.results[0].v === me;
-  if (mine && before < PRICE_CHECKOUT) await billNote(env, `💲 Price per checkout: ${money(before)} → ${money(PRICE_CHECKOUT)} (from now on; checkouts already on an invoice keep their price)`);
+  // In the Billing page's words from 2026-11-16, when the box became the price when an order's amount isn't known.
+  if (mine && before < PRICE_CHECKOUT) await billNote(env, `💲 Price when the amount isn't known: ${money(before)} → ${money(PRICE_CHECKOUT)} (from now on; checkouts already on an invoice keep their price)`);
 }
 // Payments off (the keys taken away) after they were on: noted at most every 5 minutes, for onSince.
 let offStamped = 0;
@@ -4543,6 +4549,9 @@ async function billable(c, w, d) {
   const held = waiting && (cur.paid_through == null || cur.paid_through + TZ_SLACK_MS < start);
   return { ok: true, held: held ? cur.sub_id : null, price: w.family ? "family" : "checkout" };
 }
+// An open pay session (a Stripe page) holding line `t`.id: its key_hash and mode, as the one-open-per-buyer index has them.
+const PAYING_SQL = (t) => `EXISTS (SELECT 1 FROM billing_payments p WHERE p.key_hash = ${t}.key_hash AND p.mode = ${t}.mode AND p.kind = 'pay' AND p.status = 'open'
+  AND EXISTS (SELECT 1 FROM json_each(p.line_ids) j WHERE j.value = ${t}.id))`;
 // The statements that put one order on a buyer's invoice (billable already checked), for one D1 batch: the line, then its
 // basis (billing_line_basis) when the amount it's priced on is known. The line's amount: Friends and Family's (`price` from
 // billable: "family"), always PRICE_FAMILY, $5; else the tier of the order's amount before tax (`basis`, from lineBasis, or
@@ -4553,10 +4562,17 @@ async function billable(c, w, d) {
 // invoice (another buyer's own report doesn't count: it's only their word). An alert or the owner takes over a line the
 // buyer's FAFO reported, unless their FAFO said the store canceled it (the owner can charge it again), and its due date
 // never moves earlier; a buyer's report never touches one from an alert or the owner. Nothing if it's there already, and a
-// line already there keeps the amount it was billed at (the upsert never changes it: $10 before 2026-11-12, $5 from then to
-// 2026-11-13, and its own basis's or none). The basis row goes in only when this line's INSERT made it (its new id is
-// there): a line already there, or taken over, keeps the basis it had (or none). The first statement is the line's, whose
-// meta.changes says whether it was added or taken over.
+// line already there keeps the amount it was billed at ($10 before 2026-11-12, $5 from then to 2026-11-13, and its own
+// basis's or none), with one exception (the 1.9.154 review): a take-over that brings a known amount (`basis`) re-prices the
+// buyer's line when that line has none (no billing_line_basis row: it went in at the price when the amount isn't known,
+// from a page before 1.9.154) and no open pay session holds it (its Stripe page charges the amounts it was opened with), so
+// the alert's or the owner's amount isn't lost; one with a basis of its own, or being paid, keeps its amount and basis. The
+// basis row goes on the line this INSERT made (its new id), or on the line just re-priced (no longer the buyer's, at the
+// price this statement wrote): INSERT OR IGNORE, so a line that has one keeps it. That also puts it on a line from an alert
+// or the owner already there at that same price with none, which then reads as priced on it, as it could have been.
+// Friends and Family's basis row says so (basis_from "family", with the amount kept for information), so their $5 lines
+// never read as priced on an amount whose tier is more, once the owner charges them. The first statement is the line's,
+// whose meta.changes says whether it was added or taken over (re-priced or not).
 function lineStmt(env, c, l) {
   const today = etDay(c.now), due = sundayEndAfter(l.orderAt > today ? l.orderAt : today), key = l.price === "family" ? "family" : "checkout";
   const b = l.basis && Number.isSafeInteger(l.basis.basis) && l.basis.basis > 0 ? l.basis : null, fixed = linePrice(key, b), id = randomId(12);
@@ -4564,13 +4580,17 @@ function lineStmt(env, c, l) {
   const solo = l.source === "buyer" ? "1" : "NOT EXISTS (SELECT 1 FROM billing_lines o WHERE o.store = ?3 AND o.order_no = ?4 AND o.mode = ?2 AND o.key_hash <> ?1 AND o.source <> 'buyer')";
   const line = env.DB.prepare(`INSERT INTO billing_lines (id, key_hash, mode, store, store_name, order_no, item, qty, order_at, acct_hash, profile, source, amount, created_at, due_at, held_sub)
     SELECT ?5, ?1, ?2, ?3, ?6, ?4, ?7, ?8, ?9, ?10, ?11, ?12, ${amount}, ?14, ?15, ?16 WHERE ${solo} AND ${amount} > 0
-    ON CONFLICT (key_hash, mode, store, order_no) DO UPDATE SET source = excluded.source, acct_hash = excluded.acct_hash, due_at = MAX(billing_lines.due_at, excluded.due_at)
+    ON CONFLICT (key_hash, mode, store, order_no) DO UPDATE SET source = excluded.source, acct_hash = excluded.acct_hash, due_at = MAX(billing_lines.due_at, excluded.due_at),
+      amount = CASE WHEN ?17 AND NOT EXISTS (SELECT 1 FROM billing_line_basis x WHERE x.line_id = billing_lines.id) AND NOT ${PAYING_SQL("billing_lines")}
+        THEN excluded.amount ELSE billing_lines.amount END
     WHERE billing_lines.source = 'buyer' AND excluded.source <> 'buyer' AND billing_lines.paid_at IS NULL AND billing_lines.waived_at IS NULL AND billing_lines.canceled_at IS NULL`)
     .bind(l.hash, c.mode, l.store, l.orderNo, id, String(l.storeName || "").slice(0, 40), String(l.item || "").slice(0, 120), String(l.qty || "").slice(0, 6),
-      l.orderAt, l.acctHash || "", String(l.profile || "").slice(0, 80), l.source, fixed != null ? fixed : PRICE_CHECKOUT, c.now, due, l.held || null);
+      l.orderAt, l.acctHash || "", String(l.profile || "").slice(0, 80), l.source, fixed != null ? fixed : PRICE_CHECKOUT, c.now, due, l.held || null, b ? 1 : 0);
   if (!b) return [line];
-  return [line, env.DB.prepare(`INSERT OR IGNORE INTO billing_line_basis (line_id, basis, basis_from, total) SELECT ?1, ?2, ?3, ?4
-    WHERE EXISTS (SELECT 1 FROM billing_lines WHERE id = ?1)`).bind(id, b.basis, String(b.from), String(b.total || "").slice(0, 20))];
+  const fam = key === "family";
+  return [line, env.DB.prepare(`INSERT OR IGNORE INTO billing_line_basis (line_id, basis, basis_from, total) SELECT id, ?2, ?3, ?4 FROM billing_lines
+    WHERE key_hash = ?5 AND mode = ?6 AND store = ?7 AND order_no = ?8 AND (id = ?1 OR (source <> 'buyer' AND amount = ?9))`)
+    .bind(id, b.basis, fam ? "family" : String(b.from), fam ? "" : String(b.total || "").slice(0, 20), l.hash, c.mode, l.store, l.orderNo, fixed)];
 }
 const orderNoOf = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toUpperCase().slice(0, 40);
 // A canceled order: unpaid lines go (free), from an alert (any buyer's line from an alert or the owner) or from the buyer's
@@ -5526,8 +5546,11 @@ const BILL_STORES = ["target", "pokemoncenter", "costco"];
 // that isn't the email or the date), a store's name outside the email (else the store picked), a date (YYYY-MM-DD, M/D or
 // M/D/YY, else the date picked), and the first dollar amount written with a "$" outside the email ("$59.98", "$1,234.56";
 // 2026-11-16), taken as the order's amount before tax (`amount`, in cents, else null). The amount is only read: the order
-// number is found as before, and a "$" word is never one.
-const PASTE_AMOUNT_RE = /\$(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?(?!\d|[.,]\d)/;
+// number is found as before, and a "$" word is never one. A "$" amount right after a minus sign or a dash ("-$5.00",
+// "–$5.00", "−$5") or in brackets ("($5.00)", "( $5.00)") is a discount or a credit, never the order's, so the next one
+// counts ("Discount -$5.00 | Total $64.18" is $64.18); a dash with a space before the "$" is a separator, as in a bot's log
+// ("Success - Target - $59.98" is $59.98); and one running into a letter or digit ("$1e5", "$5.00USD") is no amount.
+const PASTE_AMOUNT_RE = /(?<![-\u2013\u2212]|\(\s?)\$(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?(?![\p{L}\p{N}]|[.,]\d)/u;
 function pasteLine(line, store, date) {
   const text = String(line).replace(/\s+/g, " ").trim();
   const email = (text.match(/[^\s@<>()"',;:|]+@[^\s@<>()"',;:|]+\.[A-Za-z]{2,}/) || [""])[0];
@@ -5562,17 +5585,29 @@ async function pasteMatches(env, x) {
 }
 const WHY_TEXT = { off: "Billing is off for them (test mode)", owner: "Your FAFO", before: "Before billing started", monthly: "Monthly plan, not billed",
   charge: "From before you charged them (Friends and Family then)", "family-before": "From before Friends and Family were charged" };
-// Whether an order the owner adds would go on that buyer's invoice: {ok, held, price} or {why} in words. Their own report of it is
-// taken over, unless it's paid, waived, or their FAFO said the store canceled it (Charge again on their invoice undoes that).
+// Whether an order the owner adds would go on that buyer's invoice: {ok, held, price, take} or {why} in words. Their own report
+// of it is taken over, unless it's paid, waived, or their FAFO said the store canceled it (Charge again on their invoice undoes
+// that); `take` is then that report as it is: {amount, basis, from, total, paying} (paying: an open pay session holds it), for
+// takeOver to say whether it's re-priced (lineStmt).
 async function ownerOutcome(env, c, hash, x) {
   const ok = await billable(c, await c.who(hash), x.date);
   if (!ok.ok) return { why: WHY_TEXT[ok.why] || ok.why };
-  const { results } = await env.DB.prepare("SELECT key_hash, source, paid_at, waived_at, canceled_at FROM billing_lines WHERE mode = ? AND store = ? AND order_no = ?").bind(c.mode, x.store, x.orderNo).all();
+  const { results } = await env.DB.prepare(`SELECT l.key_hash, l.source, l.amount, l.paid_at, l.waived_at, l.canceled_at, b.basis, b.basis_from, b.total AS basis_total,
+    ${PAYING_SQL("l")} AS paying FROM billing_lines l LEFT JOIN billing_line_basis b ON b.line_id = l.id WHERE l.mode = ? AND l.store = ? AND l.order_no = ?`).bind(c.mode, x.store, x.orderNo).all();
   const mine = results.find((l) => l.key_hash === hash);
   if (mine && (mine.source !== "buyer" || mine.paid_at || mine.waived_at)) return { why: "Already on the invoice" };
   if (mine && mine.canceled_at) return { why: "Canceled by the store, their FAFO said" };
   if (results.some((l) => l.key_hash !== hash && l.source !== "buyer")) return { why: "On another buyer's invoice" };
-  return { ok: true, held: ok.held, price: ok.price };
+  return { ok: true, held: ok.held, price: ok.price,
+    take: mine ? { amount: mine.amount, basis: mine.basis, from: mine.basis_from, total: mine.basis_total || "", paying: !!mine.paying } : null };
+}
+// What the owner taking over a buyer's report (`out.take`) with the amount `b` (their basis, or null) does, as lineStmt does
+// it: re-priced ({again: true, amount, note}) when they gave an amount and the report has none and isn't being paid, else kept
+// ({again: false, amount, note, unused: whether the owner's amount goes unused}). note: what it's priced on, in words.
+function takeOver(out, b) {
+  const t = out.take;
+  if (b && t.basis == null && !t.paying) return { again: true, amount: linePrice(out.price, b), note: basisNote(b.basis, "owner", "") };
+  return { again: false, amount: t.amount, note: basisNote(t.basis, t.from, t.total), unused: !!b };
 }
 
 // The Billing page's price per checkout as typed: dollars with up to 2 decimals ("10", "$12.50"), from $1 to $100, in cents;
@@ -5680,9 +5715,21 @@ async function billingListPage(request, env, ctx, url, id) {
         const out = await ownerOutcome(env, c, key, x);
         if (!out.ok) err = `Not added: ${out.why.toLowerCase().replace(/\bfafo\b/g, "FAFO")}.`;
         else {
+          const b = cents == null ? null : { basis: cents, from: "owner", total: "" }, what = `${accountStoreName(x.store)} #${x.orderNo}`;
           const [r] = await env.DB.batch(lineStmt(env, c, { hash: key, store: x.store, storeName: accountStoreName(x.store), orderNo: x.orderNo, item, qty: "", orderAt: x.date, source: "owner",
-            held: out.held, price: out.price, basis: cents == null ? null : { basis: cents, from: "owner", total: "" } }));
-          if (r.meta && r.meta.changes) done = `Added ${accountStoreName(x.store)} #${x.orderNo} to their invoice.`; else err = "Not added: already on the invoice.";
+            held: out.held, price: out.price, basis: b }));
+          if (!(r.meta && r.meta.changes)) err = "Not added: already on the invoice.";
+          else if (!out.take) done = `Added ${what} to their invoice.`;
+          else {
+            // Their FAFO's report taken over: re-priced at the amount typed (lineStmt: it had none, and no Stripe page holds
+            // it), or keeping its own amount. Read back, so the words are what happened.
+            const now1 = await env.DB.prepare(`SELECT l.amount, b.basis, b.basis_from, b.total FROM billing_lines l LEFT JOIN billing_line_basis b ON b.line_id = l.id
+              WHERE l.key_hash = ? AND l.mode = ? AND l.store = ? AND l.order_no = ?`).bind(key, c.mode, x.store, x.orderNo).first() || { amount: out.take.amount, basis: out.take.basis };
+            // In brackets, so a total's own "(from the $64.18 total)" goes in with a comma.
+            const again = !!b && out.take.basis == null && now1.basis != null, flat = (t) => t.replace(/ \((from the [^)]*)\)/, ", $1");
+            done = again ? `Took over their FAFO's report of ${what} at ${money(now1.amount)} (${[out.price === "family" ? "Friends and Family" : "", basisNote(b.basis, "owner", "")].filter(Boolean).join("; ")}).`
+              : `Took over their FAFO's report of ${what}, which keeps ${money(now1.amount)} (${[flat(basisNote(now1.basis, now1.basis_from, now1.total)), b ? "the amount you typed isn't used" : ""].filter(Boolean).join("; ")}).`;
+          }
         }
       }
     } else if (action === "price") {
@@ -5845,10 +5892,16 @@ async function billingListPage(request, env, ctx, url, id) {
       <p class="hint">${hint}</p></form>`;
   const priceBox = box("price", "Price when the amount isn't known", price, `For checkouts FAFO can't tell the amount of (a buyer's FAFO that hasn't updated, or one you add without an amount). From now on; ones already on an invoice keep their price. Friends and Family always pay ${money(PRICE_FAMILY)}.`);
   // What a pasted line will add: the price it gives (Friends and Family's, its amount's tier, or the price when the amount
-  // isn't known) and what it's priced on.
+  // isn't known) and what it's priced on; or, for their FAFO's report of it, whether taking it over re-prices it (takeOver,
+  // as lineStmt decides) or it keeps its own amount, saying so when the line's amount then isn't used.
   const pasteOutcome = (r) => {
-    const b = pasteBasis(r.x), p = linePrice(r.out.price, b);
-    return `Will add${r.out.held ? " (on hold: their monthly payment failed)" : ""} · ${money(p != null ? p : price)}${r.out.price === "family" ? " (Friends and Family)" : ""} · ${basisNote(b && b.basis, "owner", "")}`;
+    const b = pasteBasis(r.x), p = linePrice(r.out.price, b), fam = r.out.price === "family" ? " (Friends and Family)" : "";
+    if (r.out.take) {
+      const t = takeOver(r.out, b);
+      return t.again ? `Will take over their FAFO's report · ${money(t.amount)}${fam} · ${t.note}`
+        : `Will take over their FAFO's report · keeps ${money(t.amount)} · ${t.note}${t.unused ? " (the amount here isn't used)" : ""}`;
+    }
+    return `Will add${r.out.held ? " (on hold: their monthly payment failed)" : ""} · ${money(p != null ? p : price)}${fam} · ${basisNote(b && b.basis, "owner", "")}`;
   };
   let pastePart;
   if (preview) {

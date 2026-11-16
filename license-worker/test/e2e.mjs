@@ -4340,7 +4340,7 @@ try {
     assert.deepEqual([bob.exempt, bob.family, bob.prices.checkout, bob.prices.family, bob.prices.unknown, bob.prices.tiers], ["owner", false, 1000, 500, 1000, TIERS], "the owner's own FAFO is never charged");
     // The worker before had $5 to start: with none saved, the channel hears the price is $10 now, once (priceTen), and
     // $10 is saved, so the worker before (which read none as $5) bills $10 too while it still answers.
-    assert.deepEqual(posts(p0), ["💲 Price per checkout: $5 → $10 (from now on; checkouts already on an invoice keep their price)"]);
+    assert.deepEqual(posts(p0), ["💲 Price when the amount isn't known: $5 → $10 (from now on; checkouts already on an invoice keep their price)"]);
     assert.deepEqual(dbRows("SELECT v FROM billing_config WHERE k = 'price:checkout'"), [{ v: "1000" }], "$10 saved");
     assert.ok(Math.abs(parseInt(dbRows("SELECT v FROM billing_config WHERE k = 'price_ten'")[0].v, 10) - Date.now()) < 300000, "the marker");
     const gh = await billOf(GH_KEY);
@@ -5526,14 +5526,41 @@ try {
     assert.deepEqual(priced(st, "UR-NONE"), [750, null, null], "a FAFO before 1.9.154 sends neither: the price when the amount isn't known");
     for (let i = 0; i < 7; i++) assert.deepEqual([priced(st, "UR-BAD-" + i), basisRows("UR-BAD-" + i)], [[750, null, null], []], "UR-BAD-" + i);
   });
-  await test("the price by the order's amount before tax: Friends and Family pay $5 whatever the amount (its basis is kept, for the page)", async () => {
+  // An invoice row on the Billing page (a buyer's Details): its state, then its amount and what it was priced on.
+  const rowNote = (view, no, state, amount, text) => assert.ok(new RegExp(`#${no}<br>[^\\n]*</td>\\s*<td><span[^>]*>${state}</span><br><span[^>]*>due [^<]+</span></td><td>${amount.replace(/[$.]/g, "\\$&")}<br><span style="font-size:12px">${text.replace(/[$.()]/g, "\\$&")}</span></td>`).test(view), `${no}: ${amount} ${text}`);
+  await test("the price by the order's amount before tax: Friends and Family pay $5 whatever the amount (its basis is kept, for the page, as theirs: basisFrom \"family\")", async () => {
     await alerts([billEv({ account: vicAcct(), orderNo: "VT-SUB", sub: "250.00" }), billEv({ account: vicAcct(), orderNo: "VT-TOTAL", total: "$180.00" })]);
     assert.equal((await (await api("/billing/checkouts", vicKey, { orders: [{ account: "vic.own@example.com", store: "target", orderNo: "VT-OWN", at: today, stage: "placed", sub: "199.99" }] })).json()).added, 1);
-    const vb = hashOf(vicKey).slice(0, 16);
-    assert.equal(doneOf((await billPost(offLink, { action: "add", key: hashOf(vicKey), b: vb, store: "target", order: "VT-ADD", date: today, amount: "500" })).location), "Added Target #VT-ADD to their invoice.");
+    const vicHash = hashOf(vicKey), vb = vicHash.slice(0, 16);
+    assert.equal(doneOf((await billPost(offLink, { action: "add", key: vicHash, b: vb, store: "target", order: "VT-ADD", date: today, amount: "500" })).location), "Added Target #VT-ADD to their invoice.");
     const vic = await billOf(vicKey);
-    assert.deepEqual(["VT-SUB", "VT-TOTAL", "VT-OWN", "VT-ADD"].map((no) => priced(vic, no)), [[500, 25000, "sub"], [500, 16143, "total"], [500, 19999, "sub"], [500, 50000, "owner"]]);
+    assert.deepEqual(["VT-SUB", "VT-TOTAL", "VT-OWN", "VT-ADD"].map((no) => priced(vic, no)), [[500, 25000, "family"], [500, 16143, "family"], [500, 19999, "family"], [500, 50000, "family"]]);
+    assert.deepEqual(basisRows("VT-TOTAL", vicHash), [{ basis: 16143, basis_from: "family", total: "" }], "the amount, for information; no total (it isn't what it's priced on)");
+    assert.equal(vic.lines.find((x) => x.orderNo === "VT-TOTAL").basisTotal, null);
     assert.deepEqual([vic.prices.checkout, vic.prices.family, vic.prices.unknown, vic.prices.tiers], [500, 500, 750, TIERS], "the tiers still go, for the page to show they're not theirs");
+    rowNote(unescape(await (await fetchOnce(`${offLink}&b=${vb}`)).text()), "VT-SUB", "Due", "$5", "Friends and Family price");
+  });
+  await test("Friends and Family's lines stay theirs once the owner charges them: GET /billing's basisFrom \"family\" (no basisTotal) and the Billing page's \"Friends and Family price\", never the tier of the amount kept with them; a checkout from after Charge takes its tier", async () => {
+    const vicHash = hashOf(vicKey), vb = vicHash.slice(0, 16), after = new Date(Date.now() + 2 * DAY).toISOString().slice(0, 10);
+    assert.equal(doneOf((await billPost(offLink, { action: "charge", key: vicHash, b: vb })).location),
+      `They're charged now, like any buyer approved after payments began: ${TIER_WORDS} ($7.50 when FAFO can't tell an order's amount), for checkouts from now on.`);
+    try {
+      await alerts([billEv({ account: vicAcct(), orderNo: "VT-CHG", at: after, sub: "250.00" })]);
+      const st = await billOf(vicKey), line = (no) => st.lines.find((x) => x.orderNo === no);
+      assert.deepEqual([st.family, st.prices.checkout], [false, 750], "charged now");
+      assert.deepEqual(["VT-SUB", "VT-TOTAL", "VT-OWN", "VT-ADD"].map((no) => [line(no).amount, line(no).basis, line(no).basisFrom, line(no).basisTotal]),
+        [[500, 25000, "family", null], [500, 16143, "family", null], [500, 19999, "family", null], [500, 50000, "family", null]], "their $5 lines from before, as Friends and Family's");
+      assert.deepEqual(priced(st, "VT-CHG"), [2500, 25000, "sub"], "one from after Charge: $25, its tier");
+      const view = unescape(await (await fetchOnce(`${offLink}&b=${vb}`)).text());
+      rowNote(view, "VT-SUB", "Due", "$5", "Friends and Family price");
+      rowNote(view, "VT-ADD", "Due", "$5", "Friends and Family price");
+      rowNote(view, "VT-CHG", "Due", "$25", "on $250.00 before tax");
+    } finally {
+      await billPost(offLink, { action: "family", key: vicHash, b: vb });
+      sqlRun("DELETE FROM billing_line_basis WHERE line_id IN (SELECT id FROM billing_lines WHERE order_no = 'VT-CHG')");
+      sqlRun("DELETE FROM billing_lines WHERE order_no = 'VT-CHG'");
+    }
+    assert.equal((await billOf(vicKey)).family, true, "Friends and Family again");
   });
   await test("Billing page: Add a checkout takes the order's amount before tax (optional; anything but a dollar amount adds nothing), and each invoice row says what it was priced on", async () => {
     const ub = umaHash.slice(0, 16), add = (order, amount) => billPost(offLink, { action: "add", key: umaHash, b: ub, store: "target", order, date: today, ...(amount === undefined ? {} : { amount }) });
@@ -5580,20 +5607,121 @@ try {
     const st = await billOf(umaKey);
     assert.deepEqual(["PASTE-A1", "PASTE-A2", "PASTE-A3", "PASTE-A5", "102003004006"].map((no) => priced(st, no)),
       [[1000, 5998, "owner"], [2500, 123456, "owner"], [750, null, null], [2500, 9999900, "owner"], [750, null, null]]);
-    assert.deepEqual(priced(await billOf(vicKey), "VF-PASTE-9"), [500, 25000, "owner"]);
+    assert.deepEqual(priced(await billOf(vicKey), "VF-PASTE-9"), [500, 25000, "family"], "Friends and Family's, with the amount read");
     const html = unescape(await (await fetchOnce(offLink)).text());
     assert.ok(html.includes("A dollar amount on a line (like $59.98) is taken as the order's amount before tax and prices it by its tier; without one, it's $7.50."), html.slice(-4000));
   });
-  await test("the price by the order's amount before tax: a line taken over (by Add a checkout, or an order alert) keeps the amount and basis it was written with", async () => {
+  // A pasted line's row in Paste checkouts' check: what was read from it (store, order, date, its amount), then its outcome.
+  const pasteRow = (html, no, info, outcome) => assert.ok(new RegExp(`<span style="font-size:12px">${`Target · #${no} · ${today}${info ? " · " + info : ""}`.replace(/[$.]/g, "\\$&")}</span></td>(?:(?!</tr>)[\\s\\S])*?<td( style="color:#5fd39a")?>${outcome.replace(/[$.()]/g, "\\$&")}</td></tr>`).test(html), `${no}: ${outcome}\n${html.slice(-5000)}`);
+  await test("Billing page: a pasted \"$\" amount right after a minus sign or a dash, or in brackets, is a discount, never the order's amount (the next one counts); a spaced dash is a separator; one running into a letter or digit is no amount", async () => {
+    const lines = [[`Target PASTE-D1 uma.one@example.com Discount -$5.00 | Total $64.18 ${today}`, "$64.18", "Will add · $10 · on $64.18 before tax"],
+      [`Target PASTE-D2 uma.one@example.com Success - Target - $150.00 ${today}`, "$150.00", "Will add · $20 · on $150.00 before tax"],
+      [`Target PASTE-D3 uma.one@example.com Credit –$20.00, −$3.50, then $45.10 ${today}`, "$45.10", "Will add · $5 · on $45.10 before tax"],
+      [`Target PASTE-D4 uma.one@example.com Refund ($5.00) ${today}`, "", "Will add · $7.50 · amount not known"],
+      [`Target PASTE-D5 uma.one@example.com ( $5.00) $210.00 ${today}`, "$210.00", "Will add · $25 · on $210.00 before tax"],
+      [`Target PASTE-D6 uma.one@example.com $1e5 ${today}`, "", "Will add · $7.50 · amount not known"],
+      [`Target PASTE-D7 uma.one@example.com $5.00USD ${today}`, "", "Will add · $7.50 · amount not known"],
+      [`Target PASTE-D8 uma.one@example.com $1e5 then $120.00 ${today}`, "$120.00", "Will add · $15 · on $120.00 before tax"]];
+    const paste = lines.map((l) => l[0]).join("\n");
+    const pv = await billPost(offLink, { action: "paste-preview", paste, store: "target", date: today });
+    assert.equal(pv.status, 200);
+    const html = unescape(pv.text);
+    lines.forEach(([, info, outcome], i) => pasteRow(html, "PASTE-D" + (i + 1), info, outcome));
+    const add = await billPost(offLink, { action: "paste-add", paste, store: "target", date: today });
+    assert.deepEqual([doneOf(add.location), errOf(add.location)], ["Added 8 checkouts.", null]);
+    const st = await billOf(umaKey);
+    assert.deepEqual(lines.map((l, i) => priced(st, "PASTE-D" + (i + 1))), [[1000, 6418, "owner"], [2000, 15000, "owner"], [500, 4510, "owner"], [750, null, null], [2500, 21000, "owner"],
+      [750, null, null], [750, null, null], [1500, 12000, "owner"]]);
+  });
+  // A line their FAFO reported, taken over by an order alert or the owner (2026-11-16, the 1.9.154 review): one priced with no
+  // amount (a FAFO before 1.9.154) and no Stripe page holding it takes the amount that comes with the take-over; one with an
+  // amount of its own, or being paid, keeps its amount. Uma's FAFO reports these with no amount: $7.50, the box's price.
+  const umaReport = async (orders) => (await api("/billing/checkouts", umaKey, { orders: orders.map((o) => ({ account: "uma.one@example.com", store: "target", at: today, stage: "placed", ...(typeof o === "string" ? { orderNo: o } : o) })) })).json();
+  const takeOf = (st, no) => { const l = st.lines.find((x) => x.orderNo === no); return [l.amount, l.basis, l.basisFrom, l.basisTotal, l.source]; };
+  // The basis rows on a line, by its id: the take-over's goes on the line that was there.
+  const basisOn = (id) => dbRows(`SELECT basis, basis_from, total FROM billing_line_basis WHERE line_id = '${id}'`);
+  await test("a line taken over re-prices their FAFO's report when it had no amount and no Stripe page holds it: by Paste, Add a checkout and an order alert (its sub, or its total), with the basis on that same line; the check and Add say so", async () => {
+    const ub = umaHash.slice(0, 16), nos = ["UR-RP-P1", "UR-RP-N1", "UR-RP-A1", "UR-RP-B1", "UR-RP-S1", "UR-RP-T1"];
+    const orphans = () => dbRows("SELECT COUNT(*) AS n FROM billing_line_basis WHERE line_id NOT IN (SELECT id FROM billing_lines)")[0].n, o0 = orphans();
+    assert.equal((await umaReport(nos)).added, 6);
+    const st0 = await billOf(umaKey), id = Object.fromEntries(nos.map((no) => [no, st0.lines.find((l) => l.orderNo === no).id]));
+    for (const no of nos) assert.deepEqual(takeOf(st0, no), [750, null, null, null, "buyer"], no);
+    // Paste: one with an amount, one without.
+    const paste = [`Target UR-RP-P1 uma.one@example.com $180.00 ${today}`, `Target UR-RP-N1 uma.one@example.com ${today}`].join("\n");
+    const pv = await billPost(offLink, { action: "paste-preview", paste, store: "target", date: today });
+    const html = unescape(pv.text);
+    pasteRow(html, "UR-RP-P1", "$180.00", "Will take over their FAFO's report · $20 · on $180.00 before tax");
+    pasteRow(html, "UR-RP-N1", "", "Will take over their FAFO's report · keeps $7.50 · amount not known");
+    assert.ok(html.includes(">Add 2 checkouts<"));
+    assert.deepEqual(doneOf((await billPost(offLink, { action: "paste-add", paste, store: "target", date: today })).location), "Added 2 checkouts.");
+    // Add a checkout: with an amount, and without (which keeps it).
+    const add = (order, amount) => billPost(offLink, { action: "add", key: umaHash, b: ub, store: "target", order, date: today, ...(amount ? { amount } : {}) });
+    assert.equal(doneOf((await add("UR-RP-A1", "180.00")).location), "Took over their FAFO's report of Target #UR-RP-A1 at $20 (on $180.00 before tax).");
+    assert.equal(doneOf((await add("UR-RP-B1")).location), "Took over their FAFO's report of Target #UR-RP-B1, which keeps $7.50 (amount not known).");
+    // Order alerts: by its sub, and by its total ($230.00 / 1.115 = $206.28).
+    await alerts([billEv({ account: umaAcct, orderNo: "UR-RP-S1", sub: "180.00" }), billEv({ account: umaAcct, orderNo: "UR-RP-T1", total: "$230.00" })]);
+    const st = await billOf(umaKey);
+    assert.deepEqual(nos.map((no) => takeOf(st, no)), [[2000, 18000, "owner", null, "owner"], [750, null, null, null, "owner"], [2000, 18000, "owner", null, "owner"],
+      [750, null, null, null, "owner"], [2000, 18000, "sub", null, "alert"], [2500, 20628, "total", "$230.00", "alert"]]);
+    assert.deepEqual(nos.map((no) => st.lines.find((l) => l.orderNo === no).id), nos.map((no) => id[no]), "the same lines, taken over");
+    assert.deepEqual(nos.map((no) => basisOn(id[no])), [[{ basis: 18000, basis_from: "owner", total: "" }], [], [{ basis: 18000, basis_from: "owner", total: "" }], [],
+      [{ basis: 18000, basis_from: "sub", total: "" }], [{ basis: 20628, basis_from: "total", total: "$230.00" }]], "the basis on each line taken over with an amount, and only there");
+    assert.equal(orphans(), o0, "none on a line that isn't there (the take-over's new id never went in)");
+    const view = unescape(await (await fetchOnce(`${offLink}&b=${ub}`)).text());
+    rowNote(view, "UR-RP-P1", "Due", "$20", "on $180.00 before tax");
+    rowNote(view, "UR-RP-T1", "Due", "$25", "on about $206.28 before tax (from the $230.00 total)");
+    rowNote(view, "UR-RP-N1", "Due", "$7.50", "amount not known");
+  });
+  await test("a line taken over keeps the amount and basis their FAFO's report was written with when it had an amount: by Add a checkout, Paste or an order alert, and the check and Add say the amount given isn't used", async () => {
     const ub = umaHash.slice(0, 16);
     const r = await (await api("/billing/checkouts", umaKey, { orders: [{ account: "both.own@example.com", store: "target", orderNo: "UR-TK-1", at: today, stage: "placed", sub: "30.00" },
       { account: "both.own@example.com", store: "target", orderNo: "UR-TK-2", at: today, stage: "placed", sub: "45.00" }] })).json();
     assert.equal(r.added, 2);
-    assert.equal(doneOf((await billPost(offLink, { action: "add", key: umaHash, b: ub, store: "target", order: "UR-TK-1", date: today, amount: "180.00" })).location), "Added Target #UR-TK-1 to their invoice.");
+    assert.equal((await umaReport([{ orderNo: "UR-TK-3", sub: "30.00" }, { orderNo: "UR-TK-4", total: "$133.80" }])).added, 2);
+    const id = Object.fromEntries((await billOf(umaKey)).lines.filter((l) => /^UR-TK-/.test(l.orderNo)).map((l) => [l.orderNo, l.id]));
+    const paste = [`Target UR-TK-3 uma.one@example.com $180.00 ${today}`].join("\n");
+    const pv = await billPost(offLink, { action: "paste-preview", paste, store: "target", date: today });
+    pasteRow(unescape(pv.text), "UR-TK-3", "$180.00", "Will take over their FAFO's report · keeps $5 · on $30.00 before tax (the amount here isn't used)");
+    assert.equal(doneOf((await billPost(offLink, { action: "paste-add", paste, store: "target", date: today })).location), "Added 1 checkout.");
+    assert.equal(doneOf((await billPost(offLink, { action: "add", key: umaHash, b: ub, store: "target", order: "UR-TK-1", date: today, amount: "180.00" })).location),
+      "Took over their FAFO's report of Target #UR-TK-1, which keeps $5 (on $30.00 before tax; the amount you typed isn't used).");
+    assert.equal(doneOf((await billPost(offLink, { action: "add", key: umaHash, b: ub, store: "target", order: "UR-TK-4", date: today })).location),
+      "Took over their FAFO's report of Target #UR-TK-4, which keeps $15 (on about $120.00 before tax, from the $133.80 total).");
     await alerts([billEv({ account: umaAcct, orderNo: "UR-TK-2", sub: "300.00" })]);
-    const st = await billOf(umaKey), src = (no) => st.lines.find((l) => l.orderNo === no).source;
-    assert.deepEqual([priced(st, "UR-TK-1"), src("UR-TK-1"), basisRows("UR-TK-1")], [[500, 3000, "sub"], "owner", [{ basis: 3000, basis_from: "sub", total: "" }]]);
-    assert.deepEqual([priced(st, "UR-TK-2"), src("UR-TK-2"), basisRows("UR-TK-2")], [[500, 4500, "sub"], "alert", [{ basis: 4500, basis_from: "sub", total: "" }]]);
+    const st = await billOf(umaKey);
+    assert.deepEqual(["UR-TK-1", "UR-TK-2", "UR-TK-3", "UR-TK-4"].map((no) => takeOf(st, no)), [[500, 3000, "sub", null, "owner"], [500, 4500, "sub", null, "alert"],
+      [500, 3000, "sub", null, "owner"], [1500, 12000, "total", "$133.80", "owner"]]);
+    assert.deepEqual(["UR-TK-1", "UR-TK-2", "UR-TK-3", "UR-TK-4"].map((no) => basisOn(id[no])), [[{ basis: 3000, basis_from: "sub", total: "" }], [{ basis: 4500, basis_from: "sub", total: "" }],
+      [{ basis: 3000, basis_from: "sub", total: "" }], [{ basis: 12000, basis_from: "total", total: "$133.80" }]], "the basis each had, on the same line, and no other");
+  });
+  await test("a line an open Stripe page holds keeps its amount when taken over, though it had none (the page charges what it was opened with): by Add a checkout, Paste or an order alert; once that page is gone a take-over re-prices it", async () => {
+    const ub = umaHash.slice(0, 16), nos = ["UR-PAY-A1", "UR-PAY-P1", "UR-PAY-S1", "UR-PAY-X1"];
+    assert.equal((await umaReport(nos)).added, 4);
+    const p = await checkout(umaKey, { kind: "pay" });
+    assert.equal(p.status, 200, JSON.stringify(p.body));
+    const held = JSON.parse(dbRows(`SELECT line_ids FROM billing_payments WHERE id = '${p.body.pay}'`)[0].line_ids), st0 = await billOf(umaKey);
+    const id = Object.fromEntries(nos.map((no) => [no, st0.lines.find((l) => l.orderNo === no).id]));
+    assert.ok(nos.every((no) => held.includes(id[no])), "the page holds them");
+    try {
+      const paste = `Target UR-PAY-P1 uma.one@example.com $180.00 ${today}`;
+      const pv = await billPost(offLink, { action: "paste-preview", paste, store: "target", date: today });
+      pasteRow(unescape(pv.text), "UR-PAY-P1", "$180.00", "Will take over their FAFO's report · keeps $7.50 · amount not known (the amount here isn't used)");
+      assert.equal(doneOf((await billPost(offLink, { action: "paste-add", paste, store: "target", date: today })).location), "Added 1 checkout.");
+      assert.equal(doneOf((await billPost(offLink, { action: "add", key: umaHash, b: ub, store: "target", order: "UR-PAY-A1", date: today, amount: "180.00" })).location),
+        "Took over their FAFO's report of Target #UR-PAY-A1, which keeps $7.50 (amount not known; the amount you typed isn't used).");
+      await alerts([billEv({ account: umaAcct, orderNo: "UR-PAY-S1", sub: "180.00" })]);
+      const st = await billOf(umaKey);
+      assert.deepEqual(["UR-PAY-A1", "UR-PAY-P1", "UR-PAY-S1"].map((no) => takeOf(st, no)), [[750, null, null, null, "owner"], [750, null, null, null, "owner"], [750, null, null, null, "alert"]]);
+      assert.deepEqual(["UR-PAY-A1", "UR-PAY-P1", "UR-PAY-S1"].map((no) => basisOn(id[no])), [[], [], []], "no basis written for a line it didn't price");
+      assert.deepEqual(dbRows(`SELECT status, amount FROM billing_payments WHERE id = '${p.body.pay}'`), [{ status: "open", amount: p.body.amount }], "the page as it was opened");
+    } finally {
+      const s = sessionOf(p.body.url);
+      Object.assign(s, { status: "expired", url: null });
+      assert.equal(await hook("checkout.session.expired", s), 200);
+    }
+    assert.equal(dbRows(`SELECT status FROM billing_payments WHERE id = '${p.body.pay}'`)[0].status, "expired");
+    await alerts([billEv({ account: umaAcct, orderNo: "UR-PAY-X1", sub: "180.00" })]);
+    assert.deepEqual([takeOf(await billOf(umaKey), "UR-PAY-X1"), basisOn(id["UR-PAY-X1"])], [[2000, 18000, "sub", null, "alert"], [{ basis: 18000, basis_from: "sub", total: "" }]], "the page gone: re-priced");
   });
   // The first billing request after the worker that charges Friends and Family was deployed: family_from isn't there yet.
   // What they owed from before (from while they were charged, before the owner moved them; hidden while they weren't) comes
@@ -5667,7 +5795,8 @@ try {
   // the deploy (with payments on) moves a saved price below $10 to $10, once (priceTen, marker price_ten), and the channel
   // hears of it once. Each case starts a worker on the same database with nothing in memory, as a deploy does, with the
   // database as it would be then: no marker, and the price saved as given (or none).
-  const TEN = "💲 Price per checkout: $5 → $10 (from now on; checkouts already on an invoice keep their price)";
+  // In the Billing page's words from 2026-11-16 (the box is the price when an order's amount isn't known).
+  const TEN = "💲 Price when the amount isn't known: $5 → $10 (from now on; checkouts already on an invoice keep their price)";
   const tenRow = () => dbRows("SELECT v FROM billing_config WHERE k = 'price_ten'");
   const restart = async (port, saved) => {
     stopWorker(workers.pop());

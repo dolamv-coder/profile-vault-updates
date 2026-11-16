@@ -11521,13 +11521,26 @@ const moneyCents = (v) => {
   return m ? Number(m[1].replace(/,/g, "")) * 100 + Number((m[2] || "0").padEnd(2, "0")) : null;
 };
 // An order's amount before tax, which a checkout's price goes by (1.9.154, the owner's request, 2026-11-16: "$5 under $50 …
-// All prices are included before tax"): the store email's Subtotal when FAFO read one, else qty × the unit price ("$x / ea"),
-// as "59.98"; "" when neither is known (the license worker then goes by the total, or the owner's price for an unknown amount).
+// All prices are included before tax"): what the order cost before tax, after a store's discount, as "59.98"; "" when it isn't
+// known (the license worker then goes by the total less the most sales tax can be, or the owner's price for an unknown amount).
+// It starts from the store email's Subtotal when FAFO read one, else qty × the unit price ("$x / ea"). With the total known it
+// goes by the Dashboard export's tax model (oxFits, 1.9.153: the total is that amount less a discount of $5 to $30, plus a sales
+// tax rate's tax): when the total only fits with a discount (Target's $5 off at checkout), the smallest one comes off; when the
+// total is below it and nothing fits (a gift card, a discount it doesn't know), none; and with no Subtotal read, none when the
+// total is more than tax and $10 of shipping could add (an order of several items, whose first one this is).
 function orderSubBeforeTax(o){
-  const sub = moneyCents(o && o.subtotal);
-  if (sub > 0) return (sub / 100).toFixed(2);
-  const each = moneyCents(o && o.priceEach), qty = /^\s*\d{1,4}\s*$/.test(String((o && o.qty) || "1")) ? Number(String(o.qty || "1").trim()) : 0;
-  return each > 0 && qty > 0 ? (each * qty / 100).toFixed(2) : "";
+  const sub = moneyCents(o && o.subtotal), qty = /^\s*\d{1,4}\s*$/.test(String((o && o.qty) || "1")) ? Number(String(o.qty || "1").trim()) : 0;
+  const each = moneyCents(o && o.priceEach), base = sub > 0 ? sub : each > 0 && qty > 0 ? each * qty : 0;
+  if (!(base > 0)) return "";
+  const total = moneyCents(o && o.total);
+  if (total > 0){
+    // oxFits and its helpers are defined further down (the ORDERS-XLSX block); this only runs once the page has loaded.
+    const fits = sub > 0 ? oxFits(1, sub, total) : oxFits(qty, each, total);
+    if (fits.length && !fits.some(f => f.off === 0)) return ((base - Math.min(...fits.map(f => f.off))) / 100).toFixed(2);
+    if (!fits.length && total < base) return "";
+    if (!(sub > 0) && total > base * 1.115 + 1000) return "";
+  }
+  return (base / 100).toFixed(2);
 }
 const orderById = (id) => (S.orders || []).find(o => o.id === id) || null;
 const ORDER_STAGES = [["placed","Placed"],["shipped","Shipped"],["arriving","Arriving"],["delivered","Delivered"],["canceled","Canceled"]];
@@ -11556,7 +11569,7 @@ function parseOrderEmail(text){
   const pick = (re, g) => { const m = text.match(re); return m && m[g||1] ? m[g||1].trim() : ""; };
   // Order numbers always contain a digit, so words like "Number" or "Details" never match.
   const orderNo = pick(/order\s*(?:#|no\.?|number|id)?\s*[:#]?\s*#?\s*((?=[A-Z0-9-]*\d)[A-Z0-9][A-Z0-9\-]{5,25})/i).replace(/^(\d{8,})[A-Za-z]+$/, "$1");
-  let total = pick(/(?:order\s+total|grand\s+total)[\s:|]*\$?\s*([\d,]+\.\d{2})/i) || pick(/(?:^|[^\w-])total[\s:|]*\$?\s*([\d,]+\.\d{2})/i);   // not a "Sub-total" (1.9.154)
+  let total = pick(/(?:order\s+total|grand\s+total)[\s:|]*\$?\s*([\d,]+\.\d{2})/i) || pick(/(?<!sub[\s-]?)\btotal[\s:|]*\$?\s*([\d,]+\.\d{2})/i);   // not a "Sub-total" or "Sub Total" (1.9.154)
   const buyer = pick(/thank[s]?\s+for\s+your\s+order,\s*([A-Za-z][A-Za-z .'-]{1,40}?)[!\.]/i) || pick(/hello,\s*([A-Za-z][A-Za-z .'-]{1,40}?)[!\.\n]/i);
   const shipTo = pick(/delivers?\s+to:\s*\n?\s*([A-Za-z][A-Za-z .'-]{1,40}?),/i) || pick(/[Ss]hipping\s+[Aa]ddress:\s*\n?\s*([A-Za-z][A-Za-z'-]*(?:\s+[A-Z][A-Za-z'-]*){1,3})(?=\s+\d|\s*\n|\s*\|)/);
     const cardBrandM = text.match(/(Visa|Mastercard|American Express|Amex|Discover)\s*\*+\s*(\d{4})/i);
@@ -11573,9 +11586,9 @@ function parseOrderEmail(text){
   const qty = pick(/\bQty\s*:\s*(\d+)/i) || "1";
   const priceEach = pick(/\$([\d,]+\.\d{2})\s*\/\s*ea/i);
   // The amount before tax (1.9.154: a checkout's price goes by it), as the store writes it: Target's "Subtotal (2 items)" then
-  // "$59.98", or "Subtotal: $59.98". Never taken for the total (its pattern above skips "Subtotal" and "Sub-total"), and empty
-  // when the email has none.
-  const subtotal = pick(/\bsub-?total\b(?:\s*\([^)\n]{0,30}\))?[\s:|]*\$?\s*([\d,]+\.\d{2})/i);
+  // "$59.98", or "Subtotal: $59.98", "Sub-total" or "Sub Total". Never taken for the total (its pattern above skips all three),
+  // and empty when the email has none.
+  const subtotal = pick(/\bsub[\s-]?total\b(?:\s*\([^)\n]{0,30}\))?[\s:|]*\$?\s*([\d,]+\.\d{2})/i);
   const arrives = pick(/Arrives[^\n]*?([A-Z][a-z]{2},?\s+[A-Z][a-z]{2}\s+\d{1,2})/);
   return { store, orderNo, total, buyer, shipTo, shipAddr:shipAddrFrom(text), card:cardStr, item:item.replace(/\s+/g," ").slice(0,120), qty, priceEach, subtotal, arrives };
 }
@@ -14286,9 +14299,12 @@ function repairFromConfirmations(rows){
     if (!r.confirm) return;
     let changed = false;
     if (r.at && (!o.at || r.at < o.at || o.atGuess)){ o.at = r.at; delete o.atGuess; changed = true; }
-    ["total", "priceEach", "subtotal", "shipTo", "card", "arrives", "buyer"].forEach(k => { if (!o[k] && r[k]){ o[k] = r[k]; changed = true; } });
+    ["total", "priceEach", "shipTo", "card", "arrives", "buyer"].forEach(k => { if (!o[k] && r[k]){ o[k] = r[k]; changed = true; } });
     if (r.item && (!o.item || /^order$/i.test(o.item) || looksLikeCode(o.item))){ o.item = r.item; changed = true; }
     if (changed){ o.updatedAt = Date.now(); fixed++; }
+    // The amount before tax (1.9.154), which a checkout's price goes by, is filled in too, quietly: it isn't a date or price
+    // the order showed wrong, so it isn't counted ("fixed dates and prices for N orders").
+    if (!o.subtotal && r.subtotal){ o.subtotal = r.subtotal; o.updatedAt = Date.now(); }
   });
   return fixed;
 }
@@ -19564,8 +19580,9 @@ async function removeInterest(key){
 // no $0 for Friends and Family any more). From 1.9.154 (the owner's request, 2026-11-16, with defaults chosen for the owner)
 // a checkout's price goes by the order's amount before tax ($5 under $50 up to $25 from $200, the worker's prices.tiers): this
 // page sends that amount (sub: the email's Subtotal, else qty × the unit price) and the total with each order it reports or
-// alerts, and Invoice shows the tiers and, under each checkout, what it was priced on (basis, basisFrom). Friends and Family
-// still pay $5, and an older worker's answer (no tiers) shows what 1.9.153 did.
+// alerts, and Invoice shows the tiers, the price when the amount isn't known (prices.unknown), and under each checkout what it
+// was priced on (basis, basisFrom), saying when one still owed keeps a price it wouldn't get now (billKeptLine). Friends and
+// Family still pay $5, and an older worker's answer (no tiers) shows what 1.9.153 did.
 // The license worker keeps the plan and the invoice (GET /billing) and
 // refuses Submit to a buyer who isn't paid up (402); this page shows them on Invoice, opens Stripe, and reports the orders
 // on the buyer's own accounts sent as slots (POST /billing/checkouts: the worker bills the ones placed while the slot was
@@ -19621,8 +19638,13 @@ function billTiers(d){
 }
 // Tiers for this buyer: not Friends and Family's, whose price is one.
 const billTiersFor = (d) => d && d.family ? null : billTiers(d);
-// "$5 to $25", lowest and highest.
-const billTierRange = (t) => { const lo = Math.min(...t.map(x => x.price)), hi = Math.max(...t.map(x => x.price)); return lo === hi ? billMoney(lo) : `${billMoney(lo)} to ${billMoney(hi)}`; };
+// The price of a checkout whose amount the worker can't tell (prices.unknown, the owner's Price when the amount isn't known), in
+// cents, or null when the answer has none.
+const billUnknown = (d) => { const u = Number(d && d.prices && d.prices.unknown); return u > 0 && Number.isFinite(u) ? u : null; };
+// "$5 to $25", lowest and highest. With the answer (d), the price when the amount isn't known counts too, where it's said
+// beside the tiers (the plan card's last row, the line under the invoice), so the range never leaves out a price a row names.
+const billTierRange = (t, d) => { const ps = t.map(x => x.price).concat(d && billUnknown(d) ? [billUnknown(d)] : []), lo = Math.min(...ps), hi = Math.max(...ps);
+  return lo === hi ? billMoney(lo) : `${billMoney(lo)} to ${billMoney(hi)}`; };
 // "$5 under $50, $10 from $50, $15 from $100, $20 from $150 and $25 from $200".
 const billTierList = (t) => { const p = t.map((x, i) => i ? `${billMoney(x.price)} from ${billMoney(t[i - 1].below)}` : x.below == null ? billMoney(x.price) : `${billMoney(x.price)} under ${billMoney(x.below)}`);
   return p.length > 1 ? p.slice(0, -1).join(", ") + " and " + p[p.length - 1] : p[0]; };
@@ -19631,20 +19653,35 @@ const billTierSummary = (t) => billTierList(t) + ", by the order's amount before
 const billTierRows = (t) => t.map((x, i) => [i ? (x.below == null ? `${billMoney(t[i - 1].below)} and up` : `${billMoney(t[i - 1].below)} to ${billMoney(x.below - 1)}`) : x.below == null ? "Any amount" : `Under ${billMoney(x.below)}`, billMoney(x.price)]);
 // What pay per checkout costs this buyer, after "you pay": "$5 to $25 per checkout, by the order's amount before tax", or "$5
 // per checkout".
-const billPerCheckout = (d) => { const t = billTiersFor(d); return t ? `${billTierRange(t)} per checkout, by the order's amount before tax` : `${billMoney(billPrices(d).checkout)} per checkout`; };
+const billPerCheckout = (d) => { const t = billTiersFor(d); return t ? `${billTierRange(t, d)} per checkout, by the order's amount before tax` : `${billMoney(billPrices(d).checkout)} per checkout`; };
 // The amount a line was priced on, as GET /billing names it from 1.9.154 (basis in cents and basisFrom): "on $59.98 before
 // tax" (the order's amount before tax, or one the seller typed), "on about $57.56 before tax (from the $64.18 total)" (only the
 // total was known: the worker takes off the most sales tax can be, and the total shows when the line carries it), or "amount
-// not known" (priced at the seller's price for that, or a line from before 1.9.154). Nothing for an older worker's lines,
-// which have no basisFrom.
+// not known" (priced at the seller's price for that, or a line from before 1.9.154), or "Friends and Family price" (basisFrom
+// "family": written at their one price, whatever the amount; not shown to a buyer who's Friends and Family now). Nothing for an
+// older worker's lines, which have no basisFrom.
 const billCents2 = (c) => "$" + (Math.round(c) / 100).toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2});
 function billBasisNote(l){
   if (!l || !Object.prototype.hasOwnProperty.call(l, "basisFrom")) return "";
   const b = Number(l.basis), from = l.basisFrom;
+  if (from === "family") return "Friends and Family price";
   if (!(b > 0) || !Number.isFinite(b) || !["sub", "owner", "total"].includes(from)) return "amount not known";
   if (from !== "total") return `on ${billCents2(b)} before tax`;
   const tv = l.basisTotal != null ? l.basisTotal : l.total, tc = typeof tv === "number" ? tv : moneyCents(tv);
   return `on about ${billCents2(b)} before tax${tc > 0 && Number.isFinite(tc) ? ` (from the ${billCents2(tc)} total)` : ""}`;
+}
+// The tier an amount before tax (cents) falls in: its price.
+const billTierOf = (t, cents) => { const x = t.find(x => x.below == null || cents < x.below); return x ? x.price : null; };
+// Whether a checkout still owed keeps a price it wouldn't get now (1.9.154, with tiers): its tier by the amount it was priced on
+// (basisFrom sub, total or owner), the price when the amount isn't known for one priced on none (basisFrom null: unknown, or a
+// line from before 1.9.154), and a Friends and Family price for a buyer who isn't Friends and Family now. A line with no
+// basisFrom (an older worker's) has nothing to go by. Paid, canceled and waived ones don't count.
+function billKeptLine(l, d, tiers){
+  if (!l || ["paid", "canceled", "waived"].includes(l.state) || !Object.prototype.hasOwnProperty.call(l, "basisFrom")) return false;
+  const from = l.basisFrom, b = Number(l.basis);
+  if (from === "family") return !d.family;
+  const now = ["sub", "owner", "total"].includes(from) && b > 0 && Number.isFinite(b) ? billTierOf(tiers, b) : (billUnknown(d) || Number(billPrices(d).checkout) || null);
+  return now != null && Number(l.amount) !== now;
 }
 // Whether a buyer can pick or start the monthly plan, and add its extra 15 slots (1.9.143): only when the worker's plans
 // has "monthly", never decided here, so the owner could bring it back from the worker alone. An answer without plans (an
@@ -19959,7 +19996,7 @@ function openBillCancel(change){
   openLayer({
     title:change ? "After your monthly plan" : "Cancel your monthly plan?", small:true,
     body:`<p style="margin:0 0 12px;color:var(--ink-2)">${change ? `Your plan ends ${esc(end)}.` : `Your plan stays on until ${esc(end)}, then stops.`} After ${esc(end)}:</p>
-      <div class="radios"><label class="radio"><input type="radio" name="bc-then" value="checkout" ${cur === "checkout" ? "checked" : ""}>Pay per checkout (${billTiers(d) ? `${billTierRange(billTiers(d))} each, by the order's amount before tax` : `${billMoney(pr.checkout)} each`})</label>
+      <div class="radios"><label class="radio"><input type="radio" name="bc-then" value="checkout" ${cur === "checkout" ? "checked" : ""}>Pay per checkout (${billTiers(d) ? `${billTierRange(billTiers(d), d)} each, by the order's amount before tax` : `${billMoney(pr.checkout)} each`})</label>
       <label class="radio"><input type="radio" name="bc-then" value="" ${cur ? "" : "checked"}>No plan<small>Submit turns off</small></label></div>`,
     foot:`<button class="btn" data-close>${change ? "Cancel" : "Keep my plan"}</button><button class="btn btn-primary" id="bc-go">${change ? "Save" : "Cancel plan"}</button>`,
     mount:(panel, close) => {
@@ -20219,8 +20256,10 @@ function renderInvoice(){
   // mo: the monthly plan and its extra slots are offered (1.9.143: not once the owner removed it, the worker's plans). A
   // buyer already on it keeps it, with Cancel plan and Pay now, but adds or removes no slots and doesn't resume it.
   // famPay: Friends and Family who pay per checkout (1.9.144), never offered the monthly plan.
-  // tiers: prices by the order's amount before tax (1.9.154), never Friends and Family's.
+  // tiers: prices by the order's amount before tax (1.9.154), never Friends and Family's; unknown: with them, the price of a
+  // checkout whose amount FAFO can't tell.
   const pr = billPrices(d), s = d.sub, reason = d.block && d.block.reason, famPay = !!d.family && !d.exempt, mo = billMonthlyOffered(d) && !famPay, plan = billPlan(d), tiers = billTiersFor(d);
+  const unknown = tiers ? billUnknown(d) : null;
   const notes = (reason === "disputed-payment" ? `<p class="note note-bad" style="margin:0 0 14px">A payment is disputed with your bank. Contact your seller.</p>` : "")
     + (d.mode === "test" ? `<p class="note" style="margin:0 0 14px">Test mode: your seller is trying payments out. Stripe takes only its test cards, so nothing is really charged.</p>` : "");
   const card = (name, pill, rest) => `<div class="slip inv-plan inv-cur"><div class="inv-top"><div><div class="inv-eyebrow">Your plan</div><div class="inv-name">${name}</div></div>${pill}</div>${rest}</div>`;
@@ -20241,9 +20280,9 @@ function renderInvoice(){
     const monthlyN = pr.monthlySlots + pr.extraSlots;
     return head("What you pay your seller") + notes + `<p class="inv-lead">${mo ? "Pick how you pay. Until you do, Submit stays off." : "Your seller charges per checkout. Until you choose it, Submit stays off."}</p>
       <div class="inv-plans">
-        <div class="slip inv-plan"><div class="inv-eyebrow">Plan</div><div class="inv-name">Pay per checkout</div>${tiers ? `<div class="inv-price">${billTierRange(tiers).replace(" to ", "–")} <small>per checkout</small></div>
+        <div class="slip inv-plan"><div class="inv-eyebrow">Plan</div><div class="inv-name">Pay per checkout</div>${tiers ? `<div class="inv-price">${billTierRange(tiers, d).replace(" to ", "–")} <small>per checkout</small></div>
           <p class="item-sub">By the order's amount before tax:</p>
-          <ul class="inv-tiers" aria-label="Price per checkout by the order's amount before tax">${billTierRows(tiers).map(([a, p]) => `<li><span>${esc(a)}</span><strong>${esc(p)}</strong></li>`).join("")}</ul>`
+          <ul class="inv-tiers" aria-label="Price per checkout by the order's amount before tax">${billTierRows(tiers).concat(unknown ? [["Amount not known", billMoney(unknown)]] : []).map(([a, p]) => `<li><span>${esc(a)}</span><strong>${esc(p)}</strong></li>`).join("")}</ul>`
             : `<div class="inv-price">${billMoney(pr.checkout)} <small>per checkout</small></div>`}
           <p class="item-sub">You pay for each order on an account you sent as a slot or one your seller gave you. Each is ${billDueRule(d)}, and free if the store cancels it before you pay.</p>
           <div class="inv-acts"><button class="btn btn-primary" data-act="bill-plan-checkout">Pay per checkout</button></div></div>
@@ -20273,15 +20312,15 @@ function renderInvoice(){
   const kpi = (color, label, n) => `<span class="p-kpi"><span class="p-kpi-dot" style="background:${color}"></span>${label} <strong>${n}</strong></span>`;
   const kpis = `<div class="p-kpis">${kpi("var(--caution)", "Owed", billMoney(d.owed))}${d.overdue ? kpi("var(--danger)", "Overdue", billMoney(d.overdue)) : ""}${kpi("var(--ok)", "Paid in the last 30 days", billMoney(d.paid30))}</div>`;
   const body = d.lines.length ? invPayHTML(d) + invTableHTML(d) : `<div class="empty"><h2>Nothing owed</h2><p>Checkouts your seller makes on your slots show up here.</p></div>`;
-  const sub = famPay ? (pr.checkout ? `Friends and Family · ${billMoney(pr.checkout)} per checkout` : "Friends and Family") : tiers ? `Pay per checkout · ${billTierRange(tiers)} by order amount` : `Pay per checkout · ${billMoney(pr.checkout)} each`;
+  const sub = famPay ? (pr.checkout ? `Friends and Family · ${billMoney(pr.checkout)} per checkout` : "Friends and Family") : tiers ? `Pay per checkout · ${billTierRange(tiers, d)} by order amount` : `Pay per checkout · ${billMoney(pr.checkout)} each`;
   const overdue = billSundays(d) ? "From Monday it's overdue and Submit turns off until it's paid." : "An overdue checkout turns Submit off until it's paid.";
   // A checkout still to pay at another price (one from before the price changed, which keeps what it was billed) is why the
   // price is said to be for new ones, so the line doesn't contradict the rows above it. With tiers (1.9.154) the amounts differ
-  // anyway, and each row says what it was priced on.
-  const kept = !tiers && d.lines.some(l => !["paid", "canceled", "waived"].includes(l.state) && Number(l.amount) !== Number(pr.checkout));
-  const each = tiers ? `${billTierRange(tiers)} by its amount before tax (${billTierList(tiers)})` : billMoney(pr.checkout);
+  // anyway, so it goes by each line: one that keeps a price it wouldn't get now (billKeptLine) says so, in a sentence of its own.
+  const kept = tiers ? d.lines.some(l => billKeptLine(l, d, tiers)) : d.lines.some(l => !["paid", "canceled", "waived"].includes(l.state) && Number(l.amount) !== Number(pr.checkout));
+  const each = tiers ? `${billTierRange(tiers, d)} by its amount before tax (${billTierList(tiers)})${unknown ? `, or ${billMoney(unknown)} when FAFO can't tell an order's amount` : ""}` : billMoney(pr.checkout);
   return head(sub) + notes + (famPay && famSub ? `<div class="slip inv-plan inv-cur">${famSub}</div>` : "") + kpis + body
-    + `<p class="note" style="margin:14px 0 0">Each ${kept ? "new " : ""}checkout is ${each}${kept ? " (ones already on your invoice keep their price)" : ""}, ${billDueRule(d)}. ${overdue}${mo ? ` <button class="link" data-act="bill-monthly" style="font-size:calc(13px*var(--fs))">Switch to the monthly plan</button>` : ""}</p>`;
+    + `<p class="note" style="margin:14px 0 0">Each ${kept ? "new " : ""}checkout is ${each}${kept && !tiers ? " (ones already on your invoice keep their price)" : ""}, ${billDueRule(d)}.${kept && tiers ? " Ones already on your invoice keep the price they had." : ""} ${overdue}${mo ? ` <button class="link" data-act="bill-monthly" style="font-size:calc(13px*var(--fs))">Switch to the monthly plan</button>` : ""}</p>`;
 }
 
 /* ---- Settings → Billing (the seller's own FAFO) ---- */
