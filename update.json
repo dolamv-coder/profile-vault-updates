@@ -1,10 +1,10 @@
 {
-  "version": "1.9.150",
-  "url": "index-1.9.150.html",
-  "sha256": "4f32f3a418496f8274ab686ecf28e5814dbf86f5d7d4a241e573e719548b1d7b",
-  "signature": "yjvy78FWsJMfN6VjDJswO4wlg5dYuD0ZecWRiBYO8+p7GMRTb8cJ19oQiBgw7kytfDIZe3ieDDEUBueo8aASAA==",
+  "version": "1.9.151",
+  "url": "index-1.9.151.html",
+  "sha256": "b8c5be46216c2dcc3b5e6d0e7d89fd923b77a3a5c105f9cc1f2e89a63f118d8d",
+  "signature": "zbdW42Yx5rkJeyEvRD5qtBWm7XPkEte44Dl5gBJRZCCivOeVVjNXYSEmbH0q1RuddniZlfTdmyEbuegUDeAjAg==",
   "minAppVersion": "0",
-  "notes": "Export profiles now has a list of formats to pick from, with a search: tick one or more and each downloads as its own file. New: HayhaAIO 2.0, Refract, Shikari and AYCD's Google Sheet CSV, beside Hidden AIO, StellarAIO, Valor and AYCD. In HayhaAIO 2.0, Hidden AIO, Refract, Shikari, StellarAIO and Valor files, card numbers, expiry dates, phone numbers, states and countries are written the way each bot's own export writes them.",
+  "notes": "Settings, Backups, Orders as CSV now also lists each order's ship-to address, the inbox it came to and its unit price (when the order email shows one), in three new columns at the end.",
   "installerUrl": "",
-  "publishedAt": "2026-11-15T08:51:42.560Z"
+  "publishedAt": "2026-11-16T03:16:06.640Z"
 }
