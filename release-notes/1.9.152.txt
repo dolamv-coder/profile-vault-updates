@@ -1,0 +1,1 @@
+Orders is now called Dashboard, in the sidebar, the phone's tabs and at the top of the page. Everything on it works as before.

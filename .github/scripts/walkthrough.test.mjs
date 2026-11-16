@@ -412,7 +412,7 @@ try {
     assert.ok((await s.setting()).sent > 0);
     await s.page.waitForFunction(() => document.querySelector('#guide .guide-step[data-step="wait"].is-cur'));
     assert.deepEqual((await s.steps()).map((x) => [x.id, x.done]), [["make", true], ["ready", true], ["interests", true], ["pay", true], ["submit", true], ["wait", false]]);
-    assert.match(await s.text("#guide .guide-body"), /^Your slots show Pending approval until your seller approves them, then Success\. If one shows Declined, switch it off and on again to send it in a new batch, or ask your seller\. Orders your seller places on an assigned account show up in Orders on their own\. On your own account, the store emails you: FAFO's desktop app adds those orders when it syncs that inbox\. Go to Submit$/);
+    assert.match(await s.text("#guide .guide-body"), /^Your slots show Pending approval until your seller approves them, then Success\. If one shows Declined, switch it off and on again to send it in a new batch, or ask your seller\. Orders your seller places on an assigned account show up on your Dashboard on their own\. On your own account, the store emails you: FAFO's desktop app adds those orders when it syncs that inbox\. Go to Submit$/);
   });
   await test("the seller approves (/submissions/status): the last step ticks and You're all set shows; Close guide sets done", async () => {
     W.approved = true;
