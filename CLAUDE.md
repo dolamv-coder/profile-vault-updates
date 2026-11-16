@@ -2573,6 +2573,18 @@ to export as. Something like in the picture", then, with Stellar's and Valor's e
   the newest page has no `EXPORT_FORMATS`. CI runs it on pull requests that change `license-worker/src/index.js` too.
 - Nothing gains a field.
 
+From 1.9.151 Settings → Backups → **Orders as CSV** (`ordersCSV`) ends with two more columns, **Ship Address** and **Inbox**
+(the owner's request, 2026-11-16, for a sheet of the Target orders placed on 11/13 like the 10/9 one, which leaves three
+people's orders out by the address they ship to: every order there ships to the same name, and the orders' emails went to
+inboxes the Gmail connector can't read). The columns before them stay where they were, so nothing that reads the file by
+position moves. Ship Address is the order's `shipAddr` on one line (`csvAddr`: its lines trimmed, a comma at a line's end
+dropped, joined with ", "), Inbox its `inbox` (the email address of the inbox it came to); either is empty for an order with
+none. FAFO keeps an order's total only, so the file still has no unit price, tax or shipping. `orders-csv.test.mjs` runs the
+page in Chromium (in CI after Export profiles' formats) on a vault made with Use this browser only and made-up orders: the
+file's whole text, from the button (`orders-<date>.csv`, no BOM) and from `ordersCSV`, a multi-line address, one with a
+comma at a line's end and spaces around it, quotes in an item, an order with no address or inbox, and no orders. It fails if
+the newest page has no Ship Address column. Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

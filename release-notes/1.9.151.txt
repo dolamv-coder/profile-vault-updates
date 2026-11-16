@@ -1,0 +1,1 @@
+Settings, Backups, Orders as CSV now also lists each order's ship-to address and the inbox it came to, in two new columns at the end.
