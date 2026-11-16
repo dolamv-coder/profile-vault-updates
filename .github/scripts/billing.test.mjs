@@ -563,7 +563,7 @@ try {
       await test("tiers, the window Submit opens with no plan names them", async () => {
         const w = await windowOf(() => window.__t.billingBlockDialog({ reason: "no-plan", text: "Pick a plan to submit." }));
         assert.equal(w.title, "Choose pay per checkout first");
-        assert.match(w.text, new RegExp("Pay per checkout is \\$5 to \\$25 for each order your seller places on your slots: " + SUMMARY.replace(/\$/g, "\\$") + "\\."));
+        assert.match(w.text, new RegExp("Pay per checkout is \\$5 to \\$25 for each order your seller places on your slots: " + SUMMARY.replace(/\$/g, "\\$") + ", or \\$10 when FAFO can't tell an order's amount\\."));
         assert.doesNotMatch(w.text, MONTHLY);
         // With no answer in memory (the worker didn't answer in time), no price is named.
         const t = await ev(async () => { const T = window.__t, d = T.BILL.d; T.BILL.d = null;
@@ -581,6 +581,9 @@ try {
         await answer(Object.assign({ plans: ["checkout"], prices: Object.assign({}, PRICES_T, { checkout: 3000, unknown: 3000 }) }, NO_PLAN));
         assert.equal(await price(), "$5–$30 per checkout");
         assert.deepEqual((await rows()).slice(-2), [["$200 and up", "$25"], ["Amount not known", "$30"]]);
+        // Submit's window with no plan names the same range and the price for an unknown amount (the third review).
+        const w30 = await windowOf(() => window.__t.billingBlockDialog({ reason: "no-plan", text: "Pick a plan to submit." }));
+        assert.match(w30.text, new RegExp("Pay per checkout is \\$5 to \\$30 for each order your seller places on your slots: " + SUMMARY.replace(/\$/g, "\\$") + ", or \\$30 when FAFO can't tell an order's amount\\."));
         // $3: below every tier.
         await answer(Object.assign({ plans: ["checkout"], prices: Object.assign({}, PRICES_T, { checkout: 300, unknown: 300 }) }, NO_PLAN));
         assert.equal(await price(), "$3–$25 per checkout");
@@ -830,6 +833,10 @@ try {
         assert.equal(await f({ qty: "1", priceEach: "59.99", total: "45.00" }), "");
         // A cent below is below.
         assert.equal(await f({ qty: "1", priceEach: "29.99", total: "29.98" }), "");
+        // A total of $0.00 (a credit or gift card covered it all) is below too (the third review); no total is no total.
+        assert.equal(await f({ subtotal: "159.98", total: "0.00" }), "");
+        assert.equal(await f({ qty: "2", priceEach: "79.99", total: "$0.00" }), "");
+        assert.equal(await f({ qty: "2", priceEach: "79.99", total: "" }), "159.98");
         // Tax rounded per unit (3 × $67.08 at 8.25%: $5.53 a unit, $16.59, where $201.24 × 8.25% is $16.60): the amount stays,
         // with the Subtotal and without.
         assert.equal(await f({ subtotal: "201.24", qty: "3", priceEach: "67.08", total: "217.83" }), "201.24");

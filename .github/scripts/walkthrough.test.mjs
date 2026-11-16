@@ -398,6 +398,11 @@ try {
     await s.ev(() => window.__t.refreshBilling(true));
     for (let i = 0; i < 100 && !/\$5 to \$25/.test(await body()); i++) await s.page.waitForTimeout(50);
     assert.equal(await body(), "Your seller charges $5 to $25 for each checkout, by the order's amount before tax. On Invoice, choose Pay per checkout. Until you do, Submit stays off. Open Invoice");
+    // A price for an unknown amount above the tiers widens the range, as on Invoice (the third review).
+    W.billing = billing({ prices: Object.assign({}, PRICES, { checkout: 3000, unknown: 3000, tiers: TIER_LIST }) });
+    await s.ev(() => window.__t.refreshBilling(true));
+    for (let i = 0; i < 100 && !/\$5 to \$30/.test(await body()); i++) await s.page.waitForTimeout(50);
+    assert.equal(await body(), "Your seller charges $5 to $30 for each checkout, by the order's amount before tax. On Invoice, choose Pay per checkout. Until you do, Submit stays off. Open Invoice");
     W.billing = billing({});
     await s.ev(() => window.__t.refreshBilling(true));
     for (let i = 0; i < 100 && /\$5 to \$25/.test(await body()); i++) await s.page.waitForTimeout(50);

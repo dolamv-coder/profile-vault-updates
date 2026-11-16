@@ -11533,11 +11533,10 @@ function orderSubBeforeTax(o){
   const sub = moneyCents(o && o.subtotal), qty = /^\s*\d{1,4}\s*$/.test(String((o && o.qty) || "1")) ? Number(String(o.qty || "1").trim()) : 0;
   const each = moneyCents(o && o.priceEach), base = sub > 0 ? sub : each > 0 && qty > 0 ? each * qty : 0;
   if (!(base > 0)) return "";
+  // A total of $0.00 (a credit or gift card covered it all) is below the items' price too.
   const total = moneyCents(o && o.total);
-  if (total > 0){
-    if (total < base) return "";
-    if (!(sub > 0) && total > base * 1.115 + 1000) return "";
-  }
+  if (total != null && total < base) return "";
+  if (total > 0 && !(sub > 0) && total > base * 1.115 + 1000) return "";
   return (base / 100).toFixed(2);
 }
 const orderById = (id) => (S.orders || []).find(o => o.id === id) || null;
@@ -20040,7 +20039,7 @@ function billingBlockDialog(b){
   const pr = billPrices(d), tiers = billTiersFor(d);
   openLayer({
     title, small:true,
-    body:`<p style="margin:0;color:var(--ink-2)">${esc(b.text || BILL_BLOCK[r] || "Your seller won't take slots until this is paid.")}</p>${r === "no-plan" ? `<p style="margin:10px 0 0;color:var(--ink-2)">${tiers ? `Pay per checkout is ${billTierRange(tiers)} for each order your seller places on your slots: ${billTierSummary(tiers)}.` : d ? `Pay per checkout is ${billMoney(pr.checkout)} for each order your seller places on your slots.` : "Pay per checkout charges you for each order your seller places on your slots."}${mo ? ` Invoice also has the monthly plan, ${billMoney(pr.monthly)} for ${pr.monthlySlots} slots.` : ""}</p>` : ""}`,
+    body:`<p style="margin:0;color:var(--ink-2)">${esc(b.text || BILL_BLOCK[r] || "Your seller won't take slots until this is paid.")}</p>${r === "no-plan" ? `<p style="margin:10px 0 0;color:var(--ink-2)">${tiers ? `Pay per checkout is ${billTierRange(tiers, d)} for each order your seller places on your slots: ${billTierSummary(tiers)}${billUnknown(d) ? `, or ${billMoney(billUnknown(d))} when FAFO can't tell an order's amount` : ""}.` : d ? `Pay per checkout is ${billMoney(pr.checkout)} for each order your seller places on your slots.` : "Pay per checkout charges you for each order your seller places on your slots."}${mo ? ` Invoice also has the monthly plan, ${billMoney(pr.monthly)} for ${pr.monthlySlots} slots.` : ""}</p>` : ""}`,
     foot:`<button class="btn" data-close>Close</button><button class="btn" id="bb-inv">Open Invoice</button>${act ? `<button class="btn btn-primary" id="bb-go">${esc(act)}</button>` : ""}`,
     mount:(panel, close) => {
       $("#bb-inv", panel).addEventListener("click", () => { closeAllLayers(); billOpen(); });
@@ -21134,7 +21133,7 @@ function guideState(){
     // By the order's amount before tax (1.9.154), when the worker's answer has tiers; else its one price, when it has one.
     const cents = Number(b.prices && b.prices.checkout) || 0, tiers = billTiersFor(b);
     steps.push({id:"pay", title:"Choose how you'll pay", done:!!billPlan(b),
-      body:`<p>Your seller charges ${tiers ? `${esc(billTierRange(tiers))} for each checkout, by the order's amount before tax` : `${cents > 0 ? esc(billMoney(cents)) + " " : ""}for each checkout`}. On <strong>Invoice</strong>, choose <strong>Pay per checkout</strong>. Until you do, Submit stays off.</p>`,
+      body:`<p>Your seller charges ${tiers ? `${esc(billTierRange(tiers, b))} for each checkout, by the order's amount before tax` : `${cents > 0 ? esc(billMoney(cents)) + " " : ""}for each checkout`}. On <strong>Invoice</strong>, choose <strong>Pay per checkout</strong>. Until you do, Submit stays off.</p>`,
       acts:go("pay", "Open Invoice")});
   }
   steps.push({id:"submit", title:"Switch it on and submit", done:sent,
