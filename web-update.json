@@ -1,10 +1,10 @@
 {
-  "version": "1.9.153",
-  "url": "index-1.9.153.html",
-  "sha256": "07e5690f7211a51936e732b74e563bb3ea7aeed0febab795c1dcd9eada75abf5",
-  "signature": "QS+bsp8t8YblEGOYYcb7GmSLwHFcWyKUrHimUsd9ycORilPgJs9PO1agE87IiA6LglXYBdS82XsnTBWVHhTJAA==",
+  "version": "1.9.154",
+  "url": "index-1.9.154.html",
+  "sha256": "a6f81cee59fa5eb27be63030ea7091a1521b14639b7e566b8f66b04b3c67b477",
+  "signature": "O1jPl64F1YJGTqn56QlI3hQJFnoZOL+chmUl1Qwx4GZM+8DLX/JiLvW6q4l2hWt/xwUAj+rmjnzOwymuZ+/YBA==",
   "minAppVersion": "0",
-  "notes": "Select orders on the Dashboard and choose Export to download them as an Excel report: a summary of each person's addresses and totals, a tab for each person, every order with its tax, and canceled ones on a tab of their own. FAFO fills in who each address is for and remembers the names you change.",
+  "notes": "Checkouts are now priced by the order's amount before tax: $5 under $50, $10 from $50, $15 from $100, $20 from $150 and $25 from $200. Friends and Family still pay $5. Invoice shows the price list and, under each checkout, the amount it was priced on.",
   "installerUrl": "",
-  "publishedAt": "2026-11-16T12:44:26.530Z"
+  "publishedAt": "2026-11-16T22:54:10.152Z"
 }
