@@ -414,6 +414,29 @@ if (html.includes(':spamMoves"')) test("saved Find in Spam searches added on two
   }
 });
 
+// 1.9.153+: the names Export gives addresses (settings.exportPeople, {"<address key>": {name, at}}): two devices that each name
+// one before they agree keep both, and one taken off on one side stays off.
+if (html.includes(':exportPeople"')) test("export names given on two devices keep both; one taken off stays off", () => {
+  const e = (name, at) => ({ name, at });
+  for (const base of [blank(), null]) {
+    const a = blank(), b = blank();
+    a.settings.exportPeople = { "100 EXAMPLE ST N|SAMPLETOWN|33701": e("Sam", 1) }; b.settings.exportPeople = { "200 SAMPLE AVE|OTHERTOWN|90001": e("Alex", 2) };
+    const k = [...syncUnits(a).map.keys()].find((x) => x.endsWith(":exportPeople"));
+    for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+      const r = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, {});
+      assert.deepEqual(Object.keys(r.state.settings.exportPeople).sort(), ["100 EXAMPLE ST N|SAMPLETOWN|33701", "200 SAMPLE AVE|OTHERTOWN|90001"]);
+    }
+  }
+  const base = blank(); base.settings.exportPeople = { k1: e("Sam", 1) };
+  const a = blank(), b = blank();
+  a.settings.exportPeople = {};   // taken off here
+  b.settings.exportPeople = { k1: e("Sam", 1), k3: e("Pat", 3) };
+  const k = [...syncUnits(base).map.keys()].find((x) => x.endsWith(":exportPeople"));
+  for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
+    const r = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, origOf(base, [k]));
+    assert.deepEqual(Object.keys(r.state.settings.exportPeople), ["k3"]);
+  }
+});
 // 1.9.139+: where each buyer's store emails are forwarded (settings.buyerEmails, {buyerId: {email, name, at}}): two devices
 // that each set one before they agree keep both, and one taken off on one side stays off.
 if (html.includes(':buyerEmails"')) test("buyers' emails set on two devices keep both; one taken off stays off", () => {
