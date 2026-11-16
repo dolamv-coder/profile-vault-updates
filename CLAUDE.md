@@ -2587,6 +2587,18 @@ whole text, from the button (`orders-<date>.csv`, no BOM) and from `ordersCSV`, 
 line break at either end, a comma at a line's end, spaces around), quotes in an item, a unit price and none, an order with
 no address or inbox, and no orders. It fails if the newest page has no Unit Price column. Nothing gains a field.
 
+From 1.9.152 the orders page is called **Dashboard** (the owner's request, 2026-11-16, with a screenshot of the sidebar's
+Orders: "Change orders to Dashboard"): the sidebar's first item, the phone's first tab (`#mnav`), the page's heading
+(`view-title`) and the help that sends someone there (the Picture window's "select the order on the Dashboard", Send to
+buyer's "on their Dashboard", Settings' Alerts and Orders your seller places, the setup guide's step 6). Its id stays
+`orders` (`data-id`, `UI.view`, `ORDERS_SHOWN`, `order-…` actions), so saved views, notifications and every test that clicks
+`#side [data-id="orders"]` are as before, and so are the words about orders themselves (Orders as CSV, Orders sent to
+buyers, Settings' Orders eyebrow over Alerts, the phone tracker's Orders app). The front page says it too
+(`web-worker/src/site.js`, which Deploy web app ships on merge): its phone mockup's heading and "Paste your order
+confirmation emails into the Dashboard". `dashboard.test.mjs` runs the page in Chromium (in CI after Orders as CSV): the
+sidebar and the heading on a desktop, the first tab on a phone, and no help text naming the Orders page; it fails if the
+newest page has no Dashboard heading. `walkthrough.test.mjs` follows step 6's new words. Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

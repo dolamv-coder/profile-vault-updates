@@ -496,7 +496,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
           </div>
         </div>
         <div class="phone"><div class="screen"><span class="notch"></span><span class="sbar"><span>9:41</span><i></i></span>
-          <h5>Orders</h5>
+          <h5>Dashboard</h5>
           <div class="chips"><span class="chip">Today</span><span class="chip on">Weekly</span><span class="chip">Overall</span></div>
           <div class="stick"><span class="lab"><span>Checkouts</span><span>Weekly</span></span><strong>23</strong><small>successful orders</small></div>
           <div class="olist">${ORDERS.map(([n, s, q, st, th]) => `<div class="order"><span class="thumb ${th}">${ic("box")}</span><span><b>${n}</b><span class="s"><span class="q">${mark(s)}×${q}</span>${pill(st)}</span></span></div>`).join("")}</div>
@@ -564,7 +564,7 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
         <div class="cell w7"><div class="art" aria-hidden="true"><div class="panel-card track">
           <div class="top-r"><span class="thumb a">${ic("box")}</span><span><b>Booster Bundle ×3</b><small>Target · Order #4471-0290</small></span></div>
           <div class="steps-line"><span class="d">Placed</span><span class="d">Shipped</span><span class="d">Arriving</span><span>Delivered</span></div>
-        </div></div><h3>Every order in one place.</h3><p>Paste your order confirmation emails into Orders and each one becomes an order. Mark it shipped, arriving, delivered or canceled as it goes.</p></div>
+        </div></div><h3>Every order in one place.</h3><p>Paste your order confirmation emails into the Dashboard and each one becomes an order. Mark it shipped, arriving, delivered or canceled as it goes.</p></div>
         <div class="cell w5"><div class="art" aria-hidden="true"><div class="big"><strong>92%</strong><span class="meter"><i style="flex:23"></i><i style="flex:2"></i></span><small>23 items stuck · 2 canceled</small></div></div><h3>Your stick rate, on your success card.</h3><p>Generate success shows how many of your items weren't canceled, for today, this week or any dates you pick.</p></div>
         <div class="cell w12"><div class="art" aria-hidden="true"><div class="devices"><span class="dev pc">${ic("monitor")}Computer</span><span class="syncdot"><span class="t ok">${ic("sync")}</span>Synced</span><span class="dev ph">${ic("phone")}Phone</span></div></div><h3>One vault, every screen.</h3><p>Log in with Discord on your computer and your phone, and the same vault opens on both. It's encrypted before it leaves either one.</p></div>
       </div>
