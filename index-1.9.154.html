@@ -11521,23 +11521,21 @@ const moneyCents = (v) => {
   return m ? Number(m[1].replace(/,/g, "")) * 100 + Number((m[2] || "0").padEnd(2, "0")) : null;
 };
 // An order's amount before tax, which a checkout's price goes by (1.9.154, the owner's request, 2026-11-16: "$5 under $50 …
-// All prices are included before tax"): what the order cost before tax, after a store's discount, as "59.98"; "" when it isn't
-// known (the license worker then goes by the total less the most sales tax can be, or the owner's price for an unknown amount).
-// It starts from the store email's Subtotal when FAFO read one, else qty × the unit price ("$x / ea"). With the total known it
-// goes by the Dashboard export's tax model (oxFits, 1.9.153: the total is that amount less a discount of $5 to $30, plus a sales
-// tax rate's tax): when the total only fits with a discount (Target's $5 off at checkout), the smallest one comes off; when the
-// total is below it and nothing fits (a gift card, a discount it doesn't know), none; and with no Subtotal read, none when the
-// total is more than tax and $10 of shipping could add (an order of several items, whose first one this is).
+// All prices are included before tax"), as "59.98"; "" when it isn't known (the license worker then goes by the total less the
+// most sales tax can be, total ÷ 1.115, which never overcharges, or the owner's price for an unknown amount). It's the store
+// email's Subtotal when FAFO read one, else qty × the unit price ("$x / ea"). With the total known: "" when the total is below
+// it (the order cost less than its items' price: a discount, a gift card or a credit), and, with no Subtotal read, "" when the
+// total is more than tax and $10 of shipping could add (an order of several items, whose first one this is). A store discount
+// the total doesn't show below the items' price isn't taken off: one order alone can't tell a discount from another tax rate
+// (the review found the Dashboard export's oxFits taking $5 to $30 off ordinary orders, at rates it doesn't list and with
+// tax rounded per unit), so the amount stays the items' price, at most a tier higher than with the discount.
 function orderSubBeforeTax(o){
   const sub = moneyCents(o && o.subtotal), qty = /^\s*\d{1,4}\s*$/.test(String((o && o.qty) || "1")) ? Number(String(o.qty || "1").trim()) : 0;
   const each = moneyCents(o && o.priceEach), base = sub > 0 ? sub : each > 0 && qty > 0 ? each * qty : 0;
   if (!(base > 0)) return "";
   const total = moneyCents(o && o.total);
   if (total > 0){
-    // oxFits and its helpers are defined further down (the ORDERS-XLSX block); this only runs once the page has loaded.
-    const fits = sub > 0 ? oxFits(1, sub, total) : oxFits(qty, each, total);
-    if (fits.length && !fits.some(f => f.off === 0)) return ((base - Math.min(...fits.map(f => f.off))) / 100).toFixed(2);
-    if (!fits.length && total < base) return "";
+    if (total < base) return "";
     if (!(sub > 0) && total > base * 1.115 + 1000) return "";
   }
   return (base / 100).toFixed(2);

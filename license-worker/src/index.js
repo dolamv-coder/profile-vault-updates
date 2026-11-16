@@ -4180,8 +4180,8 @@ const checkoutPrice = async (env, key = "checkout") => key === "family" ? PRICE_
 // $10 to start), which was the price per checkout until then. A line keeps the amount it was written with (lineStmt's
 // upsert changes it only for a buyer's report with no amount, not being paid, that an alert or the owner takes over with
 // one), and its basis goes in billing_line_basis (a new table: db:init can't add columns), written in the batch of the
-// line's INSERT, only for the line that INSERT made or re-priced. Friends and Family's is "family" (their $5, whatever the
-// amount, which is kept for information).
+// line's INSERT, only for the line that INSERT made or re-priced. Friends and Family's always has one, "family" (their $5,
+// whatever the amount, which is kept for information, or 0 when none is known).
 const PRICE_TIERS = Object.freeze([{ below: 5000, price: 500 }, { below: 10000, price: 1000 }, { below: 15000, price: 1500 },
   { below: 20000, price: 2000 }, { below: null, price: 2500 }].map((t) => Object.freeze(t)));
 const TAX_MAX = 0.115, MONEY_MAX = 10000000;   // 11.5%; an amount over $100,000 is no amount
@@ -4214,9 +4214,11 @@ const usd = (c) => "$" + String(Math.floor(c / 100)).replace(/\B(?=(\d{3})+(?!\d
 // "amount not known".
 const basisNote = (basis, from, total) => basis == null ? "amount not known" : from === "family" ? "Friends and Family price"
   : from === "total" ? `on about ${usd(basis)} before tax${total ? ` (from the ${total} total)` : ""}` : `on ${usd(basis)} before tax`;
-// "$5 under $50, $10 from $50, $15 from $100, $20 from $150 and $25 from $200, by the order's amount before tax"
-const tierWords = () => PRICE_TIERS.map((t, i) => i === 0 ? `${money(t.price)} under ${money(t.below)}`
-  : `${i === PRICE_TIERS.length - 1 ? "and " : ""}${money(t.price)} from ${money(PRICE_TIERS[i - 1].below)}`).join(", ").replace(", and ", " and ") + ", by the order's amount before tax";
+// "$5 under $50, $10 from $50, $15 from $100, $20 from $150 and $25 from $200" (tierList), then (tierWords) ", by the order's
+// amount before tax"
+const tierList = () => PRICE_TIERS.map((t, i) => i === 0 ? `${money(t.price)} under ${money(t.below)}`
+  : `${i === PRICE_TIERS.length - 1 ? "and " : ""}${money(t.price)} from ${money(PRICE_TIERS[i - 1].below)}`).join(", ").replace(", and ", " and ");
+const tierWords = () => tierList() + ", by the order's amount before tax";
 // The price a line takes: Friends and Family's, else its basis's tier, else (null) the price when the amount isn't known.
 const linePrice = (kind, b) => kind === "family" ? PRICE_FAMILY : b ? tierPrice(b.basis) : null;
 // The monthly plan is offered only with BILLING_MONTHLY = "on" (the tests, or the owner bringing it back): the owner removed
@@ -4553,11 +4555,12 @@ async function billable(c, w, d) {
 const PAYING_SQL = (t) => `EXISTS (SELECT 1 FROM billing_payments p WHERE p.key_hash = ${t}.key_hash AND p.mode = ${t}.mode AND p.kind = 'pay' AND p.status = 'open'
   AND EXISTS (SELECT 1 FROM json_each(p.line_ids) j WHERE j.value = ${t}.id))`;
 // The statements that put one order on a buyer's invoice (billable already checked), for one D1 batch: the line, then its
-// basis (billing_line_basis) when the amount it's priced on is known. The line's amount: Friends and Family's (`price` from
-// billable: "family"), always PRICE_FAMILY, $5; else the tier of the order's amount before tax (`basis`, from lineBasis, or
-// the owner's {basis, from: "owner"}: tierPrice, 2026-11-16); else the price when the amount isn't known as it is when the
-// line is written (priceSql: the owner's Billing page, else PRICE_CHECKOUT, $10), never at $0. Due by the end of the Sunday
-// after the order's day, or after today (Eastern) if that's later, so a late alert or report is never overdue as it arrives.
+// basis (billing_line_basis) when the amount it's priced on is known, or it's Friends and Family's. The line's amount:
+// Friends and Family's (`price` from billable: "family"), always PRICE_FAMILY, $5; else the tier of the order's amount
+// before tax (`basis`, from lineBasis, or the owner's {basis, from: "owner"}: tierPrice, 2026-11-16); else the price when
+// the amount isn't known as it is when the line is written (priceSql: the owner's Billing page, else PRICE_CHECKOUT, $10),
+// never at $0. Due by the end of the Sunday after the order's day, or after today (Eastern) if that's later, so a late
+// alert or report is never overdue as it arrives.
 // One order belongs to one buyer, so an alert or the owner never adds one that an alert or the owner put on another buyer's
 // invoice (another buyer's own report doesn't count: it's only their word). An alert or the owner takes over a line the
 // buyer's FAFO reported, unless their FAFO said the store canceled it (the owner can charge it again), and its due date
@@ -4568,11 +4571,14 @@ const PAYING_SQL = (t) => `EXISTS (SELECT 1 FROM billing_payments p WHERE p.key_
 // from a page before 1.9.154) and no open pay session holds it (its Stripe page charges the amounts it was opened with), so
 // the alert's or the owner's amount isn't lost; one with a basis of its own, or being paid, keeps its amount and basis. The
 // basis row goes on the line this INSERT made (its new id), or on the line just re-priced (no longer the buyer's, at the
-// price this statement wrote): INSERT OR IGNORE, so a line that has one keeps it. That also puts it on a line from an alert
-// or the owner already there at that same price with none, which then reads as priced on it, as it could have been.
-// Friends and Family's basis row says so (basis_from "family", with the amount kept for information), so their $5 lines
-// never read as priced on an amount whose tier is more, once the owner charges them. The first statement is the line's,
-// whose meta.changes says whether it was added or taken over (re-priced or not).
+// price this statement wrote, and no open pay session holding it, as the upsert decides: a take-over that kept the amount
+// a Stripe page holds writes none, even when that amount is the one this statement would have given, the second review):
+// INSERT OR IGNORE, so a line that has one keeps it. That also puts it on a line from an alert or the owner already there
+// at that same price with none (and not being paid), which then reads as priced on it, as it could have been.
+// Friends and Family's lines always get one (basis_from "family", with the amount kept for information, or 0 when none is
+// known: the second review), so their $5 lines read "Friends and Family price", never as priced on an amount whose tier is
+// more, nor "amount not known", once the owner charges them. The first statement is the line's, whose meta.changes says
+// whether it was added or taken over (re-priced or not).
 function lineStmt(env, c, l) {
   const today = etDay(c.now), due = sundayEndAfter(l.orderAt > today ? l.orderAt : today), key = l.price === "family" ? "family" : "checkout";
   const b = l.basis && Number.isSafeInteger(l.basis.basis) && l.basis.basis > 0 ? l.basis : null, fixed = linePrice(key, b), id = randomId(12);
@@ -4586,11 +4592,11 @@ function lineStmt(env, c, l) {
     WHERE billing_lines.source = 'buyer' AND excluded.source <> 'buyer' AND billing_lines.paid_at IS NULL AND billing_lines.waived_at IS NULL AND billing_lines.canceled_at IS NULL`)
     .bind(l.hash, c.mode, l.store, l.orderNo, id, String(l.storeName || "").slice(0, 40), String(l.item || "").slice(0, 120), String(l.qty || "").slice(0, 6),
       l.orderAt, l.acctHash || "", String(l.profile || "").slice(0, 80), l.source, fixed != null ? fixed : PRICE_CHECKOUT, c.now, due, l.held || null, b ? 1 : 0);
-  if (!b) return [line];
   const fam = key === "family";
+  if (!b && !fam) return [line];
   return [line, env.DB.prepare(`INSERT OR IGNORE INTO billing_line_basis (line_id, basis, basis_from, total) SELECT id, ?2, ?3, ?4 FROM billing_lines
-    WHERE key_hash = ?5 AND mode = ?6 AND store = ?7 AND order_no = ?8 AND (id = ?1 OR (source <> 'buyer' AND amount = ?9))`)
-    .bind(id, b.basis, fam ? "family" : String(b.from), fam ? "" : String(b.total || "").slice(0, 20), l.hash, c.mode, l.store, l.orderNo, fixed)];
+    WHERE key_hash = ?5 AND mode = ?6 AND store = ?7 AND order_no = ?8 AND (id = ?1 OR (source <> 'buyer' AND amount = ?9 AND NOT ${PAYING_SQL("billing_lines")}))`)
+    .bind(id, b ? b.basis : 0, fam ? "family" : String(b.from), fam ? "" : String(b.total || "").slice(0, 20), l.hash, c.mode, l.store, l.orderNo, fixed)];
 }
 const orderNoOf = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toUpperCase().slice(0, 40);
 // A canceled order: unpaid lines go (free), from an alert (any buyer's line from an alert or the owner) or from the buyer's
@@ -5026,7 +5032,8 @@ const plansOf = (env, w) => monthlyOffered(env) && !(w && w.family) ? ["checkout
 // out as slots in the last 45 days, from the earliest day one was). family: Friends and Family, whose price per checkout
 // (prices.checkout, their own; prices.family is that price for anyone) is always $5 (PRICE_FAMILY), whatever the amount.
 // Everyone else's checkouts take their tier (prices.tiers) by the amount each line was priced on (basis, basisFrom: from
-// billing_line_basis), or prices.unknown when it wasn't known.
+// billing_line_basis), or prices.unknown when it wasn't known (both null). A Friends and Family line's basisFrom is "family",
+// its basis the amount kept for information, or null when none was known; basisTotal is only for "total".
 async function billingBody(env, c, lic) {
   const st = await billingState(env, c, lic.hash);
   if (!st.on) return { on: false };
@@ -5047,8 +5054,8 @@ async function billingBody(env, c, lic) {
     return { id: l.id, store: l.store, storeName: l.store_name, orderNo: l.order_no, item: l.item, qty: l.qty, orderAt: l.order_at, source: l.source, amount: l.amount,
       createdAt: l.created_at, dueAt: l.due_at, state, paidAt: l.paid_at, acctHash: l.acct_hash, profile: l.profile,
       disputable: l.source === "buyer" && !l.dispute_at && (state === "due" || state === "overdue"),
-      basis: l.basis == null ? null : l.basis, basisFrom: l.basis == null ? null : l.basis_from,
-      basisTotal: l.basis == null || l.basis_from !== "total" || !l.basis_total ? null : l.basis_total };
+      basis: l.basis ? l.basis : null, basisFrom: l.basis_from == null ? null : l.basis_from,
+      basisTotal: l.basis_from !== "total" || !l.basis || !l.basis_total ? null : l.basis_total };
   });
   Object.assign(out, { owed: st.owed, overdue: st.overdue, paid30: paid.results[0].s, payments: pays.results });
   // Not from before billing came on (or on again), nor from before the owner charged them, nor, for Friends and Family, from
@@ -5289,9 +5296,25 @@ async function billingCheckout(request, env, ctx, url) {
         return win && win.url ? json({ url: win.url, pay: win.id, ...(kind === "pay" ? { amount: win.amount, n: JSON.parse(win.line_ids).length } : {}) }, 200, NO_STORE)
           : json({ error: "Try again in a moment." }, 409, NO_STORE);
       }
+      if (kind === "pay") {
+        // The claim holds its lines from here on (PAYING_SQL), but a take-over could re-price one of them (lineStmt: a report
+        // with no amount, while no pay session held it) between the read above and the claim, or one could stop being owed:
+        // read them again by the claim's own line_ids, and charge only what the claim holds. Anything else (an amount that
+        // moved, a line gone, canceled, paid or disputed meanwhile) lets the claim go and asks the buyer to try again, on
+        // their invoice as it is now (the second review).
+        const held = await env.DB.prepare(`SELECT id, store, store_name, order_no, amount FROM billing_lines WHERE key_hash = ? AND mode = ? AND ${OWED} AND NOT ${DISPUTED}
+          AND id IN (SELECT value FROM json_each((SELECT line_ids FROM billing_payments WHERE id = ?)))`).bind(lic.hash, c.mode, id).all().then((r) => r.results);
+        const was = new Map(lines.map((l) => [l.id, l.amount]));
+        if (held.length !== lines.length || held.some((l) => was.get(l.id) !== l.amount) || held.reduce((n, l) => n + l.amount, 0) !== amount) {
+          await env.DB.prepare("UPDATE billing_payments SET status = 'failed' WHERE id = ? AND status = 'open' AND session_id IS NULL").bind(id).run();
+          return body(409, { error: "Your invoice just changed. Try again." });
+        }
+        const order = new Map(lines.map((l, i) => [l.id, i]));
+        lines = held.sort((x, y) => order.get(x.id) - order.get(y.id));
+      }
       try {
-        // Each line at the amount it was written at (one Stripe line per amount), so what's paid is the row's amount even if
-        // the price changed since.
+        // Each line at the amount it was written at, as the claim holds it (read again above; one Stripe line per amount), so
+        // what's paid is the row's amount even if the price changed since.
         const groups = [...lines.reduce((m, l) => m.set(l.amount, [...(m.get(l.amount) || []), l]), new Map())];
         const s = await remade(env, c, lic.hash, async (n) => {
           const customer = await customerFor(env, c, lic, call, n);
@@ -5603,12 +5626,15 @@ async function ownerOutcome(env, c, hash, x) {
 }
 // What the owner taking over a buyer's report (`out.take`) with the amount `b` (their basis, or null) does, as lineStmt does
 // it: re-priced ({again: true, amount, note}) when they gave an amount and the report has none and isn't being paid, else kept
-// ({again: false, amount, note, unused: whether the owner's amount goes unused}). note: what it's priced on, in words.
+// ({again: false, amount, note, unused: whether the owner's amount goes unused, paying: whether that's only because a
+// payment page holds it, so the words say why: the second review}). note: what it's priced on, in words.
 function takeOver(out, b) {
   const t = out.take;
   if (b && t.basis == null && !t.paying) return { again: true, amount: linePrice(out.price, b), note: basisNote(b.basis, "owner", "") };
-  return { again: false, amount: t.amount, note: basisNote(t.basis, t.from, t.total), unused: !!b };
+  return { again: false, amount: t.amount, note: basisNote(t.basis, t.from, t.total), unused: !!b, paying: !!b && t.basis == null && !!t.paying };
 }
+// Why the owner's amount isn't used, in brackets after the kept line's words: here (the Paste check) or "you typed" (Add).
+const unusedWhy = (t, what) => t.paying ? `they're paying it now, so the amount ${what} isn't used` : `the amount ${what} isn't used`;
 
 // The Billing page's price per checkout as typed: dollars with up to 2 decimals ("10", "$12.50"), from $1 to $100, in cents;
 // null for anything else.
@@ -5725,10 +5751,12 @@ async function billingListPage(request, env, ctx, url, id) {
             // it), or keeping its own amount. Read back, so the words are what happened.
             const now1 = await env.DB.prepare(`SELECT l.amount, b.basis, b.basis_from, b.total FROM billing_lines l LEFT JOIN billing_line_basis b ON b.line_id = l.id
               WHERE l.key_hash = ? AND l.mode = ? AND l.store = ? AND l.order_no = ?`).bind(key, c.mode, x.store, x.orderNo).first() || { amount: out.take.amount, basis: out.take.basis };
-            // In brackets, so a total's own "(from the $64.18 total)" goes in with a comma.
+            // In brackets, so a total's own "(from the $64.18 total)" goes in with a comma. An amount typed for a report with
+            // none that still has none was kept only because a payment page holds it (lineStmt), which the words say.
             const again = !!b && out.take.basis == null && now1.basis != null, flat = (t) => t.replace(/ \((from the [^)]*)\)/, ", $1");
+            const kept = { paying: !!b && out.take.basis == null && now1.basis == null };
             done = again ? `Took over their FAFO's report of ${what} at ${money(now1.amount)} (${[out.price === "family" ? "Friends and Family" : "", basisNote(b.basis, "owner", "")].filter(Boolean).join("; ")}).`
-              : `Took over their FAFO's report of ${what}, which keeps ${money(now1.amount)} (${[flat(basisNote(now1.basis, now1.basis_from, now1.total)), b ? "the amount you typed isn't used" : ""].filter(Boolean).join("; ")}).`;
+              : `Took over their FAFO's report of ${what}, which keeps ${money(now1.amount)} (${[flat(basisNote(now1.basis, now1.basis_from, now1.total)), b ? unusedWhy(kept, "you typed") : ""].filter(Boolean).join("; ")}).`;
           }
         }
       }
@@ -5849,8 +5877,8 @@ async function billingListPage(request, env, ctx, url, id) {
         : st === "disputed" ? btn(f, "dispute-waive", "Waive") + btn(f, "dispute-keep", "Keep", "rm") : st === "waived" ? btn(f, "unwaive", "Undo waive")
         : st === "canceled" ? btn(f, "charge-again", "Charge again") : st === "held" ? btn(f, "waive", "Waive") : "";
       const note = l.dispute_at ? `<br><span style="font-size:12px">“${esc(l.dispute_note || "No note")}”${l.dispute_answer ? ` · ${l.dispute_answer === "waived" ? "you waived it" : "you kept it"}` : ""}</span>` : "";
-      return `<tr><td>${esc(l.order_at)}</td><td class="em">${esc(l.store_name || accountStoreName(l.store))} #${esc(l.order_no)}<br><span style="font-size:12px">${esc([l.item + (l.qty && l.qty !== "1" ? ` ×${l.qty}` : ""), l.profile, SOURCE_TEXT[l.source] || l.source].filter((x) => String(x).trim()).join(" · "))}</span></td>
-        <td><span style="color:${STATE_COLOR[st] || "#b9c6ea"}">${esc(STATE_TEXT[st])}</span>${st === "due" || st === "overdue" ? `<br><span style="font-size:12px">due ${esc(dueText(l.due_at))}</span>` : ""}${note}</td><td>${money(l.amount)}<br><span style="font-size:12px">${esc(basisNote(l.basis, l.basis_from, l.basis_total))}</span></td><td class="act">${a}</td></tr>`;
+      return `<tr><td style="white-space:nowrap">${esc(l.order_at)}</td><td class="em">${esc(l.store_name || accountStoreName(l.store))} #${esc(l.order_no)}<br><span style="font-size:12px">${esc([l.item + (l.qty && l.qty !== "1" ? ` ×${l.qty}` : ""), l.profile, SOURCE_TEXT[l.source] || l.source].filter((x) => String(x).trim()).join(" · "))}</span></td>
+        <td><span style="color:${STATE_COLOR[st] || "#b9c6ea"}">${esc(STATE_TEXT[st])}</span>${st === "due" || st === "overdue" ? `<br><span style="font-size:12px;white-space:nowrap">due ${esc(dueText(l.due_at))}</span>` : ""}${note}</td><td>${money(l.amount)}<br><span style="font-size:12px">${esc(basisNote(l.basis, l.basis_from, l.basis_total))}</span></td><td class="act">${a}</td></tr>`;
     }).join("");
     const bat = batches.results.map((x) => `<tr><td>${esc(day(x.sent))}</td><td class="em">${esc(x.store_name)}: ${esc(String(x.profiles || "").slice(0, 300))}</td><td>${x.pulled_n ? `${x.pulled_n} of ${x.n} pulled, last ${esc(day(x.pulled))}` : "Still out"}</td></tr>`).join("");
     return page(200, "Billing", "", `${msgs}<p><a class="back" href="${esc(base)}">← All buyers</a></p>
@@ -5865,7 +5893,7 @@ async function billingListPage(request, env, ctx, url, id) {
         <label>Store${storeSelect("target")}</label><label>Order number<input name="order" maxlength="40" autocomplete="off" spellcheck="false"></label>
         <label>Date<input name="date" type="date" value="${esc(today)}"></label><label>Item<input name="item" maxlength="80"></label><label>Note<input name="note" maxlength="60"></label>
         <label>Order amount before tax<input name="amount" inputmode="decimal" maxlength="20" autocomplete="off" spellcheck="false" placeholder="Leave empty if you don't know it"></label>
-        <p class="hint">With an amount, it's priced by its tier (${esc(tierWords())}); left empty, it's ${esc(money(price))}, the price when the amount isn't known. Friends and Family always pay ${esc(money(PRICE_FAMILY))}.</p>
+        <p class="hint">Priced by its tier: ${esc(tierList())}. Left empty, it's ${esc(money(price))}, the price when the amount isn't known. Friends and Family always pay ${esc(money(PRICE_FAMILY))}.</p>
         <p class="go"><button class="go" type="submit" name="action" value="add">Add to their invoice</button></p></form>
       ${bat ? `<h3>Recent batches</h3><table><thead><tr><th>Sent</th><th>Slots on their own accounts</th><th>Pulled</th></tr></thead><tbody>${bat}</tbody></table>` : ""}
       <p class="hint">The link works until ${esc(when(o.created_at + BILL_LIST_TTL_MS))}.</p>`, true);
@@ -5899,7 +5927,7 @@ async function billingListPage(request, env, ctx, url, id) {
     if (r.out.take) {
       const t = takeOver(r.out, b);
       return t.again ? `Will take over their FAFO's report · ${money(t.amount)}${fam} · ${t.note}`
-        : `Will take over their FAFO's report · keeps ${money(t.amount)} · ${t.note}${t.unused ? " (the amount here isn't used)" : ""}`;
+        : `Will take over their FAFO's report · keeps ${money(t.amount)} · ${t.note}${t.unused ? ` (${unusedWhy(t, "here")})` : ""}`;
     }
     return `Will add${r.out.held ? " (on hold: their monthly payment failed)" : ""} · ${money(p != null ? p : price)}${fam} · ${basisNote(b && b.basis, "owner", "")}`;
   };

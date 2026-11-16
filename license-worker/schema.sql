@@ -531,10 +531,10 @@ CREATE INDEX IF NOT EXISTS billing_lines_order ON billing_lines (store, order_no
 -- from $200; Friends and Family always $5): its amount before tax in cents (basis) and where that came from (basis_from: sub,
 -- the order's amount before tax its FAFO sent; total, worked out from the total with tax, less the most US sales tax can be,
 -- 11.5%; owner, typed or pasted on the Billing page; family, a Friends and Family line, at their $5 whatever the amount,
--- which is kept for information), and that total as written (total, only for "total"). Written in the batch of the line's
--- INSERT, for the line that INSERT made, or the buyer's report with none that an order alert or the owner took over with an
--- amount (re-priced then, unless a pay session held it); none for a line priced without an amount. A table of its own, as
--- db:init can't add columns.
+-- which is kept for information, 0 when none is known), and that total as written (total, only for "total"). Written in
+-- the batch of the line's INSERT, for the line that INSERT made, or the buyer's report with none that an order alert or the
+-- owner took over with an amount (re-priced then, unless a pay session held it: then none); none for a line priced without
+-- an amount, but every Friends and Family line has one. A table of its own, as db:init can't add columns.
 CREATE TABLE IF NOT EXISTS billing_line_basis (
   line_id    TEXT PRIMARY KEY,                  -- billing_lines.id
   basis      INTEGER NOT NULL,

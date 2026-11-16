@@ -758,11 +758,19 @@ prices are included before tax."; the details below are defaults chosen for the 
   basis it had: one their FAFO reported with an amount keeps its own price, and the amount you typed or pasted isn't used.
   Paste checkouts' check and Add a checkout say which ("Will take over their FAFO's report · $20 · on $180.00 before
   tax", or "· keeps $5 · on $30.00 before tax (the amount here isn't used)"; "Took over their FAFO's report of Target #…
-  at $20 (on $180.00 before tax)." or "…, which keeps $5 (on $30.00 before tax; the amount you typed isn't used).").
+  at $20 (on $180.00 before tax)." or "…, which keeps $5 (on $30.00 before tax; the amount you typed isn't used)."), and
+  when it's kept only because the buyer is paying it, they say so ("· keeps $10 · amount not known (they're paying it
+  now, so the amount here isn't used)"; "…, which keeps $10 (amount not known; they're paying it now, so the amount you
+  typed isn't used)."). A checkout kept that way isn't marked as priced on your amount, even when that amount's tier is
+  the price it kept.
+- **Paying takes what the checkouts are at that moment.** FAFO reads what the buyer owes, then holds those checkouts for
+  their Stripe page, so nothing re-prices them while they pay. If one was re-priced (taken over, above) or stopped being
+  owed in the moment between, nothing is charged: the buyer is told "Your invoice just changed. Try again." with their
+  invoice as it is now, and the next try charges the new amounts.
 - **Friends and Family's checkouts say so** ("Friends and Family price"; `basisFrom` `family`, with the order's amount
-  kept in `basis` for information and no `basisTotal`), so once you **Charge** someone, the $5 checkouts from while they
-  were Friends and Family never read as priced on an amount whose tier is more; their checkouts from then on take their
-  tiers.
+  kept in `basis` for information, `null` when none was known, and no `basisTotal`), all of them, with an amount or
+  without, so once you **Charge** someone, the $5 checkouts from while they were Friends and Family never read as priced
+  on an amount whose tier is more, nor as "amount not known"; their checkouts from then on take their tiers.
 - **FAFOs before 1.9.154** (1.9.130 to 1.9.153) don't know the tiers: until they update they keep saying "$10 per
   checkout" and "Each new checkout is $10 (ones already on your invoice keep their price)", as `prices.checkout` is the
   price when the amount isn't known, while their invoice rows show each checkout's real amount. Their own reports send
@@ -905,8 +913,10 @@ A buyer's **Details** has:
   **Keep** for a checkout they said wasn't yours ("Not my seller's checkout?" in their Invoice; your channel gets a link
   to answer it).
 - **Add a checkout**, with the order's amount before tax if you know it (it's then priced by its tier; left empty, at the
-  price when the amount isn't known; anything but a dollar amount adds nothing), and their recent batches to match your
-  bot's log against.
+  price when the amount isn't known; anything but a dollar amount adds nothing; the hint under it lists the tiers: "Priced
+  by its tier: $5 under $50, … Left empty, it's $10, the price when the amount isn't known. Friends and Family always pay
+  $5."), and their recent batches to match your bot's log against. The invoice keeps each checkout's date and due date on
+  one line.
 
 **Paste checkouts** takes your bot's success log, one checkout per line: each line needs the account's email and the
 order number (a store's name, Target, Pokémon Center or Costco, outside the email, and a date are read too, else the ones
@@ -1113,7 +1123,9 @@ signed webhooks, refunds, the monthly plan's states with `BILLING_MONTHLY` on an
 disputes, the Billing page and its price when the amount isn't known (moved to $10 once), the price by the order's
 amount before tax (each tier's edges, a total with tax, amounts that aren't, Add a checkout's and pasted lines' amounts,
 a pasted discount skipped, a checkout sent again keeping its price, and one their FAFO reported taken over: re-priced
-when it had no amount and no Stripe page held it, kept otherwise, with what the check and Add say), Friends and Family's
-$5 (and their checkouts still reading so once charged), test mode, and that
+when it had no amount and no Stripe page held it, kept otherwise, with no basis written while a page holds it and what
+the check and Add say; and a checkout re-priced between reading the invoice and claiming a payment, which a trigger in
+the local database makes happen: 409 and no Stripe page at the old amounts), Friends and Family's $5 (and their
+checkouts, with an amount or without, still reading so once charged), test mode, and that
 the tables a database from the last release gets are the same as a new one's), and inbox tests against pretend IMAP
 servers (they need openssl, to make a throwaway certificate authority).

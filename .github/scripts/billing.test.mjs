@@ -19,9 +19,9 @@
 // plan card lists them, the pay per checkout page says $5 to $25 by order amount, Submit's window, Cancel plan, Switch and the
 // seller's Settings → Billing name them, and each checkout says what it was priced on (basis, basisFrom); Friends and Family
 // keep their $5, and an answer without tiers shows what 1.9.153 did. The page sends the amount before tax: the email's
-// Subtotal (parseOrderEmail, kept by planOrderImport and repairFromConfirmations), else qty × the unit price, less a store's
-// discount the total shows (the Dashboard export's oxFits), as sub with each order alert (reportOrderAlerts, run here outside
-// the browser) and, with the total, each checkout it reports. The plan card and the line under the invoice name the price when
+// Subtotal (parseOrderEmail, kept by planOrderImport and repairFromConfirmations), else qty × the unit price (none when the
+// total is below it, or with no Subtotal for a second item; a discount is never guessed), as sub with each order alert
+// (reportOrderAlerts, run here outside the browser) and, with the total, each checkout it reports. The plan card and the line under the invoice name the price when
 // the amount isn't known (prices.unknown), and that line says when a checkout still owed keeps a price it wouldn't get now.
 //   node .github/scripts/billing.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must read plans (billMonthlyOffered), the Sunday rule (billDueDay) and the tiers (billTiers); a page named on
@@ -66,7 +66,6 @@ async function alertEventsTest() {
   const fn = (head) => { const s = HTML.indexOf(head); assert.ok(s >= 0, head); let i = HTML.indexOf("{", s), d = 0; do { d += HTML[i] === "{" ? 1 : HTML[i] === "}" ? -1 : 0; i++; } while (d); return HTML.slice(s, i); };
   const line = (re) => { const m = HTML.match(re); assert.ok(m, String(re)); return m[0]; };
   const code = [line(/^const norm = .*$/m), line(/^const STORES = .*$/m), line(/^const storeKeyOf = .*$/m), line(/^const orderStoreLabel = .*$/m), line(/^const ALERT_STEPS = .*$/m),
-    line(/^const oxRateOk = .*$/m), fn("function oxFits(qty, unit, total){"),
     fn("const moneyCents = (v) => {"), fn("function orderSubBeforeTax(o){"), fn("async function reportOrderAlerts(){")].join("\n");
   const api = new Function(`let S = null; const DESK = true, posts = [], OALERT = {busy:false, accounts:null, accountsAt:0};
     const orderAlertsOn = () => true, licRead = () => ({key:"PVLT-TEST-TEST-TEST-TEST"}), persist = () => {}, refreshAlertSender = () => {};
@@ -80,11 +79,12 @@ async function alertEventsTest() {
     o({ orderNo: "4000000002", subtotal: "", priceEach: "29.99" }),                // qty × the unit price
     o({ orderNo: "4000000003", priceEach: "" }),                                   // neither: none
     o({ orderNo: "4000000004", qty: "1", subtotal: "1,234.56", total: "1,336.41" }),
-    o({ orderNo: "4000000005", priceEach: "79.99", total: "165.83" }),            // $5 off at checkout: 154.98 + 7% tax
+    o({ orderNo: "4000000005", priceEach: "79.99", total: "165.83" }),            // $5 off at checkout (154.98 + 7% tax), not below the items' price: their price
+    o({ orderNo: "4000000006", priceEach: "27.49", total: "53.48" }),             // the total below the items' price: none
   ] });
   await api.reportOrderAlerts();
   const ev = api.posts.filter((p) => p[0] === "/alerts").flatMap((p) => p[1].events);
-  assert.deepEqual(ev.map((e) => [e.orderNo, e.sub, e.total]), [["4000000001", "59.98", "64.93"], ["4000000002", "59.98", "64.93"], ["4000000003", "", "64.93"], ["4000000004", "1234.56", "1,336.41"], ["4000000005", "154.98", "165.83"]]);
+  assert.deepEqual(ev.map((e) => [e.orderNo, e.sub, e.total]), [["4000000001", "59.98", "64.93"], ["4000000002", "59.98", "64.93"], ["4000000003", "", "64.93"], ["4000000004", "1234.56", "1,336.41"], ["4000000005", "159.98", "165.83"], ["4000000006", "", "53.48"]]);
   assert.deepEqual(ev[0], { account: "acct.one@example.com", store: "target", storeName: "Target", orderNo: "4000000001", item: "Sample Booster Bundle", qty: "2", total: "64.93", sub: "59.98", stage: "placed", at: "2026-11-15" });
 }
 
@@ -638,7 +638,11 @@ try {
         assert.equal(await ev(() => window.__t.billBasisNote({ basis: 5998, basisFrom: "other" })), "amount not known");
         assert.equal(await ev(() => window.__t.billBasisNote({ basis: 5998 })), "");
         // Friends and Family's one price (the worker's basisFrom "family"), with or without an amount.
+        // The worker sends basis null with basisFrom "family" for a Friends and Family line with no amount known (its row's basis
+        // 0): still their price, never "amount not known".
         assert.equal(await ev(() => window.__t.billBasisNote({ basis: null, basisFrom: "family" })), "Friends and Family price");
+        assert.equal(await ev(() => window.__t.billBasisNote({ basis: 0, basisFrom: "family" })), "Friends and Family price");
+        assert.equal(await ev(() => window.__t.billBasisNote({ basisFrom: "family" })), "Friends and Family price");
         assert.equal(await ev(() => window.__t.billBasisNote({ basis: 12000, basisFrom: "family" })), "Friends and Family price");
         // The kept answer has no prices or amounts.
         const kept = await ev(() => JSON.parse(localStorage.getItem("orbit-billing")));
@@ -667,9 +671,11 @@ try {
           assert.match(t, NEW, odd.orderNo);
           assert.doesNotMatch(t, /keep their price/, odd.orderNo);
         }
-        // The Friends and Family line says what it was priced on.
+        // The Friends and Family line says what it was priced on, with an amount or with none (basis null).
         await at(fine.concat([line({ orderNo: "1000000215", amount: 500, basis: 12000, basisFrom: "family" })]));
         assert.deepEqual((await basisCells()).find((r) => r[0] === "#1000000215"), ["#1000000215", "$5", "Friends and Family price"]);
+        await at(fine.concat([line({ orderNo: "1000000214", amount: 500, basis: null, basisFrom: "family" })]));
+        assert.deepEqual((await basisCells()).find((r) => r[0] === "#1000000214"), ["#1000000214", "$5", "Friends and Family price"]);
         // Paid, canceled or waived at another price: nothing still owed keeps one, so no note.
         for (const state of ["paid", "canceled", "waived"]) {
           await at(fine.concat([line({ orderNo: "1000000221", amount: 500, basis: 5998, basisFrom: "sub", state, paidAt: state === "paid" ? Date.now() - DAY : null })]));
@@ -810,32 +816,44 @@ try {
         assert.equal(await ev(() => [window.__t.moneyCents("59.9"), window.__t.moneyCents("1,234"), window.__t.moneyCents("12,34.00"), window.__t.moneyCents("$ 5")]).then(JSON.stringify), "[5990,123400,null,500]");
       });
 
-      await test("orderSubBeforeTax with the total: a store discount comes off, and none when the total can't be from that amount", async () => {
+      await test("orderSubBeforeTax with the total: none below the items' price or for a second item, else the items' price (no discount guessed)", async () => {
         const f = (o) => ev((o) => window.__t.orderSubBeforeTax(o), o);
-        // Target's $5 off at checkout: 2 × $79.99 = $159.98, less $5 = $154.98, plus 7% tax ($10.85) = $165.83.
-        assert.equal(await f({ qty: "2", priceEach: "79.99", total: "165.83" }), "154.98");
-        assert.equal(await f({ qty: "2", priceEach: "79.99", total: "$165.83" }), "154.98");
-        // From the Subtotal: $59.98, less $5 = $54.98, plus 8.25% ($4.54) = $59.52.
-        assert.equal(await f({ subtotal: "59.98", qty: "2", priceEach: "29.99", total: "59.52" }), "54.98");
-        // $10 off: $159.98 less $10 = $149.98 (a tier lower), plus 8.25% ($12.37) = $162.35.
-        assert.equal(await f({ qty: "2", priceEach: "79.99", total: "162.35" }), "149.98");
-        // No discount when the total fits without one: tax only, or no tax.
+        // Target's $5 off at checkout that the total doesn't show below the items' price: 2 × $79.99 = $159.98, less $5 =
+        // $154.98, plus 7% tax = $165.83. One order alone can't tell that from no discount at another rate (3.66%), so it isn't
+        // taken off: the items' price, at most a tier higher.
+        assert.equal(await f({ qty: "2", priceEach: "79.99", total: "165.83" }), "159.98");
+        assert.equal(await f({ qty: "2", priceEach: "79.99", total: "$165.83" }), "159.98");
+        // The total below the items' price (a discount, a gift card or a credit): none, so the worker goes by the total ÷ 1.115.
+        assert.equal(await f({ qty: "2", priceEach: "27.49", total: "53.48" }), "");
+        assert.equal(await f({ subtotal: "59.98", total: "59.52" }), "");
+        assert.equal(await f({ subtotal: "59.98", qty: "2", priceEach: "29.99", total: "59.52" }), "");
+        assert.equal(await f({ qty: "1", priceEach: "59.99", total: "45.00" }), "");
+        // A cent below is below.
+        assert.equal(await f({ qty: "1", priceEach: "29.99", total: "29.98" }), "");
+        // Tax rounded per unit (3 × $67.08 at 8.25%: $5.53 a unit, $16.59, where $201.24 × 8.25% is $16.60): the amount stays,
+        // with the Subtotal and without.
+        assert.equal(await f({ subtotal: "201.24", qty: "3", priceEach: "67.08", total: "217.83" }), "201.24");
+        assert.equal(await f({ qty: "3", priceEach: "67.08", total: "217.83" }), "201.24");
+        // Rates the Dashboard export's oxFits doesn't list (Hawaii's 4.712%), and ordinary ones: the amount stays.
+        assert.equal(await f({ qty: "1", priceEach: "100.43", total: "105.16" }), "100.43");
+        assert.equal(await f({ qty: "2", priceEach: "76.46", total: "164.38" }), "152.92");
         assert.equal(await f({ qty: "2", priceEach: "29.99", total: "64.93" }), "59.98");
         assert.equal(await f({ subtotal: "59.98", total: "64.93" }), "59.98");
+        // No tax: the total is the items' price.
         assert.equal(await f({ qty: "1", priceEach: "29.99", total: "29.99" }), "29.99");
-        // The total below the amount and nothing fits (a gift card, a discount it doesn't know): none.
-        assert.equal(await f({ qty: "1", priceEach: "59.99", total: "45.00" }), "");
-        assert.equal(await f({ subtotal: "59.98", total: "40.00" }), "");
         // More than tax and $10 of shipping could add, with no Subtotal: several items, of which this is the first. None.
         assert.equal(await f({ qty: "1", priceEach: "29.99", total: "120.00" }), "");
         assert.equal(await f({ qty: "1", priceEach: "29.99", total: "43.45" }), "");      // $29.99 × 1.115 + $10 = $43.44
         // Up to that it's tax and shipping: the amount stays.
         assert.equal(await f({ qty: "1", priceEach: "29.99", total: "43.43" }), "29.99");
         assert.equal(await f({ qty: "1", priceEach: "29.99", total: "38.46" }), "29.99");   // 8.25% tax and $5.99 shipping
-        // With a Subtotal read it's the order's own: kept whatever the total.
+        // With a Subtotal read it's the order's own: kept whatever the total above it.
+        assert.equal(await f({ subtotal: "29.99", total: "120.00" }), "29.99");
         assert.equal(await f({ subtotal: "29.99", qty: "1", priceEach: "9.99", total: "120.00" }), "29.99");
         // A total that isn't an amount is no total.
         assert.equal(await f({ qty: "2", priceEach: "79.99", total: "about 165" }), "159.98");
+        // The page no longer guesses discounts: orderSubBeforeTax never calls the export's oxFits.
+        assert.doesNotMatch(await ev(() => String(window.__t.orderSubBeforeTax)), /oxFits|oxSplit|oxRateOk/);
       });
 
       await test("a confirmation that comes after a later email fills in the subtotal", async () => {
