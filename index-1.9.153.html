@@ -15209,7 +15209,7 @@ function syncMerge(L, R, base, lmt, rmt, keyOf, orig){
       // (autoPicsNo, 1.9.126), named by their hash.
       // So are Find in Spam's saved searches (spamMoves, 1.9.136), keyed by their words, and the products ticked on
       // Interests (interestPicks, 1.9.142), keyed by store and SKU. And the names Export gives addresses (exportPeople, 1.9.153).
-      if (!bv && l && r && (k === SYNC_CODE.settings + ":itemPics" || k === SYNC_CODE.settings + ":canceledGone" || k === SYNC_CODE.settings + ":autoPicsNo" || k === SYNC_CODE.settings + ":spamMoves" || k === SYNC_CODE.settings + ":interestPicks" || k === SYNC_CODE.settings + ":buyerAddrs" || k === SYNC_CODE.settings + ":buyerEmails" || k === SYNC_CODE.settings + ":exportPeople")) bv = {};
+      if (!bv && l && r && (k === SYNC_CODE.settings + ":itemPics" || k === SYNC_CODE.settings + ":canceledGone" || k === SYNC_CODE.settings + ":autoPicsNo" || k === SYNC_CODE.settings + ":spamMoves" || k === SYNC_CODE.settings + ":interestPicks" || k === SYNC_CODE.settings + ":exportPeople" || k === SYNC_CODE.settings + ":buyerAddrs" || k === SYNC_CODE.settings + ":buyerEmails")) bv = {};
       if (bv && syncPlain(bv) && syncPlain(l.v) && syncPlain(r.v)){
         const v = syncFields(bv, l.v, r.v, preferL), c = syncCanon(v);
         u = {v, h:syncHash(c), c};
