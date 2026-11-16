@@ -1,0 +1,1 @@
+Select orders on the Dashboard and choose Export to download them as an Excel report: a summary of each person's addresses and totals, a tab for each person, every order with its tax, and canceled ones on a tab of their own. FAFO fills in who each address is for and remembers the names you change.

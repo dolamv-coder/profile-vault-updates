@@ -2599,6 +2599,63 @@ confirmation emails into the Dashboard". `dashboard.test.mjs` runs the page in C
 sidebar and the heading on a desktop, the first tab on a phone, and no help text naming the Orders page; it fails if the
 newest page has no Dashboard heading. `walkthrough.test.mjs` follows step 6's new words. Nothing gains a field.
 
+From 1.9.153 the Dashboard's selection bar has **Export** (the owner's request, 2026-11-16, with their orders report for a
+day's Target orders: "Include an export button at the bottom. Format should be like that file."), between Send to buyer and
+Delete (`orders-export`, `openOrdersExport`). It saves the orders picked as an Excel workbook laid out as that report, made
+in the page (between `ORDERS-XLSX-START` and `ORDERS-XLSX-END`; no library: `zipStore` writes a zip with its files stored,
+`xlBook` the parts, with inline text, formulas carrying their values and `fullCalcOnLoad`):
+- **Summary:** the title (A1:D1; a long one wraps), "Cost = order total including tax. Click a person name for their tab.",
+  then each person's addresses (the name a link to their tab, the order count, the total a formula to the tab's address
+  total), a subtotal per person, GRAND TOTAL (the subtotals added up, or past Excel's 8,192 characters a formula a SUMIF of
+  them), "Check vs All Orders tab (should be 0)" and notes (the card's bank, cancelled orders, inboxes, how tax was worked
+  out, orders under their items or with no total, discounts). Four rows frozen.
+- **A tab per person**, the most orders first: a section per address (the address on navy, "N order(s) placed …" with the
+  spellings grouped there in the rows' order, "Last card used (last order listed): …", then Order #, Order Date,
+  Description, Cost, Card Used / Bank, Delivery Status, and the address total), and with more than one address "TOTAL -
+  <person>". Landscape, one page wide.
+- **All Orders** (a row per order: person, grouped address, order number, date, ship-to name, address as entered,
+  description, qty, unit price, shipping, tax, total, card, status, inbox; the total; the filter; a row frozen) and
+  **Cancelled (excluded)** (canceled orders, or "(none)").
+- Fonts, fills, borders, number formats, column widths (Tax as wide as Shipping, the report's J:K), print setup and row
+  heights are the report's (`OX`); a row whose wrapped text takes more lines is taller (`xlLines`), as merged cells don't
+  grow by themselves.
+- **Tax** (`oxFits`, `oxSplit`): FAFO keeps an order's total and unit price (`priceEach`), not its tax, so total = (qty x
+  unit price - a discount) + tax, the tax that amount times a sales tax rate rounded to the cent (or, with no discount, a
+  unit's tax rounded, times qty). Rates are 0, or 2.9 % to 11.5 % in 0.05 % or 1/8 % steps (6.35 %, 8.875 %, 9.375 %, 10.25
+  %), discounts $5 to $30 in $5 steps (on 11/13 some Target orders were $5 less before tax). No discount when a rate fits,
+  and a discount only at a rate some order in the export shows with none, its ZIP's first (`ratesFor`), so one is never
+  guessed from one order alone. Shipping is 0 then. When nothing fits, the tax column is the total less the items ("tax and
+  any shipping"); empty with no unit price (a seller's alert, typed in) or a total under the items.
+- **Who each address is for** is the owner's to say: the window lists the addresses of the orders not canceled (`oxGroups`,
+  `oxKey`: Send to buyer's `shareAddrKey` of the address on one line, so Jig's spellings of one building are one; else the
+  address as written; no address, the ship-to name; split by the buyer orders were sent to, so two buyers at one building
+  are two), each labelled as the report writes an address (`oxCanon`: no dots or unit line, North as N but not when it's the
+  street's name, as shareAddrKey decides; no country), with a name: one given before (the synced setting `exportPeople`,
+  {"<group key>": {name, at}}, merged per entry by `syncMerge`, 3000 at most), else the buyer the orders were sent to
+  (`shareTo`, without "@user" or "License …"), a remembered address's buyer (`shareTargetOf`), the ship-to name. Names
+  changed there are kept on Download; one set back to FAFO's (or left empty) is dropped. Names are people in any case. Tab
+  names lose what XML can't hold and `[]:*?/\`, keep 31 characters (never half an emoji), have no apostrophe or space at
+  either end, and never repeat or take the report's own (`Summary 2`, `Pat 2`). Text like SpreadsheetML's own escape
+  (`_x0041_`) is escaped (`xlText`).
+- The title, the file name and the stores go by the orders not canceled. The file is `<Store>_Orders_<MM-DD-YYYY>.xlsx`
+  (`Target_Orders_11-13-2026.xlsx`), `<Store>_Orders_<first>_to_<last>.xlsx` over several days, and `FAFO_Orders_…` for
+  several stores, whose descriptions then start with the store.
+- **The window:** a click on the backdrop leaves it open (the names typed stay), a double click on Download Excel saves once
+  and presses nothing under it (as Export profiles, 1.9.150), a save the vault locks during writes no names, and a copy of
+  FAFO that can't save files says to open app.fafoaco.com.
+- **Tests:** `orders-export.test.mjs` runs the page in Chromium (in CI after Dashboard's) on made-up orders, kept in the
+  vault out of order: the bar, the window's addresses and names, the backdrop, a double click, the download unzipped (each
+  CRC) and every part read with DOMParser (well-formed), how the parts are wired (relationships, content types, each
+  worksheet's elements in the schema's order, frozen panes), each sheet's values, formulas and their values, styles, merges,
+  links, filter, widths, heights and print setup, a name remembered across a lock and forgotten, a title typed, `oxSplit`
+  (real rates, discounts only with another order's rate, Connecticut's 6.35 %), `oxCanon`, two stores and days, a canceled
+  order elsewhere, a $10 discount, a total under its items, a preorder, a section over two days, no total, groups (two
+  buyers at one building, no address, unreadable addresses), tab names (an apostrophe at the cut, half an emoji, a control
+  character), characters XML can't hold, the SUMIF past 8,192 characters, every order canceled. `sync-merge.test.mjs` merges
+  `exportPeople` (guarded by `ORDERS-XLSX-START`, not by the entry it tests). Checked outside the repo against the owner's
+  real orders: LibreOffice opens it with no formula errors and the same values the page cached. Settings gain
+  `exportPeople`, which 1.9.112 syncs as it is.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
