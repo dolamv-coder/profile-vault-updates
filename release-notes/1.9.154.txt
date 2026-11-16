@@ -1,0 +1,1 @@
+Checkouts are now priced by the order's amount before tax: $5 under $50, $10 from $50, $15 from $100, $20 from $150 and $25 from $200. Friends and Family still pay $5. Invoice shows the price list and, under each checkout, the amount it was priced on.
