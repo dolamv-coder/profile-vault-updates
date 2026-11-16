@@ -17657,13 +17657,14 @@ function renderSettingsView(){
       </div>
     </div>`;
 }
-// Ship Address and Inbox come last (1.9.151, the owner's request: a sheet of one day's orders leaves some people out by the
-// address they ship to), so the columns before them stay where they were. An address on several lines is one line here.
+// Ship Address, Inbox and Unit Price come last (1.9.151, the owner's request: a sheet of one day's orders with each product's
+// unit price, leaving some people out by the address they ship to), so the columns before them stay where they were. An
+// address on several lines is one line here. Unit Price is the email's "$x / ea" (priceEach), empty when it had none.
 const csvAddr = (a) => String(a || "").split(/[\r\n]+/).map(s => s.trim().replace(/,$/, "").trim()).filter(Boolean).join(", ");
 function ordersCSV(){
-  const cols = ["Store","Item","Order Number","Qty","Total","Order Date","Status","Ship To","Paid With","Arrives","Account","Ship Address","Inbox"];
+  const cols = ["Store","Item","Order Number","Qty","Total","Order Date","Status","Ship To","Paid With","Arrives","Account","Ship Address","Inbox","Unit Price"];
   const cell = (v) => { const t = String(v==null?"":v); return /[",\n\r]/.test(t) ? `"${t.replace(/"/g,'""')}"` : t; };
-  const rows = (S.orders||[]).slice().sort((a,b)=>(b.at||"").localeCompare(a.at||"")).map(o => [orderStoreLabel(o),o.item,o.orderNo,o.qty,o.total,o.at,stageLabel(o.stage||"placed"),o.shipTo,o.card,o.arrives,o.buyer,csvAddr(o.shipAddr),o.inbox].map(cell).join(","));
+  const rows = (S.orders||[]).slice().sort((a,b)=>(b.at||"").localeCompare(a.at||"")).map(o => [orderStoreLabel(o),o.item,o.orderNo,o.qty,o.total,o.at,stageLabel(o.stage||"placed"),o.shipTo,o.card,o.arrives,o.buyer,csvAddr(o.shipAddr),o.inbox,o.priceEach].map(cell).join(","));
   return [cols.join(",")].concat(rows).join("\r\n");
 }
 function jsonOrdersToRows(text){
