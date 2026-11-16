@@ -717,15 +717,67 @@ for another store, are left out, and nothing about them can stop a batch.
 ## Payments (Stripe)
 
 From FAFO 1.9.130 your buyers can pay you for checkouts through Stripe (the owner's decisions, 2026-10-18): a price
-**per checkout**, **$10** to start, which you can change in the **Price per checkout** box on the Billing page (below),
-and Friends and Family always pay **$5** (the owner, 2026-11-13: "Friends and family are always 5 dollars but everyone
-else is 10 or can be set for more later"; it was $10 until 2026-11-12, then $5 to start until 2026-11-13, and Friends
-and Family paid nothing until then). There's no monthly plan any more: on 2026-11-12 the owner removed the $25 a month
-plan and its extra 15 slots ("Remove $25 plan completely"); a buyer who's already on one keeps it until it ends (below).
-It stays off until you add the two Stripe secrets below; until then nothing changes anywhere.
+**per checkout**, which since 2026-11-16 goes **by the order's amount before tax** (below), and Friends and Family always
+pay **$5** (the owner, 2026-11-13: "Friends and family are always 5 dollars but everyone else is 10 or can be set for more
+later"; it was $10 until 2026-11-12, then $5 to start until 2026-11-13, then $10 or what you set until 2026-11-16, and
+Friends and Family paid nothing until 2026-11-12). There's no monthly plan any more: on 2026-11-12 the owner removed the
+$25 a month plan and its extra 15 slots ("Remove $25 plan completely"); a buyer who's already on one keeps it until it
+ends (below). It stays off until you add the two Stripe secrets below; until then nothing changes anywhere.
 
-- **Who pays.** Anyone who isn't on a paid monthly plan pays the price per checkout for each checkout on the slots they
-  sent (Friends and Family $5): an order on an account you gave them (from your FAFO's order alerts), an order on their
+**The price by the order's amount before tax** (the owner's request, 2026-11-16: "Friends and family are always $5.
+Orders that is before $1-49.99, $5. 50-99.99, $10. $100-149.99, $15. 150-199.99, $20. Anything over 200 is $25. All
+prices are included before tax."; the details below are defaults chosen for the owner):
+
+| The order's amount before tax | Price |
+| --- | --- |
+| under $50.00 (under $1 too) | $5 |
+| $50.00 to $99.99 | $10 |
+| $100.00 to $149.99 | $15 |
+| $150.00 to $199.99 | $20 |
+| $200.00 and over | $25 |
+
+- **The amount it goes by** (its *basis*), first that's known: the order's amount before tax the FAFO sends (`sub`, from
+  FAFO 1.9.154: the store email's Subtotal when FAFO read one, else quantity × unit price); else only its total with tax
+  (`total`, which every FAFO sends with order alerts), less the most US sales tax can be, 11.5% (the total divided by
+  1.115, so tax never pushes an order into a higher tier; shipping still counts): a $64.18 total is about $57.56 before
+  tax, $10; else an amount you type in **Add a checkout** or that a pasted line has. With none of those (a buyer's FAFO
+  before 1.9.154 reporting a checkout on their own account, or one you add without an amount), it's the **price when the
+  amount isn't known**, the Billing page's box (below), $10 to start.
+- Amounts are read strictly: an optional `$`, digits with optional thousands commas, and optional cents (`59.98`,
+  `$59.98`, `1,234.56`); anything else (`12.345`, `-5`, `1e5`, `about $60`), $0 and over $100,000 count as no amount.
+- **Friends and Family** pay $5 whatever the amount, and your own FAFO is never charged.
+- A checkout keeps the price it went on the invoice at, and what it was priced on is kept beside it (the
+  `billing_line_basis` table, a new one, as `db:init` can't add columns; written with the checkout). Your Billing page
+  shows it under each checkout's amount ("on $59.98 before tax", "on about $57.56 before tax (from the $64.18 total)",
+  "Friends and Family price", or "amount not known"), and buyers' FAFOs get it with their invoice (`basis`, `basisFrom`,
+  `basisTotal`) and the tiers (`prices.tiers`).
+- **A checkout their FAFO reported, then taken over** by your order alerts or by you (Add a checkout, Paste checkouts:
+  the same order, which then counts as yours) takes the amount that comes with the take-over, but only when the buyer's
+  report had none (it went on at the price when the amount isn't known, from a FAFO before 1.9.154) and no Stripe page
+  the buyer opened to pay holds it (that page charges the amounts it was opened with). Otherwise it keeps the amount and
+  basis it had: one their FAFO reported with an amount keeps its own price, and the amount you typed or pasted isn't used.
+  Paste checkouts' check and Add a checkout say which ("Will take over their FAFO's report · $20 · on $180.00 before
+  tax", or "· keeps $5 · on $30.00 before tax (the amount here isn't used)"; "Took over their FAFO's report of Target #…
+  at $20 (on $180.00 before tax)." or "…, which keeps $5 (on $30.00 before tax; the amount you typed isn't used)."), and
+  when it's kept only because the buyer is paying it, they say so ("· keeps $10 · amount not known (they're paying it
+  now, so the amount here isn't used)"; "…, which keeps $10 (amount not known; they're paying it now, so the amount you
+  typed isn't used)."). A checkout kept that way isn't marked as priced on your amount, even when that amount's tier is
+  the price it kept.
+- **Paying takes what the checkouts are at that moment.** FAFO reads what the buyer owes, then holds those checkouts for
+  their Stripe page, so nothing re-prices them while they pay. If one was re-priced (taken over, above) or stopped being
+  owed in the moment between, nothing is charged: the buyer is told "Your invoice just changed. Try again." with their
+  invoice as it is now, and the next try charges the new amounts.
+- **Friends and Family's checkouts say so** ("Friends and Family price"; `basisFrom` `family`, with the order's amount
+  kept in `basis` for information, `null` when none was known, and no `basisTotal`), all of them, with an amount or
+  without, so once you **Charge** someone, the $5 checkouts from while they were Friends and Family never read as priced
+  on an amount whose tier is more, nor as "amount not known"; their checkouts from then on take their tiers.
+- **FAFOs before 1.9.154** (1.9.130 to 1.9.153) don't know the tiers: until they update they keep saying "$10 per
+  checkout" and "Each new checkout is $10 (ones already on your invoice keep their price)", as `prices.checkout` is the
+  price when the amount isn't known, while their invoice rows show each checkout's real amount. Their own reports send
+  no amount, so they're at that price unless your order alerts or you take them over with one (above).
+
+- **Who pays.** Anyone who isn't on a paid monthly plan pays a price per checkout (its tier, above) for each checkout on
+  the slots they sent (Friends and Family $5): an order on an account you gave them (from your FAFO's order alerts), an order on their
   own account while it was out as one of their slots (their FAFO finds it in their email and reports it; this worker
   checks the account was out then), or one you add on the Billing page. One order is one checkout, whatever the
   quantity. Each is free if the store cancels it before it's paid, and **due by the end of the Sunday after it**, 11:59
@@ -734,7 +786,7 @@ It stays off until you add the two Stripe secrets below; until then nothing chan
   overdue. One that reaches the invoice late (a late order alert or report, or one you add or paste with an older date)
   is due the Sunday after the day it's added, so it's never overdue as it arrives. A checkout takes the price as it is
   when it goes on the invoice, and keeps it: a new price is for checkouts from then on ($5 ones from 2026-11-12 to
-  2026-11-13 stay $5). Orders from before payments came on are never billed, and neither are checkouts on a declined
+  2026-11-13 stay $5, and the flat price of ones from before 2026-11-16 stays). Orders from before payments came on are never billed, and neither are checkouts on a declined
   batch's slots (add one by hand if you ran it), nor ones after a slot was pulled (once your channel was told of the
   pull).
 - **Checkouts from before the Sunday rule.** The first request after the worker that has it was deployed moved every
@@ -766,7 +818,7 @@ It stays off until you add the two Stripe secrets below; until then nothing chan
   their amounts and show again, due the coming Sunday at the earliest, so none is overdue as it comes back and Submit
   isn't off for them at once; **Waive** any you don't want them to pay. Everyone you approved before payments came on is
   Friends and Family (the first request that sees the Stripe keys notes when that was), and so is every key you made by
-  hand. The Billing page moves anyone either way: **Charge** makes a buyer pay the regular price like one approved after
+  hand. The Billing page moves anyone either way: **Charge** makes a buyer pay by the tiers like one approved after
   payments began, for checkouts from then on (never for ones from while they were Friends and Family), on pay per
   checkout. If you make a buyer with a monthly plan Friends and Family, Stripe stops charging it (its collection is
   paused) until you charge them again; they pay $5 per checkout meanwhile, and can't start or grow a monthly plan.
@@ -833,18 +885,22 @@ what's owed and overdue, what was paid in the last 30 days, whether your FAFO's 
 stop, checkouts on accounts you give out aren't billed: keep Order alerts for buyers on in your desktop FAFO), and every
 buyer with their plan and status.
 
-**Price per checkout** (the owner's request, 2026-11-12) is the price in dollars, $10 to start, from $1 to $100, with up
-to two decimals (12, 12.50). **Save** changes it for checkouts from then on, in test and live mode alike: ones already
-on an invoice keep the price they went on at, and are paid at it. Your channel gets a note each time it changes (`💲 Price
-per checkout: $10 → $12 …`); saving the same price changes nothing. Buyers' FAFOs show the new price in Invoice. It's
-everyone's but Friends and Family's, who always pay $5 (nothing on the page changes that). Each buyer's row says their
-plan ("Friends and Family · $5 per checkout"), and each checkout's due date is its Sunday (in Eastern time).
+**Price when the amount isn't known** (the owner's request, 2026-11-12, as the price per checkout; since 2026-11-16 the
+price of a checkout whose amount FAFO can't tell: one a buyer's FAFO before 1.9.154 reports on their own account, or one
+you add or paste without an amount) is the price in dollars, $10 to start, from $1 to $100, with up to two decimals (12,
+12.50). **Save** changes it for checkouts from then on, in test and live mode alike: ones already on an invoice keep the
+price they went on at, and are paid at it. Your channel gets a note each time it changes (`💲 Price when the amount isn't
+known: $10 → $12 …`); saving the same price changes nothing. It's everyone's but Friends and Family's, who always pay $5
+(nothing on the page changes that). The prices line above it says the tiers, Friends and Family's $5 and this price; each
+buyer's row says their plan ("Friends and Family · $5 per checkout"), and each checkout's due date is its Sunday (in
+Eastern time) and what it was priced on.
 
 **From $5 to $10, once.** The worker before 2026-11-13 had $5 to start. The first request after this one was deployed
 with payments on (a buyer's FAFO asking, an order alert, the Billing page, `/admin/billing`) saved $10 as the price when
-it was below $10, saved or not, and told your channel (`💲 Price per checkout: $5 → $10 …`; with none saved, too, since
-it was $5 until then). It's saved either way so that the worker before, if it still answers for a moment during the
-deploy or you roll back to it in Cloudflare, bills $10 too. A price of $10 or more stayed as it was, and checkouts
+it was below $10, saved or not, and told your channel (`💲 Price when the amount isn't known: $5 → $10 …`, the price
+before as it really was; with none saved, too, since it was $5 until then; "Price per checkout" until 2026-11-16, when
+the box became the price when the amount isn't known). It's saved either way so that the worker before, if it still
+answers for a moment during the deploy or you roll back to it in Cloudflare, bills $10 too. A price of $10 or more stayed as it was, and checkouts
 already on an invoice keep theirs. It's noted as `price_ten` in `billing_config`, and never happens again: a price you
 save afterwards, lower too, stays (saving a price notes it as done too, if it wasn't yet).
 
@@ -856,26 +912,37 @@ A buyer's **Details** has:
   it's then due by the end of the Sunday after that day, or later if it was due later, never earlier), and **Waive** or
   **Keep** for a checkout they said wasn't yours ("Not my seller's checkout?" in their Invoice; your channel gets a link
   to answer it).
-- **Add a checkout**, and their recent batches to match your bot's log against.
+- **Add a checkout**, with the order's amount before tax if you know it (it's then priced by its tier; left empty, at the
+  price when the amount isn't known; anything but a dollar amount adds nothing; the hint under it lists the tiers: "Priced
+  by its tier: $5 under $50, … Left empty, it's $10, the price when the amount isn't known. Friends and Family always pay
+  $5."), and their recent batches to match your bot's log against. The invoice keeps each checkout's date and due date on
+  one line.
 
 **Paste checkouts** takes your bot's success log, one checkout per line: each line needs the account's email and the
 order number (a store's name, Target, Pokémon Center or Costco, outside the email, and a date are read too, else the ones
-you pick; Add a checkout offers the same three stores). You see who each one goes to first (the
+you pick; Add a checkout offers the same three stores). The first dollar amount written with a `$` on a line, outside its
+email (`$59.98`, `$1,234.56`), is taken as the order's amount before tax and prices it by its tier; the check shows it
+and the price each line gives ("Will add · $10 · on $59.98 before tax"), and a line without one is at the price when the
+amount isn't known. A `$` amount right after a minus sign or a dash (`-$5.00`, `–$5.00`) or in brackets (`($5.00)`,
+`( $5.00)`) is a discount or a credit, so the next one counts (`Discount -$5.00 | Total $64.18` is $64.18); a dash with a
+space before the `$` is a separator, as in a bot's log (`Success - Target - $59.98` is $59.98); and one running into a
+letter or a digit (`$1e5`, `$5.00USD`) is no amount. You see who each one goes to first (the
 buyer who had that email out as a slot that day, or a list to pick from when two did) and whether it would be billed;
 **Add** writes them. Pasted emails are only matched, never kept. If the store cancels one you added on a buyer's own
 account, their FAFO says so and it's free, as for the checkouts it reports itself (you can charge it again).
 
 - **Refunds** are made in your Stripe Dashboard; your channel hears about them. The prices are FAFO's own, not Stripe's:
-  the price per checkout is the Billing page's box (kept in `billing_config` as `price:checkout`, in cents; `PRICE_CHECKOUT`
-  in `src/index.js` until it's first saved), Friends and Family's is `PRICE_FAMILY` there (never set on the page), and
-  the monthly plan's are `PRICE_MONTHLY` and `PRICE_EXTRA`.
+  the tiers are `PRICE_TIERS` in `src/index.js` (and `TAX_MAX`, the 11.5% taken off a total), the price when the amount
+  isn't known is the Billing page's box (kept in `billing_config` as `price:checkout`, in cents; `PRICE_CHECKOUT` in
+  `src/index.js` until it's first saved), Friends and Family's is `PRICE_FAMILY` there (never set on the page), and the
+  monthly plan's are `PRICE_MONTHLY` and `PRICE_EXTRA`.
 - **Removing either secret turns payments off here, but Stripe keeps charging monthly plans.** Cancel those in Stripe
   first if you're stopping for good. Checkouts from while they were gone aren't billed once you add them back.
 - Payments are in the `billing_*` tables, which `npm run db:init` (and the deploy Action) adds.
 
 ```
-# Payments: on or off, the mode, since when, plans, what's owed, the prices per checkout (prices.checkout and
-# prices.family, in cents), since when Friends and Family are charged (familyFrom), when checkouts from before were moved
+# Payments: on or off, the mode, since when, plans, what's owed, the prices per checkout (prices.tiers by the order's
+# amount before tax, prices.checkout and prices.unknown when it isn't known, and prices.family, in cents), since when Friends and Family are charged (familyFrom), when checkouts from before were moved
 # onto the Sunday rule (dueSunday; asking moves any left over), when a price below $10 was moved to $10 (priceTen), which
 # plans buyers can pick (offered), Stripe's price ids, the last order alerts from your FAFO
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/billing
@@ -1053,6 +1120,12 @@ products added to it once, and the SKUs a batch carries), product pictures
 synced vaults (revisions, two devices saving at once, large vaults, a new password, and the lock
 after wrong passwords), and payments against a stand-in Stripe (plans, invoices, Submit refused and allowed, sessions,
 signed webhooks, refunds, the monthly plan's states with `BILLING_MONTHLY` on and what's left of it with it off,
-disputes, the Billing page and its price per checkout (moved to $10 once), Friends and Family's $5, test mode, and that
+disputes, the Billing page and its price when the amount isn't known (moved to $10 once), the price by the order's
+amount before tax (each tier's edges, a total with tax, amounts that aren't, Add a checkout's and pasted lines' amounts,
+a pasted discount skipped, a checkout sent again keeping its price, and one their FAFO reported taken over: re-priced
+when it had no amount and no Stripe page held it, kept otherwise, with no basis written while a page holds it and what
+the check and Add say; and a checkout re-priced between reading the invoice and claiming a payment, which a trigger in
+the local database makes happen: 409 and no Stripe page at the old amounts), Friends and Family's $5 (and their
+checkouts, with an amount or without, still reading so once charged), test mode, and that
 the tables a database from the last release gets are the same as a new one's), and inbox tests against pretend IMAP
 servers (they need openssl, to make a throwaway certificate authority).

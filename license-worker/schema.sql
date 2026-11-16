@@ -494,7 +494,8 @@ CREATE TABLE IF NOT EXISTS billing_subs (
 CREATE INDEX IF NOT EXISTS billing_subs_key ON billing_subs (key_hash, mode);
 
 -- Invoice lines: one per order per buyer, each at the price per checkout of its buyer's kind when it was written (amount:
--- the regular price, or Friends and Family's from 2026-11-12), due by the end of the Sunday after the order, US Eastern
+-- the regular price, or Friends and Family's from 2026-11-12; from 2026-11-16 the tier of the order's amount before tax, or
+-- the price when the amount isn't known: billing_line_basis), due by the end of the Sunday after the order, US Eastern
 -- (due_at: Monday 00:00 Eastern less 1 ms; 3 days after the order until 2026-11-12). An order belongs to one buyer.
 CREATE TABLE IF NOT EXISTS billing_lines (
   id             TEXT PRIMARY KEY,
@@ -525,6 +526,21 @@ CREATE TABLE IF NOT EXISTS billing_lines (
 );
 CREATE INDEX IF NOT EXISTS billing_lines_key ON billing_lines (key_hash, mode, created_at);
 CREATE INDEX IF NOT EXISTS billing_lines_order ON billing_lines (store, order_no);
+
+-- What a line was priced on (2026-11-16, the owner: a checkout's price by the order's amount before tax, $5 under $50 to $25
+-- from $200; Friends and Family always $5): its amount before tax in cents (basis) and where that came from (basis_from: sub,
+-- the order's amount before tax its FAFO sent; total, worked out from the total with tax, less the most US sales tax can be,
+-- 11.5%; owner, typed or pasted on the Billing page; family, a Friends and Family line, at their $5 whatever the amount,
+-- which is kept for information, 0 when none is known), and that total as written (total, only for "total"). Written in
+-- the batch of the line's INSERT, for the line that INSERT made, or the buyer's report with none that an order alert or the
+-- owner took over with an amount (re-priced then, unless a pay session held it: then none); none for a line priced without
+-- an amount, but every Friends and Family line has one. A table of its own, as db:init can't add columns.
+CREATE TABLE IF NOT EXISTS billing_line_basis (
+  line_id    TEXT PRIMARY KEY,                  -- billing_lines.id
+  basis      INTEGER NOT NULL,
+  basis_from TEXT NOT NULL,                     -- sub | total | owner | family
+  total      TEXT NOT NULL DEFAULT ''           -- the total it was worked out from ("$64.18"), for total
+);
 
 -- A buyer's own accounts that were out as slots, and when (from the batch reaching the channel until a pull): the hash of
 -- the email only, which their FAFO's reported checkouts are checked against. Kept whether billing is on or off; a declined
@@ -598,7 +614,7 @@ CREATE TABLE IF NOT EXISTS billing_calls (
 );
 CREATE INDEX IF NOT EXISTS billing_calls_key ON billing_calls (key_hash, kind, at);
 -- Settings and stamps: on_since:<mode>, back_on:<mode>, off_seen, alerts_seen, prices:<mode> (Stripe's ids), price:checkout
--- (cents; a price:family row is never read: Friends and Family always pay $5), family_from:<mode> (since when Friends and
+-- (cents: the price per checkout, from 2026-11-16 the price when an order's amount isn't known; a price:family row is never read: Friends and Family always pay $5), family_from:<mode> (since when Friends and
 -- Family are charged), due_sunday (when unpaid lines were moved onto the Sunday rule), price_ten (when a price below $10
 -- was moved to $10, once).
 CREATE TABLE IF NOT EXISTS billing_config (

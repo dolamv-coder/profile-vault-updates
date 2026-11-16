@@ -519,6 +519,40 @@ alone (every store's rows of one account) from reading the whole table. Only
     waits. Errors are logged and never fail the request. The tests make a call lose the race to the marker (a trigger in
     the local database writes another value first: that call saves and posts nothing) and make `priceTen` fail before a
     Save.
+  On 2026-11-16 (the owner: "Friends and family are always $5. Orders that is before $1-49.99, $5. 50-99.99, $10.
+  $100-149.99, $15. 150-199.99, $20. Anything over 200 is $25. All prices are included before tax."; the details below
+  are defaults chosen for the owner) a checkout is **priced by the order's amount before tax** (worker and page 1.9.154):
+  - **Tiers** (`PRICE_TIERS`, `tierPrice`): $5 under $50, $10 from $50, $15 from $100, $20 from $150 and $25 from $200.
+    Friends and Family pay `PRICE_FAMILY`, $5, whatever the amount; the owner's own FAFO is never charged.
+  - **What a line is priced on** (`basis`, in cents, `lineBasis`):
+    - the page's `sub` (on POST /alerts events and POST /billing/checkouts orders, page 1.9.154: the email's Subtotal,
+      else qty × unit price; none when the total is below it, or for a second item);
+    - else its `total` (with tax) less the most US sales tax can be (`TAX_MAX`, 11.5%: total ÷ 1.115, so tax never
+      pushes an order a tier up; shipping still counts);
+    - else nothing: the **price when the amount isn't known**, which is the old price per checkout box (`price:checkout`,
+      $1 to $100, $10 to start; a change posts "💲 Price when the amount isn't known: $10 → $12 …", and priceTen's one-time
+      post says the same);
+    - on the Billing page, Add a checkout's "Order amount before tax" and a pasted line's first "$" amount are basis
+      `owner` (`PASTE_AMOUNT_RE`: never inside its email; not right after a minus sign or a dash, nor in brackets, which
+      are discounts; a spaced dash is a separator, as in "Success - Target - $59.98").
+    - Money is read strictly (`moneyCents`: an optional "$", digits with thousands commas, at most 2 decimals, over 0 and
+      at most $100,000; anything else is none). `sub` is never kept with an alert.
+  - **Kept:** a line keeps the amount it was written with, so unpaid lines from before keep theirs. One exception: a line a
+    buyer's FAFO reported with no amount (a page before 1.9.154) takes the price an alert or the owner brings when they
+    take it over, unless an open pay session holds it (`PAYING_SQL`). The Paste check and Add say which happened ("Will
+    take over their FAFO's report · $20 · on $180.00 before tax", or "· keeps $5 · …", with "they're paying it now" when
+    a session holds it). Pay reads the claimed lines' amounts again after claiming its session and answers 409 "Your
+    invoice just changed. Try again." if one moved meanwhile, so Stripe never charges a line's old amount.
+  - **Stored** in `billing_line_basis` (a new table: `line_id`, `basis`, `basis_from` sub | total | owner | family,
+    `total`), written in the line's D1 batch, only for the line it made or re-priced (never one a pay session holds).
+    Every Friends and Family line has a row saying `family` (its basis 0 when none is known), so they read "Friends and
+    Family price", also after Charge, never a basis a tier contradicts or "amount not known".
+  - **GET /billing** adds `prices.tiers` (`[{below, price}]`, the last `below` null) and `prices.unknown`, and each line
+    `basis`, `basisFrom` and `basisTotal` ("$64.18", for total). `prices.checkout` is still Friends and Family's $5 or the
+    unknown-amount price, so pages 1.9.130 to 1.9.153 say "$10 per checkout" and "Each new checkout is $10 (ones already
+    on your invoice keep their price)" until they update, while their rows show the real amounts.
+  - **The Billing page** names the tiers, has the note under each amount ("on $59.98 before tax", "on about $57.56 before
+    tax (from the $64.18 total)", "amount not known", "Friends and Family price"), and `/admin/billing` adds the tiers.
   The owner's words: "Buyers that I already approved should not be charged for anything", so **Friends and Family**
   (`exemptOf`): everyone issued a license before payments came on (`on_since:<mode>` in `billing_config`, stamped by the
   first request that sees the keys), every hand-made key, and anyone the owner moves there, was never charged or refused
@@ -2655,6 +2689,33 @@ in the page (between `ORDERS-XLSX-START` and `ORDERS-XLSX-END`; no library: `zip
   `exportPeople` (guarded by `ORDERS-XLSX-START`, not by the entry it tests). Checked outside the repo against the owner's
   real orders: LibreOffice opens it with no formula errors and the same values the page cached. Settings gain
   `exportPeople`, which 1.9.112 syncs as it is.
+
+From 1.9.154 Invoice shows **checkout prices by the order's amount before tax** (the owner's request, 2026-11-16; the
+worker section above), and FAFO sends what each checkout is priced on:
+- **What's sent:** orders gain `subtotal`, the email's Subtotal, Sub-total or Sub Total (Target's "Subtotal (2 items)").
+  `repairFromConfirmations` fills it on orders from before without counting it as a repair.
+  - `orderSubBeforeTax(o)` is the amount before tax: the subtotal, else qty × `priceEach`, as the email gives them. It's
+    "" when the total is below it (a discount or credit: the worker then goes by the total, which never overcharges) or,
+    with no subtotal, above it by more than tax and $10 could explain (a second item). A store discount the total doesn't
+    show below the items' price isn't taken off: one order alone can't tell a discount from another tax rate (the review
+    found false ones from `oxFits` at rates it doesn't list and with tax rounded per unit).
+  - POST /alerts events add `sub`, and `billEvent` adds `sub` and `total`. Send to buyer's events are unchanged.
+  - The total's fallback reads neither "Sub-total" nor "Sub Total" as the total (`(?<!sub[\s-]?)\btotal`), and still
+    reads "ORDER-TOTAL:".
+- **Invoice**, only when the worker sends `prices.tiers` (with none, 1.9.153's wording, except that Submit's block window
+  names no price when no answer is in memory):
+  - the plan card's "$5–$25 per checkout" with the tiers listed and "Amount not known" (`prices.unknown`, `billUnknown`;
+    the range takes it in when it's outside the tiers');
+  - the heading "Pay per checkout · $5 to $25 by order amount", and the footer's tiers with ", or $10 when FAFO can't tell
+    an order's amount";
+  - "Ones already on your invoice keep the price they had." only while an owed line isn't at what it would cost now
+    (`billKeptLine`);
+  - each row's amount with its note (`billBasisNote`, `.inv-basis`; none for Friends and Family);
+  - Cancel plan, Switch, Submit's block window, the setup guide's step 4 and the owner's Settings → Billing name the
+    tiers. Friends and Family see $5 as before.
+- **Tests:** `billing.test.mjs` (the alert and report fields, the parse, discounts, the repair, every Invoice wording with
+  and without tiers, the unknown price, kept lines, Friends and Family) and `walkthrough.test.mjs` (step 4 with tiers).
+- Orders gain `subtotal`, which 1.9.112 syncs as it is.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

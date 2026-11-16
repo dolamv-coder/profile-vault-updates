@@ -46,6 +46,10 @@ const PW = "sample-pass-145";
 // ---- The pretend license worker ----
 const LIC = "PVLT-TEST-TEST-TEST-TEST";
 const PRICES = { checkout: 500, family: 500, monthly: 2500, extra: 2500, monthlySlots: 10, extraSlots: 15, extraMax: 1, dueDays: 3, dueRule: "sunday", dueTz: "America/New_York" };
+// The worker's prices by the order's amount before tax (1.9.154), when the page reads them (billTiers).
+const TIERS = /function billTiers\(/.test(HTML);
+if (!TIERS && !process.argv[2] && cmp(newest, "1.9.154") >= 0) { console.error(`${file} doesn't read the worker's tiers (billTiers): update this test if that's on purpose`); process.exit(1); }
+const TIER_LIST = [{ below: 5000, price: 500 }, { below: 10000, price: 1000 }, { below: 15000, price: 1500 }, { below: 20000, price: 2000 }, { below: null, price: 2500 }];
 const billing = (o) => Object.assign({ on: true, mode: "live", exempt: null, plan: null, plans: ["checkout"], nextPlan: null, block: { reason: "no-plan", text: "Pick a plan to submit." },
   now: Date.now(), prices: PRICES, sub: null, lines: [], owed: 0, overdue: 0, paid30: 0, payments: [], report: null }, o);
 const ITEMS = [{ sku: "11111111", store: "target", name: "Sample Booster Bundle", about: "Six sample booster packs.", set: "Sample Set", ref: "" }];
@@ -385,6 +389,25 @@ try {
     assert.ok((await s.setting()).skip.interests > 0);
     await s.page.waitForFunction(() => document.querySelector('#guide .guide-step[data-step="pay"].is-cur'));
     assert.match(await s.text("#guide .guide-body"), /^Your seller charges \$5 for each checkout\. On Invoice, choose Pay per checkout\. Until you do, Submit stays off\. Open Invoice$/);
+  });
+  // From 1.9.154 the worker prices a checkout by the order's amount before tax (prices.tiers): the step says so, and goes back
+  // to the one price when an answer has none (an older worker).
+  if (TIERS) await test("with the worker's tiers (1.9.154), the Invoice step says $5 to $25 by the order's amount before tax", async () => {
+    const body = () => s.page.$eval("#guide .guide-body", (e) => e.innerText.replace(/\s+/g, " ").trim()).catch(() => "");
+    W.billing = billing({ prices: Object.assign({}, PRICES, { checkout: 1000, unknown: 1000, tiers: TIER_LIST }) });
+    await s.ev(() => window.__t.refreshBilling(true));
+    for (let i = 0; i < 100 && !/\$5 to \$25/.test(await body()); i++) await s.page.waitForTimeout(50);
+    assert.equal(await body(), "Your seller charges $5 to $25 for each checkout, by the order's amount before tax. On Invoice, choose Pay per checkout. Until you do, Submit stays off. Open Invoice");
+    // A price for an unknown amount above the tiers widens the range, as on Invoice (the third review).
+    W.billing = billing({ prices: Object.assign({}, PRICES, { checkout: 3000, unknown: 3000, tiers: TIER_LIST }) });
+    await s.ev(() => window.__t.refreshBilling(true));
+    for (let i = 0; i < 100 && !/\$5 to \$30/.test(await body()); i++) await s.page.waitForTimeout(50);
+    assert.equal(await body(), "Your seller charges $5 to $30 for each checkout, by the order's amount before tax. On Invoice, choose Pay per checkout. Until you do, Submit stays off. Open Invoice");
+    W.billing = billing({});
+    await s.ev(() => window.__t.refreshBilling(true));
+    for (let i = 0; i < 100 && /\$5 to \$25/.test(await body()); i++) await s.page.waitForTimeout(50);
+    assert.equal(await body(), "Your seller charges $5 for each checkout. On Invoice, choose Pay per checkout. Until you do, Submit stays off. Open Invoice");
+    assert.equal(await s.cur(), "pay");
   });
   await test("Open Invoice rings Pay per checkout; choosing it ticks the step off", async () => {
     await s.page.click('#guide [data-act="guide-go"][data-id="pay"]');
