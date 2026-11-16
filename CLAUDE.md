@@ -526,7 +526,7 @@ alone (every store's rows of one account) from reading the whole table. Only
     Friends and Family pay `PRICE_FAMILY`, $5, whatever the amount; the owner's own FAFO is never charged.
   - **What a line is priced on** (`basis`, in cents, `lineBasis`):
     - the page's `sub` (on POST /alerts events and POST /billing/checkouts orders, page 1.9.154: the email's Subtotal,
-      else qty × unit price, less a store discount the total shows);
+      else qty × unit price; none when the total is below it, or for a second item);
     - else its `total` (with tax) less the most US sales tax can be (`TAX_MAX`, 11.5%: total ÷ 1.115, so tax never
       pushes an order a tier up; shipping still counts);
     - else nothing: the **price when the amount isn't known**, which is the old price per checkout box (`price:checkout`,
@@ -540,10 +540,13 @@ alone (every store's rows of one account) from reading the whole table. Only
   - **Kept:** a line keeps the amount it was written with, so unpaid lines from before keep theirs. One exception: a line a
     buyer's FAFO reported with no amount (a page before 1.9.154) takes the price an alert or the owner brings when they
     take it over, unless an open pay session holds it (`PAYING_SQL`). The Paste check and Add say which happened ("Will
-    take over their FAFO's report · $20 · on $180.00 before tax", or "· keeps $5 · …").
+    take over their FAFO's report · $20 · on $180.00 before tax", or "· keeps $5 · …", with "they're paying it now" when
+    a session holds it). Pay reads the claimed lines' amounts again after claiming its session and answers 409 "Your
+    invoice just changed. Try again." if one moved meanwhile, so Stripe never charges a line's old amount.
   - **Stored** in `billing_line_basis` (a new table: `line_id`, `basis`, `basis_from` sub | total | owner | family,
-    `total`), written in the line's D1 batch, only for the line it made or re-priced. Friends and Family lines' rows say
-    `family`, so after Charge their old $5 lines read "Friends and Family price", not a basis a tier contradicts.
+    `total`), written in the line's D1 batch, only for the line it made or re-priced (never one a pay session holds).
+    Every Friends and Family line has a row saying `family` (its basis 0 when none is known), so they read "Friends and
+    Family price", also after Charge, never a basis a tier contradicts or "amount not known".
   - **GET /billing** adds `prices.tiers` (`[{below, price}]`, the last `below` null) and `prices.unknown`, and each line
     `basis`, `basisFrom` and `basisTotal` ("$64.18", for total). `prices.checkout` is still Friends and Family's $5 or the
     unknown-amount price, so pages 1.9.130 to 1.9.153 say "$10 per checkout" and "Each new checkout is $10 (ones already
@@ -2691,10 +2694,11 @@ From 1.9.154 Invoice shows **checkout prices by the order's amount before tax** 
 worker section above), and FAFO sends what each checkout is priced on:
 - **What's sent:** orders gain `subtotal`, the email's Subtotal, Sub-total or Sub Total (Target's "Subtotal (2 items)").
   `repairFromConfirmations` fills it on orders from before without counting it as a repair.
-  - `orderSubBeforeTax(o)` is the amount before tax: the subtotal, else qty × `priceEach`. It takes off a store discount
-    when the total fits one and not the full price (`oxFits`, the export's tax model: Target's $5 off). It's "" when the
-    total is below it with nothing fitting, or, with no subtotal, above it by more than tax and $10 could explain (a second
-    item), so the worker goes by the total.
+  - `orderSubBeforeTax(o)` is the amount before tax: the subtotal, else qty × `priceEach`, as the email gives them. It's
+    "" when the total is below it (a discount or credit: the worker then goes by the total, which never overcharges) or,
+    with no subtotal, above it by more than tax and $10 could explain (a second item). A store discount the total doesn't
+    show below the items' price isn't taken off: one order alone can't tell a discount from another tax rate (the review
+    found false ones from `oxFits` at rates it doesn't list and with tax rounded per unit).
   - POST /alerts events add `sub`, and `billEvent` adds `sub` and `total`. Send to buyer's events are unchanged.
   - The total's fallback reads neither "Sub-total" nor "Sub Total" as the total (`(?<!sub[\s-]?)\btotal`), and still
     reads "ORDER-TOTAL:".
