@@ -162,10 +162,11 @@ try {
       f(2, 7999, 16583),            // $5 less with no order showing 7 % with none: no discount guessed
       f(2, 4999, 10198, [0.07]),    // 2 % (no rate), or $5 off at 7.375 % (no order shows it): neither
       f(1, 6999, 7060),             // 0.875 % isn't a rate; $5 off at 8.625 % isn't shown by any order
+      f(2, 7999, 16482),            // 3.025 % isn't a rate (and no order shows 6.35 % to take $5 off at)
     ]; });
     assert.deepEqual(r.slice(0, 7), [{ off: 0, tax: 1120, rate: 0.07 }, { off: 500, tax: 1085, rate: 0.07 }, { off: 0, tax: 1760, rate: 0.11 }, { off: 500, tax: 1550, rate: 0.1 },
       { off: 0, tax: 1200, rate: 0.075 }, { off: 0, tax: 0, rate: 0 }, { off: 500, tax: 984, rate: 0.0635 }]);
-    assert.deepEqual(r.slice(7), [null, null, null, null, null, null, null]);
+    assert.deepEqual(r.slice(7), [null, null, null, null, null, null, null, null]);
   });
 
   await test("oxCanon: an address as the report writes one", async () => {
@@ -202,12 +203,15 @@ try {
   await test("Download Excel saves Target_Orders_11-13-2026.xlsx, well-formed, with the report's sheets in order", async () => {
     await page.fill('.ox-who[aria-label="Who 300 Remembered Rd, Thirdtown, TX 75001 is for"]', "Robin O'Neil & Co");
     let downloads = 0; page.on("download", () => downloads++);
+    // A second click that gets past the closing window to what's under it (an order card, the bar's Delete) is recorded.
+    await page.evaluate(() => { window.__under = []; document.body.addEventListener("click", (e) => { if (e.detail > 1 && !e.target.closest(".layer")) window.__under.push(e.target.className || e.target.tagName); }); });
     const [dl] = await Promise.all([page.waitForEvent("download"), page.dblclick("#ox-go")]);
     assert.equal(dl.suggestedFilename(), "Target_Orders_11-13-2026.xlsx");
     await page.waitForFunction(() => !document.querySelector(".layer.is-open"));
     await page.waitForTimeout(600);
     assert.equal(downloads, 1, "a double click saves once");
     assert.equal(await page.$$eval(".layer", (l) => l.length), 0, "and its second click pressed nothing under the window (the bar's Delete asks first)");
+    assert.deepEqual(await page.evaluate(() => window.__under), [], "the second click reached nothing under the window");
     book = await readBook(await dl.path());
     assert.deepEqual(book.bad, [], "every part parses");
     assert.deepEqual(book.sheets.map((s) => s.name), ["Summary", "Sam Sample", "Alex Buyer", "Robin O'Neil & Co", "All Orders", "Cancelled (excluded)"]);   // the most orders first
