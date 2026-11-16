@@ -836,7 +836,7 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .ox-row{display:flex;align-items:center;gap:12px;padding:8px 6px;border-bottom:1px solid var(--line)}
 .ox-row:last-child{border-bottom:0}
 .ox-addr{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;overflow-wrap:anywhere}
-.ox-who{flex:none;width:200px;min-height:40px;border:1px solid var(--line);border-radius:8px;background:var(--sheet-2);padding:7px 10px;font-size:calc(15px*var(--fs));color:var(--ink)}
+.ox-who{flex:none;width:200px;min-height:40px;border:1px solid var(--line);border-radius:8px;background:var(--sheet-2);padding:7px 10px;font-size:calc(16px*var(--fs));color:var(--ink)}
 .ox-who:focus{border-color:var(--ink);outline:none}
 @media (max-width:560px){.ox-row{flex-direction:column;align-items:stretch}.ox-who{width:100%}}
 .sb-row:hover{background:var(--sheet-2)}
@@ -17720,9 +17720,11 @@ function zipStore(files, when){
    fmt}, all Arial. Text goes inline, formulas carry their value (and the workbook recalculates when Excel opens it). */
 const XL_FMT = {money:[164, '\\$#,##0.00;"($"#,##0.00\\);\\-'], date:[165, "mm/dd/yyyy"], text:[49, ""]};
 const xlCol = (i) => { let s = ""; for (i++; i > 0; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + (i - 1) % 26) + s; return s; };
-const xlText = (v) => String(v == null ? "" : v)
-  .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g, "")
-  .replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+// Characters XML can't hold go (controls, lone surrogates); text that reads as SpreadsheetML's own escape (_x0041_) is escaped.
+const xlStrip = (v) => String(v == null ? "" : v).replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]|[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, "");
+const xlText = (v) => xlStrip(v).replace(/_(x[0-9A-Fa-f]{4}_)/g, "_x005F_$1").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+// How many lines a wrapped cell's text takes in a column this wide (Arial at this size; bold a little wider).
+const xlLines = (text, width, sz, bold) => { const cap = Math.max(1, Math.floor(width * 1.18 * 10 / (sz || 10) * (bold ? 0.9 : 1))); return String(text == null ? "" : text).split("\n").reduce((n, l) => n + Math.max(1, Math.ceil(l.length / cap)), 0); };
 const xlSheetRef = (name) => "'" + String(name).replace(/'/g, "''") + "'";
 const xlSerial = (ymd) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd || ""); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) / 864e5 + 25569 : null; };
 function xlBook(sheets){
@@ -17803,7 +17805,7 @@ function xlSheet(name, cols, print){
 /* The report's styles (from the owner's Target_Orders report). */
 const OX_NAVY = "1F3864", OX_PALE = "D9E2F3", OX_GOLD = "FFF2CC";
 const OX = {
-  title:{sz:14, b:true, v:"center"}, sub:{sz:9, i:true}, note:{sz:9},
+  title:{sz:14, b:true, v:"center"}, titleWrap:{sz:14, b:true, v:"center", wrap:true}, sub:{sz:9, i:true}, note:{sz:9},
   sumHead:{sz:11, b:true, color:"FFFFFF", fill:OX_NAVY, border:true, h:"center"},
   sumPerson:{color:"0000FF", border:true}, sumAddr:{border:true}, sumCount:{color:"0000FF", border:true}, sumMoney:{border:true, fmt:"money"},
   subLabel:{b:true, h:"right"}, subCount:{b:true}, subMoney:{b:true, fill:OX_GOLD, border:true, fmt:"money"},
@@ -17826,22 +17828,32 @@ const oxQty = (o) => Math.max(1, parseInt(String(o.qty || "1").replace(/[^\d]/g,
 const oxMoney = (cents) => { const n = Math.abs(cents) / 100, [a, b] = n.toFixed(2).split("."); return (cents < 0 ? "-$" : "$") + a.replace(/\B(?=(\d{3})+(?!\d))/g, ",") + "." + b; };
 const oxDay = (ymd) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd || ""); return m ? `${m[2]}/${m[3]}/${m[1]}` : ""; };
 const oxItem = (o) => String(o.item || "Order").trim().replace(/^Pok[eé]mon Trading Card Game:\s*/i, "Pokémon TCG: ").replace(/(\w)- (?=\w)/g, "$1 - ");
-// Total = (qty x unit price - a discount) + tax, the tax that amount times a sales tax rate rounded to the cent: rates in 1/8 %
-// steps first, then 1/80 %, and no discount first (FAFO keeps an order's total and unit price, not its tax). null: nothing fits.
-function oxSplit(qty, unit, total){
-  if (unit == null || total == null || unit <= 0) return null;
-  const base = qty * unit;
-  for (const step of [125, 12.5]) for (const off of [0, 500, 1000, 1500, 2000, 2500, 3000]){   // rate in 1/100000ths
-    const sub = base - off; if (sub <= 0) break;
-    const r0 = (total / sub - 1) * 1e5; if (r0 < -1e-6 || r0 > 13000) continue;
-    const k0 = Math.round(r0 / step);
-    for (const k of [k0 - 1, k0, k0 + 1]){
-      if (k < 0) continue;
-      const tax = Math.round(sub * k * step / 1e5 + 1e-9);
-      if (sub + tax === total) return {off, tax, rate:k * step / 1e5};
+// FAFO keeps an order's total and unit price, not its tax, so the tax is worked out: total = (qty x unit price - a discount) + tax,
+// the tax that amount times a sales tax rate, rounded to the cent (or, with no discount, a unit's tax rounded, times qty). Rates
+// it takes: none, or 2.9 % to 11.5 % in steps of 0.05 % or 1/8 % (6.35 %, 7 %, 8.875 %, 9.375 %, 10.25 %: what US states and towns
+// charge together); discounts $5 to $30 in $5 steps. oxFits lists every split that fits, with the rate nearest the total's.
+const oxRateOk = (r) => r === 0 || (r >= 2900 && r <= 11500 && (r % 50 === 0 || r % 125 === 0));   // in 1/100000ths
+function oxFits(qty, unit, total){
+  const out = [];
+  if (unit == null || total == null || unit <= 0) return out;
+  for (const off of [0, 500, 1000, 1500, 2000, 2500, 3000]){
+    const sub = qty * unit - off, tax = total - sub; if (sub <= 0) break; if (tax < 0) continue;
+    const r0 = Math.round(tax / sub * 1e5);
+    find: for (let d = 0; d <= 250; d++) for (const r of d ? [r0 - d, r0 + d] : [r0]){
+      if (r < 0 || !oxRateOk(r)) continue;
+      if (Math.round(sub * r / 1e5 + 1e-9) === tax || (!off && qty > 1 && qty * Math.round(unit * r / 1e5 + 1e-9) === tax)){ out.push({off, tax, rate:r / 1e5}); break find; }
     }
   }
-  return null;
+  return out;
+}
+// The split shown. rates: the rates orders show with no discount, this ZIP's first (most orders first), then the export's. No
+// discount when a rate fits, unless a discount fits at the ZIP's rate and none doesn't; a discount only at a rate some order shows
+// with none, so one is never guessed from one order alone. null: nothing fits.
+function oxSplit(qty, unit, total, rates){
+  const f = oxFits(qty, unit, total), c0 = f.find(x => !x.off), seen = rates || [], zr = seen[0];
+  const cd = f.filter(x => x.off && seen.includes(x.rate));
+  if (c0 && (c0.rate === zr || !cd.some(x => x.rate === zr))) return c0;
+  return cd.find(x => x.rate === zr) || cd[0] || c0 || null;
 }
 // "Mon, Dec 7" -> 12/07.
 const OX_MON = {jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12};
@@ -17860,18 +17872,26 @@ function oxCard(o){
   const brand = /^(amex|american express)$/i.test(m[1].trim()) ? "American Express" : m[1].trim();
   return `${brand} *${m[2]} / Bank: ` + (brand === "American Express" ? "American Express" : "not shown in order email");
 }
-// One address: Send to buyer's key (Jig's spellings of one building are one) of the address on one line (FAFO reads an email's
-// with commas; one typed in, or a seller's, can have line breaks, which the key reads as spaces), else as written, else none.
-const oxKey = (o) => { const a = csvAddr(o.shipAddr); return shareAddrKey(a) || (a ? "a:" + a.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() : ""); };
+// One group: the address, as Send to buyer's key of it on one line (Jig's spellings of one building are one; FAFO reads an email's
+// with commas, one typed in or a seller's can have line breaks, which the key reads as spaces), else as written, else (no address)
+// the ship-to name; split by the buyer orders there were sent to, so two buyers at one building aren't one person.
+const oxKey = (o) => { const a = csvAddr(o.shipAddr);
+  return (shareAddrKey(a) || (a ? "a:" + a.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() : "n:" + String(o.shipTo || "").trim().toLowerCase().replace(/\s+/g, " ")))
+    + (o.shareTo && !o.shareTo.off && o.shareTo.id ? "#" + o.shareTo.id : ""); };
+const oxZip = (o) => { const m = /\b(\d{5})(?:-\d{4})?$/.exec(csvAddr(o.shipAddr)); return m ? m[1] : ""; };
 // An address as the report writes one: no dots, a direction written out (North) as one letter, lowercase words capitalised, no
 // unit line (the address is the building), the city in capitals only when it was all lowercase or all capitals.
 const OX_DIR = {north:"N", south:"S", east:"E", west:"W", northeast:"NE", northwest:"NW", southeast:"SE", southwest:"SW"};
 function oxCanon(a){
-  const ps = csvAddr(a).split(", ").filter(Boolean);
+  let ps = csvAddr(a).split(", ").filter(Boolean);
+  if (ps.length > 3 && /^(?:us|usa|u\.s\.(?:a\.)?|united states(?: of america)?)$/i.test(ps[ps.length - 1])) ps = ps.slice(0, -1);
   if (ps.length < 3) return ps.join(", ").replace(/(\w)\.(?=\w)/g, "$1");
   const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
   const ws = ps[0].replace(/\./g, "").replace(/\s+/g, " ").trim().split(" ");
+  const isDir = (w) => !!OX_DIR[w.toLowerCase()] || /^(?:n|s|e|w|ne|nw|se|sw)$/i.test(w);
+  const named = ws.length >= 3 && isDir(ws[1]) && SHARE_TYPE.has(ws[2].toUpperCase()) && ws.slice(3).every(isDir);   // N St, North St: as shareAddrKey decides
   const l1 = ws.map((w, i) => { const lw = w.toLowerCase();
+    if (i === 1 && named) return w === lw ? cap(w) : w;
     if (OX_DIR[lw] && (i === 1 || i === ws.length - 1)) return OX_DIR[lw];
     if (/^(n|s|e|w|ne|nw|se|sw)$/.test(lw)) return lw.toUpperCase();
     if (/^\d+(st|nd|rd|th)$/i.test(w)) return lw;
@@ -17902,11 +17922,18 @@ function oxGroups(orders, settings){
 // The report: people (each with its addresses and orders), all orders, canceled ones, notes. groups from oxGroups, with name.
 function oxReport(orders, groups, title){
   const kept = orders.filter(o => (o.stage || "placed") !== "canceled"), cxl = orders.filter(o => (o.stage || "placed") === "canceled");
-  const stores = [...new Set(orders.map(orderStoreLabel))], multi = stores.length > 1;
-  const days = [...new Set(orders.map(o => (o.at || "").slice(0, 10)).filter(d => xlSerial(d) != null))].sort();
+  const named = kept.length ? kept : orders;   // the title, the file and the stores go by the orders reported, not the canceled ones
+  const stores = [...new Set(named.map(orderStoreLabel))], multi = stores.length > 1;
+  const days = [...new Set(named.map(o => (o.at || "").slice(0, 10)).filter(d => xlSerial(d) != null))].sort();
+  // The rates orders show with no discount: each ZIP's, the most orders first, then the export's.
+  const unitOf = (o) => { const u = oxCents(o.priceEach); return u > 0 ? u : null; };
+  const r0 = new Map(kept.map(o => { const c = oxFits(oxQty(o), unitOf(o), oxCents(o.total)).find(x => !x.off); return [o, c ? c.rate : null]; }));
+  const tally = (os) => { const m = new Map(); os.forEach(o => { const r = r0.get(o); if (r != null) m.set(r, (m.get(r) || 0) + 1); }); return [...m].sort((a, b) => b[1] - a[1]).map(x => x[0]); };
+  const everywhere = tally(kept), byZip = new Map();
+  const ratesFor = (o) => { const z = oxZip(o); if (!byZip.has(z)) byZip.set(z, [...new Set((z ? tally(kept.filter(x => oxZip(x) === z)) : []).concat(everywhere))]); return byZip.get(z); };
   const dayTxt = (ds) => ds.length ? oxDay(ds[0]) + (ds.length > 1 ? " to " + oxDay(ds[ds.length - 1]) : "") : "";
   const line = (o) => {
-    const q = oxQty(o), u0 = oxCents(o.priceEach), u = u0 > 0 ? u0 : null, t = oxCents(o.total), sp = oxSplit(q, u, t);
+    const q = oxQty(o), u = unitOf(o), t = oxCents(o.total), sp = oxSplit(q, u, t, ratesFor(o));
     const item = (multi ? orderStoreLabel(o) + ": " : "") + oxItem(o);
     let desc = `${item} x${q}` + (u != null ? ` @ ${oxMoney(u)}` : "");
     if (sp){ if (sp.off) desc += ` - ${oxMoney(sp.off)} off`; if (sp.tax) desc += ` + ${oxMoney(sp.tax)} tax`; }
@@ -17926,17 +17953,19 @@ function oxReport(orders, groups, title){
   const list = [...people.values()];
   list.forEach(p => p.addrs.sort((a, b) => b.lines.length - a.lines.length || a.label.localeCompare(b.label)));
   list.sort((a, b) => b.addrs.reduce((n, x) => n + x.lines.length, 0) - a.addrs.reduce((n, x) => n + x.lines.length, 0) || a.name.localeCompare(b.name));
-  // Tab names: no [ ] : * ? / \, 31 characters at most, none twice (Excel compares them in any case), never the report's own.
+  // Tab names: what XML can hold, no [ ] : * ? / \, 31 characters at most (never half an emoji), no apostrophe or space at either
+  // end, none twice (Excel compares them in any case, after all that), never the report's own.
   const used = new Set(["summary", "all orders", "cancelled (excluded)", "history"]);
+  const cut = (x, n) => x.slice(0, n).replace(/[\uD800-\uDBFF]$/, "").replace(/^[\s']+|[\s']+$/g, "");
   for (const p of list){
-    const base = p.name.replace(/[\[\]:*?\/\\]/g, "").replace(/^'+|'+$/g, "").trim().slice(0, 31).trim() || "Person";
-    let t = base, i = 2; while (used.has(t.toLowerCase())){ const suf = " " + i++; t = base.slice(0, 31 - suf.length).trim() + suf; }
+    const base = cut(xlStrip(p.name).replace(/[\[\]:*?\/\\]/g, "").replace(/\s+/g, " "), 31) || "Person";
+    let t = base, i = 2; while (used.has(t.toLowerCase())){ const suf = " " + i++; t = cut(base, 31 - suf.length) + suf; }
     used.add(t.toLowerCase()); p.tab = t;
   }
   const lines = list.flatMap(p => p.addrs.flatMap(a => a.lines.map(l => Object.assign({person:p.name, grouped:a.label}, l))));
   const storeTxt = stores.length === 1 ? stores[0] : stores.length === 2 ? stores.join(" and ") : "";
   const auto = `${storeTxt ? storeTxt + " orders" : "Orders"}${days.length ? " placed " + dayTxt(days) : ""} - successful, no cancellations`;
-  const plain = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  const plain = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   const fd = (d) => d.slice(5, 7) + "-" + d.slice(8, 10) + "-" + d.slice(0, 4);
   const today = new Date(), ymd = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
   const file = `${stores.length === 1 ? plain(stores[0]) || "FAFO" : "FAFO"}_Orders_${days.length ? fd(days[0]) + (days.length > 1 ? "_to_" + fd(days[days.length - 1]) : "") : fd(ymd)}.xlsx`;
@@ -17946,8 +17975,9 @@ function oxWorkbook(rep){
   const sheets = [];
   const Sum = xlSheet("Summary", [16, 46, 10, 15], {paper:9, fitW:1, fitH:1});
   Sum.freeze = 4;
-  Sum.put(1, 0, {v:rep.title}, OX.title); for (let c = 1; c < 4; c++) Sum.put(1, c, {}, OX.title);
-  Sum.merges.push("A1:D1"); Sum.ht(1, 25.5);
+  const tl = xlLines(rep.title, 87, 14, true), ts = tl > 1 ? OX.titleWrap : OX.title;
+  Sum.put(1, 0, {v:rep.title}, ts); for (let c = 1; c < 4; c++) Sum.put(1, c, {}, ts);
+  Sum.merges.push("A1:D1"); Sum.ht(1, 25.5 + 18 * (tl - 1));
   Sum.put(2, 0, {v:"Cost = order total including tax. Click a person name for their tab."}, OX.sub); Sum.ht(2, 15);
   ["Person", "Address", "Orders", "Total"].forEach((h, c) => Sum.put(4, c, {v:h}, OX.sumHead)); Sum.ht(4, 15);
   sheets.push(Sum);
@@ -17960,18 +17990,19 @@ function oxWorkbook(rep){
       const n = a.lines.length, days = [...new Set(a.lines.map(l => (l.o.at || "").slice(0, 10)).filter(d => xlSerial(d) != null))].sort();
       for (let c = 0; c < 6; c++){ T.put(tr, c, c ? {} : {v:a.label}, OX.addr); T.put(tr + 1, c, c ? {} : {v:""}, OX.count); T.put(tr + 2, c, c ? {} : {v:""}, OX.cardLine); }
       let cnt = `${n} order(s) placed${days.length ? " " + rep.dayTxt(days) : ""}.`;
-      if (a.spellings.size > 1) cnt += " Variants grouped here: " + [...a.spellings].map(([s, k]) => `${s.split(", ").slice(0, -2).join(", ") || s} (x${k})`).join(" | ");
+      const sp = new Map(); a.lines.forEach(l => { const x = csvAddr(l.o.shipAddr); if (x) sp.set(x, (sp.get(x) || 0) + 1); });   // in the rows' order
+      if (sp.size > 1) cnt += " Variants grouped here: " + [...sp].map(([x, k]) => `${x.split(", ").slice(0, -2).join(", ") || x} (x${k})`).join(" | ");
       T.put(tr + 1, 0, {v:cnt}, OX.count);
       T.put(tr + 2, 0, {v:"Last card used (last order listed): " + a.lines[n - 1].card}, OX.cardLine);
       [tr, tr + 1, tr + 2].forEach(x => T.merges.push(`A${x}:F${x}`));
-      T.ht(tr, 24); T.ht(tr + 1, 13.5); T.ht(tr + 2, 15);
+      T.ht(tr, 24); T.ht(tr + 1, 13.5 + 10.5 * (xlLines(cnt, 179, 8) - 1)); T.ht(tr + 2, 15 + 11.5 * (xlLines("Last card used (last order listed): " + a.lines[n - 1].card, 179, 9, true) - 1));
       ["Order #", "Order Date", "Description", "Cost", "Card Used / Bank", "Delivery Status"].forEach((h, c) => T.put(tr + 3, c, {v:h}, OX.head)); T.ht(tr + 3, 15);
       const first = tr + 4;
       a.lines.forEach((l, i) => {
         const x = first + i;
         T.put(x, 0, {v:String(l.o.orderNo || "")}, OX.cellText); T.put(x, 1, {v:xlSerial((l.o.at || "").slice(0, 10))}, OX.cellDate);
         T.put(x, 2, {v:l.desc}, OX.cell); T.put(x, 3, {v:l.t == null ? null : l.t / 100}, OX.cellMoney); T.put(x, 4, {v:l.card}, OX.cell); T.put(x, 5, {v:l.status}, OX.cell);
-        T.ht(x, 28.5);
+        T.ht(x, Math.max(28.5, 15 + 13.5 * (Math.max(xlLines(l.o.orderNo, 19), xlLines(l.desc, 58), xlLines(l.card, 38), xlLines(l.status, 40)) - 1)));
       });
       const tot = first + n, sum = a.lines.reduce((s, l) => s + (l.t || 0), 0) / 100;
       T.put(tot, 2, {v:"Address total"}, OX.addrTotalLabel); T.put(tot, 3, {f:`SUM(D${first}:D${tot - 1})`, v:sum}, OX.addrTotal); T.ht(tot, 15);
@@ -17996,8 +18027,9 @@ function oxWorkbook(rep){
   }
   const grand = Math.round(subs.reduce((s, x) => s + x.s * 100, 0)) / 100, aol = rep.lines.length + 2;
   Sum.put(r, 1, {v:"GRAND TOTAL"}, OX.grandLabel);
-  Sum.put(r, 2, subs.length ? {f:subs.map(x => "C" + x.r).join("+"), v:subs.reduce((n, x) => n + x.n, 0)} : {v:0}, OX.grandCount);
-  Sum.put(r, 3, subs.length ? {f:subs.map(x => "D" + x.r).join("+"), v:grand} : {v:0}, OX.grandMoney); Sum.ht(r, 15);
+  const addUp = (c) => { const f = subs.map(x => c + x.r).join("+"); return f.length < 8000 ? f : `SUMIF(B5:B${r - 1},"Subtotal - *",${c}5:${c}${r - 1})`; };
+  Sum.put(r, 2, subs.length ? {f:addUp("C"), v:subs.reduce((n, x) => n + x.n, 0)} : {v:0}, OX.grandCount);
+  Sum.put(r, 3, subs.length ? {f:addUp("D"), v:grand} : {v:0}, OX.grandMoney); Sum.ht(r, 15);
   Sum.put(r + 1, 1, {v:"Check vs All Orders tab (should be 0)"}, OX.checkLabel);
   Sum.put(r + 1, 3, {f:`ROUND(D${r}-'All Orders'!L${aol},2)`, v:0}, OX.checkMoney); Sum.ht(r + 1, 15);
   // Notes, as the report's.
@@ -18007,15 +18039,17 @@ function oxWorkbook(rep){
   notes.push(rep.cxl.length ? `${rep.cxl.length} cancelled order(s) were excluded (see last tab).` : "None of the orders exported were cancelled.");
   if (inb.size) notes.push("Inboxes included: " + [...inb].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} (${plural(v, "order")})`).join(" + ") + ".");
   const fit = rep.lines.filter(l => l.sp), nofit = rep.lines.filter(l => !l.sp && l.tax != null), under = rep.lines.filter(l => !l.sp && l.u != null && l.t != null && l.tax == null), nounit = rep.lines.filter(l => l.u == null);
-  if (fit.length) notes.push("Tax is worked out from each order's total, unit price and local sales tax rate" + (nofit.length || under.length ? "." : "; no order had shipping."));
+  if (fit.length) notes.push("Tax is worked out from each order's total, unit price and local sales tax rate" + (rep.lines.every(l => l.sp || l.t == null) ? "; no order had shipping." : "."));
   if (nofit.length) notes.push(`${plural(nofit.length, "order")} fit no tax rate, so ${nofit.length === 1 ? "its" : "their"} tax is the total less the items (tax and any shipping).`);
   if (under.length) notes.push(`${plural(under.length, "order")} came to less than ${under.length === 1 ? "its" : "their"} items (a discount or gift card), so ${under.length === 1 ? "its" : "their"} tax is left blank.`);
   if (nounit.length) notes.push(`${plural(nounit.length, "order")} ${nounit.length === 1 ? "has" : "have"} no unit price in FAFO (from your seller, or added by hand), so ${nounit.length === 1 ? "its" : "their"} tax isn't split out.`);
+  const nototal = rep.lines.filter(l => l.t == null);
+  if (nototal.length) notes.push(`${plural(nototal.length, "order")} ${nototal.length === 1 ? "has" : "have"} no total in FAFO, so ${nototal.length === 1 ? "it counts" : "they count"} as $0.`);
   const off = fit.filter(l => l.sp.off);
   if (off.length){ const amts = [...new Set(off.map(l => l.sp.off))].sort((a, b) => a - b); notes.push(`${plural(off.length, "order")} came to ${amts.map(oxMoney).join(" or ")} less before tax (a checkout discount), so ${off.length === 1 ? "its" : "their"} tax is on the lower amount.`); }
   notes.forEach((t, i) => { Sum.put(r + 3 + i, 0, {v:t}, OX.note); Sum.ht(r + 3 + i, 15); });
   // All Orders.
-  const A = xlSheet("All Orders", [14, 40, 19, 12, 16, 42, 58, 6, 11, 10, 0, 13, 36, 44, 22], {paper:9, fitW:1, fitH:1});
+  const A = xlSheet("All Orders", [14, 40, 19, 12, 16, 42, 58, 6, 11, 10, 10, 13, 36, 44, 22], {paper:9, fitW:1, fitH:1});
   A.freeze = 1; A.filter = `A1:O${Math.max(1, aol - 1)}`;
   ["Person", "Grouped Address", "Order #", "Order Date", "Ship-To Name", "Address As Entered", "Description", "Qty", "Unit Price", "Shipping", "Tax", "Order Total", "Card / Bank", "Delivery Status", "Gmail Inbox"].forEach((h, c) => A.put(1, c, {v:h}, OX.allHead));
   A.ht(1, 15);
@@ -18025,7 +18059,8 @@ function oxWorkbook(rep){
       [l.all, OX.allCell], [l.q, OX.allCell], [l.u == null ? null : l.u / 100, OX.allMoney], [l.ship, OX.allMoney], [l.tax == null ? null : l.tax / 100, OX.allMoney], [l.t == null ? null : l.t / 100, OX.allMoney],
       [l.card, OX.allCell], [l.status, OX.allCell], [o.inbox || o.sentTo || "", OX.allCell]];
     vals.forEach(([v, s], c) => A.put(x, c, {v}, s));
-    A.ht(x, l.all.length > 58 || l.status.length > 44 ? 23.85 : 15);
+    const nl = Math.max(...[[0, 14], [1, 40], [4, 16], [5, 42], [6, 58], [12, 36], [13, 44], [14, 22]].map(([c, w]) => xlLines(vals[c][0], w)));
+    A.ht(x, nl > 1 ? Math.round((23.85 + 11.9 * (nl - 2)) * 100) / 100 : 15);
   });
   A.put(aol, 10, {v:"Total"}, OX.allTotalLabel);
   A.put(aol, 11, aol > 2 ? {f:`SUM(L2:L${aol - 1})`, v:Math.round(rep.lines.reduce((s, l) => s + (l.t || 0), 0)) / 100} : {v:0}, OX.allTotal); A.ht(aol, 15);
@@ -18048,9 +18083,9 @@ function openOrdersExport(ids){
   const cxl = picked.filter(o => (o.stage || "placed") === "canceled").length;
   const first = oxReport(picked, groups, "");
   const names = [...new Set(groups.map(g => g.name).concat(groups.map(g => g.auto), Object.values(S.settings.exportPeople || {}).map(e => e && e.name)).filter(x => typeof x === "string" && x.trim()))].sort((a, b) => a.localeCompare(b));
-  let busy = false;
+  let busy = false, clickAt = 0;
   openLayer({
-    title:`Export ${plural(picked.length, "order")}`, wide:true,
+    title:`Export ${plural(picked.length, "order")}`, wide:true, dismiss:false,
     body:`<p class="item-sub" style="margin:0 0 12px">An Excel workbook laid out like an orders report: a Summary of each person's addresses and totals (each name opens their tab), a tab for each person with a section per address, All Orders with each order's unit price and tax, and canceled orders on a tab of their own.</p>
       <div class="field"><label for="ox-title">Title</label><input id="ox-title" value="${esc(first.title)}" maxlength="140" autocomplete="off"></div>
       ${groups.length ? `<p class="flabel" style="margin:4px 0 2px">Who each address is for</p>
@@ -18059,19 +18094,29 @@ function openOrdersExport(ids){
       <datalist id="ox-names">${names.map(n => `<option value="${esc(n)}">`).join("")}</datalist>` : `<p class="item-sub">Every order picked was canceled: they go on the Cancelled (excluded) tab.</p>`}
       ${cxl && groups.length ? `<p class="item-sub" style="margin:10px 0 0">${plural(cxl, "canceled order goes", "canceled orders go")} on the Cancelled (excluded) tab.</p>` : ""}`,
     foot:`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="ox-go">${ic("exp")}Download Excel</button>`,
+    // A closing window is inert while it fades, so a double click's second click would press what's under it (the selection
+    // bar's Delete): closed by a click, it drops a second click for 400 ms, as Export profiles does (1.9.150).
+    onClose:() => { if (performance.now() - clickAt > 100) return;
+      const t0 = performance.now(), eat = (e) => { if (e.detail > 1 && performance.now() - t0 < 400){ e.stopPropagation(); e.preventDefault(); } };
+      document.addEventListener("click", eat, true); setTimeout(() => document.removeEventListener("click", eat, true), 450); },
     mount:(panel, close) => {
       const go = $("#ox-go", panel);
+      panel.addEventListener("click", () => { clickAt = performance.now(); }, true);
       go.addEventListener("click", async () => {
-        if (busy) return; busy = true;
+        if (busy) return;
+        if (!DL && !IS_LOCAL){ toast("This copy of FAFO can't save files. Open FAFO at app.fafoaco.com to export.", "err"); return; }
+        busy = true;
+        const vault = S;
         try {
           $$(".ox-who", panel).forEach(inp => { const g = groups[+inp.dataset.i]; if (g) g.name = inp.value.trim().replace(/\s+/g, " ") || g.auto; });
           const rep = oxReport(picked, groups, $("#ox-title", panel).value);
           const bytes = oxWorkbook(rep);
           if (!(await saveFile(rep.file, bytes))) return;
-          // The names given here, for the next export (one set back to what FAFO would put goes).
+          if (S !== vault) return;   // locked while the file was being saved: the file went, the names stay as they were
+          // The names given here, for the next export (one set back to what FAFO would put goes; none for no address and no name).
           const m = Object.assign({}, S.settings.exportPeople), now = Date.now(); let changed = false;
           for (const g of groups){
-            if (!g.key) continue;
+            if (!g.key || g.key === "n:") continue;
             if (g.name !== g.auto){ if (!m[g.key] || m[g.key].name !== g.name){ m[g.key] = {name:g.name, at:now}; changed = true; } }
             else if (m[g.key]){ delete m[g.key]; changed = true; }
           }

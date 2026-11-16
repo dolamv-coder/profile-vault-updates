@@ -95,6 +95,9 @@ page.on("pageerror", (e) => errors.push(String(e)));
 // The workbook's parts, read by the browser: every sheet's cells with their styles resolved.
 async function readBook(path) {
   const parts = unzip(readFileSync(path));
+  return Object.assign(await readParts(parts), { raw: parts });
+}
+async function readParts(parts) {
   return page.evaluate((parts) => {
     const P = new DOMParser(), bad = [], doc = {};
     for (const [k, v] of Object.entries(parts)) { const d = P.parseFromString(v, "application/xml"); if (d.getElementsByTagName("parsererror").length) bad.push(k); doc[k] = d; }
@@ -147,25 +150,29 @@ try {
   // The address o5 ships to is remembered for a buyer (Send to buyer's "Also send future orders"), from before it was added.
   await page.evaluate((orders) => {
     const T = window.__t, k = T.shareAddrKey(orders[4].shipAddr);
-    T.S.orders = orders;
+    T.S.orders = orders.slice().reverse();
     T.S.settings.buyerAddrs = { [k + "|b2"]: { key: k, id: "b2", name: "Robin Remembered · License …ABCD", addr: orders[4].shipAddr, at: Date.UTC(2026, 10, 1) } };
     T.persist(); T.render();
   }, ORDERS);
 
-  await test("oxSplit: tax from the total, the unit price and a sales tax rate, with a discount when that's what fits", async () => {
-    const r = await page.evaluate(() => { const f = window.__t.oxSplit; return [f(2, 7999, 17118), f(2, 7999, 16583), f(2, 7999, 17758), f(2, 7999, 17048), f(2, 7999, 17198), f(2, 7999, 15998), f(1, 1000, 1399), f(2, null, 17118), f(2, 7999, null), f(1, 0, 500)]; });
-    assert.deepEqual(r[0], { off: 0, tax: 1120, rate: 0.07 });
-    assert.deepEqual(r[1], { off: 500, tax: 1085, rate: 0.07 });   // $5.00 off before tax, then 7%
-    assert.deepEqual(r[2], { off: 0, tax: 1760, rate: 0.11 });
-    assert.deepEqual(r[3], { off: 500, tax: 1550, rate: 0.1 });
-    assert.deepEqual(r[4], { off: 0, tax: 1200, rate: 0.075 });
-    assert.deepEqual(r[5], { off: 0, tax: 0, rate: 0 });   // no sales tax
-    assert.deepEqual(r.slice(6), [null, null, null, null]);
+  await test("oxSplit: tax from the total, the unit price and a real sales tax rate; a discount only at a rate another order shows", async () => {
+    const r = await page.evaluate(() => { const f = window.__t.oxSplit; return [
+      f(2, 7999, 17118), f(2, 7999, 16583, [0.07]), f(2, 7999, 17758), f(2, 7999, 17048, [0.1]), f(2, 7999, 17198), f(2, 7999, 15998), f(2, 7999, 16482, [0.0635]),
+      f(1, 1000, 1399), f(2, null, 17118), f(2, 7999, null), f(1, 0, 500),
+      f(2, 7999, 16583),            // $5 less with no order showing 7 % with none: no discount guessed
+      f(2, 4999, 10198, [0.07]),    // 2 % (no rate), or $5 off at 7.375 % (no order shows it): neither
+      f(1, 6999, 7060),             // 0.875 % isn't a rate; $5 off at 8.625 % isn't shown by any order
+    ]; });
+    assert.deepEqual(r.slice(0, 7), [{ off: 0, tax: 1120, rate: 0.07 }, { off: 500, tax: 1085, rate: 0.07 }, { off: 0, tax: 1760, rate: 0.11 }, { off: 500, tax: 1550, rate: 0.1 },
+      { off: 0, tax: 1200, rate: 0.075 }, { off: 0, tax: 0, rate: 0 }, { off: 500, tax: 984, rate: 0.0635 }]);
+    assert.deepEqual(r.slice(7), [null, null, null, null, null, null, null]);
   });
 
   await test("oxCanon: an address as the report writes one", async () => {
-    const r = await page.evaluate(() => ["100 Exam.ple St North\nRoom 2\nSampletown, FL 33701", "77 w 9th st, sampleville, ca 90001", "88 21st Ave. N., Sample Park, FL 33701", "One line only"].map(window.__t.oxCanon));
-    assert.deepEqual(r, ["100 Example St N, Sampletown, FL 33701", "77 W 9th St, Sampleville, CA 90001", "88 21st Ave N, Sample Park, FL 33701", "One line only"]);
+    const r = await page.evaluate(() => ["100 Exam.ple St North\nRoom 2\nSampletown, FL 33701", "77 w 9th st, sampleville, ca 90001", "88 21st Ave. N., Sample Park, FL 33701", "One line only",
+      "100 North St, Sampletown, FL 33701", "100 N St, Sampletown, FL 33701", "12 West End Ave, Sampletown, FL 33701", "100 Main St, Sampletown, IL 62701, United States"].map(window.__t.oxCanon));
+    assert.deepEqual(r, ["100 Example St N, Sampletown, FL 33701", "77 W 9th St, Sampleville, CA 90001", "88 21st Ave N, Sample Park, FL 33701", "One line only",
+      "100 North St, Sampletown, FL 33701", "100 N St, Sampletown, FL 33701", "12 W End Ave, Sampletown, FL 33701", "100 Main St, Sampletown, IL 62701"]);
   });
 
   await test("the selection bar has Export, and its window says who each address is for", async () => {
@@ -186,20 +193,43 @@ try {
       { addr: "400 Second Place Blvd, Sampletown, FL 33701", sub: "2 orders · $163.77", who: "Sam Sample", auto: "Sam Sample" },
     ]);
     assert.match(await page.$eval(".layer.is-open .panel-body", (b) => b.textContent), /1 canceled order goes on the Cancelled \(excluded\) tab\./);
+    await page.mouse.click(5, 5);   // the backdrop: the names typed aren't thrown away
+    await page.waitForTimeout(300);
+    assert.equal(await page.$$eval(".layer.is-open #ox-go", (l) => l.length), 1, "a click on the backdrop leaves the window open");
   });
 
   let book;
   await test("Download Excel saves Target_Orders_11-13-2026.xlsx, well-formed, with the report's sheets in order", async () => {
     await page.fill('.ox-who[aria-label="Who 300 Remembered Rd, Thirdtown, TX 75001 is for"]', "Robin O'Neil & Co");
-    const [dl] = await Promise.all([page.waitForEvent("download"), page.click("#ox-go")]);
+    let downloads = 0; page.on("download", () => downloads++);
+    const [dl] = await Promise.all([page.waitForEvent("download"), page.dblclick("#ox-go")]);
     assert.equal(dl.suggestedFilename(), "Target_Orders_11-13-2026.xlsx");
     await page.waitForFunction(() => !document.querySelector(".layer.is-open"));
+    await page.waitForTimeout(600);
+    assert.equal(downloads, 1, "a double click saves once");
+    assert.equal(await page.$$eval(".layer", (l) => l.length), 0, "and its second click pressed nothing under the window (the bar's Delete asks first)");
     book = await readBook(await dl.path());
     assert.deepEqual(book.bad, [], "every part parses");
     assert.deepEqual(book.sheets.map((s) => s.name), ["Summary", "Sam Sample", "Alex Buyer", "Robin O'Neil & Co", "All Orders", "Cancelled (excluded)"]);   // the most orders first
     assert.equal(book.calc, "1", "Excel recalculates it on opening");
     assert.match(book.types, /spreadsheetml\.sheet\.main\+xml/);
     assert.deepEqual(book.defined, [{ name: "_xlnm._FilterDatabase", sheet: "4", ref: "'All Orders'!$A$1:$O$8" }]);
+    // How the parts are wired: the package's relationship, the workbook's (each sheet, the styles), each part's content type.
+    const raw = book.raw;
+    assert.deepEqual(Object.keys(raw).sort(), ["[Content_Types].xml", "_rels/.rels", "xl/_rels/workbook.xml.rels", "xl/styles.xml", "xl/workbook.xml", ...[1, 2, 3, 4, 5, 6].map((i) => `xl/worksheets/sheet${i}.xml`)].sort());
+    assert.match(raw["_rels/.rels"], /Type="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/officeDocument" Target="xl\/workbook\.xml"/);
+    assert.match(raw["xl/_rels/workbook.xml.rels"], /Id="rId7" Type="http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/styles" Target="styles\.xml"/);
+    for (let i = 1; i <= 6; i++) {
+      assert.match(raw["xl/_rels/workbook.xml.rels"], new RegExp(`Id="rId${i}" Type="http://schemas\\.openxmlformats\\.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i}\\.xml"`));
+      assert.match(raw["[Content_Types].xml"], new RegExp(`PartName="/xl/worksheets/sheet${i}\\.xml" ContentType="application/vnd\\.openxmlformats-officedocument\\.spreadsheetml\\.worksheet\\+xml"`));
+      // A worksheet's elements in the order the schema has them (Excel repairs a file that has them in another).
+      const ORDER = ["sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData", "autoFilter", "mergeCells", "hyperlinks", "pageMargins", "pageSetup"];
+      const tops = [...raw[`xl/worksheets/sheet${i}.xml`].matchAll(/<(sheetPr|dimension|sheetViews|sheetFormatPr|cols|sheetData|autoFilter|mergeCells|hyperlinks|pageMargins|pageSetup)[\s>/]/g)].map((m) => m[1]);
+      assert.deepEqual(tops, ORDER.filter((x) => tops.includes(x)), "sheet" + i + "'s elements in order");
+    }
+    assert.match(raw["[Content_Types].xml"], /PartName="\/xl\/styles\.xml" ContentType="application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.styles\+xml"/);
+    assert.match(raw["xl/worksheets/sheet1.xml"], /<pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"\/>/);
+    assert.match(raw["xl/worksheets/sheet5.xml"], /<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"\/>/);
   });
 
   await test("Summary: each person's addresses, their counts and totals from the tabs, subtotals, the grand total, the check, the notes", async () => {
@@ -307,8 +337,8 @@ try {
     assert.deepEqual(sty(A, "A1"), { sz: 10, b: true, i: false, color: "FFFFFFFF", name: "Arial", fill: "FF1F3864", border: true, fmt: "General", h: "center", v: null, wrap: true });
     assert.deepEqual([sty(A, "C2").fmt, sty(A, "D2").fmt, sty(A, "I2").fmt, sty(A, "L2").fmt, sty(A, "G2").wrap, sty(A, "G2").v], ["@", "mm/dd/yyyy", MONEY, MONEY, true, "top"]);
     assert.deepEqual([sty(A, "K9").b, sty(A, "L9").fill, sty(A, "L9").border], [true, "FFFFF2CC", false]);
-    assert.deepEqual([A.heights[1], A.heights[2], A.heights[3], A.heights[9]], [15, 15, 23.85, 15]);   // two lines where the description takes two
-    assert.deepEqual(A.cols, { 1: 14, 2: 40, 3: 19, 4: 12, 5: 16, 6: 42, 7: 58, 8: 6, 9: 11, 10: 10, 12: 13, 13: 36, 14: 44, 15: 22 });
+    assert.deepEqual([A.heights[1], A.heights[2], A.heights[3], A.heights[9]], [15, 23.85, 23.85, 15]);   // two lines where a cell's text takes two (the card here)
+    assert.deepEqual(A.cols, { 1: 14, 2: 40, 3: 19, 4: 12, 5: 16, 6: 42, 7: 58, 8: 6, 9: 11, 10: 10, 11: 10, 12: 13, 13: 36, 14: 44, 15: 22 });
     assert.deepEqual(A.setup, { paper: 9, orient: "portrait", fitW: 1, fitH: 1 });
     const C = sheet(book, "Cancelled (excluded)");
     assert.deepEqual([["A1", "B1", "C1"], ["A2", "B2", "C2"]].map((r) => r.map((x) => val(C, x))), [["Order #", "Note", "Gmail Inbox"], ["900000000000014", "Canceled in FAFO - excluded from this report", "inbox.one@example.com"]]);
@@ -320,14 +350,25 @@ try {
     const k = await page.evaluate((a) => window.__t.shareAddrKey(a), ORDERS[4].shipAddr);
     const saved = await page.evaluate(() => window.__t.S.settings.exportPeople);
     assert.deepEqual(Object.keys(saved), [k]); assert.equal(saved[k].name, "Robin O'Neil & Co");
+    // Saved in the vault: still there after locking and unlocking.
+    await page.click('[data-act="lock"]');
+    await page.waitForSelector("#pw1");
+    await page.fill("#pw1", "correct horse battery");   // the lock screen unlocks as the password is typed
+    await page.waitForSelector('#side [data-id="orders"]', { state: "attached", timeout: 30000 });
+    assert.equal((await page.evaluate(() => window.__t.S.settings.exportPeople))[k].name, "Robin O'Neil & Co");
+    await page.click('#side [data-id="orders"]');
+    await page.waitForSelector(".order[data-oid]");
+    if (!(await page.$('#bulkbar [data-act="orders-export"]'))) await page.click('[data-act="order-sel-all"]');
     await page.click('[data-act="orders-export"]');
     await page.waitForSelector(".layer.is-open #ox-go");
     const box = '.ox-who[aria-label="Who 300 Remembered Rd, Thirdtown, TX 75001 is for"]';
     assert.equal(await page.inputValue(box), "Robin O'Neil & Co");
     assert.equal(await page.getAttribute(box, "placeholder"), "Robin Remembered");
     await page.fill(box, "");   // empty: what FAFO puts there
+    await page.fill("#ox-title", "Sample report for 11/13");
     const [dl] = await Promise.all([page.waitForEvent("download"), page.click("#ox-go")]);
     const b2 = await readBook(await dl.path());
+    assert.equal(val(sheet(b2, "Summary"), "A1"), "Sample report for 11/13", "the title typed");
     assert.deepEqual(b2.sheets.map((s) => s.name), ["Summary", "Sam Sample", "Alex Buyer", "Robin Remembered", "All Orders", "Cancelled (excluded)"]);
     assert.deepEqual(await page.evaluate(() => window.__t.S.settings.exportPeople), {});
   });
@@ -349,6 +390,94 @@ try {
     // can't be Pat; never the Summary's own name.
     assert.deepEqual(r.tabs, ["Pat", "ABCDEFGH " + "x".repeat(22), "Pat 2", "Summary 2"]);
     assert.ok(r.desc.some((d) => d.startsWith("Pokémon Center: B x1")) && r.desc.some((d) => d.startsWith("Target: A x1")), "each description names its store");
+  });
+
+  await test("the report's other cases: a $10 discount, a total under its items, a preorder, a section over two days, no total, the (none) row", async () => {
+    const bytes = await page.evaluate(() => {
+      const T = window.__t, b = { store: "target", qty: "2", priceEach: "79.99", stage: "placed", card: "Visa ••1234", inbox: "x@example.com", shipTo: "Sam Sample" };
+      const os = [
+        Object.assign({}, b, { id: "e1", item: "A", orderNo: "1", total: "171.18", at: "2026-11-12", shipAddr: "1 A St, Sampletown, FL 33701" }),
+        Object.assign({}, b, { id: "e2", item: "A", orderNo: "2", total: "160.48", at: "2026-11-13", shipAddr: "1 A St, Sampletown, FL 33701" }),   // $10 off, then 7 %
+        Object.assign({}, b, { id: "e3", item: "B", orderNo: "3", qty: "1", priceEach: "50.00", total: "40.00", at: "2026-11-13", shipAddr: "2 B St, Sampletown, FL 33701" }),   // under its items
+        Object.assign({}, b, { id: "e4", item: "Sample Box (Preorder)", orderNo: "4", total: "171.18", at: "2026-11-13", arrives: "Fri, Dec 4", shipAddr: "2 B St, Sampletown, FL 33701" }),
+        Object.assign({}, b, { id: "e5", item: "C", orderNo: "5", total: "", at: "2026-11-13", shipAddr: "2 B St, Sampletown, FL 33701" }),   // no total
+      ];
+      return Array.from(T.oxWorkbook(T.oxReport(os, T.oxGroups(os, {}), "")));
+    });
+    const b = await readParts(unzip(Buffer.from(bytes)));
+    assert.deepEqual(b.bad, []);
+    const T = sheet(b, "Sam Sample"), S = sheet(b, "Summary"), A = sheet(b, "All Orders"), C = sheet(b, "Cancelled (excluded)");
+    assert.equal(val(T, "A1"), "2 B St, Sampletown, FL 33701");
+    assert.equal(val(T, "A2"), "3 order(s) placed 11/13/2026.");
+    assert.deepEqual(["C5", "D5", "C6", "F6", "C7", "D7"].map((r) => val(T, r)), ["B x1 @ $50.00", 40, "Sample Box (Preorder) x2 @ $79.99 + $11.20 tax", "Preorder - arrives 12/04", "C x2 @ $79.99", null]);
+    assert.equal(val(T, "A11"), "2 order(s) placed 11/12/2026 to 11/13/2026.");
+    assert.equal(val(T, "C15"), "A x2 @ $79.99 - $10.00 off + $10.50 tax");
+    const notes = []; for (let r = 1; r <= 40; r++) { const v = val(S, "A" + r); if (typeof v === "string" && r > 4) notes.push(v); }
+    assert.deepEqual(notes.slice(-6), ["None of the orders exported were cancelled.", "Inboxes included: x@example.com (5 orders).", "Tax is worked out from each order's total, unit price and local sales tax rate.",
+      "1 order came to less than its items (a discount or gift card), so its tax is left blank.", "1 order has no total in FAFO, so it counts as $0.",
+      "1 order came to $10.00 less before tax (a checkout discount), so its tax is on the lower amount."]);
+    const rowOf = (no) => Object.keys(A.cells).find((r) => /^C\d+$/.test(r) && A.cells[r].v === no).slice(1);
+    assert.deepEqual([val(A, "G" + rowOf("3")), val(A, "K" + rowOf("3")), val(A, "L" + rowOf("5")), val(A, "G" + rowOf("2"))], ["B", null, null, "A ($10.00 off before tax)"]);
+    assert.deepEqual([val(C, "A2"), val(C, "B2")], ["(none)", "None of the orders exported were cancelled."]);
+  });
+
+  await test("groups and tab names: two buyers at one building apart, orders with no address by name, unreadable addresses apart; tab names Excel takes; text XML can't hold", async () => {
+    const r = await page.evaluate(() => {
+      const T = window.__t, C = String.fromCharCode, b = { store: "target", qty: "1", priceEach: "10.00", total: "10.70", stage: "placed", at: "2026-11-13", card: "Visa ••1234", inbox: "x@example.com", item: "T" };
+      const os = [
+        Object.assign({}, b, { id: "g1", orderNo: "1", shipTo: "Ann Ship", shipAddr: "500 Forward Way, Ste 101, Portland, OR 97201", shareTo: { id: "ann", name: "@ann · Ann Alpha", at: 1 } }),
+        Object.assign({}, b, { id: "g2", orderNo: "2", shipTo: "Bob Ship", shipAddr: "500 Forward Way, Ste 202, Portland, OR 97201", shareTo: { id: "bob", name: "Bob Beta · License …WXYZ", at: 1 } }),
+        Object.assign({}, b, { id: "g3", orderNo: "3", shipTo: "Cara Nowhere", shipAddr: "" }),
+        Object.assign({}, b, { id: "g4", orderNo: "4", shipTo: "Dan Nowhere", shipAddr: "" }),
+        Object.assign({}, b, { id: "g5", orderNo: "5", shipTo: "Eve Lane", shipAddr: "Sample Lane, Sampletown, FL 33701" }),
+        Object.assign({}, b, { id: "g6", orderNo: "6", shipTo: "Fay Lane", shipAddr: "Other Lane, Sampletown, FL 33701" }),
+      ];
+      const gs = T.oxGroups(os, {});
+      const names = ["Christopher Alexander Johnston's mom", "A".repeat(30) + C(0xD83D, 0xDE00) + " tail", "A".repeat(30), "Pat", "Pat" + C(7)];
+      const os2 = names.map((n, i) => Object.assign({}, b, { id: "t" + i, orderNo: String(10 + i), shipTo: n, shipAddr: (20 + i) + " T St, Sampletown, FL 33701",
+        item: i ? "T" : "Bad" + C(1) + "Item" + C(0xD800), inbox: i ? "x@example.com" : "_x0041_@example.com" }));
+      const rep = T.oxReport(os2, T.oxGroups(os2, {}), "");
+      return { autos: gs.map((g) => g.auto), keys: gs.map((g) => g.key), tabs: rep.people.map((p) => p.tab), book: Array.from(T.oxWorkbook(rep)) };
+    });
+    assert.deepEqual(r.autos, ["Ann Alpha", "Bob Beta", "Cara Nowhere", "Dan Nowhere", "Eve Lane", "Fay Lane"]);
+    assert.equal(r.keys[0].replace(/#.*/, ""), r.keys[1].replace(/#.*/, ""), "one building");
+    assert.deepEqual([r.keys[0].endsWith("#ann"), r.keys[1].endsWith("#bob"), r.keys[2], r.keys[3]], [true, true, "n:cara nowhere", "n:dan nowhere"]);
+    assert.ok(r.keys[4].startsWith("a:") && r.keys[5].startsWith("a:") && r.keys[4] !== r.keys[5], "addresses the key can't read, apart: " + r.keys.slice(4));
+    assert.deepEqual(r.tabs, ["A".repeat(30), "A".repeat(29) + " 2", "Christopher Alexander Johnston", "Pat", "Pat 2"]);
+    const parts = unzip(Buffer.from(r.book)), b = await readParts(parts);
+    assert.deepEqual(b.bad, [], "every part parses");
+    assert.deepEqual(b.sheets.map((s) => s.name).slice(1, 6), r.tabs);
+    const A = sheet(b, "All Orders"), row = Object.keys(A.cells).find((x) => /^C\d+$/.test(x) && A.cells[x].v === "10").slice(1);
+    assert.equal(val(A, "G" + row), "BadItem", "characters XML can't hold are left out");
+    assert.match(parts["xl/worksheets/sheet7.xml"], /_x005F_x0041_@example\.com/, "text like SpreadsheetML's own escape is escaped");
+  });
+
+  await test("a canceled order doesn't change the title, the file or the descriptions; one store over two days is named for it", async () => {
+    const r = await page.evaluate(() => {
+      const T = window.__t, b = { qty: "1", priceEach: "10.00", total: "10.70", card: "Visa ••1234", inbox: "x@example.com", shipTo: "Sam", shipAddr: "1 A St, Sampletown, FL 33701" };
+      const a = [Object.assign({ id: "c1", store: "target", item: "A", orderNo: "1", at: "2026-11-13", stage: "placed" }, b), Object.assign({ id: "c2", store: "pokemoncenter", item: "B", orderNo: "2", at: "2026-11-12", stage: "canceled" }, b)];
+      const two = [Object.assign({ id: "d1", store: "target", item: "A", orderNo: "1", at: "2026-11-12", stage: "placed" }, b), Object.assign({ id: "d2", store: "target", item: "B", orderNo: "2", at: "2026-11-13", stage: "placed" }, b)];
+      const ra = T.oxReport(a, T.oxGroups(a, {}), ""), rt = T.oxReport(two, T.oxGroups(two, {}), "");
+      return [ra.title, ra.file, ra.lines.map((l) => l.desc), rt.title, rt.file];
+    });
+    assert.deepEqual(r, ["Target orders placed 11/13/2026 - successful, no cancellations", "Target_Orders_11-13-2026.xlsx", ["A x1 @ $10.00 + $0.70 tax"],
+      "Target orders placed 11/12/2026 to 11/13/2026 - successful, no cancellations", "Target_Orders_11-12-2026_to_11-13-2026.xlsx"]);
+  });
+
+  await test("past Excel's 8,192 characters a formula, GRAND TOTAL sums the subtotals with SUMIF; a long title wraps", async () => {
+    const bytes = await page.evaluate(() => {
+      const T = window.__t, os = [];
+      for (let i = 0; i < 1500; i++) os.push({ id: "p" + i, store: "target", item: "A", orderNo: String(100000 + i), qty: "1", priceEach: "10.00", total: "10.70", stage: "placed", at: "2026-11-13",
+        card: "Visa ••1234", inbox: "x@example.com", shipTo: "Person " + i, shipAddr: (1000 + i) + " A St, Sampletown, FL 33701" });
+      return Array.from(T.oxWorkbook(T.oxReport(os, T.oxGroups(os, {}), "A title long enough that it can't fit on one line across the Summary's four columns at fourteen points")));
+    });
+    const x = unzip(Buffer.from(bytes))["xl/worksheets/sheet1.xml"];
+    const gt = /<c r="C(\d+)"[^>]*><f>SUMIF\(B5:B(\d+),&quot;Subtotal - \*&quot;,C5:C(\d+)\)<\/f><v>1500<\/v><\/c>/.exec(x);
+    assert.ok(gt, "GRAND TOTAL's count is a SUMIF of the subtotals");
+    assert.deepEqual([+gt[2], +gt[3]], [+gt[1] - 1, +gt[1] - 1]);
+    assert.match(x, new RegExp(`<c r="D${gt[1]}"[^>]*><f>SUMIF\\(B5:B${+gt[1] - 1},&quot;Subtotal - \\*&quot;,D5:D${+gt[1] - 1}\\)</f><v>16050</v></c>`));
+    assert.match(x, /<row r="1" ht="43\.5" customHeight="1">/);
+    assert.ok([...x.matchAll(/<f>([^<]*)<\/f>/g)].every((m) => m[1].length < 8192), "no formula past Excel's limit");
   });
 
   await test("every order picked canceled: no person's tab, zero totals, still a workbook that parses", async () => {

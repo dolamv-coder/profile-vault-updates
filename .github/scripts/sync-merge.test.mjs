@@ -416,7 +416,8 @@ if (html.includes(':spamMoves"')) test("saved Find in Spam searches added on two
 
 // 1.9.153+: the names Export gives addresses (settings.exportPeople, {"<address key>": {name, at}}): two devices that each name
 // one before they agree keep both, and one taken off on one side stays off.
-if (html.includes(':exportPeople"')) test("export names given on two devices keep both; one taken off stays off", () => {
+// (Guarded by the page's Export, not by the entry it tests, so dropping exportPeople from syncMerge's list fails here.)
+if (html.includes("// ORDERS-XLSX-START")) test("export names given on two devices keep both; one taken off stays off", () => {
   const e = (name, at) => ({ name, at });
   for (const base of [blank(), null]) {
     const a = blank(), b = blank();
