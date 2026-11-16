@@ -2573,6 +2573,20 @@ to export as. Something like in the picture", then, with Stellar's and Valor's e
   the newest page has no `EXPORT_FORMATS`. CI runs it on pull requests that change `license-worker/src/index.js` too.
 - Nothing gains a field.
 
+From 1.9.151 Settings → Backups → **Orders as CSV** (`ordersCSV`) ends with three more columns, **Ship Address**, **Inbox**
+and **Unit Price** (the owner's request, 2026-11-16, for a sheet of the Target orders placed on 11/13 like the 10/9 one,
+with each product's unit price, which leaves three people's orders out by the address they ship to: every order there ships
+to the same name, and the orders' emails went to inboxes the Gmail connector can't read). The columns before them stay where
+they were, so nothing that reads the file by position moves. Ship Address is the order's `shipAddr` on one line (`csvAddr`:
+its lines trimmed, a comma at a line's end dropped, empty ones left out, joined with ", "), Inbox its `inbox` (the email
+address of the inbox it came to), Unit Price its `priceEach` as the email gave it ("$x / ea", read by `parseOrderEmail` and
+kept by `planOrderImport` and `repairFromConfirmations`); each is empty for an order with none (the seller's alerts and
+orders typed by hand have no unit price). No order has a tax or shipping field. `orders-csv.test.mjs` runs the page in
+Chromium (in CI after Export profiles' formats) on a vault made with Use this browser only and made-up orders: the file's
+whole text, from the button (`orders-<date>.csv`, no BOM) and from `ordersCSV`, addresses on several lines (blank lines, a
+line break at either end, a comma at a line's end, spaces around), quotes in an item, a unit price and none, an order with
+no address or inbox, and no orders. It fails if the newest page has no Unit Price column. Nothing gains a field.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
