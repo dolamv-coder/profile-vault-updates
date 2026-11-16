@@ -1,10 +1,10 @@
 {
-  "version": "1.9.152",
-  "url": "index-1.9.152.html",
-  "sha256": "2eafb78d1506a2a36c2e04007503075b5c2fd06903be58d203ec49ec97e88f70",
-  "signature": "HEnrpRl6BqC7f9ObUTiqqMPZrx10sDQ5ePH6/yLCroMda49ceU4cAr1bBrWPYGFaqQfxJVBA52WSJs4BtbiSDA==",
+  "version": "1.9.153",
+  "url": "index-1.9.153.html",
+  "sha256": "07e5690f7211a51936e732b74e563bb3ea7aeed0febab795c1dcd9eada75abf5",
+  "signature": "QS+bsp8t8YblEGOYYcb7GmSLwHFcWyKUrHimUsd9ycORilPgJs9PO1agE87IiA6LglXYBdS82XsnTBWVHhTJAA==",
   "minAppVersion": "0",
-  "notes": "Orders is now called Dashboard, in the sidebar, the phone's tabs and at the top of the page. Everything on it works as before.",
+  "notes": "Select orders on the Dashboard and choose Export to download them as an Excel report: a summary of each person's addresses and totals, a tab for each person, every order with its tax, and canceled ones on a tab of their own. FAFO fills in who each address is for and remembers the names you change.",
   "installerUrl": "",
-  "publishedAt": "2026-11-16T06:17:27.006Z"
+  "publishedAt": "2026-11-16T12:44:26.530Z"
 }
