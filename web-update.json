@@ -1,10 +1,10 @@
 {
-  "version": "1.9.151",
-  "url": "index-1.9.151.html",
-  "sha256": "b8c5be46216c2dcc3b5e6d0e7d89fd923b77a3a5c105f9cc1f2e89a63f118d8d",
-  "signature": "zbdW42Yx5rkJeyEvRD5qtBWm7XPkEte44Dl5gBJRZCCivOeVVjNXYSEmbH0q1RuddniZlfTdmyEbuegUDeAjAg==",
+  "version": "1.9.152",
+  "url": "index-1.9.152.html",
+  "sha256": "2eafb78d1506a2a36c2e04007503075b5c2fd06903be58d203ec49ec97e88f70",
+  "signature": "HEnrpRl6BqC7f9ObUTiqqMPZrx10sDQ5ePH6/yLCroMda49ceU4cAr1bBrWPYGFaqQfxJVBA52WSJs4BtbiSDA==",
   "minAppVersion": "0",
-  "notes": "Settings, Backups, Orders as CSV now also lists each order's ship-to address, the inbox it came to and its unit price (when the order email shows one), in three new columns at the end.",
+  "notes": "Orders is now called Dashboard, in the sidebar, the phone's tabs and at the top of the page. Everything on it works as before.",
   "installerUrl": "",
-  "publishedAt": "2026-11-16T03:16:06.640Z"
+  "publishedAt": "2026-11-16T06:17:27.006Z"
 }
