@@ -4875,7 +4875,7 @@ try {
     const b = tessHash.slice(0, 16);
     const view = unescape(await (await fetchOnce(`${billLink}&b=${b}`)).text());
     assert.ok(view.includes("Their invoice") && view.includes("Target #TB-4001") && view.includes('value="family">Friends and Family<'), view.slice(0, 1500));
-    assert.ok(new RegExp(`Target #TB-4001[\\s\\S]*?<span style="font-size:12px">due ${DUE.dueText((await lineOf(tessKey, "TB-4001")).dueAt)}</span>`).test(view) && /due Sun, [A-Z][a-z]{2} \d{1,2}</.test(view),
+    assert.ok(new RegExp(`Target #TB-4001[\\s\\S]*?<span style="font-size:12px;white-space:nowrap">due ${DUE.dueText((await lineOf(tessKey, "TB-4001")).dueAt)}</span>`).test(view) && /due Sun, [A-Z][a-z]{2} \d{1,2}</.test(view),
       "a due date says its Sunday, as in Eastern time (in UTC it's Monday)");
     assert.ok(view.includes(`Friends and Family always pay $5 per checkout, whatever the order's amount, with no plan to pick; Submit is off for them only while a checkout is overdue or a payment is disputed with their bank. Charge makes them pay like any buyer approved after payments began: ${TIER_WORDS} ($10 when FAFO can't tell an order's amount), for checkouts from then on.`));
     const fam = await billPost(billLink, { action: "family", key: tessHash, b });
