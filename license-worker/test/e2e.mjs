@@ -4982,13 +4982,19 @@ try {
   console.log("\nPayments (Stripe)");
   const STRIPE = [`STRIPE_API_BASE=http://127.0.0.1:${DISCORD_PORT}/stripe`, "STRIPE_WEBHOOK_SECRET=fake_webhook_secret_not_real"];
   await test("schema.sql brings the last release's database to the same tables and indexes as a new one (db:init can't add columns)", async () => {
-    // The last release's: the committed one if this one isn't committed yet, else the one before the last commit that changed
-    // it (on main, the merge before; its parent needs history: a checkout with fetch-depth 2 or more).
+    // The last release's: on a branch, main's where it forked (the deploy Action only deploys main, so a table a branch's
+    // own commit made and a later one changed was never in a database); otherwise the committed one if this one isn't
+    // committed yet, else the one before the last commit that changed it (on main, the merge before; its parent needs
+    // history: a checkout with fetch-depth 2 or more).
     const git = (...a) => execFileSync("git", a, { cwd: root, stdio: ["ignore", "pipe", "ignore"] }).toString();
     let old;
     try {
-      old = git("show", "HEAD:license-worker/schema.sql");
-      if (old === readFileSync(join(root, "schema.sql"), "utf8")) old = git("show", `${git("log", "--first-parent", "-n", "1", "--format=%H", "--", "schema.sql").trim()}^:license-worker/schema.sql`);
+      const now = readFileSync(join(root, "schema.sql"), "utf8");
+      try { old = git("show", `${git("merge-base", "HEAD", "origin/main").trim()}:license-worker/schema.sql`); } catch { old = ""; }
+      if (!old || old === now) {
+        old = git("show", "HEAD:license-worker/schema.sql");
+        if (old === now) old = git("show", `${git("log", "--first-parent", "-n", "1", "--format=%H", "--", "schema.sql").trim()}^:license-worker/schema.sql`);
+      }
     } catch { console.log("    (no git history here: skipped)"); return; }
     writeFileSync(join(tmp, "schema-old.sql"), old);
     const d1 = (dir, args) => execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, dir), ...args], { cwd: root, env, stdio: "pipe" });
