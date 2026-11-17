@@ -2740,12 +2740,23 @@ above): buyers send their picks to the seller's channel without submitting slots
 - **The bar** (`interestBarHTML`, sticky at the bottom, above which `pageRoom` lifts the setup guide): what's picked by store,
   whether the seller has it (`interestSendState`: not sent, sent N ago, changed since sent, nothing picked), and Send N picks,
   Send update or Sent. `interestsSend` posts every store's picks (`interestsForStores`) with `S.submitName`, one at a time,
-  and writes the synced setting `interestSent` `{at, sig}` (`interestPicksSig`, a SHA-256 in the page, `interestSha256`,
-  matching the worker's); the newer of it and the worker's `sent` decides (`interestLastSent`). Each refusal has its words,
-  and the ticks are always kept. The owner's FAFO has no bar.
+  and writes the synced setting `interestSent`: one string, JSON of `{at, sig, kept}` (`interestSentWrite`; read leniently
+  by `interestSentLocal`), so sync merges it whole, never one send's time with another's picks. `sig` is
+  `interestPicksSig`, a SHA-256 in the page (`interestSha256`) matching the worker's; the newer of it and the worker's
+  `sent` decides (`interestLastSent`), and with the picks kept, a product the owner takes off the list doesn't count as a
+  change (`interestSameAs`). A send whose sig differs from the page's (its list is behind the worker's) fetches the whole
+  list at once (`interestsCatchUp`). A Submit whose batch carried every store's picks counts as a send too
+  (`interestsSentWithBatch`). Each refusal has its words, and the ticks are always kept. The owner's FAFO has no bar.
 - Submit's interest line and the setup guide's step 3 mention Send to seller.
 - **Tests:** `interests.test.mjs` (the view, the bar's states, the request, every answer, a lock mid-send, the phone, the
   guide above the bar, the owner) and the worker's e2e. Settings gain `interestSent`, which 1.9.112 syncs as it is.
+- **Card numbers need their length** (the owner's request, 2026-11-17, with a screenshot of a RedCard with 17 digits: "CC only
+  contains 16 digits, do not let buyer save profile until it is entered correctly"): `validateCard` (the profile editor's
+  and the card editor's Save, and the profile's problem icon) wants 16 digits for a Target RedCard, Visa, Mastercard and
+  Discover and 15 for American Express (`cardLen`), and says how many it has ("A RedCard number has 16 digits. This one has
+  17."). Until then only the checksum was checked (a 17-digit number passes it one time in ten) and a RedCard none. Import
+  cards skips a number of the wrong length as it does one that fails the checksum. `card-number.test.mjs` runs the page's
+  own `validateCard` in node (in CI after the Dashboard export's).
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

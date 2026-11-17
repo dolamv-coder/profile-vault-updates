@@ -5585,7 +5585,7 @@ function openBulkCards(){
         let padded = 0, named = 0, renamed = 0;
         rows.forEach(r => {
           if (have.has(r.number) || seen.has(r.number)){ dupes.push(r.line); return; }
-          if (!r.redcard && !luhn(r.number)){ invalid.push(r.line); return; }
+          if (r.number.length !== cardLen(r) || (!r.redcard && !luhn(r.number))){ invalid.push(r.line); return; }
           seen.add(r.number);
           // A row of a file with column names can say virtual or physical (Category), its provider and the
           // rest; what it leaves out comes from the choices above, as for pasted lines.
@@ -5766,12 +5766,18 @@ function parseExp(s){
   const mo = +m[1]; if (mo < 1 || mo > 12) return null;
   return { expM:String(mo).padStart(2,"0"), expY:m[2].length === 2 ? "20" + m[2] : m[2] };
 }
+// How many digits a card number has (1.9.155, the owner's request, 2026-11-17: "CC only contains 16 digits, do not let
+// buyer save profile until it is entered correctly"): a Target RedCard, Visa, Mastercard and Discover 16, American Express
+// 15. Until 1.9.155 only the checksum was checked (a 17-digit number passes it one time in ten), and a RedCard none at all.
+const cardLen = (c) => brandOf(c.number) === "amex" && !c.redcard ? 15 : 16;
 function validateCard(c){
   const err = {};
-  const b = brandOf(c.number);
+  const b = brandOf(c.number), n = String(c.number || "").length, want = cardLen(c);
+  const lenErr = () => `${c.redcard ? "A RedCard number" : b === "amex" ? "An American Express number" : "A card number"} has ${want} digits. This one has ${n}.`;
   if (!c.number) err.number = "Enter the card number.";
-  else if (c.redcard){ if (c.number.length < 12) err.number = "This number looks too short."; }
+  else if (c.redcard){ if (n !== want) err.number = lenErr(); }
   else if (!["visa","mastercard","amex","discover"].includes(b)) err.number = "Use a Visa, Mastercard, Amex or Discover card.";
+  else if (n !== want) err.number = lenErr();
   else if (!luhn(c.number)) err.number = "This number doesn't look right. Check for a typo.";
   const cl = b === "amex" && !c.redcard ? 4 : 3;
   if (c.redcard){ if (c.cvv && !/^\d{3,4}$/.test(c.cvv)) err.cvv = "Use 3 or 4 digits, or leave it blank."; }
@@ -6064,7 +6070,7 @@ function openProfileEditor(existing){
         $("#pc-prev", panel).innerHTML = ccHTML(c, true);
         const nm = cardBrand(c); $("#f_c_number_affix", panel).textContent = nm === "Card" ? "" : nm;
         $('[data-field="c_holder"]', panel).hidden = nameSameCb.checked; $("#pe-name-diff", panel).hidden = !nameSameCb.checked;
-        const hint = $('[data-field="c_number"] .hint', panel); if (hint) hint.textContent = red.checked ? "RedCard numbers skip the card-brand check." : "Supported: Visa, Mastercard, Amex, Discover";
+        const hint = $('[data-field="c_number"] .hint', panel); if (hint) hint.textContent = red.checked ? "A RedCard number has 16 digits. It skips the card-brand check." : "Supported: Visa, Mastercard, Amex, Discover";
         const cvvLab = $('label[for="f_c_cvv"]', panel); if (cvvLab) cvvLab.innerHTML = red.checked ? 'CVV <span class="opt">(optional)</span>' : "CVV";
       };
       const zipWarn = () => ["s_", "b_"].forEach(pfx => {
@@ -18809,7 +18815,8 @@ async function sendFilesToSeller(from, files, n, stores, batch, lic){
   try { r = await relayFetch("/submissions", {method:"POST", headers:{authorization:"Bearer " + lic, "content-type":"application/json"}, body:JSON.stringify(Object.assign({files, name:from, slots:n, stores, batch, active:slotsOut(files), on:slotsInUse()}, Object.keys(interests).length ? {interests} : {}))}); }
   catch(e){ throw new Error("Couldn't reach the seller. Check your connection and try again."); }
   // `review` (2026-10-06): the batch waits for the seller to approve it in their channel.
-  if (r.ok){ const d = await r.json().catch(() => ({})); return {keyId:"CSV", id:d.id || batch, review:d.review || ""}; }
+  // `interests`: what it carried, so Interests can count the picks as sent (interestsSentWithBatch, 1.9.155).
+  if (r.ok){ const d = await r.json().catch(() => ({})); return {keyId:"CSV", id:d.id || batch, review:d.review || "", interests}; }
   // 1.9.130: the seller's payments. `on` (the slots switched on now) lets the worker check a monthly plan's slots.
   if (r.status === 402) throw await billRefusal(r);
   if (r.status === 425) throw new Error("Still sending. Wait a moment, then try again.");
@@ -19099,7 +19106,8 @@ function interestCardHTML(it, editing){
 // per store, named as a batch's (<buyer>-<store>-skus.txt), or "cleared their Interests" when nothing is picked. It keeps
 // only the SKUs on its list at their store, in its order, answers same:true (posting nothing) when they're the picks it last
 // posted, and 429 past 20 posts a day. GET /interests answers sent {at, sig} for the last send, and the device that sent keeps
-// the same in the synced setting interestSent, so every device can say whether the picks changed since.
+// the same, with the picks it carried, in the synced setting interestSent (one string: interestSentLocal), so every device can
+// say whether the picks changed since. A batch Submit sends with every store's picks counts as a send too.
 // sig: the first 16 hex of the SHA-256 of the kept picks' canonical JSON (an object, store keys sorted, each an array of SKUs
 // in the list's order, stores with none left out, "{}" for none; JSON.stringify, no spaces), the worker's own. Worked out
 // here over the list kept on this device, synchronously (the bar is drawn with the rest), so a small SHA-256 of our own.
@@ -19140,22 +19148,65 @@ function interestPicksSig(kept){
   if (!s){ s = interestSha256(c).slice(0, 16); if (INTEREST_SIGS.size > 64) INTEREST_SIGS.clear(); INTEREST_SIGS.set(c, s); }
   return s;
 }
-const interestSentOk = (x) => !!x && typeof x === "object" && Number.isFinite(x.at) && x.at > 0 && typeof x.sig === "string" && /^[0-9a-f]{16}$/.test(x.sig);
+const INTEREST_SIG_RE = /^[0-9a-f]{16}$/;
+const interestSentOk = (x) => !!x && typeof x === "object" && Number.isFinite(x.at) && x.at > 0 && typeof x.sig === "string" && INTEREST_SIG_RE.test(x.sig);
 const interestSentClean = (x) => interestSentOk(x) ? {at:x.at, sig:x.sig} : null;
-// The last send that reached the seller: the newer of this vault's (interestSent, synced) and the worker's (the list's sent),
-// the worker's on a tie, so a desktop that hasn't synced since another device sent knows too.
+// The picks a send carried ({store: [sku]}, as interestKept writes them), kept with this vault's interestSent: at most 10 stores
+// of at most INTEREST_MAX SKUs, each a string as the list writes it. Anything else is none, and the bar goes by the signature.
+function interestKeptClean(x){
+  if (!x || typeof x !== "object" || Array.isArray(x)) return null;
+  const ks = Object.keys(x), o = {};
+  if (ks.length > 10) return null;
+  for (const k of ks){
+    const v = x[k];
+    if (!Array.isArray(v) || v.length > INTEREST_MAX || !v.every(s => typeof s === "string" && s.length > 0 && s.length <= 24)) return null;
+    if (v.length) o[k] = v.slice();
+  }
+  return o;
+}
+// This vault's last send (the synced setting interestSent) is ONE string, the JSON of {at, sig, kept}, so a sync merge takes it
+// whole (the later change wins) and never pairs one send's time with another's signature or picks, as a settings object is
+// merged field by field (the review of 1.9.155). kept: the picks it carried, when they're the ones the worker kept (left out
+// when that isn't known). Read leniently: an object of the same shape counts too, and anything else is none.
+function interestSentLocal(){
+  let x = S && S.settings.interestSent;
+  if (typeof x === "string"){ try { x = JSON.parse(x); } catch(e){ x = null; } }
+  if (!interestSentOk(x)) return null;
+  const kept = interestKeptClean(x.kept);
+  return Object.assign({at:x.at, sig:x.sig}, kept ? {kept} : {});
+}
+// The caller persists.
+function interestSentWrite(at, sig, kept){
+  S.settings.interestSent = JSON.stringify(Object.assign({at, sig}, kept ? {kept:interestKeptClean(kept) || undefined} : {}));
+}
+// The last send that reached the seller: the newer of this vault's (interestSent, synced) and the worker's (the list's sent).
+// On a tie the worker's, so a desktop that hasn't synced since another device sent knows too, but this vault's when it's the
+// same send (the same signature), as it also says which picks went (kept).
 function interestLastSent(){
-  const L = interestRead(), a = interestSentClean(S && S.settings.interestSent), b = interestSentClean(L && L.sent);
-  return !a ? b : !b ? a : b.at >= a.at ? b : a;
+  const L = interestRead(), a = interestSentLocal(), b = interestSentClean(L && L.sent);
+  return !a ? b : !b ? a : b.at > a.at || (b.at === a.at && b.sig !== a.sig) ? b : a;
+}
+// The picks ticked now (kept) are the ones a send carried (sent), but for those no longer on the list at their store: a product
+// the seller took off the list since isn't a change of the buyer's (the review of 1.9.155: removing a ticked product said
+// "Changed since you last sent" to every buyer who'd sent it). Order doesn't count.
+function interestSameAs(kept, sent, L){
+  const on = new Set((L ? L.items : []).map(interestKey));
+  for (const k of new Set(Object.keys(kept).concat(Object.keys(sent)))){
+    const now = new Set(kept[k] || []), was = new Set((sent[k] || []).filter(sku => on.has(k + ":" + sku)));
+    if (now.size !== was.size || [...now].some(s => !was.has(s))) return false;
+  }
+  return true;
 }
 // What the bar says: the picks (kept, counted per store), their sig and the last send, and so the state: "same" (the seller
-// has these), "changed" (since the last send), "new" (picked, never sent) or "none" (nothing picked, never sent).
+// has these), "changed" (since the last send), "new" (picked, never sent) or "none" (nothing picked, never sent). The last send
+// is this vault's with the picks it carried: those, less any taken off the list since (interestSameAs); else its signature.
 function interestSendState(){
   const L = interestRead(), kept = interestKept(L), counts = {};
   let n = 0;
   Object.keys(kept).forEach(k => { counts[k] = kept[k].length; n += kept[k].length; });
   const sig = interestPicksSig(kept), last = interestLastSent();
-  return {kept, counts, n, sig, last, state:last ? (last.sig === sig ? "same" : "changed") : n ? "new" : "none"};
+  const same = !!last && (last.kept ? interestSameAs(kept, last.kept, L) : last.sig === sig);
+  return {kept, counts, n, sig, last, state:last ? (same ? "same" : "changed") : n ? "new" : "none"};
 }
 // "just now", "3 min ago", "2 hours ago", "3 days ago", then the day ("on Nov 15"; short: "Nov 15").
 function interestAgo(t, short){
@@ -19215,10 +19266,16 @@ async function interestsSend(){
   finally { INTEREST.sending = false; }
   // Locked, or another key meanwhile: nothing kept from this answer (the bar, drawn while it was out, is drawn again).
   if (S !== vault || sellerLic() !== k){ if (S && UI.view === "interests") renderMain(); return; }
+  let behind = "";
   if (r && r.ok && d && d.ok === true){
-    // The worker's time (the same send's own when it was the same) and its sig, else the one worked out here (the same, unless
-    // the list kept here is behind the worker's); a tick changed meanwhile is still "changed".
-    S.settings.interestSent = {at:Number.isFinite(d.at) && d.at > 0 ? d.at : Date.now(), sig:typeof d.sig === "string" && /^[0-9a-f]{16}$/.test(d.sig) ? d.sig : st.sig};
+    // The worker's time (the same send's own when it was the same) and its sig, else the one worked out here; a tick changed
+    // meanwhile is still "changed". With the picks it carried (kept) when the worker's sig is the one worked out here, so the
+    // list here is the worker's. When it isn't, the list here is behind the worker's (asked every 10 minutes): the whole list
+    // is asked again below, so the bar catches up, and the picks go with the send once it has (the review of 1.9.155: the bar
+    // said Changed right after a send, and each press answered same).
+    const wsig = typeof d.sig === "string" && INTEREST_SIG_RE.test(d.sig) ? d.sig : "";
+    behind = wsig && wsig !== st.sig ? wsig : "";
+    interestSentWrite(Number.isFinite(d.at) && d.at > 0 ? d.at : Date.now(), wsig || st.sig, behind ? null : st.kept);
     persist();
     toast(d.same ? "Your seller already has these picks" : "Sent your picks to your seller");
   } else {
@@ -19234,6 +19291,20 @@ async function interestsSend(){
       : "The license server couldn't send them just now. Your ticks are kept: try again.", "err");
   }
   redraw();
+  if (behind){ await interestsCatchUp(vault, k, S.settings.interestSent, behind); if (S === vault) redraw(); }
+}
+// After a send whose signature isn't the one worked out here: the whole list again (once a refresh already out has answered),
+// so the bar goes by the list the worker kept the picks from. Then, if the picks ticked on it now are the ones the worker kept
+// (their signature is the send's) and nothing has written interestSent since, they're kept with the send (interestSameAs).
+async function interestsCatchUp(vault, k, wrote, sig){
+  for (let i = 0; i < 100 && S === vault && INTEREST.busy; i++) await new Promise(res => setTimeout(res, 250));
+  if (S !== vault || sellerLic() !== k) return;
+  await refreshInterests(true, true);
+  if (S !== vault || sellerLic() !== k || S.settings.interestSent !== wrote) return;
+  const kept = interestKept(interestRead()), x = interestSentLocal();
+  if (!x || x.sig !== sig || interestPicksSig(kept) !== sig) return;
+  interestSentWrite(x.at, x.sig, kept);
+  persist();
 }
 function renderInterests(){
   setTimeout(() => refreshInterests(false), 0);
@@ -19308,6 +19379,26 @@ function interestsForStores(stores){
   return out;
 }
 const interestsFor = (files) => interestsForStores(files.filter(f => f.kind === "profiles").map(f => f.storeKey));
+// A batch Submit sent to the seller's channel (`interests`, as interestsFor gave them; lic, the key it went with) carried the
+// picks as its SKU files. When those were every store's picks on the list here (the same SKUs at each store, those not on it
+// aside, as the worker keeps only its list's), the seller has them as Send to seller would have sent them, so they count as
+// sent now (the review of 1.9.155: the bar still said "Not sent yet" or "Changed since you last sent" after a Submit, and
+// Send posted them again). A batch for some of the stores only, or with nothing picked, leaves the last send as it was. The
+// time is never before the last send known here (another device's clock may be ahead). The caller persists.
+function interestsSentWithBatch(interests, lic){
+  const k = S && sellerLic();
+  if (!k || !interests || typeof interests !== "object" || (lic && premiumHash(lic) !== premiumHash(k))) return false;
+  const L = interestRead(), kept = interestKept(L);
+  if (!L || L.owner || !Object.keys(kept).length) return false;
+  const on = new Set(L.items.map(interestKey));
+  for (const s of new Set(Object.keys(kept).concat(Object.keys(interests)))){
+    const went = new Set((Array.isArray(interests[s]) ? interests[s] : []).filter(sku => on.has(s + ":" + sku))), has = kept[s] || [];
+    if (went.size !== has.length || has.some(sku => !went.has(sku))) return false;
+  }
+  const last = interestLastSent();
+  interestSentWrite(Math.max(Date.now(), last ? last.at + 1 : 0), interestPicksSig(kept), kept);
+  return true;
+}
 
 /* -- the seller's own FAFO edits the list -- */
 const interestOut = (it) => ({sku:it.sku, store:it.store, name:it.name, about:it.about || "", set:it.set || "", pic:it.pic || "", tcg:it.tcg || ""});
@@ -21039,6 +21130,8 @@ async function openSubmitSlots(){
           closers.forEach(x => x.disabled = false);
           // A key typed here was accepted: the vault keeps it for approvals, pulls and next time (keepTypedLic).
           keepTypedLic(viaCSV ? lic : "", panel);
+          // The picks on Interests it carried count as sent when they were all of them (1.9.155); mark persists.
+          if (viaCSV && sent.interests) interestsSentWithBatch(sent.interests, lic);
           b.hidden = true; mark(from);
           const done = $("#ss-sent", panel); done.hidden = false;
           if (sent.review === "pending"){
