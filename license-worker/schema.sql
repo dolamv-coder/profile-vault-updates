@@ -685,3 +685,25 @@ CREATE TABLE IF NOT EXISTS interest_sends (
   last_at  INTEGER NOT NULL DEFAULT 0,
   last_sig TEXT NOT NULL DEFAULT ''
 );
+
+-- FAFO's Terms of Service (2026-11-17, the owner: "Before a key is issue, I want users to read the terms and conditions,
+-- accepts it then a key will be generated for them to use"; "only new users accept"): a new user's acceptance, by Discord
+-- account, the first one kept (a later version doesn't replace it), with the version it was for (src/terms.js) and when.
+-- The seller sees it on the key request. A table of its own, as db:init can't add columns.
+CREATE TABLE IF NOT EXISTS terms_accepts (
+  discord_id  TEXT PRIMARY KEY,
+  username    TEXT NOT NULL,
+  version     TEXT NOT NULL,                    -- the terms' version, as "2026-11-13"
+  accepted_at INTEGER NOT NULL
+);
+
+-- A new user's sign-in waiting on the terms page (its request at status 'terms'), by the request's r: who signed in with
+-- Discord, so the page can be shown again and Accept and continue can go on without asking Discord again. Taken when the
+-- form is sent; ones left over go with the requests' clean-up.
+CREATE TABLE IF NOT EXISTS terms_asks (
+  r          TEXT PRIMARY KEY,
+  discord_id TEXT NOT NULL,
+  username   TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS terms_asks_created ON terms_asks (created_at);
