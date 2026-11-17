@@ -705,14 +705,43 @@ at that moment.
   is refused, and FAFO shows you the list as it is now to make it again.
 - The list is the `interest_list` table (one row), its pictures `interest_pics` and the additions applied
   `interest_adds`, which `npm run db:init` (and the deploy Action) adds. A buyer's ticks are in their own vault;
-  this worker only sees the SKUs a batch sends.
+  this worker only sees the SKUs a batch sends, or the buyer sends from Interests (below), and keeps none of them.
 - If this worker can't read the list of keys made by hand on GitHub just then, a buyer with such a key keeps the list
-  FAFO last had (the answer is 503, not "not a license"), as for Premium buyers.
+  FAFO last had (the answer is 503, not "not a license"), as for Premium buyers, and can't send picks until it can.
 
-FAFO uses `GET /interests` (any license; `?rev=` answers `same` when nothing changed), and your FAFO `PUT
-/interests` (the whole list, with the revision it was made from; 409 when another computer saved since) and `POST
-/interests/pic`. `POST /submissions` takes `interests`: `{"target": ["88897899", …]}`; SKUs not on the list now, or
-for another store, are left out, and nothing about them can stop a batch.
+### Sending picks from Interests (FAFO 1.9.155)
+
+From FAFO 1.9.155 (2026-11-17, at your request: "Include a submit button in Interests, that way buyers doesn't have to
+unsubmit and submit their profiles again"), Interests has **Send to seller**, so a buyer's picks reach you without a
+batch of slots. They come to the same channel as batches, in one message:
+
+```
+🎯 **Kim** sent their Interests: Target 5 · Pokémon Center 2
+-# @kim · license …ABCD
+```
+
+with one `Kim-target-skus.txt` (and `Kim-pokemon-center-skus.txt`) per store with picks, named and written as a batch's
+SKU files are (one SKU per line, in your list's order; only products on your list now at that store). The name is the
+one they typed in Submit's window, else their Discord name, else the license (`license …ABCD`, for a key made by hand,
+with no line under it). A buyer who unticks everything and sends sends `🎯 **Kim** cleared their Interests: no products
+picked`, with no file.
+
+- Sending the same picks as their last message posts nothing (FAFO says you have them already), and a buyer can post 20
+  times a day (UTC). Your own FAFO doesn't send (it keeps the list).
+- Batches still carry the SKUs ticked for their stores as before; these are apart from that.
+- The `interest_sends` table keeps, per license, only the day's count, when the last message went and a short hash of its
+  picks (so each of the buyer's computers can tell whether its picks changed since). The picks themselves aren't kept.
+
+FAFO uses `GET /interests` (any license; `?rev=` answers `same` when nothing changed; a buyer's answer has `sent`:
+`{at, sig}` of their last send from Interests, or null), and your FAFO `PUT /interests` (the whole list, with the
+revision it was made from; 409 when another computer saved since) and `POST /interests/pic`. `POST /submissions` takes
+`interests`: `{"target": ["88897899", …]}`; SKUs not on the list now, or for another store, are left out, and nothing
+about them can stop a batch. `POST /interests/send` (a buyer's license; 403 for your FAFO) takes `{"interests":
+{"target": ["88897899", …]}, "name": "Kim"}` (32 KB at most; `interests` that isn't right counts as nothing picked) and
+answers `{ok, at, counts: {"target": 5}, sig}`, `{ok, same: true, at, sig}` when nothing changed since the last post,
+429 `{error: "limit", limit: 20}`, or 502 `{error: "discord"}` when the post failed (nothing recorded). `sig` is the
+first 16 hex of the SHA-256 of the picks kept, as JSON with no spaces: `{"pokemoncenter": [...], "target": [...]}`,
+store keys sorted, SKUs in the list's order, stores with none left out (`{}` when none).
 
 ## Payments (Stripe)
 
@@ -1115,7 +1144,8 @@ once handing out keys straight away and once with approval on. It goes through s
 key pickup, repeat sign-in, cancelled and refused sign-ins, the account-age and server
 checks, revoke and restore, the rate limit, requests being posted, approved, denied
 and changed, slot limits, submissions and collecting keys, pulled slots, the Interests list (its pictures, the
-products added to it once, and the SKUs a batch carries), product pictures
+products added to it once, the SKUs a batch carries, and picks sent on their own: the message and files, the same
+picks again, the daily limit, also sent at once, and a failed post), product pictures
 (against a stand-in catalog: exact names only, never a case, another edition or two that fit),
 synced vaults (revisions, two devices saving at once, large vaults, a new password, and the lock
 after wrong passwords), and payments against a stand-in Stripe (plans, invoices, Submit refused and allowed, sessions,
