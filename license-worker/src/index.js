@@ -513,7 +513,8 @@ async function finishSignIn(env, ctx, origin, r, from, discordId, username, webA
 // FAFO's terms (src/terms.js, word for word as the owner posted them in FAFO's Discord), which a new user accepts after
 // Continue with Discord and before their request reaches the seller (or, with approval off, before their key). Each
 // acceptance is kept once per Discord account, the first one, with its version (terms_accepts), and the seller sees it on
-// the request (reviewMessage, the review page, /admin/applications).
+// the request (reviewMessage, the review page, /admin/applications), or with approval off on the new key's notice
+// (issueLicense) and /admin/licenses.
 const TERMS_FORM_MAX = 2048;
 const TERMS_DECLINED_MSG = "You need to accept FAFO's Terms of Service to get a key. Click Continue with Discord in FAFO to start again.";
 const TERMS_CSS = `  main.terms{max-width:640px}

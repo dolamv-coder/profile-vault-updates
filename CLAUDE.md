@@ -62,18 +62,26 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   `REQUIRED_GUILD_ID` still first): the callback puts the sign-in at status `terms`, with who signed in in `terms_asks` (by
   its `r`; loaded again it shows them from there, never exchanging the code again), and shows `termsAskPage`: `TERMS` from
   `license-worker/src/terms.js`, word for word as the owner posted them in FAFO's Discord (keep it so), who signed in, a box
-  (I've read and agree…), Accept and continue (off until ticked; the worker checks the box too) and Decline. `POST
-  /discord/terms` (`termsPost`; the form capped at 2 KB, the state never logged) takes the ask first, in one D1 batch with
-  the acceptance (`terms_accepts`: the first one kept, with its `version` and `accepted_at`), so a double press finishes it
-  once (the other waits for its outcome, `signInPage`), then goes on through `finishSignIn`, the tail the callback uses for
-  everyone else (approval on: `ensureApplication`, `review`, Request sent; off: the key), so those pages are byte for byte
-  as before; without the box it's 400 with the terms again; Decline is status `error` ("You need to accept FAFO's Terms of
-  Service to get a key…", the page "Terms not accepted"). Past 15 minutes from Continue with Discord (`REQUEST_TTL_MS`) it
-  has expired, and a sign-in past the terms gets the callback's page for its status (Back to FAFO for the web).
-  `/discord/status` answers `pending` at `terms`. The channel's request (`reviewMessage`, also when `decide` edits it), the
-  review page and `/admin/applications` (`terms: {version, at}`, null for one from before) say "Accepted the Terms of
-  Service (November 13, 2026 version) on Nov 17, 2026, 2:05 PM EST" (`termsLine`, `etWhen`: US Eastern); requests from
-  before say nothing new. `GET /terms` shows them to anyone, with no form (cached 5 minutes). Changing them is a new
+  (I've read and agree…), Accept and continue (off until ticked; the worker checks the box too) and Decline (an outline).
+  Only the browser Discord sent back answers them: the state isn't a secret (whoever called `/discord/start` has it), so
+  the ask keeps a `nonce` the form carries and `code_hash` (SHA-256 of Discord's code), the page loaded again shows the form
+  and the name only with that code (`termsOwned`), and anyone else gets `termsElsewhere` (403, no name, nothing changed; the
+  review's repro: a link to Discord with someone else's state let its maker accept the terms in the victim's name). `POST
+  /discord/terms` (`termsPost`; the form capped at 2 KB, the state and nonce never logged) takes the ask first (by its
+  nonce), in one D1 batch with the acceptance (`terms_accepts`: the first one kept, with its `version` and `accepted_at`),
+  so a double press finishes it once (the other waits for its outcome, `signInPage`), then goes on through `finishSignIn`,
+  the tail the callback uses for everyone else (approval on: `ensureApplication`, `review`, Request sent; off: the key), so
+  those pages are byte for byte as before; without the box it's 400 with the terms again; Decline is status `error` ("You
+  need to accept FAFO's Terms of Service to get a key…", the page "Terms not accepted"). The page's script sends the form
+  once (never by turning the pressed button off, which drops `action`), so a double click shows the first press's page,
+  with the key when approval is off. Past 15 minutes from Continue with Discord (`REQUEST_TTL_MS`) it has expired, and a
+  sign-in past the terms gets the callback's page for its status (Back to FAFO for the web); `GET /discord/terms` is 405
+  with a line saying there's nothing to show. `/discord/status` answers `pending` at `terms`. The channel's request
+  (`reviewMessage`, also when `decide` edits it), the review page (whose Requested line is Eastern now too) and
+  `/admin/applications` (`terms: {version, at}`, null for one from before) say "Accepted the Terms of Service (November 13,
+  2026 version) on Nov 17, 2026, 2:05 PM EST" (`termsLine`, `etWhen`: US Eastern); with approval off, the 🔑 notice
+  (`issueLicense`) and `/admin/licenses` do; requests and keys from before say nothing new. `GET /terms` shows them to
+  anyone, with no form (cached 5 minutes). Changing them is a new
   `version` in `terms.js`: only new users accept, so no one is asked again. Worker only: no new page, and every app version,
   desktop and web, gets it, since it all happens in the browser after Discord.
   It also keeps each license's slot limit (default 20 switched on at once on the

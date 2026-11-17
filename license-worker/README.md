@@ -201,12 +201,19 @@ update.
 - **The page** shows the terms word for word (the title, the date they took effect, "In short", the seven
   sections, "Questions? Ask staff."), who signed in, a box to tick, **I've read and agree to FAFO's Terms of
   Service**, then **Accept and continue** (off until the box is ticked; the worker checks the box too) and
-  **Decline**. The sign-in lasts 15 minutes from **Continue with Discord**, as before; meanwhile FAFO keeps
-  waiting (`/discord/status` answers `pending`). Loading the page again shows the terms again without going
-  back to Discord.
+  **Decline** (an outline button, so the bright one under the box isn't the one that ends the sign-in). The
+  sign-in lasts 15 minutes from **Continue with Discord**, as before; meanwhile FAFO keeps waiting
+  (`/discord/status` answers `pending`). Loading the page again shows the terms again without going back to
+  Discord.
+- **Only the browser Discord sent back** can answer them or see who signed in. The sign-in's `state` isn't a
+  secret (whoever started the sign-in has it), so someone who got a person to sign in with Discord from their
+  link could otherwise accept the terms in that person's name. The form carries a nonce only that page has, and
+  the page loaded again shows the form only with Discord's code in its address; anyone else gets "Finish where
+  you signed in", with no name, and nothing changes.
 - **Accept and continue** keeps the acceptance and goes on as a sign-in did before: with approval on, the
   request is posted to your channel and the page says **Request sent**; with approval off, the key is made and
-  shown. Pressing it twice sends one request.
+  shown. The page sends the form once, so a double click shows the page the first press got (with the key,
+  with approval off); without JavaScript, a second press still sends one request.
 - **Decline** ends the sign-in ("Terms not accepted"). FAFO says they need to accept the terms to get a key, and
   Continue with Discord starts again with the terms.
 - **What you see:** the request in your channel, its review page and `/admin/applications` (`terms`:
@@ -216,13 +223,18 @@ update.
   > Accepted the Terms of Service (November 13, 2026 version) on Nov 17, 2026, 2:05 PM EST
   > [Review: approve or deny](…)
 
-  Requests from before the terms say nothing new.
+  The review page gives when it was requested in Eastern time too ("Requested Nov 17, 2026, 2:05 PM EST"; it was
+  UTC before). With approval off there's no request: the "🔑 New FAFO license issued" notice in your channel ends
+  with the same line, and `/admin/licenses` has each key's `terms`. Requests and keys from before the terms say
+  nothing new.
 - **Anyone can read them** at `/terms` (for example `https://license.fafoaco.com/terms`), with no form.
 
 The worker's side: the callback (`GET /discord/callback`) moves a new user's sign-in to the status `terms`
-and keeps who signed in in `terms_asks` (by the sign-in's id, cleaned up with old sign-ins); the page's form
-posts to `POST /discord/terms` (`state`, `agree`, `action` `accept` or `decline`); each acceptance is kept once
-per Discord account, the first one, with the terms' version and when (`terms_accepts`). Both tables are new: the
+and keeps who signed in in `terms_asks` (by the sign-in's id, with the form's `nonce` and a SHA-256 of
+Discord's code, never the code; cleaned up with old sign-ins); the page's form posts to `POST /discord/terms`
+(`state`, `nonce`, `agree`, `action` `accept` or `decline`; anything but POST is 405, and `GET /discord/terms`,
+the address a page after the form shows, says there's nothing to show there); each acceptance is kept once per
+Discord account, the first one, with the terms' version and when (`terms_accepts`). Both tables are new: the
 deploy Action adds them before it deploys (`npm run db:init`, safe to run again; run it yourself if you deploy by
 hand).
 
@@ -1156,7 +1168,7 @@ A single network address can start at most 20 sign-ins an hour.
 These need `ADMIN_TOKEN`. In PowerShell, use `curl.exe` rather than `curl`.
 
 ```
-# Every key issued, newest first
+# Every key issued, newest first, each with the Terms of Service it accepted
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/licenses
 
 # Every request and your decision, each with its review link and the Terms of Service it accepted
@@ -1191,8 +1203,10 @@ once handing out keys straight away and once with approval on. It goes through s
 key pickup, repeat sign-in, cancelled and refused sign-ins, the account-age and server
 checks, revoke and restore, the rate limit, requests being posted, approved, denied
 and changed, the Terms of Service (shown only to new users, loaded again without asking Discord again,
-the box required, accepted with approval on and off, pressed twice at once, declined, expired, from the web
-version, what the channel, the review page and `/admin/applications` say, and `/terms`), slot limits, submissions and collecting keys, pulled slots, the Interests list (its pictures, the
+answered only from the browser Discord sent back (the state alone, a wrong nonce or code), the box required,
+accepted with approval on and off (from the web version too), pressed twice at once, accepted in a second sign-in
+after a denial or the key turned off, declined, expired, old asks cleaned up, what the channel, the review page,
+`/admin/applications` and `/admin/licenses` say, and `/terms`), slot limits, submissions and collecting keys, pulled slots, the Interests list (its pictures, the
 products added to it once, the SKUs a batch carries, and picks sent on their own: the message and files, the same
 picks again, the daily limit, also sent at once, and a failed post), product pictures
 (against a stand-in catalog: exact names only, never a case, another edition or two that fit),

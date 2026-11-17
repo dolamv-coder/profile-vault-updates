@@ -1148,6 +1148,8 @@ try {
     const big = await fetchAgain(BASE + "/discord/terms", { method: "POST", body: "state=" + "x".repeat(5000) });
     assert.equal(big.status, 413);
   });
+  // The hour's 20 sign-ins from this address: the ones so far go an hour back, so the ones after have room.
+  approvalSql(`UPDATE requests SET created_at = created_at - 3600000 WHERE r IN (${termsRs.map((r) => `'${r}'`).join(", ")})`);
   // Two sign-ins of one new user (two tabs, two FAFOs) both wait at the terms. Accepted in one, the request is decided
   // before they accept in the other, which then goes as the callback would for them now: declined, or their key turned off.
   await test("terms: accepted in a second sign-in after a denial, it's declined, and nothing is posted again", async () => {
@@ -1188,7 +1190,9 @@ try {
     await new Promise((ok) => setTimeout(ok, 300));
     assert.equal(webhookPosts.length, posts);
     // Sol leaves no key behind for the tests after these.
-    approvalSql(`DELETE FROM licenses WHERE discord_id = '${USERS.sol.id}'; DELETE FROM applications WHERE discord_id = '${USERS.sol.id}'; UPDATE list_state SET version = version + 1 WHERE id = 1`);
+    approvalSql(`DELETE FROM licenses WHERE discord_id = '${USERS.sol.id}'`);
+    approvalSql(`DELETE FROM applications WHERE discord_id = '${USERS.sol.id}'`);
+    approvalSql("UPDATE list_state SET version = version + 1 WHERE id = 1");
   });
   await test("terms: asks left over go with old sign-ins when a sign-in starts", async () => {
     const old = Date.now() - 7 * 24 * 3600000 - 86400000 - 60000, recent = Date.now() - 7 * 24 * 3600000;
@@ -1262,6 +1266,27 @@ try {
     await new Promise((ok) => setTimeout(ok, 300));
     assert.equal(webhookPosts.length, posts + 1, "no second notice");
     assert.equal((await signIn(rid(), "frank")).terms, false, "and never again");
+  });
+  await test("a new user from the web version gets Back to FAFO and their key once they accept", async () => {
+    await new Promise((ok) => setTimeout(ok, 300));
+    const posts = webhookPosts.length, r = rid();
+    const x = await webSignIn(r, "tia", "https://app.fafoaco.com", "", { accept: false });
+    assert.equal(x.terms, true); assert.equal(x.page.status, 200);
+    assert.deepEqual(await getJson("/discord/status/" + r), { status: "pending" });
+    const res = await termsPost(x.state, { agree: "1", action: "accept" });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    const s = await getJson("/discord/status/" + r);
+    assert.equal(s.status, "issued"); assert.match(s.key, /^PVLT-/);
+    assert.ok(html.includes("<h2>You&#39;re all set</h2><p>Go back to FAFO: your master password opens your vault there, or you choose one if you&#39;re new. It keeps your profiles and cards private.</p><p class=\"go\"><button class=\"go\" id=\"back\" type=\"button\">Back to FAFO</button></p>"),
+      "the web key page a new user got before the terms, as it was");
+    assert.ok(html.includes('location.replace("https://app.fafoaco.com/")'), "Back to FAFO on its address");
+    assert.ok(html.includes(`<p class="small">Your license key, in case you need it later:</p><p class="key">${s.key}</p></main>`), "with the key");
+    await new Promise((ok) => setTimeout(ok, 400));
+    assert.equal(webhookPosts.length, posts + 1);
+    assert.match(webhookPosts.at(-1).content, /^🔑 New FAFO license issued to \*\*@tia\*\* [^\n]*\nAccepted the Terms of Service \(November 13, 2026 version\) on /);
+    // Later tests use up the hour's sign-ins from this address: this one doesn't count toward them.
+    approvalSql(`UPDATE requests SET created_at = created_at - 3600000 WHERE r = '${r}'`);
   });
 
   console.log("\nSlots");
