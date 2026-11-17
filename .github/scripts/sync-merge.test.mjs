@@ -28,7 +28,8 @@ const clone = (x) => JSON.parse(JSON.stringify(x));
 const blank = () => ({ v: 1, settings: { autoLockMin: 15 }, groups: [], cardGroups: [], addresses: [], cards: [], profiles: [], logins: [], inboxes: [], checkouts: [], orders: [],
   shareOld: [], deletedOrders: {}, caps: {}, slots: [], subs: {}, lastBatch: [], pulls: [], submitTo: null, submitName: "" });
 // Merges `local` with `remote`, both having started from `base` (a state, or null for never synced).
-const merge = (local, remote, base, lmt, rmt, orig) => syncMerge(syncUnits(local), syncUnits(remote), base ? syncHashes(syncUnits(base)) : {}, lmt, rmt, orderKey, orig);
+// fp: an inbox's fingerprint (the page passes its ibxFp, 1.9.157+; older pages' merge ignores it).
+const merge = (local, remote, base, lmt, rmt, orig, fp) => syncMerge(syncUnits(local), syncUnits(remote), base ? syncHashes(syncUnits(base)) : {}, lmt, rmt, orderKey, orig, fp);
 const ids = (list) => list.map((x) => x.id);
 
 console.log(`Sync merge in ${file.split(/[\\/]/).pop()}`);
@@ -516,6 +517,107 @@ if (/function renderInterests\(/.test(html)) test("Interests ticked on two devic
   for (const [lmt, rmt] of [[2, 1], [1, 2]]) {
     const m = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, origOf(base, [k]));
     assert.deepEqual(m.state.settings.interestPicks, { "target:12345678": p(false, 5), "target:87654321": p(true, 6) });
+  }
+});
+
+// 1.9.157+: an inbox's last check (chk {ok, at, why, by, f}, its light on Store logins) syncs. An inbox changed on both sides
+// keeps the check made for the email, server, port and app password it ends up with (the newer when both or neither are),
+// whichever side's other fields win; an inbox deleted on one side while the other only rewrote its check stays deleted;
+// this desktop's own (deskChk, deskTry) and when its sync failed (syncErrAt) stay on each device. (Guarded by the page's
+// lights.)
+if (/function inboxLight\(/.test(html)) test("an inbox's last check syncs, a clash keeps the one for the merged credentials, and each desktop's own stays on it", () => {
+  // The page's ibxFp is a hash of the email, server, port and app password; here the password alone tells them apart.
+  const fp = (v) => "fp:" + v.password;
+  const chk = (ok, at, by, pw = "pw") => ({ ok, at, by, f: "fp:" + pw });
+  const base = blank(); base.inboxes.push({ id: "i1", email: "a@x.com", password: "pw", chk: chk(true, 10, "desktop") });
+  const k = "i:i1";
+  // Only the other side checked it: its check comes over, and this one's own bookkeeping never makes a change to send.
+  let a = clone(base), b = clone(base);
+  Object.assign(a.inboxes[0], { deskChk: { ok: true, at: 50, f: "fp:pw" }, deskTry: { at: 55, f: "fp:pw", err: "x" }, syncErrAt: 40, syncError: "x" });
+  assert.deepEqual(syncHashes(syncUnits(a)), syncHashes(syncUnits(base)), "deskChk, deskTry and syncErrAt stay on the device");
+  b.inboxes[0].chk = chk(false, 30, "server");
+  let m = merge(a, b, base, {}, {}, {}, fp);
+  assert.deepEqual(m.state.inboxes[0].chk, chk(false, 30, "server"));
+  assert.equal(m.toLocal, true);
+  for (const [lmt, rmt] of [[5, 9], [9, 5]]) {
+    // Both checked it with the same app password (one renamed it too): the newer check, whichever side's item wins.
+    a = clone(base); b = clone(base);
+    a.inboxes[0].chk = chk(true, 80, "desktop");
+    b.inboxes[0].label = "Main"; b.inboxes[0].chk = chk(false, 60, "server");
+    for (const o of [origOf(base, [k]), {}]) for (const f of [fp, undefined]) {
+      m = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, o, f);
+      assert.deepEqual(m.state.inboxes[0].chk, chk(true, 80, "desktop"), `same password, lmt ${lmt}`);
+    }
+    a.inboxes[0].chk = chk(true, 20, "desktop"); b.inboxes[0].chk = chk(false, 90, "server");
+    m = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, {}, fp);
+    assert.deepEqual(m.state.inboxes[0].chk, chk(false, 90, "server"), `the other side's newer, lmt ${lmt}`);
+    // The review's case: the web changed the app password and tested it (green, at 60); the desktop, before it merged,
+    // synced with the old one and was refused later (at 80). Field by field the new password stays, and so does the web's
+    // check: the desktop's is for the password the merge dropped (every device would show it gray).
+    a = clone(base); b = clone(base);
+    a.inboxes[0].chk = chk(false, 80, "desktop", "pw");
+    b.inboxes[0].password = "pw2"; b.inboxes[0].chk = chk(true, 60, "server", "pw2");
+    for (const f of [fp, undefined]) {   // the page's fingerprint, or each side's own credentials against the merged ones
+      m = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, origOf(base, [k]), f);
+      assert.equal(m.state.inboxes[0].password, "pw2");
+      assert.deepEqual(m.state.inboxes[0].chk, chk(true, 60, "server", "pw2"), `two fingerprints, lmt ${lmt}, fp ${!!f}`);
+      // The same both ways round (this side changed the password).
+      m = merge(b, a, base, { [k]: rmt }, { [k]: lmt }, origOf(base, [k]), f);
+      assert.equal(m.state.inboxes[0].password, "pw2");
+      assert.deepEqual(m.state.inboxes[0].chk, chk(true, 60, "server", "pw2"), `two fingerprints, swapped, lmt ${lmt}`);
+    }
+    // With no version to go by, the whole item by time, and the check for its password.
+    m = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, {}, fp);
+    assert.equal(m.state.inboxes[0].password, lmt > rmt ? "pw" : "pw2");
+    assert.deepEqual(m.state.inboxes[0].chk, lmt > rmt ? chk(false, 80, "desktop", "pw") : chk(true, 60, "server", "pw2"), `whole, lmt ${lmt}`);
+    // Neither check is for the merged credentials (the web changed the password without testing it; the desktop's refusal
+    // is the old one's): the newer, which every device shows as gray anyway.
+    a = clone(base); b = clone(base);
+    a.inboxes[0].chk = chk(false, 80, "desktop", "pw"); b.inboxes[0].password = "pw3";
+    m = merge(a, b, base, { [k]: lmt }, { [k]: rmt }, origOf(base, [k]), fp);
+    assert.equal(m.state.inboxes[0].password, "pw3");
+    assert.deepEqual(m.state.inboxes[0].chk, chk(false, 80, "desktop", "pw"));
+  }
+  // One side added a check to an inbox the other changed (no check there): kept.
+  const base2 = blank(); base2.inboxes.push({ id: "i1", email: "a@x.com", password: "pw" });
+  a = clone(base2); b = clone(base2);
+  a.inboxes[0].chk = chk(true, 70, "desktop"); b.inboxes[0].label = "Main";
+  for (const [lmt, rmt] of [[5, 9], [9, 5]]) {
+    m = merge(a, b, base2, { [k]: lmt }, { [k]: rmt }, {}, fp);
+    assert.deepEqual(m.state.inboxes[0].chk, chk(true, 70, "desktop"));
+  }
+});
+
+if (/function inboxLight\(/.test(html)) test("an inbox deleted on one side stays deleted when the other only rewrote its last check (an email sync's), either way round", () => {
+  const fp = (v) => "fp:" + v.password;
+  const k = "i:i1";
+  for (const withChk of [true, false]) {   // the check rewritten, or the first one written (the first sync after updating)
+    const base = blank();
+    base.inboxes.push(Object.assign({ id: "i1", email: "a@x.com", password: "pw", provider: "gmail", host: "imap.gmail.com", port: "993", auto: true }, withChk ? { chk: { ok: true, at: 10, by: "desktop", f: "fp:pw" } } : {}));
+    base.inboxes.push({ id: "i2", email: "b@x.com", password: "pw" });
+    base.logins.push({ id: "l1", store: "target", email: "s@x.com", inboxId: "i1" });
+    const synced = clone(base), deleted = clone(base);
+    synced.inboxes[0].chk = { ok: false, at: 900, by: "desktop", f: "fp:pw", why: "Gmail didn't accept the password." };
+    synced.inboxes[0].lastSync = 950; synced.inboxes[0].deskChk = { ok: false, at: 900, f: "fp:pw", err: "x" };   // device fields
+    deleted.inboxes.splice(0, 1); deleted.logins[0].inboxId = "";   // Delete inbox unlinks its logins too
+    for (const [lmt, rmt] of [[5, 9], [9, 5]]) {
+      // This side rewrote the check (a desktop's sync), the online copy deleted it (the web): deleted here too.
+      let m = merge(synced, deleted, base, { [k]: lmt }, { [k]: rmt }, origOf(base, [k]), fp);
+      assert.deepEqual(ids(m.state.inboxes), ["i2"], `check here, deletion there, lmt ${lmt}, chk ${withChk}`);
+      assert.equal(m.state.logins[0].inboxId, "");
+      assert.equal(m.toLocal, true);
+      // This side deleted it (syncNote keeps the version both started from), the online copy has the rewritten check:
+      // the deletion goes there, never back.
+      m = merge(deleted, synced, base, { [k]: lmt }, { [k]: rmt }, origOf(base, [k]), fp);
+      assert.deepEqual(ids(m.state.inboxes), ["i2"], `deletion here, check there, lmt ${lmt}, chk ${withChk}`);
+      assert.equal(m.toRemote, true);
+      // An edit beats a deletion, as before: a changed app password (with its check) comes back.
+      const edited = clone(synced); edited.inboxes[0].password = "pw2"; edited.inboxes[0].chk.f = "fp:pw2";
+      m = merge(edited, deleted, base, { [k]: lmt }, { [k]: rmt }, origOf(base, [k]), fp);
+      assert.deepEqual(ids(m.state.inboxes).sort(), ["i1", "i2"], "an edit beats a deletion");
+      m = merge(deleted, edited, base, { [k]: lmt }, { [k]: rmt }, origOf(base, [k]), fp);
+      assert.deepEqual(ids(m.state.inboxes).sort(), ["i1", "i2"], "an edit beats a deletion, swapped");
+    }
   }
 });
 

@@ -233,10 +233,10 @@ try {
     assert.deepEqual(await name(T + "sample-39-s/-/A-12345691"), ["12345691", "SKU 12345691"]);
   });
 
-  await test("with a license key, Interests is between IMAP and Submit in the sidebar, and right before Submit in the phone's tabs", async () => {
+  await test("with a license key, Interests is between IMAP (Store logins from 1.9.157, which has no IMAP tab) and Submit in the sidebar, and right before Submit in the phone's tabs", async () => {
     await ev((lic) => { const T = window.__t; T.keepTypedLic(lic); T.persist(); T.render(); T.refreshInterests(true); }, LIC);
     const side = await navIds("#side [data-act=view]"), i = side.indexOf("interests");
-    assert.deepEqual(side.slice(i - 1, i + 2), ["imap", "interests", "submit"]);
+    assert.deepEqual(side.slice(i - 1, i + 2), [side.includes("imap") ? "imap" : "logins", "interests", "submit"]);
     const tabs = await navIds("#mnav [data-act=view]"), j = tabs.indexOf("interests");
     assert.ok(j > 0 && tabs[j + 1] === "submit", tabs.join(","));
     await page.waitForFunction(() => { const L = window.__t.interestRead(); return L && L.items.length === 4; });

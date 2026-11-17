@@ -11,6 +11,9 @@
 // an inbox mid-test, results kept on this device only (never synced, never on the inboxes), changed credentials, the
 // editor's and the setup's results kept on Save, the seller's own FAFO, and the desktop's code left as it was. Sample
 // addresses, made-up app passwords and keys only.
+// From 1.9.157 (inbox-lights.test.mjs) IMAP's tab is gone: its inbox cards are on Store logins, each with a light, and a
+// result that tells (signed in, or the inbox's fault) also goes on the inbox for every device (chk). On such a page this
+// test checks the same things there, in its words (LIGHTS below); the desktop's side is inbox-lights.test.mjs's.
 //   node .github/scripts/web-inbox-test.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must test inboxes from the web version ("/inbox/test"); a page named on the command line that doesn't is
 // skipped.
@@ -114,13 +117,26 @@ const ev = (fn, arg) => page.evaluate(fn, arg);
 const text = (sel) => page.$eval(sel, (e) => e.textContent.replace(/\s+/g, " ").trim());
 const PW = "sample-pass-149";
 const ready = () => page.waitForSelector('#side [data-id="orders"]', { timeout: 30000 });
-const VIEW_TITLE = { imap: "IMAP", logins: "Store logins" };
+// The words each page says (1.9.149 to 1.9.156, or with the lights from 1.9.157), and where IMAP's cards are.
+const LIGHTS = /function inboxLight\(/.test(HTML);
+const W_OK = LIGHTS ? "Signed in · checked just now" : "Connected · checked just now";
+const W_ERR = LIGHTS ? "Couldn't sign in · checked just now" : "Error · checked just now";
+const W_CC = LIGHTS ? "Couldn't check from FAFO's server · just now" : "Couldn't check from FAFO's server · checked just now";
+const W_NEW = LIGHTS ? "Not checked yet: press Test" : "Not checked here yet";
+const W_KPI = LIGHTS ? "Can't sign in 1" : "Inbox error 1";
+const W_BADPILL = LIGHTS ? "Can't sign in" : "Inbox error";
+const BAD_PILL = LIGHTS ? ".lt-line:has(.lt-bad)" : ".ppill-bad";
+const BAD_MARK = LIGHTS ? ".lt-line:has(.lt-bad)" : ".lst-err";
+const RED = LIGHTS ? ".lt-bad, .lt-w-bad" : '[style*="danger"]';
+const PILL_TEXT = (e) => e.textContent.trim();
+const has = (s, w) => assert.ok(s.includes(w), s);
+const VIEW_TITLE = { imap: LIGHTS ? "Store logins" : "IMAP", logins: "Store logins" };
 const view = async (id) => {
-  await page.click(`#side [data-id="${id}"]`);
+  await page.click(`#side [data-id="${LIGHTS && id === "imap" ? "logins" : id}"]`);
   await page.waitForFunction((t) => { const h = document.querySelector("#main .view-title"); return h && h.textContent === t; }, VIEW_TITLE[id]);
 };
 const cardOf = (id) => page.$eval(`#main [data-id="${id}"]`, (b) => b.closest("article").innerText.replace(/\s+/g, " ").trim());   // as it reads, lines apart
-const testBtns = () => page.$$eval('#main .item-actions [data-act="test-inbox"]', (bs) => bs.map((b) => ({ id: b.dataset.id, disabled: b.disabled, text: b.textContent.trim() })));
+const testBtns = () => page.$$eval('#main [data-act="test-inbox"]', (bs) => bs.map((b) => ({ id: b.dataset.id, disabled: b.disabled, text: b.textContent.trim() })));
 const kpis = () => text("#main .p-kpis");
 const toasts = () => ev(() => window.__toasts.slice());
 const ibx = () => ev(() => { const L = window.__t.S._local; return L && L.ibx ? JSON.parse(JSON.stringify(L.ibx)) : {}; });
@@ -143,7 +159,7 @@ async function relock() {
   await page.fill("#pw1", PW);   // the lock screen unlocks as the password is typed
   await ready();
 }
-// Test on an IMAP card, the caveat already seen: waits for its answer to be drawn.
+// Test on an IMAP card (Store logins' from 1.9.157), the caveat already seen: waits for its answer to be drawn.
 async function cardTest(id) {
   const n = W.tests.length;
   await page.click(`#main [data-act="test-inbox"][data-id="${id}"]`);
@@ -176,6 +192,7 @@ async function setupToPassword(email, open = async () => { await page.click('#ma
   await page.fill('#layers [name="g_password"]', "abcdefghijklmnop");
   await page.waitForTimeout(450);
 }
+const loginPill = (who) => page.$eval(`#main .slip:has-text("${who}") .l-inbox-line ${LIGHTS ? ".lt-line" : ".ppill"}`, (e) => e.textContent.trim());
 const INBOX = (id, email, extra = {}) => Object.assign({ id, email, password: "qrstuvwxyzabcdef", provider: "gmail", host: "imap.gmail.com", port: "993" }, extra);
 
 console.log(`Testing an inbox from the web version in ${file.split(/[\\/]/).pop()}`);
@@ -217,12 +234,12 @@ try {
 
   await test("no license key yet: Test is off with what to do, the status is the desktop app's, and nothing is sent", async () => {
     await view("imap");
-    const b = await page.$eval('#main article .item-actions button', (x) => ({ disabled: x.disabled, title: x.title, act: x.dataset.act || "" }));
+    const b = await page.$eval(LIGHTS ? "#main article.ibx-card .ibx-test button" : "#main article .item-actions button", (x) => ({ disabled: x.disabled, title: x.title, act: x.dataset.act || "" }));
     assert.deepEqual(b, { disabled: true, title: "Test needs your license key in this browser: Settings, then Web version & sync, then Turn on sync. Or test it in the desktop app.", act: "" });
     assert.ok(!(await page.$('#main [data-act="test-inbox"]')), "no live Test");
     const main = await text("#main");
-    assert.match(main, /Status shows in the desktop app/);
-    assert.doesNotMatch(main, /Not checked here yet/);
+    assert.match(main, LIGHTS ? /Not checked yet: the desktop app checks it when it syncs/ : /Status shows in the desktop app/);
+    assert.doesNotMatch(main, LIGHTS ? /press Test/ : /Not checked here yet/);
     assert.match(main, /FAFO signs in to check an inbox only in the desktop app/);
     assert.match(main, /To test an inbox here, add your license key: Settings, then Web version & sync, then Turn on sync\./);
     assert.doesNotMatch(main, /Test signs in from FAFO's server/);
@@ -251,8 +268,8 @@ try {
     await view("imap");
     const main = await text("#main");
     assert.ok(main.includes("You're on the web version. Test checks an inbox by signing in to it from FAFO's server, then signing out. Reading your email to pull in your orders happens only in the desktop app — the web version can't read email, so here you track orders by pasting their confirmation emails. Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test (FAFO's server signs in with it and keeps nothing) and with the slots you submit on that inbox's accounts."), main.slice(0, 1500));
-    assert.match(main, /One inbox can serve several store logins\. Test signs in from FAFO's server; the status is this browser's last test\./);
-    assert.match(await cardOf("ib-ok"), /Not checked here yet/);
+    assert.match(main, LIGHTS ? /One inbox can serve several store logins\..* Test signs in from FAFO's server\./ : /One inbox can serve several store logins\. Test signs in from FAFO's server; the status is this browser's last test\./);
+    has(await cardOf("ib-ok"), W_NEW);
     assert.ok((await testBtns()).every((b) => !b.disabled && b.text === "Test"));
     await page.click('#main [data-act="test-inbox"][data-id="ib-ok"]');
     await page.waitForSelector("#layers #cf-go");
@@ -276,7 +293,7 @@ try {
     await page.click("#layers #cf-go");
     await until(() => W.tests.length === 1, "the request");
     assert.deepEqual(W.tests[0], { body: { email: "ok.sample@gmail.com", password: "abcdefghijklmnop", host: "imap.gmail.com", port: "993" }, auth: "Bearer " + LIC });
-    await page.waitForFunction(() => /Connected · checked just now/.test(document.querySelector('#main [data-id="ib-ok"]').closest("article").textContent.replace(/\s+/g, " ")));
+    await page.waitForFunction((w) => document.querySelector('#main [data-id="ib-ok"]').closest("article").textContent.replace(/\s+/g, " ").includes(w), W_OK);
     assert.ok((await toasts()).includes("ok.sample@gmail.com: signed in from FAFO's server."));
   });
   await test("Testing… and the spinner while it runs, then Connected; the +tag inbox goes without its tag", async () => {
@@ -286,7 +303,7 @@ try {
     const bs = await testBtns();
     assert.deepEqual(bs.filter((b) => b.text === "Testing…").map((b) => b.id), ["ib-slow"]);
     assert.ok(bs.every((b) => b.disabled), "every card's Test is off meanwhile");
-    await page.waitForFunction(() => /Connected · checked just now/.test(document.querySelector('#main [data-id="ib-slow"]').closest("article").textContent.replace(/\s+/g, " ")));
+    await page.waitForFunction((w) => document.querySelector('#main [data-id="ib-slow"]').closest("article").textContent.replace(/\s+/g, " ").includes(w), W_OK);
     const t = await cardTest("ib-tag");
     assert.equal(t.body.email, "tag.sample@gmail.com");
     assert.ok(!JSON.stringify(W.tests).includes("+box"));
@@ -297,57 +314,58 @@ try {
     await page.click('#main [data-act="test-inbox"][data-id="ib-bad"]');
     await until(() => W.tests.length > n, "the request");
     assert.equal(await caveatOpen(), false, "no caveat window the second time");
-    await page.waitForFunction(() => /Error/.test(document.querySelector('#main [data-id="ib-bad"]').closest("article").textContent));
+    await page.waitForFunction((w) => document.querySelector('#main [data-id="ib-bad"]').closest("article").textContent.includes(w), W_ERR.split(" ·")[0]);
     const c = await cardOf("ib-bad");
-    assert.match(c, /Error · checked just now/);
+    has(c, W_ERR);
     assert.match(c, /Gmail didn't accept the password for bad\.sample@gmail\.com\. Use an app password \(not your normal password\) made while signed in as bad\.sample@gmail\.com, and paste all of it\. \(Details: \[AUTHENTICATIONFAILED\] Invalid credentials \(Failure\)\)/);
-    assert.ok(await page.$eval('#main article:has([data-id="ib-bad"]) .item-sub[style*="danger"]', (e) => !!e), "in red");
-    assert.match(await kpis(), /Inbox error 1/);
+    assert.ok(await page.$eval(`#main article:has([data-id="ib-bad"]) ${LIGHTS ? ".lt-w-bad" : '.item-sub[style*="danger"]'}`, (e) => !!e), "in red");
+    has(await kpis(), W_KPI);
     assert.ok((await toasts()).includes("Couldn't sign in to bad.sample@gmail.com from FAFO's server. Its card says why."));
     await view("logins");
-    assert.match(await kpis(), /Inbox error 1/);
-    const pill = await page.$eval('#main .slip:has(.ppill-bad)', (e) => ({ text: e.querySelector(".ppill-bad").textContent, title: e.querySelector(".ppill-bad").title, who: e.textContent }));
-    assert.equal(pill.text, "Inbox error");
-    assert.ok(pill.title.startsWith("FAFO's server couldn't sign in (Test on IMAP): Gmail didn't accept the password for bad.sample@gmail.com."), pill.title);
+    has(await kpis(), W_KPI);
+    const pill = await page.$eval(`#main .slip.login:has(${BAD_PILL})`, (e, sel) => ({ text: e.querySelector(sel).textContent.trim(), title: e.querySelector(sel).title, who: e.textContent }), BAD_PILL);
+    assert.equal(pill.text, W_BADPILL);
+    assert.ok(pill.title.startsWith(LIGHTS ? "Couldn't sign in on its last check (just now from FAFO's server): Gmail didn't accept the password for bad.sample@gmail.com." : "FAFO's server couldn't sign in (Test on IMAP): Gmail didn't accept the password for bad.sample@gmail.com."), pill.title);
     assert.match(pill.who, /bad\.login@example\.com/);
     for (const v of ["compact", "list"]) {
       await page.click(`#main [data-act="login-view"][data-id="${v}"]`);
-      const marks = await page.$$eval("#main .lst-err", (es) => es.map((e) => [e.textContent, e.title.startsWith("FAFO's server couldn't sign in (Test on IMAP): Gmail didn't accept")]));
-      assert.deepEqual(marks, [["Error", true]], v);
+      const marks = await page.$$eval(`#main ${BAD_MARK}`, (es, L) => es.map((e) => [e.textContent.trim(), e.title.startsWith(L ? "Couldn't sign in on its last check (just now from FAFO's server): Gmail didn't accept" : "FAFO's server couldn't sign in (Test on IMAP): Gmail didn't accept")]), LIGHTS);
+      assert.deepEqual(marks, [[LIGHTS ? "Can't sign in" : "Error", true]], v);
     }
     await page.click('#main [data-act="login-view"][data-id="comfortable"]');
     await view("imap");
   });
   await test("blocked, throttled and unreachable: their words under Couldn't check from FAFO's server, not red, and no Inbox error", async () => {
     for (const id of ["ib-blocked", "ib-throttle", "ib-far"]) await cardTest(id);
-    assert.match(await cardOf("ib-blocked"), /Couldn't check from FAFO's server · checked just now Gmail stopped this sign-in because it came from FAFO's server, not your computer\. Sign in to blocked\.sample@gmail\.com in your browser, confirm it was you if it asks, then test again\. The desktop app signs in from your computer\./);
-    assert.match(await cardOf("ib-throttle"), /Couldn't check from FAFO's server · checked just now Gmail had a temporary problem or is limiting sign-ins\. Try again in a few minutes\. \(Details: \[ALERT\] Too many simultaneous connections\. \(Failure\)\)/);
-    assert.match(await cardOf("ib-far"), /Couldn't check from FAFO's server · checked just now FAFO's server couldn't reach Gmail just now\. Try again in a few minutes\./);
+    has(await cardOf("ib-blocked"), W_CC + " Gmail stopped this sign-in because it came from FAFO's server, not your computer. Sign in to blocked.sample@gmail.com in your browser, confirm it was you if it asks, then test again. The desktop app signs in from your computer.");
+    has(await cardOf("ib-throttle"), W_CC + " Gmail had a temporary problem or is limiting sign-ins. Try again in a few minutes. (Details: [ALERT] Too many simultaneous connections. (Failure))");
+    has(await cardOf("ib-far"), W_CC + " FAFO's server couldn't reach Gmail just now. Try again in a few minutes.");
     for (const id of ["ib-blocked", "ib-throttle", "ib-far"]) {
-      const red = await page.$$eval(`#main article:has([data-id="${id}"]) [style*="danger"]`, (es) => es.length);
+      const red = await page.$$eval(`#main article:has([data-id="${id}"]) :is(${RED})`, (es) => es.length);
       assert.equal(red, 0, id + " isn't red");
-      assert.doesNotMatch(await cardOf(id), /Error/, id);
+      assert.doesNotMatch(await cardOf(id), LIGHTS ? /Couldn't sign in/ : /Error/, id);
+      if (LIGHTS) has(await cardOf(id), W_NEW);   // the light stays as it was: not checked
     }
-    assert.match(await kpis(), /Inbox error 1/);
+    has(await kpis(), W_KPI);
     await view("logins");
     for (const who of ["blocked.login", "throttle.login", "far.login"]) {
-      assert.equal(await page.$eval(`#main .slip:has-text("${who}@example.com") .l-inbox-line .ppill`, (e) => e.textContent), "Inbox connected", who);
+      assert.equal(await loginPill(who + "@example.com"), LIGHTS ? "Not checked yet" : "Inbox connected", who);
     }
     await view("imap");
   });
   await test("not-imap is FAFO's server's for the six providers (no Inbox error), and the inbox's for a custom server; a custom server that won't open the inbox", async () => {
     await cardTest("ib-notimap");
-    assert.match(await cardOf("ib-notimap"), /Couldn't check from FAFO's server · checked just now FAFO's server couldn't reach Gmail just now\. Try again in a few minutes\./);
-    assert.doesNotMatch(await cardOf("ib-notimap"), /Error|server name/);
-    assert.equal(await page.$$eval('#main article:has([data-id="ib-notimap"]) [style*="danger"]', (es) => es.length), 0);
+    has(await cardOf("ib-notimap"), W_CC + " FAFO's server couldn't reach Gmail just now. Try again in a few minutes.");
+    assert.doesNotMatch(await cardOf("ib-notimap"), LIGHTS ? /Couldn't sign in|server name/ : /Error|server name/);
+    assert.equal(await page.$$eval(`#main article:has([data-id="ib-notimap"]) :is(${RED})`, (es) => es.length), 0);
     await cardTest("ib-notimapc");
-    assert.match(await cardOf("ib-notimapc"), /Error · checked just now mail\.example\.com didn't answer like a mail server\. Check the server name\./);
+    has(await cardOf("ib-notimapc"), W_ERR + " mail.example.com didn't answer like a mail server. Check the server name.");
     await cardTest("ib-acct");
-    assert.match(await cardOf("ib-acct"), /Error · checked just now FAFO's server signed in to acct\.sample@example\.com, but the mail server wouldn't open its inbox\. \(Details: Mailbox does not exist\)/);
-    assert.match(await kpis(), /Inbox error 1/);
+    has(await cardOf("ib-acct"), W_ERR + " FAFO's server signed in to acct.sample@example.com, but the mail server wouldn't open its inbox. (Details: Mailbox does not exist)");
+    has(await kpis(), W_KPI);
     await view("logins");
-    assert.match(await kpis(), /Inbox error 1/);
-    assert.equal(await page.$eval('#main .slip:has-text("notimap.login@example.com") .l-inbox-line .ppill', (e) => e.textContent), "Inbox connected");
+    has(await kpis(), W_KPI);
+    assert.equal(await loginPill("notimap.login@example.com"), LIGHTS ? "Not checked yet" : "Inbox connected");
     await view("imap");
   });
   await test("mailError's network words never show for FAFO's server's sign-in; the server's words are text, never markup", async () => {
@@ -363,15 +381,15 @@ try {
     assert.match(await cardOf("ib-xss"), /\(Details: "><img src=x onerror=window\.__xss=1>LOGIN failed\.\)/);
     await none("an Error card");
     await cardTest("ib-xsss");
-    assert.match(await cardOf("ib-xsss"), /Couldn't check from FAFO's server · checked just now The mail server had a temporary problem or is limiting sign-ins\. Try again in a few minutes\. \(Details: "><img src=x onerror=window\.__xss=1>Try again later\)/);
+    has(await cardOf("ib-xsss"), W_CC + ' The mail server had a temporary problem or is limiting sign-ins. Try again in a few minutes. (Details: "><img src=x onerror=window.__xss=1>Try again later)');
     await none("a Couldn't check card");
     await view("logins");
-    const t = await page.$eval('#main .slip:has-text("xss.login@example.com") .ppill-bad', (e) => e.title);
+    const t = await page.$eval(`#main .slip:has-text("xss.login@example.com") ${BAD_PILL}`, (e) => e.title);
     assert.ok(t.includes('"><img src=x onerror=window.__xss=1>LOGIN failed.'), t);
     await none("the pill's title");
     for (const v of ["compact", "list"]) {
       await page.click(`#main [data-act="login-view"][data-id="${v}"]`);
-      assert.ok((await page.$$eval("#main .lst-err", (es) => es.map((e) => e.title))).some((t) => t.includes('"><img src=x onerror=window.__xss=1>')), v);
+      assert.ok((await page.$$eval(`#main ${BAD_MARK}`, (es) => es.map((e) => e.title))).some((t) => t.includes('"><img src=x onerror=window.__xss=1>')), v);
       await none("the mark's title, " + v);
     }
     await page.click('#main [data-act="login-view"][data-id="comfortable"]');
@@ -406,7 +424,7 @@ try {
       await page.waitForTimeout(200);
       const m = await page.$eval('#main article:has([data-act="test-inbox"][data-id="ib-long"])', (art) => {
         const card = art.getBoundingClientRect(), btn = art.querySelector('[data-act="test-inbox"]').getBoundingClientRect();
-        const div = [...art.querySelectorAll(".item-sub")].find((d) => d.textContent.includes("didn't accept"));
+        const div = [...art.querySelectorAll(".item-sub, .ibx-why")].find((d) => d.textContent.includes("didn't accept") && !d.querySelector(".item-sub, .ibx-why"));
         const range = document.createRange(); range.selectNodeContents(div);
         const rs = [...range.getClientRects()];
         return { lines: rs.length, past: rs.some((r) => r.right > card.right + 0.5),
@@ -423,11 +441,11 @@ try {
   });
   await test("a kind of answer this page doesn't know, and the cap across every license (a toast, nothing kept)", async () => {
     await cardTest("ib-newer");
-    assert.match(await cardOf("ib-newer"), /Couldn't check from FAFO's server · checked just now FAFO's server couldn't sign in to newer\.sample@gmail\.com\. \(Details: sample\)/);
+    has(await cardOf("ib-newer"), W_CC + " FAFO's server couldn't sign in to newer.sample@gmail.com. (Details: sample)");
     await cardTest("ib-everyone");
     await until(async () => (await toasts()).includes("FAFO's server has tested as many inboxes as it can today. Try again tomorrow, or test it in the desktop app."), "the toast");
     assert.equal((await ibx())["ib-everyone"], undefined, "nothing noted");
-    assert.match(await cardOf("ib-everyone"), /Not checked here yet/);
+    has(await cardOf("ib-everyone"), W_NEW);
   });
 
   await test("one at a time: a double click on a card's Test sends one request, and every Test is off meanwhile", async () => {
@@ -437,7 +455,7 @@ try {
     const bs = await testBtns();
     assert.ok(bs.every((b) => b.disabled));
     assert.deepEqual(bs.filter((b) => b.text === "Testing…").map((b) => b.id), ["ib-slow2"]);
-    await page.waitForFunction(() => /Connected/.test(document.querySelector('#main [data-id="ib-slow2"]').closest("article").textContent));
+    await page.waitForFunction((w) => document.querySelector('#main [data-id="ib-slow2"]').closest("article").textContent.includes(w), W_OK.split(" ·")[0]);
     assert.equal(W.tests.length, n + 1);
   });
   await test("one at a time: a double click on the inbox editor's Test, and on the setup's Check and use, each send one request", async () => {
@@ -471,8 +489,14 @@ try {
     await ev(() => { localStorage.removeItem("orbit-inbox-test-ok"); window.__t.inboxTestMem = false; });
     const n = W.tests.length;
     // The window opens in the middle of the screen, and the second click lands on it there (on the scrim, beside it, it
-    // would close it): the first card (the left column, under the window), scrolled to the middle.
-    const id = await page.$eval('#main [data-act="test-inbox"]', (b) => { b.scrollIntoView({ block: "center" }); return b.dataset.id; });
+    // would close it): the card whose Test is nearest the middle (1.9.149's first card had it under the window; from 1.9.157
+    // Test is at a card's left, on its own row), scrolled to the middle.
+    const id = await page.$$eval('#main [data-act="test-inbox"]', (bs) => {
+      const mid = window.innerWidth / 2, d = (b) => { const r = b.getBoundingClientRect(); return Math.abs((r.left + r.right) / 2 - mid); };
+      const b = bs.slice().sort((x, y) => d(x) - d(y))[0];
+      b.scrollIntoView({ block: "center" });
+      return b.dataset.id;
+    });
     await page.dblclick(`#main [data-act="test-inbox"][data-id="${id}"]`);
     await page.waitForSelector("#layers #cf-go");
     await page.waitForTimeout(300);
@@ -554,7 +578,7 @@ try {
     assert.deepEqual((await toasts()).slice(t0).filter((x) => /slow3/.test(x)), [], "no toast");
     assert.equal((await ibx())["ib-slow3"], undefined, "nothing noted");
     await view("imap");
-    assert.match(await cardOf("ib-slow3"), /Not checked here yet/);
+    has(await cardOf("ib-slow3"), W_NEW);
     // An inbox deleted while its test runs.
     n = W.tests.length;
     await page.click('#main [data-act="test-inbox"][data-id="ib-slow4"]');
@@ -564,7 +588,8 @@ try {
     assert.equal((await ibx())["ib-slow4"], undefined, "no entry for a deleted inbox");
   });
 
-  await test("results stay on this device: across a lock and a reload, in the vault's own bookkeeping, never on the inboxes or in what sync sends", async () => {
+  await test(LIGHTS ? "results stay on this device: across a lock and a reload, in the vault's own bookkeeping; only one that tells goes on its inbox (chk) and in what sync sends"
+    : "results stay on this device: across a lock and a reload, in the vault's own bookkeeping, never on the inboxes or in what sync sends", async () => {
     const before = await ibx();
     assert.deepEqual(Object.keys(before).sort(), ["ib-acct", "ib-bad", "ib-blocked", "ib-far", "ib-long", "ib-net", "ib-newer", "ib-notimap", "ib-notimapc", "ib-ok", "ib-slow", "ib-slow2", "ib-tag", "ib-throttle", "ib-xss", "ib-xsss"]);
     for (const r of Object.values(before)) assert.deepEqual(Object.keys(r).sort(), ["at", "f", "n", "ok", "text", "why"]);
@@ -576,20 +601,27 @@ try {
     await ready();
     assert.deepEqual(await ibx(), before);
     await view("imap");
-    assert.match(await cardOf("ib-ok"), /Connected/);
-    assert.match(await cardOf("ib-bad"), /Error/);
+    has(await cardOf("ib-ok"), W_OK.split(" ·")[0]);
+    has(await cardOf("ib-bad"), W_ERR.split(" ·")[0]);
     const n = W.tests.length;
     await page.click('#main [data-act="test-inbox"][data-id="ib-nomsg"]');
     await until(() => W.tests.length > n, "the request");
     assert.equal(await caveatOpen(), false, "no caveat window after a reload");
+    // From 1.9.157 its answer goes on its inbox (chk) once it's in: the request is sent before the page has the answer.
+    if (LIGHTS) await until(() => ev(() => !!(window.__t.S.inboxes.find((i) => i.id === "ib-nomsg") || {}).chk), "its check");
     const keys = await ev(() => Object.fromEntries(window.__t.S.inboxes.map((i) => [i.id, Object.keys(i).sort().join(",")])));
-    for (const [id, k] of Object.entries(keys)) if (KEYS0[id]) assert.equal(k, KEYS0[id], id + " gained no field");
-    assert.ok(Object.values(keys).every((k) => !/ibx|test|check|(^|,)f(,|$)/i.test(k)), JSON.stringify(keys));
+    // From 1.9.157 an inbox whose answer told (signed in, or the inbox's fault) gains its check (chk), nothing else.
+    const TOLD = ["ib-acct", "ib-bad", "ib-long", "ib-net", "ib-notimapc", "ib-ok", "ib-slow", "ib-slow2", "ib-tag", "ib-xss", "ib-nomsg"];
+    const plain = (id, k) => LIGHTS && TOLD.includes(id) ? k.split(",").filter((x) => x !== "chk").join(",") : k;
+    for (const [id, k] of Object.entries(keys)) if (KEYS0[id]) assert.equal(plain(id, k), KEYS0[id], id + " gained no field");
+    if (LIGHTS) for (const id of TOLD) assert.ok(keys[id].split(",").includes("chk"), id + " has its check");
+    assert.ok(Object.values(keys).every((k) => !/ibx|test|(^|,)f(,|$)/i.test(k) && (LIGHTS || !/check/i.test(k))), JSON.stringify(keys));
     const sent = await ev(() => JSON.stringify([...window.__t.syncUnits(window.__t.S).map.values()].map((x) => x.v)));
     assert.ok(!sent.includes("ibx"), "no ibx in what sync sends");
-    for (const r of Object.values(before)) assert.ok(!sent.includes(r.f), "no fingerprint either");
+    // A fingerprint goes only with a check that told (on its inbox), never with one that didn't (blocked, throttled…).
+    for (const [id, r] of Object.entries(before)) assert.equal(sent.includes(r.f), LIGHTS && TOLD.includes(id), "fingerprint of " + id);
   });
-  await test("a changed app password: the card says Not checked here yet, and the count's Inbox error goes", async () => {
+  await test("a changed app password: the card says Not checked here yet (Not checked yet, 1.9.157), and the count's Inbox error goes", async () => {
     await view("logins");
     await page.click('#main [data-act="edit-inbox"][data-id="ib-bad"]');
     await page.waitForSelector("#layers #i-save");
@@ -598,10 +630,10 @@ try {
     await page.fill('#layers [name="i_password"]', "zyxwvutsrqponmlk");
     await page.click("#layers #i-save");
     await page.waitForFunction(() => !document.querySelector("#layers .panel"));
-    assert.equal(await page.$eval('#main .slip:has-text("bad.login@example.com") .l-inbox-line .ppill', (e) => e.textContent), "Inbox connected");
+    assert.equal(await loginPill("bad.login@example.com"), LIGHTS ? "Not checked yet" : "Inbox connected");
     await view("imap");
-    assert.match(await cardOf("ib-bad"), /Not checked here yet/);
-    assert.match(await kpis(), /Inbox error 1/, "only xss's left");
+    has(await cardOf("ib-bad"), W_NEW);
+    assert.ok((await kpis()).includes(W_KPI), "only xss's left");
   });
 
   await test("the inbox editor's Test: its words for each answer, the page's own checks before sending, and a new inbox's result kept on Save", async () => {
@@ -644,13 +676,13 @@ try {
     assert.equal(await addSays({ email: "co:lon.sample@example.com" }), "Check this inbox's email address.");
     await closeLayers();
     assert.equal(W.tests.length, n, "none of those was sent");
-    // Add inbox, Test, Save: its card is Connected.
+    // Add inbox, Test, Save: its card is Connected (Signed in, 1.9.157).
     assert.equal(await addSays({ email: "fresh.sample@gmail.com", provider: "gmail", password: "abcdefghijklmnop" }), "Signed in from FAFO's server. Your inbox has 3 emails.");
     await page.click("#layers #i-save");
     await page.waitForFunction(() => !document.querySelector("#layers .panel"));
     await view("imap");
     const id = await ev(() => window.__t.S.inboxes.find((i) => i.email === "fresh.sample@gmail.com").id);
-    assert.match(await cardOf(id), /Connected · checked just now/);
+    has(await cardOf(id), W_OK);
   });
 
   await test("the step-by-step setup: Check and use from FAFO's server, its words, Use it anyway, and the result kept on Save, from Add inbox and from a new store login", async () => {
@@ -677,7 +709,7 @@ try {
     await page.waitForFunction(() => !document.querySelector("#layers .panel"));
     await view("imap");
     let id = await ev(() => window.__t.S.inboxes.find((i) => i.email === "ok.setup@gmail.com").id);
-    assert.match(await cardOf(id), /Connected · checked just now/);
+    has(await cardOf(id), W_OK);
     // A new store login whose new inbox is checked by the setup: Save login keeps the result for that inbox.
     await view("logins");
     await setup("", async () => {
@@ -693,7 +725,7 @@ try {
     await page.waitForFunction(() => !document.querySelector("#layers .panel"));
     await view("imap");
     id = await ev(() => window.__t.S.inboxes.find((i) => i.email === "ok.newlogin@gmail.com").id);
-    assert.match(await cardOf(id), /Connected · checked just now/);
+    has(await cardOf(id), W_OK);
   });
 
   await test("the seller's own FAFO: Test still works, and the note has no slots clause", async () => {
@@ -711,8 +743,9 @@ try {
     await page.waitForFunction(() => !window.__t.isPremiumOwner());
   });
 
-  await test("the desktop app is as it was: the gate, its Tests and its words", async () => {
+  await test(LIGHTS ? "the gate is the web's only (the desktop's lights and Test: inbox-lights.test.mjs)" : "the desktop app is as it was: the gate, its Tests and its words", async () => {
     assert.match(HTML, /const inboxTestOn = \(\) => !DESK && /);
+    if (LIGHTS) return;   // 1.9.157 changes the desktop's side on purpose: inbox-lights.test.mjs checks it
     assert.ok(HTML.includes("window.pvDesktop.testInbox({email:r.inbox.email, password:r.inbox.password, host:r.inbox.host, port:r.inbox.port})"), "the inbox editor's");
     assert.ok(HTML.includes('window.pvDesktop.testInbox({email:g.email, password:pw, host:g.provider === "custom" ? g.host : (p ? p[2] : ""), port:g.provider === "custom" ? g.port : "993"})'), "the setup's");
     assert.ok(HTML.includes("\"The desktop app couldn't sign in: \""));
