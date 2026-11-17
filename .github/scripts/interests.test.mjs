@@ -47,6 +47,12 @@ if (!HAS_SEND && !process.argv[2]) { console.error(`${file} has no Send to selle
 // list isn't a change of the buyer's.
 const HAS_SENT_STR = /function interestSentLocal\(/.test(HTML);
 if (HAS_SEND && !HAS_SENT_STR && !process.argv[2]) { console.error(`${file} has Send to seller but keeps interestSent as an object (no interestSentLocal): update this test if that's on purpose`); process.exit(1); }
+// From 1.9.156 (the owner's request, 2026-11-17: "change "Send to Seller" to "Send to Runner"") Interests says runner: its
+// button, its bar, what a send says and the line under its heading, and Submit's line and the setup guide name the button.
+// Submit's own words still say seller.
+const RUNNER = /"Send to runner"/.test(HTML);
+if (HAS_SEND && !RUNNER && !process.argv[2]) { console.error(`${file} has Send to seller where it says Send to runner from 1.9.156: update this test if that's on purpose`); process.exit(1); }
+const who = (x) => !RUNNER ? x : x instanceof RegExp ? new RegExp(x.source.replace(/seller/g, "runner"), x.flags) : x.replace(/seller/g, "runner");
 // How many new products Add products looks up on TCGplayer (8 in 1.9.142, 20 from 1.9.143).
 const FIND_MAX = Number((/\bconst INTEREST_FIND_MAX = (\d+);/.exec(HTML) || [])[1]);
 assert.ok(FIND_MAX > 0, "couldn't find INTEREST_FIND_MAX");
@@ -366,7 +372,7 @@ try {
     await page.click('#side [data-id="submit"]');
     await page.waitForSelector("#main .sub-act");
     assert.match(await page.$eval("#main .sub-act", (e) => e.textContent), /2 interests ticked: their SKUs go to your seller with the next Target slots you submit\./);
-    if (HAS_SEND) assert.match(await page.$eval("#main .sub-act", (e) => e.textContent), /you submit\. To send them without submitting, use Send to seller on Interests\./);
+    if (HAS_SEND) assert.match(await page.$eval("#main .sub-act", (e) => e.textContent), who(/you submit\. To send them without submitting, use Send to seller on Interests\./));
     await page.click('#main [data-act="submit-slots"]');
     await page.fill("#ss-from", "Sam");
     await page.click("#ss-go");
@@ -385,7 +391,7 @@ try {
     // One ticked: its SKU.
     await ev(() => { const T = window.__t; T.S.settings.interestPicks = { "target:33333333": { on: true, at: Date.now() } }; T.persist(); T.render(); });
     assert.match(await page.$eval("#main .sub-act", (e) => e.textContent), /1 interest ticked: its SKU goes to your seller with the next Target slots you submit\./);
-    if (HAS_SEND) assert.match(await page.$eval("#main .sub-act", (e) => e.textContent), /To send it without submitting, use Send to seller on Interests\./);
+    if (HAS_SEND) assert.match(await page.$eval("#main .sub-act", (e) => e.textContent), who(/To send it without submitting, use Send to seller on Interests\./));
   });
 
   // ---- Send to seller (1.9.155): the revamped view and its bar ----
@@ -471,7 +477,7 @@ try {
     await test("the bar: nothing picked, then picked and not sent; Send to seller sends every store's picks with the name, and then the seller has them", async () => {
       await ev(() => { const T = window.__t; T.S.settings.interestPicks = {}; T.persist(); T.render(); });
       assert.equal(W.sent, null); assert.equal(await setting(), null);
-      assert.deepEqual(await bar(), { ttl: "Nothing picked", st: "Tick Run this on the products you'd like your seller to run.", btn: "Send to seller", off: true });
+      assert.deepEqual(await bar(), { ttl: "Nothing picked", st: who("Tick Run this on the products you'd like your seller to run."), btn: who("Send to seller"), off: true });
       assert.match(await kpis(), /^Products 4\s*Picked 0\s*Sets 2\s*Last sent Never$/);
       await pick("target:11111111", true); await pick("target:33333333", true); await pick("pokemoncenter:100-10001", true);
       assert.deepEqual(await bar(), { ttl: "3 picked · Target 2 · Pokémon Center 1", st: "Not sent yet.", btn: "Send 3 picks", off: false });
@@ -483,7 +489,7 @@ try {
       assert.equal(name, "Sam", "the name typed in Submit's window");
       await clearToasts();
       await page.click("#int-send");
-      await toastHas(/Sent your picks to your seller/);
+      await toastHas(who(/Sent your picks to your seller/));
       assert.equal(W.sendBodies.length, 1);
       assert.deepEqual(W.sendBodies[0], { interests: { target: ["11111111", "33333333", "99999999"], pokemoncenter: ["100-10001"] }, name: "Sam" });
       assert.deepEqual(Object.keys(W.sendBodies[0].interests), ["target", "pokemoncenter"]);
@@ -492,7 +498,7 @@ try {
       assert.deepEqual(await sentKept(), withKept({ at: W.sent.at, sig: W.sent.sig }, { pokemoncenter: ["100-10001"], target: ["11111111", "33333333"] }),
         "kept in the synced setting, with the worker's time and signature, and the picks it carried");
       await page.waitForFunction(() => document.querySelector("#int-send") && document.querySelector("#int-send").getAttribute("aria-disabled") === "true");
-      assert.deepEqual(await bar(), { ttl: "3 picked · Target 2 · Pokémon Center 1", st: "Your seller has these picks, sent just now.", btn: "Sent", off: true });
+      assert.deepEqual(await bar(), { ttl: "3 picked · Target 2 · Pokémon Center 1", st: who("Your seller has these picks, sent just now."), btn: "Sent", off: true });
       assert.deepEqual(await sentKpi(), { text: "Last sent just now", dot: "background:var(--ok)" });
       assert.equal(W.subs.length, 1, "no batch of slots went");
     });
@@ -502,13 +508,13 @@ try {
       assert.deepEqual(await bar(), { ttl: "2 picked · Target 1 · Pokémon Center 1", st: "Changed since you last sent (just now).", btn: "Send update", off: false });
       assert.deepEqual(await sentKpi(), { text: "Last sent Changed since sent", dot: "background:var(--caution)" });
       await pick("target:33333333", true);
-      assert.deepEqual(await bar(), { ttl: "3 picked · Target 2 · Pokémon Center 1", st: "Your seller has these picks, sent just now.", btn: "Sent", off: true });
+      assert.deepEqual(await bar(), { ttl: "3 picked · Target 2 · Pokémon Center 1", st: who("Your seller has these picks, sent just now."), btn: "Sent", off: true });
       await pick("target:33333333", false);
       await clearToasts();
       // From the keyboard: the focus stays on the button while it sends and once it's sent, and Enter on Sent sends nothing.
       await page.focus("#int-send");
       await page.keyboard.press("Enter");
-      await toastHas(/Sent your picks to your seller/);
+      await toastHas(who(/Sent your picks to your seller/));
       assert.equal(W.posts.length, 2);
       assert.deepEqual(W.posts[1].kept, { pokemoncenter: ["100-10001"], target: ["11111111"] });
       assert.equal((await bar()).btn, "Sent");
@@ -524,7 +530,7 @@ try {
       assert.equal((await bar()).btn, "Send update");
       await clearToasts();
       await page.click("#int-send");
-      await toastHas(/Your seller already has these picks/);
+      await toastHas(who(/Your seller already has these picks/));
       assert.equal(W.posts.length, posts, "nothing posted");
       assert.deepEqual(await sentKept(), withKept({ at: W.sent.at, sig: W.sent.sig }, { pokemoncenter: ["100-10001"], target: ["11111111"] }));
       assert.equal((await bar()).btn, "Sent");
@@ -540,15 +546,15 @@ try {
       assert.deepEqual(JSON.parse(await ev(() => localStorage.getItem("orbit-interests"))).sent, W.sent, "kept with the list");
       W.sent = { at: now - 2 * 60000, sig: mine };
       await ev(() => window.__t.refreshInterests(true, true));
-      await page.waitForFunction(() => /seller has these/.test(document.querySelector("#main .int-bar-st").textContent));
-      assert.deepEqual(await bar(), { ttl: "2 picked · Target 1 · Pokémon Center 1", st: "Your seller has these picks, sent 2 min ago.", btn: "Sent", off: true });
+      await page.waitForFunction(() => /(?:seller|runner) has these/.test(document.querySelector("#main .int-bar-st").textContent));
+      assert.deepEqual(await bar(), { ttl: "2 picked · Target 1 · Pokémon Center 1", st: who("Your seller has these picks, sent 2 min ago."), btn: "Sent", off: true });
       assert.equal((await sentKpi()).text, "Last sent 2 min ago");
       // A same answer (the revision here) that doesn't say sent keeps the one kept; one that does moves it.
       W.sentOnSame = false;
       const asked = W.gets.length;
       await ev(() => window.__t.refreshInterests(true));
       assert.equal(W.gets.at(-1), "?rev=3"); assert.equal(W.gets.length, asked + 1);
-      assert.equal((await bar()).st, "Your seller has these picks, sent 2 min ago.");
+      assert.equal((await bar()).st, who("Your seller has these picks, sent 2 min ago."));
       W.sentOnSame = true; W.sent = { at: now - 60000, sig: mine };
       await ev(() => window.__t.refreshInterests(true));
       await page.waitForFunction(() => /1 min ago/.test(document.querySelector("#main .int-bar-st").textContent));
@@ -557,7 +563,7 @@ try {
       await page.fill("#pw1", "sample-pass-142");
       await page.waitForSelector('#side [data-id="interests"]', { timeout: 30000 });
       if (!(await page.locator("#main .int-bar").count())) await page.click('#side [data-id="interests"]');
-      assert.equal((await bar()).st, "Your seller has these picks, sent 1 min ago.");
+      assert.equal((await bar()).st, who("Your seller has these picks, sent 1 min ago."));
     });
 
     await test("a refusal or no connection says why, and keeps the ticks and the last send; one send at a time", async () => {
@@ -567,7 +573,7 @@ try {
       for (const [s, re] of [[429, /^That's 20 sends today\. Your ticks are kept: send them tomorrow, or they go with the next slots you submit\./],
         [401, /^Your license wasn't recognized, so your picks weren't sent\./], [403, /^Your own FAFO keeps the list: buyers send their picks from theirs\./],
         [503, /^The license server can't check your key just now\. Your ticks are kept: try again in a few minutes\./],
-        [502, /^Your seller's Discord didn't take them just now\. Your ticks are kept: try again in a minute\./],
+        [502, who(/^Your seller's Discord didn't take them just now\. Your ticks are kept: try again in a minute\./)],
         [404, /^The license server can't take picks on their own yet\. They go with the next slots you submit\./],
         [500, /^The license server couldn't send them just now\. Your ticks are kept: try again\./], ["net", /^Couldn't reach the license server\. Your ticks are kept: check your connection and try again\./]]) {
         await clearToasts();
@@ -585,12 +591,12 @@ try {
       await clearToasts();
       await page.click("#int-send");
       await waitFor(() => W.sendBodies.length === n + 1, "the send");
-      assert.deepEqual(await bar(), { ttl: "3 picked · Target 2 · Pokémon Center 1", st: "Sending your picks to your seller…", btn: "Sending…", off: true });
+      assert.deepEqual(await bar(), { ttl: "3 picked · Target 2 · Pokémon Center 1", st: who("Sending your picks to your seller…"), btn: "Sending…", off: true });
       await ev(() => { window.__t.interestsSend(); window.__t.interestsSend(); });
       await new Promise((r) => setTimeout(r, 300));
       assert.equal(W.sendBodies.length, n + 1, "nothing else sent");
       release(); W.sendHold = null;
-      await toastHas(/Sent your picks to your seller/);
+      await toastHas(who(/Sent your picks to your seller/));
       assert.equal((await bar()).btn, "Sent");
     });
 
@@ -609,7 +615,7 @@ try {
       if (!(await page.locator("#main .int-bar").count())) await page.click('#side [data-id="interests"]');
       assert.deepEqual(await setting(), before, "the vault locked meanwhile: nothing kept from that answer");
       await ev(() => window.__t.refreshInterests(true, true));
-      await page.waitForFunction(() => /seller has these/.test(document.querySelector("#main .int-bar-st").textContent));
+      await page.waitForFunction(() => /(?:seller|runner) has these/.test(document.querySelector("#main .int-bar-st").textContent));
       assert.equal((await bar()).btn, "Sent");
     });
 
@@ -621,11 +627,11 @@ try {
       const posts = W.posts.length;
       await clearToasts();
       await page.click("#int-send");
-      await toastHas(/Sent your picks to your seller/);
+      await toastHas(who(/Sent your picks to your seller/));
       assert.deepEqual(W.sendBodies.at(-1).interests, { target: ["99999999"] }, "a tick off the list here still goes; the worker drops it");
       assert.equal(W.posts.length, posts + 1); assert.deepEqual(W.posts.at(-1).kept, {});
       assert.deepEqual(await sentKept(), withKept({ at: W.sent.at, sig: sigOf({}) }, {}));
-      assert.deepEqual(await bar(), { ttl: "Nothing picked", st: "Your seller knows you've picked nothing, sent just now.", btn: "Sent", off: true });
+      assert.deepEqual(await bar(), { ttl: "Nothing picked", st: who("Your seller knows you've picked nothing, sent just now."), btn: "Sent", off: true });
     });
 
     await test("with the worker's list ahead of the one here, the worker's signature is kept and the whole list asked again at once, so the bar says Sent", async () => {
@@ -637,7 +643,7 @@ try {
       const gets = W.gets.length;
       await clearToasts();
       await page.click("#int-send");
-      await toastHas(/Sent your picks to your seller/);
+      await toastHas(who(/Sent your picks to your seller/));
       assert.deepEqual(W.posts.at(-1).kept, { target: ["11111111", "99999999"] });
       const wsig = sigOf({ target: ["11111111", "99999999"] });
       assert.deepEqual(await sentKept(), { at: W.sent.at, sig: wsig }, "the worker's sig, not the one worked out here, and no picks with it (the list here doesn't have them all)");
@@ -649,8 +655,8 @@ try {
         assert.equal(W.gets.at(-1), "", "the whole list");
         release(); W.hold = null;
       } else await ev(() => window.__t.refreshInterests(true));
-      await page.waitForFunction(() => /seller has these/.test(document.querySelector("#main .int-bar-st").textContent));
-      assert.deepEqual(await bar(), { ttl: "2 picked · Target 2", st: "Your seller has these picks, sent just now.", btn: "Sent", off: true });
+      await page.waitForFunction(() => /(?:seller|runner) has these/.test(document.querySelector("#main .int-bar-st").textContent));
+      assert.deepEqual(await bar(), { ttl: "2 picked · Target 2", st: who("Your seller has these picks, sent just now."), btn: "Sent", off: true });
       // Caught up, the picks it carried are kept with the send (their signature is the worker's).
       if (HAS_SENT_STR) await page.waitForFunction(() => { try { return !!JSON.parse(window.__t.S.settings.interestSent).kept; } catch (e) { return false; } });
       assert.deepEqual(await sentKept(), withKept({ at: W.sent.at, sig: wsig }, { target: ["11111111", "99999999"] }));
@@ -742,7 +748,7 @@ try {
         await ev(() => { const T = window.__t; T.S.settings.interestSent = "not json"; T.persist(); T.render(); });
         assert.deepEqual(await bar(), { ttl: "1 picked · Target 1", st: "Not sent yet.", btn: "Send 1 pick", off: false });
         await ev(() => { const T = window.__t; T.S.settings.interestSent = { at: Date.now(), sig: T.interestSendState().sig }; T.persist(); T.render(); });
-        assert.deepEqual(await bar(), { ttl: "1 picked · Target 1", st: "Your seller has these picks, sent just now.", btn: "Sent", off: true });
+        assert.deepEqual(await bar(), { ttl: "1 picked · Target 1", st: who("Your seller has these picks, sent just now."), btn: "Sent", off: true });
         W.sent = was.worker;
         await ev((v) => { const T = window.__t; T.S.settings.interestSent = v; T.persist(); }, was.local);
         await refresh(true);
@@ -754,7 +760,7 @@ try {
           T.S.settings.interestPicks = { "target:11111111": { on: true, at }, "target:33333333": { on: true, at }, "pokemoncenter:100-10001": { on: true, at } }; T.persist(); T.render(); });
         await clearToasts();
         await page.click("#int-send");
-        await toastHas(/Sent your picks to your seller/);
+        await toastHas(who(/Sent your picks to your seller/));
         const kept = { pokemoncenter: ["100-10001"], target: ["11111111", "33333333"] };
         assert.deepEqual(W.posts.at(-1).kept, kept);
         assert.deepEqual(await sentKept(), { at: W.sent.at, sig: sigOf(kept), kept });
@@ -762,7 +768,7 @@ try {
         W.items = LIST().filter((it) => it.sku !== "33333333"); W.rev = 5;
         await refresh(false);
         await page.waitForFunction(() => window.__t.interestRead().rev === 5);
-        assert.deepEqual(await bar(), { ttl: "2 picked · Target 1 · Pokémon Center 1", st: "Your seller has these picks, sent just now.", btn: "Sent", off: true });
+        assert.deepEqual(await bar(), { ttl: "2 picked · Target 1 · Pokémon Center 1", st: who("Your seller has these picks, sent just now."), btn: "Sent", off: true });
         assert.deepEqual(await sentKpi(), { text: "Last sent just now", dot: "background:var(--ok)" });
         assert.notEqual(await ev(() => window.__t.interestSendState().sig), W.sent.sig, "by signature it would be a change: the picks kept with the send say it isn't");
         // A product added to the list changes no one's picks.
@@ -783,7 +789,7 @@ try {
         const mine = W.sent;
         W.sent = { at: mine.at + 1000, sig: sigOf({ pokemoncenter: ["100-10001"], target: ["11111111"] }) };
         await refresh(true);
-        await page.waitForFunction(() => /seller has these/.test(document.querySelector("#main .int-bar-st").textContent));
+        await page.waitForFunction(() => /(?:seller|runner) has these/.test(document.querySelector("#main .int-bar-st").textContent));
         W.sent = { at: mine.at + 2000, sig: sigOf({ target: ["11111111"] }) };
         await refresh(true);
         await page.waitForFunction(() => /Changed since/.test(document.querySelector("#main .int-bar-st").textContent));
@@ -792,7 +798,7 @@ try {
         W.items = LIST(); W.rev = 3;
         await refresh(true);
         await page.waitForFunction(() => window.__t.interestRead().rev === 3 && window.__t.interestRead().items.length === 4);
-        assert.deepEqual(await bar(), { ttl: "3 picked · Target 2 · Pokémon Center 1", st: "Your seller has these picks, sent just now.", btn: "Sent", off: true });
+        assert.deepEqual(await bar(), { ttl: "3 picked · Target 2 · Pokémon Center 1", st: who("Your seller has these picks, sent just now."), btn: "Sent", off: true });
       });
 
       await test("a Submit whose batch carries every store's picks counts them as sent; one for some stores only, or one that fails, doesn't", async () => {
@@ -823,7 +829,7 @@ try {
         assert.ok(v.at >= before && v.at <= Date.now() + 5000, "sent now");
         assert.deepEqual(v, { at: v.at, sig: sigOf(kept), kept });
         await close();
-        assert.deepEqual(await bar(), { ttl: "3 picked · Target 2 · Pokémon Center 1", st: "Your seller has these picks, sent just now.", btn: "Sent", off: true });
+        assert.deepEqual(await bar(), { ttl: "3 picked · Target 2 · Pokémon Center 1", st: who("Your seller has these picks, sent just now."), btn: "Sent", off: true });
         assert.deepEqual([W.posts.length, W.sendBodies.length], [posts, sends], "nothing went through Send to seller");
         // Another Target pick, then a batch of Target slots only: Pokémon Center's pick didn't go with it, so nothing changes.
         await pick("target:22222222", true);
@@ -848,7 +854,7 @@ try {
         await done();
         assert.deepEqual((await sentKept()).kept, { pokemoncenter: ["100-10001"], target: ["11111111", "22222222", "33333333"] });
         await close();
-        assert.deepEqual(await bar(), { ttl: "4 picked · Target 3 · Pokémon Center 1", st: "Your seller has these picks, sent just now.", btn: "Sent", off: true });
+        assert.deepEqual(await bar(), { ttl: "4 picked · Target 3 · Pokémon Center 1", st: who("Your seller has these picks, sent just now."), btn: "Sent", off: true });
         assert.deepEqual([W.posts.length, W.sendBodies.length], [posts, sends]);
         // With nothing picked a batch leaves it as it was.
         await ev(() => { const T = window.__t; T.S.settings.interestPicks = {}; T.persist(); T.render(); });
@@ -875,7 +881,7 @@ try {
       // No Send to seller on the seller's own FAFO (its picks would go to itself), and no Last sent.
       assert.equal(await page.locator("#main .int-bar, #int-send").count(), 0);
       assert.match(await page.$eval("#main .p-kpis", (e) => e.textContent), /^Products 4\s*Picked \d+\s*Sets 2$/);
-      assert.match(await page.$eval("#main .view-sub", (e) => e.textContent), /Their picks come to your Discord channel when they press Send to seller/);
+      assert.match(await page.$eval("#main .view-sub", (e) => e.textContent), who(/Their picks come to your Discord channel when they press Send to seller/));
     }
     await page.click('#main [data-act="interests-edit"]');
     assert.equal(await page.locator('#main [data-act="interest-edit"]').count(), 4);

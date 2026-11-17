@@ -656,7 +656,8 @@ alone (every store's rows of one account) from reading the whole table. Only
   mockups of FAFO's own Submit and Orders screens with sample data, four stacked steps, a grid of features, an FAQ and a
   dark last call. Only the style is taken from that site, never its wording, logo or product photos, and what it says has
   to be true of the web version (no email sync there: orders come from pasted confirmation emails). It calls the seller
-  the buyer's **runner** (the owner's word, 2026-10-13); the app itself still says seller. The page waits at
+  the buyer's **runner** (the owner's word, 2026-10-13); the app itself still says seller, but for Interests from page
+  1.9.156 (below). The page waits at
   most 800 ms for the feed's version line. Since 2026-10-14 (the owner's pick of four) FAFO's logo there is "Speed": a
   checked F, an arrow-tip A, motion lines trailing left and a small ACO under it (`web-worker/src/brand.js`, `logoSVG`,
   drawn inline in the theme's colours; the app shows it too from 1.9.128, below, and so do the front page's mockups of
@@ -2757,6 +2758,17 @@ above): buyers send their picks to the seller's channel without submitting slots
   17."). Until then only the checksum was checked (a 17-digit number passes it one time in ten) and a RedCard none. Import
   cards skips a number of the wrong length as it does one that fails the checksum. `card-number.test.mjs` runs the page's
   own `validateCard` in node (in CI after the Dashboard export's).
+
+From 1.9.156 Interests' **Send to seller** is **Send to runner** (the owner's request, 2026-11-17: "Can you change "Send to
+Seller" to "Send to Runner""), and the rest of Interests a buyer reads calls the seller their runner, as the front page does
+(2026-10-13): the bar ("Your runner has these picks, sent …", "Tick Run this on the products you'd like your runner to
+run.", its title and label), what a send says ("Sent your picks to your runner", "Your runner already has these picks",
+"Your runner's Discord didn't take them just now…"), the line under the heading (the owner's too: "…when they press Send to
+runner…"), and the list's loading and empty states ("Loading your runner's list…", "Your runner hasn't listed any products
+yet."). Submit's line and the setup guide's step 3 name the button "Send to runner", and say seller otherwise, as the rest
+of the app does. The worker's Discord message ("🎯 **<buyer>** sent their Interests…") names no seller and is unchanged.
+`interests.test.mjs` (`RUNNER`, `who`) and `walkthrough.test.mjs` read either wording, and the newest page must say runner.
+Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
