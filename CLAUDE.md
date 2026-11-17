@@ -2809,6 +2809,100 @@ of the app does. The worker's Discord message ("🎯 **<buyer>** sent their Inte
 `interests.test.mjs` (`RUNNER`, `who`) and `walkthrough.test.mjs` read either wording, and the newest page must say runner.
 Nothing gains a field.
 
+From 1.9.157 the **IMAP tab is gone** and every inbox and store login has a **light** (the owner, 2026-11-17, with a
+screenshot of the IMAP tab: "i find this IMAP tab is unnecessary because the same thing is repeated in Store Login. If we
+remove IMAP tab, will it lose its functionality?"; told what only IMAP had, they agreed to move it to Store logins, then "can
+you make a feature to where if an Imap is good then a good light is lit up and fafo cannot connect to its inbox then shows a
+red light?" and "yes share between devices, only check on Test"; they approved a mockup, with Test on its own row).
+- **The light** is one function's (`inboxLight`): green **Inbox OK**, the inbox's last check signed in; red **Can't sign
+  in**, its last check couldn't because of the inbox (the email or app password refused, the account or server turning it
+  down, a custom server's name, certificate or connection: `deskTells` and `deskErrBad` for the desktop's errors, read as
+  `mailError` does, and 1.9.149's `ibxBad` for FAFO's server's); gray **Not checked yet**, no check for its current email,
+  server, port and app password (`ibxFp`, so a changed password is gray again). A store login with no inbox saved is gray
+  **Needs an inbox** with **Set up inbox** (its editor, `edit-login`, `loginSetupHTML`). A check that couldn't tell (this
+  computer offline, `navigator.onLine`, its network, antivirus or clock, a sync that stopped; FAFO's server blocked,
+  throttled or unreachable at one of the six providers) leaves the light as it was and is said in words: the hover text
+  (`lightTitle`) and "Couldn't check from this computer · 5 min ago" or "…from FAFO's server" on the inbox's card (the
+  desktop's: its last email sync's `syncError`, or its last Test's or setup check's, `deskTry` `{at, f, err}`, per device,
+  the newer). The desktop words a mail server name that doesn't exist and this computer's DNS or internet being down
+  (ENOTFOUND, EAI_AGAIN) the same, "Couldn't find that mail server", so that's red only for a custom server and only while
+  another inbox signed in from this computer in the last 15 minutes (`deskLookupsWork`; the review: a hotel's Wi-Fi with no
+  internet turned a custom server red on every device). Known gap: the desktop app (`friendlyError` in
+  `desktop/imap-sync.js`) words every NO to its sign-in "Sign-in failed…", so a provider's temporary refusal there (Gmail's
+  "Too many simultaneous connections", "[UNAVAILABLE]") reads as the password's and is red until the next check that signs
+  in; telling them apart (its `serverResponseCode` before `authenticationFailed`) needs a new download, the owner's call. The dot is aria-hidden and always beside
+  its words (`lightHTML`; `LIGHT_WORD`, `LIGHT_SHORT` for Compact and the List), whose colours keep 4.5:1 in all five themes
+  (`.lt-w-ok`, `.lt-w-bad` darker in the light themes and the default's red lighter, as the pills', 1.9.124; measured on the
+  cards and ticked List rows, lowest 5.3:1).
+- **Shared between devices:** a new synced field on each inbox, `chk` `{ok, at, why, by:"desktop"|"server", f}` (`why` the
+  reason's words, at most 200 characters, `chkClip`, never a password; `f` the `ibxFp` of the credentials checked). It isn't
+  in `SYNC_DEVICE_FIELDS`, so it syncs, and 1.9.112 and up sync it as it is (a new field on an existing item). The light is
+  the newest of `chk`, this desktop's own last check (`deskChk` `{ok, at, f, err, u}`, per device, with `syncErrAt`, when its
+  last email sync failed, and `deskTry`: all added to `SYNC_DEVICE_FIELDS`) and this browser's own Test (`S._local.ibx`,
+  `ibxResult`), each only while its `f` matches. What a desktop before 1.9.157 kept (`lastSync`, `syncError`) becomes this
+  computer's `deskChk` once, at unlock (`deskChkSeed`, in `startApp`), with the `ibxFp` of the inbox as it is then, so an edit
+  afterwards (a custom server's port in the inbox editor, which starts no sync) is gray: green at `lastSync`; red when its
+  last sync was refused because of the inbox, at a time not known (`u`: "Couldn't sign in on its last sync", no "checked …
+  ago", `lightBadHead`; the review saw "checked 20774 days ago"); nothing for one with neither, or whose failed sync 1.9.157
+  timed (`syncErrAt`: offline, say), which stays gray until a check tells. Writes go
+  through `inboxLightNote(id, cred, res, by, sync, when)`, only for an answer that told: the desktop after each sign-in (email
+  sync, Test on a card, the inbox editor's Test, the step-by-step setup's check, which from 1.9.157 passes its result on the
+  desktop too, and with Use it anyway the last one that failed) and the web after a Test (its card's, the editor's, the
+  setup's). An email sync writes `chk` only when the light changes (or why it's red) or `chk` is over 6 hours old
+  (`CHK_STALE_MS`), so a sync every 15 minutes doesn't change the vault; Test always writes. The web never signs in on its
+  own: only Test (1.9.149). `syncMerge`, for an inbox changed on both sides, keeps the `chk` made for the email, server, port
+  and app password it ends up with, whichever side's other fields win, field by field or whole: by `f` against its new
+  `fpOf` argument (the page passes `ibxFp`; without it, a side whose own credentials are the merged ones), the newer when both
+  or neither are (the review: the web's green Test of a new password lost to the desktop's later refusal of the old one, and
+  every device showed gray). And an inbox deleted on one side while the other only rewrote its `chk` stays deleted (the
+  review: a laptop waking after a night rewrites every inbox's 6-hour-old `chk` before its merge, which brought back an inbox
+  deleted on the web, with its app password): the merge compares the survivor without `chk` with the version both started
+  from (`orig`; `syncNote` keeps it for an inbox deleted on this device too, `goneIbx`), so an edit still beats a deletion. A
+  page before 1.9.157 that does the merge still brings it back.
+- **Store logins** has IMAP's things: the light on every layout's login (the Comfortable card's inbox line, Compact and the
+  List short), each inbox card with the light before its email, its status ("Signed in · checked 4 min ago", "Couldn't sign
+  in · checked 1 hr ago" with why under it, "Not checked yet: press Test"; `inboxStatusHTML`) and **Test** on a row of its own
+  under it (`inboxCardHTML`, `inboxTestBtnHTML`). Test runs in place on both (`testInboxHere`): the web's as 1.9.149's
+  (`inboxTestOn`, the caveat, one at a time, its words, off with no license key and 1.9.149's explanation), the desktop's
+  with its own `testInbox` (`deskTestOn`; off while that inbox syncs; a desktop app without it opens the editor). The counts
+  strip says Logins, Inbox OK, Can't sign in, Not checked yet and Need an inbox (when any; they add up to Logins), Inboxes;
+  **Need an inbox** and **Can't sign in** are buttons (`aria-pressed`, `login-filter`, `UI.loginFilter`, `loginFilterOk` in
+  `visibleLogins`, so Select all and the group chips and search still apply) that show only those logins (Need an inbox no
+  inboxes; Can't sign in only those that can't), with Show all logins; a view change puts all back. IMAP's warning is under
+  the counts: "N store logins still need an inbox. Without one, your bot can't read the sign-in code to log into the account,
+  so M profiles may not get pulled." with Show them (the "so M profiles" clause only when M > 0, by profiles linked to those
+  logins: the owner's screenshot said "so 0 profiles"), and one for inboxes that can't sign in (which, up to 3, and to check
+  the email and app password, then press Test). IMAP's web note (email sync only in the desktop app, orders pasted on the
+  web, Test from FAFO's server keeps nothing, where inbox passwords go) is under the Inboxes heading, whose line says what
+  the lights mean. Logins' dot in the counts is blue, not the accent, which is red in two themes.
+- **IMAP's tab is gone:** the sidebar item, the phone's tab, `renderImap`, `imapInboxStatus`, `inboxCheck` and the old pills
+  and marks (`loginInboxPill`, `loginInboxMark`, `loginInboxCounts`, `inboxKpis`), and every `UI.view === "imap"` (`inboxViews`,
+  the email sync's redraws, `refreshSlotAllow`'s, `premiumApply`'s); a view or a stale click on IMAP opens Store logins
+  (`render`, `renderMain`, the `view` action). Store logins' sidebar item keeps its total with a small red light while an
+  inbox can't sign in or a login needs one (`loginsNavLight`, `loginsAttention`; its title and a screen reader's words say
+  which), as the phone's Logins tab does. IMAP's slot summary isn't moved: Submit has it.
+- **Tests:** `inbox-lights.test.mjs` (CI, after the card number lengths) runs the page in Chromium as the web version against
+  a pretend license worker and as the desktop app (`window.pvDesktop` stubbed, its email sync's and Test's answers picked):
+  the IMAP tab gone (sidebar, phone, a saved and a stale view), every light on the login cards in all three layouts and on
+  the inbox cards, another device's `chk` read, the counts, both filters with the group chips, the search and Select all, and
+  the keyboard's cursor staying on the pressed button or the warning's link (`aria-pressed`; the filter draws the page again,
+  so `login-filter` puts it back), the warnings (and no "0 profiles"), the sidebar's light, Test on a card writing `chk`
+  (what sync sends) on both, blocked and unreachable at Gmail from FAFO's server never red (a custom server it can't reach
+  securely is), offline and a network error never red, a custom server's name red only with another inbox signed in from
+  this computer in the last 15 minutes and its certificate red, but not Gmail's, the desktop's Test that couldn't tell said on
+  its card and hover (`deskTry`, not in what sync sends), the 6-hour throttle, a changed password gray, the newer of two
+  devices' checks, what a desktop before 1.9.157 kept seeded at unlock (red with no time, green at `lastSync`, gray after an
+  edit, a new inbox refused offline gray), the step-by-step setup's Check and use and Use it anyway saved on the light on
+  both (signed in, refused, a network error; from Add inbox and a new store login), an inbox deleted on this device keeping
+  its starting version through `syncNote` so a merge with a rewritten `chk` leaves it deleted, the words' contrast in all
+  five themes, a phone (the cards' Test whole, inside its card, under the status), and that 1.9.112's device fields don't
+  include `chk`. `sync-merge.test.mjs` merges `chk` with two fingerprints (both ways round, field by field and whole) and an
+  inbox deleted on one side with only `chk` rewritten on the other (both ways round; an edit still comes back). `web-inbox-test.test.mjs`
+  checks 1.9.149's things where they are now (`LIGHTS`: Store logins' cards, the new words, a check that told on its inbox and
+  in what sync sends), `imap-submit.test.mjs` the passwords' words under Store logins' Inboxes, and `interests.test.mjs`
+  Interests after Store logins; each still passes on 1.9.156. Inboxes gain `chk` (synced), `deskChk`, `deskTry` and
+  `syncErrAt` (per device).
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the

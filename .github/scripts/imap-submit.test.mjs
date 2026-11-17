@@ -10,7 +10,7 @@
 // the pretend worker refuses a batch the license worker would), what Submit's window says (with and without slots it can't
 // send one for, and what to do about a checkout email that forwards elsewhere), a batch of only Use Assigned Account slots
 // (no file, no line), a recipient set by hand (the sealed code: no line), the seller's own FAFO (no file, no line, and
-// nothing says the seller gets one), and what Store logins, IMAP and Settings say. Sample names, addresses, app passwords
+// nothing says the seller gets one), and what Store logins, IMAP (until 1.9.156) and Settings say. Sample names, addresses, app passwords
 // and keys only.
 //   node .github/scripts/imap-submit.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must send it (kind:"imap"); a page named on the command line that doesn't is skipped.
@@ -252,7 +252,9 @@ try {
     await page.waitForFunction(() => !document.querySelector("#ss-go"));
     await ev(() => { const T = window.__t; delete T.S.submitTo; T.persist(); });
   });
-  await test("Store logins has Add inbox and says the seller gets an inbox's access with the slots; IMAP no longer says it's never sent", async () => {
+  // IMAP's tab is gone from 1.9.157 (inbox-lights.test.mjs): what it said about inbox passwords is under Store logins' Inboxes.
+  const imapTab = async () => !!(await page.$('#side [data-id="imap"]'));
+  await test("Store logins has Add inbox and says the seller gets an inbox's access with the slots; IMAP (Store logins' Inboxes from 1.9.157) no longer says it's never sent", async () => {
     await page.click('#side [data-id="logins"]');
     assert.ok(await page.$('#main .view-tools [data-act="new-inbox-only"]'), "Add inbox on Store logins");
     assert.match(await text("#main"), /Your seller gets an inbox's email and app password with the slots you submit on its accounts, so they can follow your orders\./);
@@ -261,9 +263,10 @@ try {
     assert.equal(await text("#layers .panel-head h2"), "Add inbox");
     await page.click("#layers [data-close]");
     await page.waitForFunction(() => !document.querySelector("#layers .panel"));
-    await page.click('#side [data-id="imap"]');
+    const tab = await imapTab();
+    if (tab) await page.click('#side [data-id="imap"]');
     assert.doesNotMatch(await text("#main"), /never sends an inbox password|never sent to the server|nowhere else|only to your seller/);
-    assert.match(await text("#main"), /When you submit slots on your own accounts, FAFO sends your seller their inboxes' email and app password, so they can follow your orders\./);
+    if (tab) assert.match(await text("#main"), /When you submit slots on your own accounts, FAFO sends your seller their inboxes' email and app password, so they can follow your orders\./);
     // 1.9.149: with the license key, Test sends an inbox's password to FAFO's server too (web-inbox-test.test.mjs).
     assert.match(await text("#main"), /Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test \(FAFO's server signs in with it and keeps nothing\) and with the slots you submit on that inbox's accounts\./);
     // Settings → Email import on the web: Add inbox is on Store logins; only Sync needs the desktop app.
@@ -283,14 +286,15 @@ try {
     assert.deepEqual(body.files.map((f) => f.kind), ["profiles", "aycd", "profiles", "aycd", "logins"]);
     await page.click('#side [data-id="logins"]');
     assert.doesNotMatch(await text("#main"), /Your seller gets/);
-    await page.click('#side [data-id="imap"]');
-    assert.doesNotMatch(await text("#main"), /FAFO sends your seller|leave it only with the slots/);
+    const tab = await imapTab();
+    if (tab) await page.click('#side [data-id="imap"]');
+    assert.doesNotMatch(await text("#main"), /FAFO sends your seller|leave it only with the slots|with the slots you submit/);
     assert.match(await text("#main"), /Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test \(FAFO's server signs in with it and keeps nothing\)\./);
     W.owner = false;
     await ev(() => window.__t.refreshPremium(true));
     await page.waitForFunction(() => !window.__t.isPremiumOwner());
-    // Back to a buyer's: the IMAP page says so again once the answer is in.
-    await page.waitForFunction(() => /FAFO sends your seller/.test(document.querySelector("#main").textContent));
+    // Back to a buyer's: the IMAP page (Store logins, from 1.9.157) says so again once the answer is in.
+    await page.waitForFunction((tab) => (tab ? /FAFO sends your seller/ : /Your seller gets an inbox's email and app password/).test(document.querySelector("#main").textContent), tab);
   });
 
   await test("the page threw nothing", () => assert.deepEqual(errors, []));
