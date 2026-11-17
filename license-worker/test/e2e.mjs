@@ -52,6 +52,7 @@ const USERS = {
   xia:   { id: snowflake(Date.parse("2022-05-01")), username: "xia", guilds: [] },   // with the monthly plan no longer offered
   vic:   { id: snowflake(Date.parse("2022-04-01")), username: "vic", guilds: [] },   // approved before payments began
   yuri:  { id: snowflake(Date.parse("2022-06-01")), username: "yuri", guilds: [] },   // inbox access with Submit (page 1.9.147)
+  zoe:   { id: snowflake(Date.parse("2022-07-01")), username: "zoe", guilds: [] },    // Interests sent on their own (page 1.9.155)
 };
 const OWNER = snowflake(Date.parse("2017-02-01"));   // NOTIFY_USER_ID in approval mode
 
@@ -3687,6 +3688,7 @@ try {
     assert.equal(g.status, 200); assert.equal(g.cc, "no-store");
     assert.equal(g.body.rev, SEED_REV, "the seed, until the owner saves a list: its rev counts the additions in it");
     assert.equal(g.body.owner, false);
+    assert.equal(g.body.sent, null, "never sent its picks on their own (1.9.155)");
     assert.equal(SEED_KEYS.length, 30, "the 30 SKUs the owner gave");
     assert.deepEqual(g.body.items.map(iKey), SEED_ALL, "the seed's SKUs in order, then each addition's that the seed doesn't have, once each");
     assert.equal(g.body.items.length, INTEREST_SEED.length + SEED_NEW.length, "the seed plus the new SKUs");
@@ -3700,9 +3702,10 @@ try {
     assert.equal(new Set(g.body.items.map(iKey)).size, SEED_ALL.length, "each once");
     const o = await iGet(bobKey);
     assert.equal(o.status, 200); assert.equal(o.body.owner, true); assert.equal(o.body.rev, SEED_REV);
+    assert.ok(!("sent" in o.body), "the owner's FAFO doesn't send picks");
     assert.deepEqual(o.body.items.map((it) => iShown(it)), g.body.items, "the same list");
     assert.ok(o.body.items.every((it) => it.pic === "" && /^(\d{1,10})?$/.test(it.tcg) && it.ref === (it.tcg ? "t" + it.tcg : "")), "with what the owner edits");
-    assert.deepEqual((await iGet(ginaKey, "?rev=" + SEED_REV)).body, { rev: SEED_REV, owner: false, same: true }, "nothing new");
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + SEED_REV)).body, { rev: SEED_REV, owner: false, same: true, sent: null }, "nothing new; a buyer's answer says it never sent its picks on their own (1.9.155)");
     if (SEED_REV) assert.equal((await iGet(ginaKey, "?rev=0")).body.items.length, SEED_ALL.length, "a FAFO with 1.9.142's seed (rev 0) gets the list again");
     assert.equal((await iGet(ginaKey, "?rev=" + (SEED_REV + 3))).body.items.length, SEED_ALL.length, "another rev gets the list");
     assert.equal((await iGet(ginaKey, "?rev=")).body.items.length, SEED_ALL.length, "and so does none");
@@ -3760,8 +3763,8 @@ try {
     ];
     const rev = SEED_REV + 1;
     assert.deepEqual(r.body, { rev, owner: true, items: saved.map((it) => ({ ...iShown(it), pic: it.pic, tcg: it.tcg })) }, "answered as GET, for the owner");
-    assert.deepEqual((await iGet(ginaKey)).body, { rev, owner: false, items: saved.map(iShown) }, "a buyer gets it, without the additions it doesn't keep");
-    assert.deepEqual((await iGet(ginaKey, "?rev=" + rev)).body, { rev, owner: false, same: true });
+    assert.deepEqual((await iGet(ginaKey)).body, { rev, owner: false, items: saved.map(iShown), sent: null }, "a buyer gets it, without the additions it doesn't keep");
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + rev)).body, { rev, owner: false, same: true, sent: null });
     assert.deepEqual((await iGet(bobKey, "?rev=" + rev)).body, { rev, owner: true, same: true });
     const stale = await iPut(bobKey, { rev: SEED_REV, items: list });
     assert.equal(stale.status, 409); assert.deepEqual(stale.body, { error: "changed", rev }, "made from the seed: another device saved since");
@@ -3903,6 +3906,229 @@ try {
     const targetFirst = await iSubmit([iFile("Target", "target", ["Gina T3"]), logins(["Gina T3"]), typed(["Gina O2"])], { interests: { target: ["88897899"] } });
     assert.deepEqual(targetFirst.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-skus.txt",
       "Gina-target-aycd.json", "Gina-target-shikari.csv"], "right after Target's logins, not after the typed store's files");
+  });
+
+  console.log("\nInterests sent from the Interests page (page 1.9.155, 2026-11-17)");
+  // The owner: "Include a submit button in Interests, that way buyers doesn't have to unsubmit and submit their profiles
+  // again. Submit can directly send sku numbers to FAFO's discord." POST /interests/send posts a buyer's picks on their own:
+  // one message, with the <buyer>-<store>-skus.txt files a batch has. Zoe is a buyer of her own here, so Gina's answers stay
+  // `sent: null`; Bob's FAFO is the owner's. The list is the one saved above: Target 88897899, 88897898, 1011407490 and
+  // 88897904, Pokémon Center 100-10001 and 100-10002, in that order.
+  let zoeKey, zoeLast;   // Zoe's last post: {at, sig}
+  const TGT = ["88897899", "88897898", "1011407490", "88897904"];
+  const sendI = async (key, body) => {
+    const r = await fetchOnce(BASE + "/interests/send", { method: "POST", headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" },
+      body: typeof body === "string" ? body : JSON.stringify(body) });
+    return { status: r.status, cc: r.headers.get("cache-control"), body: await r.json() };
+  };
+  const sendPosts = (before) => webhookPosts.slice(before).filter((m) => m.content.startsWith("🎯"));
+  // The sig as the page works it out: the first 16 hex of the SHA-256 of the kept picks as JSON, store keys sorted.
+  const sigOf = (o) => createHash("sha256").update(JSON.stringify(Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]])))).digest("hex").slice(0, 16);
+  const sendRow = (key) => dbRows(`SELECT day, n, last_at, last_sig FROM interest_sends WHERE key_hash = '${hashOf(key)}'`)[0] || null;
+  const utcDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const zoeTail = () => `\n-# @zoe · license …${zoeKey.slice(-4)}`;
+  await test("interests send: a license is needed, and the owner's FAFO doesn't send picks; nothing is posted or kept", async () => {
+    sqlRun(`UPDATE requests SET created_at = created_at - 3600000 WHERE created_at > ${Date.now() - 3600000}`);   // room for a sign-in this hour
+    zoeKey = await newKey("zoe");
+    const before = webhookPosts.length;
+    for (const key of [null, "PVLT-NOPE-NOPE-NOPE-NOPE", "not a key"]) {
+      const r = await sendI(key, { interests: { target: ["88897899"] } });
+      assert.deepEqual([r.status, r.body, r.cc], [401, { error: "license not recognized" }, "no-store"], String(key));
+    }
+    const o = await sendI(bobKey, { interests: { target: ["88897899"] }, name: "Bob" });
+    assert.deepEqual([o.status, o.body, o.cc], [403, { error: "your FAFO keeps the list: buyers send their picks" }, "no-store"]);
+    assert.equal(webhookPosts.length, before, "nothing posted");
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM interest_sends")[0].n, 0, "nothing kept, nor for the batches' SKUs above");
+    assert.deepEqual(dbRows("SELECT name FROM pragma_table_info('interest_sends') ORDER BY cid").map((x) => x.name), ["key_hash", "day", "n", "last_at", "last_sig"]);
+    assert.equal((await fetchOnce(BASE + "/interests/send", { headers: { authorization: "Bearer " + zoeKey } })).status, 404, "POST only");
+    assert.equal((await fetchOnce(BASE + "/interests/send", { method: "OPTIONS" })).status, 204);
+  });
+  await test("interests send: the SKUs ticked that the list has go per store, in the list's order, as <buyer>-<store>-skus.txt files in one message", async () => {
+    const before = webhookPosts.length, t0 = Date.now();
+    // Out of the list's order, one twice, a number, one the list doesn't have, one of the other store's, malformed ones, and a
+    // store the list doesn't have first.
+    const r = await sendI(zoeKey, { name: "  Zoë \n  Sample ", interests: { walmart: ["12345678"], pokemoncenter: ["100-10002", "88897899", "100-10001", null, "1 0"],
+      target: ["88897904", "1011407490", "88897899", 88897898, "88897899", "99999999", "100-10001", {}] } });
+    assert.equal(r.status, 200, JSON.stringify(r.body)); assert.equal(r.cc, "no-store");
+    const kept = { target: TGT, pokemoncenter: ["100-10001", "100-10002"] };
+    assert.deepEqual(r.body, { ok: true, at: r.body.at, counts: { target: 4, pokemoncenter: 2 }, sig: sigOf(kept) });
+    assert.ok(r.body.at >= t0 && r.body.at <= Date.now(), "when it went");
+    assert.equal(r.body.sig, createHash("sha256").update('{"pokemoncenter":["100-10001","100-10002"],"target":["88897899","88897898","1011407490","88897904"]}').digest("hex").slice(0, 16),
+      "the form the page works out: store keys sorted, SKUs in the list's order, no spaces");
+    const posts = sendPosts(before);
+    assert.equal(webhookPosts.length, before + 1); assert.equal(posts.length, 1, "one message");
+    const m = posts[0];
+    assert.equal(m.content, `🎯 **Zoë Sample** sent their Interests: Target 4 · Pokémon Center 2${zoeTail()}`);
+    assert.deepEqual(m.files.map((f) => [f.name, f.text]), [["Zoe-Sample-target-skus.txt", "88897899\r\n88897898\r\n1011407490\r\n88897904"],
+      ["Zoe-Sample-pokemon-center-skus.txt", "100-10001\r\n100-10002"]]);
+    assert.ok(m.files.every((f) => /^text\/plain/.test(f.type)));
+    assert.deepEqual(m.allowed_mentions, { parse: [] });
+    const row = sendRow(zoeKey);
+    assert.deepEqual(row, { day: row.day, n: 1, last_at: r.body.at, last_sig: r.body.sig });
+    assert.ok([utcDay(t0), utcDay(Date.now())].includes(row.day), row.day);
+    assert.ok(!JSON.stringify(dbRows("SELECT * FROM interest_sends")).includes("88897899"), "the picks themselves aren't kept");
+    zoeLast = { at: r.body.at, sig: r.body.sig };
+  });
+  await test("interests send: GET /interests tells each of the buyer's FAFOs what was sent last, with the list or without it", async () => {
+    const g = await iGet(zoeKey);
+    assert.equal(g.status, 200); assert.equal(g.body.rev, irev);
+    assert.deepEqual(g.body.sent, zoeLast);
+    assert.deepEqual((await iGet(zoeKey, "?rev=" + irev)).body, { rev: irev, owner: false, same: true, sent: zoeLast });
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + irev)).body, { rev: irev, owner: false, same: true, sent: null }, "a buyer who never sent");
+    assert.deepEqual((await iGet(bobKey, "?rev=" + irev)).body, { rev: irev, owner: true, same: true }, "the owner's FAFO doesn't send");
+  });
+  await test("interests send: the same picks again post nothing and aren't counted, ticked another way too; others post", async () => {
+    const before = webhookPosts.length;
+    for (const interests of [
+      { target: ["88897904", "1011407490", "88897898", "88897899"], pokemoncenter: ["100-10002", "100-10001"] },
+      { pokemoncenter: ["100-10001", "100-10002", "99999999"], target: [...TGT, "100-10002"], walmart: ["12345678"] },
+    ]) {
+      const r = await sendI(zoeKey, { interests, name: "Another name" });
+      assert.deepEqual([r.status, r.body, r.cc], [200, { ok: true, same: true, at: zoeLast.at, sig: zoeLast.sig }, "no-store"], JSON.stringify(interests));
+    }
+    assert.equal(webhookPosts.length, before, "nothing posted");
+    assert.equal(sendRow(zoeKey).n, 1, "not counted");
+    const r = await sendI(zoeKey, { name: "Zoë Sample", interests: { target: ["1011407490", "88897899"], pokemoncenter: [] } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual([r.body.counts, r.body.sig], [{ target: 2 }, sigOf({ target: ["88897899", "1011407490"] })]);
+    const m = sendPosts(before);
+    assert.equal(m.length, 1);
+    assert.equal(m[0].content, `🎯 **Zoë Sample** sent their Interests: Target 2${zoeTail()}`, "only the stores with picks");
+    assert.deepEqual(m[0].files.map((f) => [f.name, f.text]), [["Zoe-Sample-target-skus.txt", "88897899\r\n1011407490"]]);
+    assert.equal(sendRow(zoeKey).n, 2);
+    zoeLast = { at: r.body.at, sig: r.body.sig };
+    assert.deepEqual((await iGet(zoeKey)).body.sent, zoeLast);
+  });
+  await test("interests send: files named as a batch names them: the name typed, else the Discord name, else the license", async () => {
+    // With the same name and picks, this file and a batch's SKU file are the same; a batch's SKUs don't count as a send.
+    const before = webhookPosts.length;
+    const r = await sendI(zoeKey, { name: "Gina", interests: { target: ["1011407490", "88897898"] } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const mine = sendPosts(before)[0];
+    assert.equal(mine.content, `🎯 **Gina** sent their Interests: Target 2${zoeTail()}`);
+    const batch = await iSubmit([iFile("Target", "target", ["Gina Send1"])], { interests: { target: ["1011407490", "88897898"] } });
+    assert.deepEqual(mine.files.map((f) => [f.name, f.text, f.type]), batch.files.filter((f) => f.name.endsWith("-skus.txt")).map((f) => [f.name, f.text, f.type]));
+    assert.deepEqual(mine.files.map((f) => f.name), ["Gina-target-skus.txt"]);
+    assert.equal(sendRow(ginaKey), null, "slot batches send their SKUs as before, and don't count here");
+    // No name: their Discord name, with the license on the line under it.
+    const b2 = webhookPosts.length;
+    assert.equal((await sendI(zoeKey, { interests: { pokemoncenter: ["100-10002"] } })).status, 200);
+    const m2 = sendPosts(b2)[0];
+    assert.equal(m2.content, `🎯 **zoe** sent their Interests: Pokémon Center 1\n-# license …${zoeKey.slice(-4)}`);
+    assert.deepEqual(m2.files.map((f) => [f.name, f.text]), [["zoe-pokemon-center-skus.txt", "100-10002"]]);
+    // Markdown in a name shows as typed, and a name is 60 characters at most, as a batch's.
+    const b3 = webhookPosts.length, long = "Sam_*Sample*_" + "x".repeat(80);
+    assert.equal((await sendI(zoeKey, { name: long, interests: { target: ["88897904"] } })).status, 200);
+    const m3 = sendPosts(b3)[0];
+    assert.equal(m3.content, "🎯 **Sam\\_\\*Sample\\*\\_" + "x".repeat(47) + "** sent their Interests: Target 1" + zoeTail());
+    assert.deepEqual(m3.files.map((f) => f.name), ["Sam-Sample-" + "x".repeat(19) + "-target-skus.txt"]);
+    // A key made by hand has no Discord name: the license, and nothing more to tell it by.
+    const b4 = webhookPosts.length;
+    const h = await sendI(GH_KEY, { interests: { target: ["88897899"] } });
+    assert.equal(h.status, 200, JSON.stringify(h.body));
+    const m4 = sendPosts(b4)[0];
+    assert.equal(m4.content, "🎯 **license …KEY2** sent their Interests: Target 1");
+    assert.deepEqual(m4.files.map((f) => [f.name, f.text]), [["license-KEY2-target-skus.txt", "88897899"]]);
+    assert.deepEqual((await iGet(GH_KEY)).body.sent, { at: h.body.at, sig: sigOf({ target: ["88897899"] }) }, "each license its own");
+    assert.equal(sendRow(zoeKey).n, 5);
+    zoeLast = (await iGet(zoeKey)).body.sent;
+    assert.equal(zoeLast.sig, sigOf({ target: ["88897904"] }));
+  });
+  await test("interests send: nothing ticked, or nothing the list has, posts once that the picks were cleared, with no file", async () => {
+    const before = webhookPosts.length;
+    const r = await sendI(zoeKey, { name: "Zoë Sample", interests: { target: [], pokemoncenter: [] } });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body, { ok: true, at: r.body.at, counts: {}, sig: sigOf({}) });
+    assert.equal(r.body.sig, createHash("sha256").update("{}").digest("hex").slice(0, 16));
+    const posts = sendPosts(before);
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].content, `🎯 **Zoë Sample** cleared their Interests: no products picked${zoeTail()}`);
+    assert.deepEqual(posts[0].files, [], "no file");
+    zoeLast = { at: r.body.at, sig: r.body.sig };
+    // `interests` that isn't right, or names only SKUs and stores the list doesn't have, is none ticked: the same again.
+    for (const interests of [undefined, null, "nope", [["target", ["88897899"]]], { target: "88897899" }, { target: [null, {}, ["88897899"], "8 8"] },
+      { target: ["99999999"], walmart: ["88897899"] }, { pokemoncenter: ["88897899"] }]) {
+      const s = await sendI(zoeKey, { name: "Zoë Sample", ...(interests === undefined ? {} : { interests }) });
+      assert.deepEqual([s.status, s.body], [200, { ok: true, same: true, at: zoeLast.at, sig: zoeLast.sig }], JSON.stringify(interests));
+    }
+    assert.equal(webhookPosts.length, before + 1, "posted once");
+    assert.deepEqual((await iGet(zoeKey)).body.sent, zoeLast);
+  });
+  await test("interests send: a body that isn't an object is refused (400), one over 32 KB too (413), and nothing is posted; one under it goes", async () => {
+    const before = webhookPosts.length, row = sendRow(zoeKey);
+    for (const body of ["not json", '{"interests":', "[1,2]", "null", '"text"', "42"]) {
+      const r = await sendI(zoeKey, body);
+      assert.deepEqual([r.status, r.body, r.cc], [400, { error: "bad request" }, "no-store"], body);
+    }
+    const big = await sendI(zoeKey, { interests: { target: ["88897899"] }, pad: "x".repeat(32 * 1024) });
+    assert.deepEqual([big.status, big.body, big.cc], [413, { error: "too large" }, "no-store"]);
+    assert.equal(webhookPosts.length, before, "nothing posted");
+    assert.deepEqual(sendRow(zoeKey), row, "nor counted");
+    const under = await sendI(zoeKey, { name: "Zoë Sample", interests: { target: ["88897898"] }, pad: "x".repeat(32 * 1024 - 200) });
+    assert.equal(under.status, 200, JSON.stringify(under.body));
+    assert.deepEqual(under.body.counts, { target: 1 });
+    assert.equal(sendPosts(before).length, 1);
+    zoeLast = { at: under.body.at, sig: under.body.sig };
+  });
+  await test("interests send: a post Discord refuses is a 502 that records nothing, so the same picks post when sent again", async () => {
+    const row = sendRow(zoeKey), before = webhookPosts.length;
+    webhookFail.push(500);
+    const r = await sendI(zoeKey, { name: "Zoë Sample", interests: { target: ["1011407490"] } });
+    assert.deepEqual([r.status, r.body, r.cc], [502, { error: "discord" }, "no-store"]);
+    assert.equal(webhookPosts.length, before, "nothing posted");
+    assert.deepEqual(sendRow(zoeKey), row, "nothing recorded: not counted, and what went last is as it was");
+    assert.deepEqual((await iGet(zoeKey)).body.sent, zoeLast);
+    const again = await sendI(zoeKey, { name: "Zoë Sample", interests: { target: ["1011407490"] } });
+    assert.equal(again.status, 200, JSON.stringify(again.body)); assert.equal(again.body.same, undefined, "not the same: it never went");
+    assert.equal(sendPosts(before).length, 1);
+    assert.equal(sendRow(zoeKey).n, row.n + 1);
+    zoeLast = { at: again.body.at, sig: again.body.sig };
+    // A license whose first send fails is left with no row at all.
+    const fresh = VAULT_KEYS[1];
+    webhookFail.push(500);
+    assert.deepEqual((await sendI(fresh, { interests: { target: ["88897899"] } })).status, 502);
+    assert.equal(sendRow(fresh), null);
+    assert.equal((await iGet(fresh)).body.sent, null, "never sent");
+  });
+  await test("interests send: 20 posts a day per license; past that 429 and nothing posted, also sent at once; the same picks still answer; a new day starts over", async () => {
+    // One at a time, picks that differ from the last post's each time, up to 18 today.
+    const sets = [["88897899"], ["88897898"], ["88897904"], ["88897899", "88897898"], ["88897898", "1011407490"], ["1011407490"]];
+    let i = 0;
+    const next = () => ({ name: "Zoë Sample", interests: { target: sets[i++ % sets.length] } });
+    for (let n = sendRow(zoeKey).n; n < 18; n++) {
+      const r = await sendI(zoeKey, next());
+      assert.equal(r.status, 200, JSON.stringify(r.body)); assert.equal(r.body.same, undefined);
+    }
+    assert.equal(sendRow(zoeKey).n, 18);
+    // Five at once, none of them picks posted before: two go, to 20, and three are refused.
+    const five = [["88897904", "88897899"], ["88897904", "88897898"], ["88897904", "1011407490"], ["88897899", "1011407490"], ["88897899", "88897898", "1011407490"]];
+    const before = webhookPosts.length;
+    const at = await Promise.all(five.map((t) => sendI(zoeKey, { name: "Zoë Sample", interests: { target: t } })));
+    assert.deepEqual(at.map((r) => r.status).sort(), [200, 200, 429, 429, 429], JSON.stringify(at.map((r) => r.body)));
+    for (const r of at.filter((x) => x.status === 429)) assert.deepEqual([r.body, r.cc], [{ error: "limit", limit: 20 }, "no-store"]);
+    assert.equal(sendPosts(before).length, 2, "two posted");
+    assert.equal(sendRow(zoeKey).n, 20);
+    // At the limit, the last post's picks still answer the same; any others are refused.
+    const sent = (await iGet(zoeKey)).body.sent;
+    const last = five.map((t) => TGT.filter((x) => t.includes(x))).find((t) => sigOf({ target: t }) === sent.sig);
+    assert.ok(last, "the last post's picks are one of the two that went");
+    assert.ok(at.some((r) => r.status === 200 && r.body.at === sent.at && r.body.sig === sent.sig));
+    const same = await sendI(zoeKey, { interests: { target: last } });
+    assert.deepEqual([same.status, same.body], [200, { ok: true, same: true, at: sent.at, sig: sent.sig }]);
+    const over = await sendI(zoeKey, next());
+    assert.deepEqual([over.status, over.body], [429, { error: "limit", limit: 20 }]);
+    assert.equal(webhookPosts.length, before + 2, "nothing more posted");
+    const held = sendRow(zoeKey);
+    assert.deepEqual(held, { day: held.day, n: 20, last_at: sent.at, last_sig: sent.sig });
+    // Another license isn't held back by it.
+    assert.equal((await sendI(GH_KEY, { interests: { target: ["88897898"] } })).status, 200);
+    // The next day (UTC) counts from nothing again.
+    sqlRun(`UPDATE interest_sends SET day = '${utcDay(Date.now() - 86400000)}' WHERE key_hash = '${hashOf(zoeKey)}'`);
+    const t0 = Date.now(), fresh = await sendI(zoeKey, next());
+    assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
+    const row = sendRow(zoeKey);
+    assert.deepEqual([row.n, row.last_at, row.last_sig], [1, fresh.body.at, fresh.body.sig]);
+    assert.ok([utcDay(t0), utcDay(Date.now())].includes(row.day), row.day);
   });
 
   console.log("\nInbox access with Submit (page 1.9.147, 2026-11-13)");
@@ -4057,7 +4283,7 @@ try {
     await iFresh(APPROVAL_PORT + 6);
     const g = await iGet(ginaKey);
     assert.equal(g.status, 200);
-    assert.deepEqual(g.body, { rev: irev, owner: false, items: list.map(iShown) }, "the same list and rev: nothing to add");
+    assert.deepEqual(g.body, { rev: irev, owner: false, items: list.map(iShown), sent: null }, "the same list and rev: nothing to add");
     assert.deepEqual(iAdded(), ADD_IDS, "noted as applied");
     assert.equal(iRev(), irev, "nothing written");
   });
@@ -4088,7 +4314,7 @@ try {
   await test("interests: asked again, nothing changes; a change made from the list before the addition is refused once", async () => {
     const g = await iGet(ginaKey);
     assert.equal(g.body.rev, irev);
-    assert.deepEqual((await iGet(ginaKey, "?rev=" + irev)).body, { rev: irev, owner: false, same: true });
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + irev)).body, { rev: irev, owner: false, same: true, sent: null });
     const stale = await iPut(bobKey, { rev: irev - 1, items: iBefore });
     assert.equal(stale.status, 409); assert.deepEqual(stale.body, { error: "changed", rev: irev }, "the owner's FAFO reloads the list, with the added products");
     assert.equal(iRev(), irev, "nothing written");
@@ -4143,7 +4369,7 @@ try {
     finally { sqlRun("DROP TRIGGER IF EXISTS ilist_test_old"); }
     assert.equal(r.status, 409, JSON.stringify(r.body));
     assert.deepEqual(r.body, { error: "changed", rev: SEED_REV + 1 }, "the owner's FAFO reloads the list that was saved, with the additions");
-    assert.deepEqual((await iGet(ginaKey)).body, { rev: SEED_REV + 1, owner: false, items: [...theirs.map(iShown), ...ADDED.map(iSeedShown)] });
+    assert.deepEqual((await iGet(ginaKey)).body, { rev: SEED_REV + 1, owner: false, items: [...theirs.map(iShown), ...ADDED.map(iSeedShown)], sent: null });
     assert.equal(iRev(), SEED_REV + 1);
     assert.deepEqual(iAdded(), ADD_IDS);
   });
@@ -4151,7 +4377,7 @@ try {
     const list = [iItem("SAMPLE-OLD", "Sample Old Worker Box", { set: "Sample Set" }), ...ADDED.map((it, i) => iMine(it, i + 1))];
     sqlRun(`UPDATE interest_list SET rev = ${SEED_REV}, items = ${iSql(list)}`); sqlRun("DELETE FROM interest_adds");
     await iFresh(APPROVAL_PORT + 12);
-    assert.deepEqual((await iGet(ginaKey, "?rev=" + SEED_REV)).body, { rev: SEED_REV + 1, owner: false, items: list.map(iShown) }, "not the seed's rev: the list as saved");
+    assert.deepEqual((await iGet(ginaKey, "?rev=" + SEED_REV)).body, { rev: SEED_REV + 1, owner: false, items: list.map(iShown), sent: null }, "not the seed's rev: the list as saved");
     assert.equal(iRev(), SEED_REV + 1, "only the rev written");
     assert.deepEqual(iAdded(), ADD_IDS, "noted as applied with it");
     assert.deepEqual((await iGet(bobKey, "?rev=" + (SEED_REV + 1))).body, { rev: SEED_REV + 1, owner: true, same: true });
@@ -6702,16 +6928,31 @@ try {
     assert.deepEqual(await inboxAsk(GH_KEY), { status: 503, body: { error: "the list of keys made by hand can't be read just now" }, cc: "no-store" }, "POST /inbox/test too");
     assert.equal((await inboxAsk("PVLT-NOPE-NOPE-NOPE-NOPE")).status, 503, "and with a key on neither list");
     assert.equal((await inboxAsk(null)).status, 401, "401 still means no key");
+    // Sending picks from the Interests page (1.9.155) too: refused at the license, before anything is read or posted.
+    const sendAsk = async (key) => {
+      const r = await fetch(BASE + "/interests/send", { method: "POST", headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" },
+        body: JSON.stringify({ interests: { target: ["88897899"] }, name: "Sample" }) });
+      return { status: r.status, body: await r.json(), cc: r.headers.get("cache-control") };
+    };
+    const posted = webhookPosts.length;
+    assert.deepEqual(await sendAsk(GH_KEY), { status: 503, body: { error: "the list of keys made by hand can't be read just now" }, cc: "no-store" }, "POST /interests/send too");
+    assert.equal((await sendAsk("PVLT-NOPE-NOPE-NOPE-NOPE")).status, 503, "and with a key on neither list");
+    assert.equal((await sendAsk(null)).status, 401, "401 still means no key");
+    assert.equal(webhookPosts.length, posted, "nothing posted");
     assert.equal((await ask(null)).status, 401);
     assert.equal((await ask("not a key")).status, 401);
     const key = await newKey("gina");
     const g = await ask(key);
-    assert.deepEqual([g.status, g.body.rev, g.body.owner, g.body.items.length], [200, SEED_REV, false, SEED_ALL.length], "a key from Continue with Discord is in this database");
+    assert.deepEqual([g.status, g.body.rev, g.body.owner, g.body.items.length, g.body.sent], [200, SEED_REV, false, SEED_ALL.length, null], "a key from Continue with Discord is in this database");
+    const sent = await sendAsk(key);
+    assert.equal(sent.status, 200, JSON.stringify(sent.body));
+    assert.deepEqual((await ask(key)).body.sent, { at: sent.body.at, sig: sent.body.sig }, "and sends its picks");
     await admin("/admin/revoke", { key });
-    assert.deepEqual([(await ask(key)).status, (await getAuth("/premium", key)).status], [401, 401], "turned off");
+    assert.deepEqual([(await ask(key)).status, (await getAuth("/premium", key)).status, (await sendAsk(key)).status], [401, 401, 401], "turned off");
     ghDown = false;
     const up = await ask(GH_KEY);
     assert.deepEqual([up.status, up.body.items.length], [200, SEED_ALL.length], "once the list can be read");
+    assert.equal((await sendAsk(GH_KEY)).status, 200, "and its picks go");
     assert.equal((await ask("PVLT-NOPE-NOPE-NOPE-NOPE")).status, 401, "and a key that isn't on it is refused");
   });
   console.log(`\n${passed} passed`);

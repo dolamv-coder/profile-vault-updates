@@ -1,0 +1,1 @@
+Interests has a new look, and a Send to seller button: your picks go straight to your seller, without submitting your profiles again. Interests shows whether your seller has your latest picks, and they still go with every batch you submit. A card number now has to have all its digits (16, or 15 for American Express) before a profile or card saves.

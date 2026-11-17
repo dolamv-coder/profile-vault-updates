@@ -389,6 +389,20 @@ alone (every store's rows of one account) from reading the whole table. Only
     - They go as `<buyer>-<store>-skus.txt`, one SKU per line, right after that store's other files. The message doesn't
       change.
     - Anything malformed, or a list that can't be read, sends no file rather than failing the batch.
+  - **Sent on their own** (2026-11-17, the owner: "Include a submit button in Interests, that way buyers doesn't have to
+    unsubmit and submit their profiles again. Submit can directly send sku numbers to FAFO's discord"; page 1.9.155):
+    `POST /interests/send {interests: {storeKey: [sku]}, name}` (license Bearer; 401; 503 for a key made by hand while
+    GitHub's list can't be read; 403 for the owner's FAFO; the body at most 32 KB and a JSON object).
+    - It keeps the SKUs on the current list at their store, in the list's order (`interestWants`, `interestKept`, which
+      `batchSkus` also uses), and posts one message to `DISCORD_WEBHOOK_URL`: "🎯 **<buyer>** sent their Interests: Target 4
+      · Pokémon Center 2" (a second line names the Discord name and the license's last four), with a file per store named
+      as batches name theirs (`buyerSlug`, `storeSlug`: `<buyer>-<store>-skus.txt`), or "… cleared their Interests: no
+      products picked" with none.
+    - The same picks as the last post (`interestSig`: the first 16 hex of SHA-256 of the kept picks as JSON, store keys
+      sorted, empty stores left out) answer `same` and post nothing. 20 posts a day per license (`INTEREST_SENDS_PER_DAY`,
+      reserved before posting and undone when Discord refuses: 429 `limit`, 502 `discord`).
+    - D1 `interest_sends` (new: `key_hash`, `day`, `n`, `last_at`, `last_sig`; the picks aren't kept), and `GET /interests`
+      answers a buyer's `sent: {at, sig}` (null before the first).
   - Page 1.9.142 below.
   From 1.9.57 a store waiting for a login is linked to the saved login with the profile's email on
   its own: once per vault at unlock (`settings._linkedByEmail`), on Import profiles and inbox
@@ -2716,6 +2730,33 @@ worker section above), and FAFO sends what each checkout is priced on:
 - **Tests:** `billing.test.mjs` (the alert and report fields, the parse, discounts, the repair, every Invoice wording with
   and without tiers, the unknown price, kept lines, Friends and Family) and `walkthrough.test.mjs` (step 4 with tiers).
 - Orders gain `subtotal`, which 1.9.112 syncs as it is.
+
+From 1.9.155 Interests has the revamp's look and **Send to seller** (the owner's request, 2026-11-17; the worker section
+above): buyers send their picks to the seller's channel without submitting slots again.
+- **The view** (`renderInterests`): a counts strip (Products, Picked, Sets, Last sent), a store filter when the list has two
+  stores (`UI.store`, `interestStoreShown`), sections per set with "N of M picked" and Tick all (on what's shown), and cards
+  in a grid (`interestCardHTML`: picture, store mark, name, "Set · SKU", the description clamped to 3 lines, and Run this, the
+  same checkbox, as a pill; picked ones get an `--info` edge). On a phone the cards are rows.
+- **The bar** (`interestBarHTML`, sticky at the bottom, above which `pageRoom` lifts the setup guide): what's picked by store,
+  whether the seller has it (`interestSendState`: not sent, sent N ago, changed since sent, nothing picked), and Send N picks,
+  Send update or Sent. `interestsSend` posts every store's picks (`interestsForStores`) with `S.submitName`, one at a time,
+  and writes the synced setting `interestSent`: one string, JSON of `{at, sig, kept}` (`interestSentWrite`; read leniently
+  by `interestSentLocal`), so sync merges it whole, never one send's time with another's picks. `sig` is
+  `interestPicksSig`, a SHA-256 in the page (`interestSha256`) matching the worker's; the newer of it and the worker's
+  `sent` decides (`interestLastSent`), and with the picks kept, a product the owner takes off the list doesn't count as a
+  change (`interestSameAs`). A send whose sig differs from the page's (its list is behind the worker's) fetches the whole
+  list at once (`interestsCatchUp`). A Submit whose batch carried every store's picks counts as a send too
+  (`interestsSentWithBatch`). Each refusal has its words, and the ticks are always kept. The owner's FAFO has no bar.
+- Submit's interest line and the setup guide's step 3 mention Send to seller.
+- **Tests:** `interests.test.mjs` (the view, the bar's states, the request, every answer, a lock mid-send, the phone, the
+  guide above the bar, the owner) and the worker's e2e. Settings gain `interestSent`, which 1.9.112 syncs as it is.
+- **Card numbers need their length** (the owner's request, 2026-11-17, with a screenshot of a RedCard with 17 digits: "CC only
+  contains 16 digits, do not let buyer save profile until it is entered correctly"): `validateCard` (the profile editor's
+  and the card editor's Save, and the profile's problem icon) wants 16 digits for a Target RedCard, Visa, Mastercard and
+  Discover and 15 for American Express (`cardLen`), and says how many it has ("A RedCard number has 16 digits. This one has
+  17."). Until then only the checksum was checked (a 17-digit number passes it one time in ten) and a RedCard none. Import
+  cards skips a number of the wrong length as it does one that fails the checksum. `card-number.test.mjs` runs the page's
+  own `validateCard` in node (in CI after the Dashboard export's).
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores

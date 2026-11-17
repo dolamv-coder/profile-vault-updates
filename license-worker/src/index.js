@@ -26,7 +26,16 @@
 // Interests (page 1.9.142; the owner's request, 2026-11-12: products the owner lists for buyers to tick):
 //   GET  /interests?rev=N      {rev, owner, items:[{sku, store, name, about, set, ref}]} (license Bearer); the owner's FAFO
 //                              also gets each item's pic and tcg; {rev, owner, same:true} when N is the current rev.
-//                              INTEREST_ADDS (2026-11-12: Friday's drop list) go onto the list once, saved or not
+//                              INTEREST_ADDS (2026-11-12: Friday's drop list) go onto the list once, saved or not. A
+//                              buyer's answer, same or not, has `sent`: {at, sig} of their last POST /interests/send that
+//                              posted, or null
+//   POST /interests/send       a buyer's FAFO (page 1.9.155; the owner, 2026-11-17: "Include a submit button in Interests"):
+//                              {interests:{storeKey:[sku]}, name}, 32 KB at most: the SKUs ticked that the list has, posted
+//                              to DISCORD_WEBHOOK_URL as <buyer>-<store>-skus.txt files, or a note that none are picked:
+//                              {ok, at, counts:{storeKey:n}, sig}; {ok, same:true, at, sig} for the picks the last post
+//                              had (nothing posted); 429 {error:"limit", limit:20} past 20 posts a day; 502
+//                              {error:"discord"}; 403 for the owner's FAFO. sig: the first 16 hex of the SHA-256 of the
+//                              kept picks as JSON, {storeKey:[sku]} with store keys sorted and SKUs in the list's order
 //   PUT  /interests            the owner's FAFO only: {rev, items:[{sku, store, name, about, set, pic, tcg}]}, the whole
 //                              list, answered as GET; 409 {error:"changed", rev} when another device saved since rev
 //   POST /interests/pic        the owner's FAFO only: {data:"data:image/(webp|jpeg|png);base64,..."}, 150 KB at most: {ref}
@@ -238,6 +247,7 @@ export default {
       }
       if (path === "/interests" && request.method === "PUT") return await interestsPut(request, env);
       if (path === "/interests/pic" && request.method === "POST") return await interestPicPost(request, env);
+      if (path === "/interests/send" && request.method === "POST") return await interestsSend(request, env);
       if (path.startsWith("/review/")) return await review(request, env, ctx, url, path.slice("/review/".length));
       if (path === "/slots/limit" && request.method === "GET") return await slotLimit(request, env);
       if (path === "/slots/request" && request.method === "POST") return await slotRequest(request, env, ctx, url);
@@ -615,6 +625,15 @@ async function webhookEdit(env, messageId, payload) {
 }
 
 const md = (s) => String(s).replace(/([\\*_~`|>\[\]()])/g, "\\$1");
+
+// Files posted to the channel are named after the buyer and the store (the owner's request, 2026-10-09): Kim-target-skus.txt.
+// The buyer's part is the name they sent with, else their Discord name, accents taken off, as letters, digits and hyphens,
+// else license-XXXX; the store's is its name the same way, in lower case (pokemon-center). Batches (POST /submissions) and
+// Interests sent on their own (POST /interests/send) name them alike.
+const asciiOf = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const slugOf = (t) => asciiOf(t).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
+const buyerSlug = (name, username, last4) => slugOf(name) || slugOf(username) || `license-${last4}`;
+const storeSlug = (store) => asciiOf(store).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "store";
 
 // ---- signed key list -------------------------------------------------------------
 
@@ -1168,12 +1187,10 @@ async function submission(request, env, url, ctx) {
     // Kim-target-shikari.csv and Kim-target-logins.txt; the name they sent with, or their Discord name. No logins
     // for Pokémon Center (2026-10-07). The slots CSV itself goes out only as Shikari's. Then Kim-target-imap.txt, the
     // inbox access for the store's slots on the buyer's own accounts (page 1.9.147), Pokémon Center's too.
-    const ascii = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
-    const buyer = ascii(s.name).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30)
-      || ascii(s.username).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || `license-${s.key_last4}`;
+    const buyer = buyerSlug(s.name, s.username, s.key_last4);
     const used = new Map();
     const label = (store) => {
-      const x = ascii(store).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "store";
+      const x = storeSlug(store);
       if (!used.has(store)) { let y = x, i = 2; while ([...used.values()].includes(y)) y = `${x}-${i++}`; used.set(store, y); }
       return used.get(store);
     };
@@ -6504,9 +6521,13 @@ async function interestsGet(request, env, url) {
   if (w.error) return w.error;
   let list;
   try { list = await interestList(env); } catch (e) { console.error("interests", e); return json({ error: "try again in a minute" }, 503, NO_STORE); }
+  // A buyer's last send from the Interests page (POST /interests/send, page 1.9.155), {at, sig} or null, with the list or
+  // without it, so each of their devices knows whether its picks are the ones the owner has. Left out if it can't be read.
+  const sent = w.owner ? undefined : await interestSent(env, w.lic.hash).catch((e) => { console.error("interests", e); return undefined; });
+  const more = sent === undefined ? {} : { sent };
   const have = url.searchParams.get("rev");
-  if (/^\d+$/.test(have || "") && Number(have) === list.rev) return json({ rev: list.rev, owner: w.owner, same: true }, 200, NO_STORE);
-  return json(interestsOut(list, w.owner), 200, NO_STORE);
+  if (/^\d+$/.test(have || "") && Number(have) === list.rev) return json({ rev: list.rev, owner: w.owner, same: true, ...more }, 200, NO_STORE);
+  return json({ ...interestsOut(list, w.owner), ...more }, 200, NO_STORE);
 }
 
 // PUT /interests (the owner's FAFO): the whole list, made from rev. A save from another device since then is a 409, and the
@@ -6611,29 +6632,116 @@ async function interestPic(env, ref) {
     "cache-control": ref[0] === "h" ? "public, max-age=31536000, immutable" : "public, max-age=604800" } });
 }
 
-// The products a batch's buyer ticked, per store (`interests` from page 1.9.142: {storeKey: [sku]}, at most 10 stores and
-// 300 SKUs each), as the list has them now: for each store the batch sends profiles for, the list's items at that store
-// that were ticked, in the list's order, once each. Anything malformed is left out, and a list that can't be read sends
-// none: the batch goes on either way. Older apps send no `interests`, and nothing changes for them.
-async function batchSkus(env, files, sent) {
-  const out = new Map(), want = new Map();
-  if (!sent || typeof sent !== "object" || Array.isArray(sent)) return out;
+// The products a buyer ticked (`interests` from page 1.9.142: {storeKey: [sku]}), as wanted: at most 10 stores and 300 SKUs
+// each, a store the list has and a SKU it could have, in lower case. Anything malformed is left out.
+function interestWants(sent) {
+  const want = new Map();
+  if (!sent || typeof sent !== "object" || Array.isArray(sent)) return want;
   for (const [k, v] of Object.entries(sent).slice(0, 10)) {
     if (!INTEREST_STORES.has(k) || !Array.isArray(v)) continue;
     const skus = v.slice(0, INTEREST_MAX).map((x) => typeof x === "number" && Number.isSafeInteger(x) ? String(x) : x)
       .filter((x) => typeof x === "string" && INTEREST_SKU.test(x)).map((x) => x.toLowerCase());
     if (skus.length) want.set(k, new Set(skus));
   }
+  return want;
+}
+// The list's items at that store that were ticked, in the list's order, once each, as the list writes their SKUs.
+const interestKept = (list, want, store) => !want.has(store) ? []
+  : [...new Set(list.items.filter((it) => it.store === store && want.get(store).has(it.sku.toLowerCase())).map((it) => it.sku))];
+
+// The products a batch's buyer ticked, per store, as the list has them now: for each store the batch sends profiles for,
+// the list's items at that store that were ticked (interestKept). A list that can't be read sends none: the batch goes on
+// either way. Older apps send no `interests`, and nothing changes for them.
+async function batchSkus(env, files, sent) {
+  const out = new Map(), want = interestWants(sent);
   if (!files.some((f) => f.kind === "profiles" && want.has(f.storeKey))) return out;
   let list;
   try { list = await interestList(env); } catch (e) { console.error("interests", e); return out; }
   for (const f of files) {
     if (f.kind !== "profiles" || !want.has(f.storeKey) || out.has(f.storeKey)) continue;
-    const w = want.get(f.storeKey);
-    const skus = [...new Set(list.items.filter((it) => it.store === f.storeKey && w.has(it.sku.toLowerCase())).map((it) => it.sku))];
+    const skus = interestKept(list, want, f.storeKey);
     if (skus.length) out.set(f.storeKey, skus);
   }
   return out;
+}
+
+// ---- Interests sent on their own (page 1.9.155) ---------------------------------------------
+// The owner's request (2026-11-17): "Revamp Interests Tab. Include a submit button in Interests, that way buyers doesn't
+// have to unsubmit and submit their profiles again. Submit can directly send sku numbers to FAFO's discord." Until then a
+// buyer's ticks reached the owner only with a batch of slots (batchSkus above), so sending new picks meant pulling slots and
+// submitting them again. POST /interests/send posts the picks on their own: one message to the channel batches go to, with
+// the same <buyer>-<store>-skus.txt file per store a batch has. D1 interest_sends keeps per license only the day's count of
+// posts (for the limit), when the last one went and its picks' sig, so the same picks again post nothing and each of the
+// buyer's devices can tell from GET /interests (`sent`) whether its picks changed since. The picks themselves aren't kept.
+// Slot batches send their SKUs as before, and don't count here.
+const INTEREST_SENDS_PER_DAY = 20;
+const INTEREST_SEND_MAX = 32 * 1024;   // the body, {interests: {storeKey: [sku]}, name}, in bytes
+// A set of picks as a short hash, which the page works out the same way: the first 16 hex of the SHA-256 of the kept picks
+// as JSON with no spaces: an object of each store with picks, keys sorted, to its SKUs as the list writes them, in the
+// list's order; "{}" with none.
+async function interestSig(kept) {
+  const o = {};
+  for (const k of [...kept.keys()].sort()) if (kept.get(k).length) o[k] = kept.get(k);
+  return (await sha256Hex(JSON.stringify(o))).slice(0, 16);
+}
+// The license's last send that posted, for GET /interests: {at, sig}, or null if it never sent.
+async function interestSent(env, hash) {
+  const r = await env.DB.prepare("SELECT last_at, last_sig FROM interest_sends WHERE key_hash = ?").bind(hash).first();
+  return r && r.last_at > 0 ? { at: r.last_at, sig: r.last_sig } : null;
+}
+
+// POST /interests/send {interests: {storeKey: [sku]}, name} (license Bearer; a buyer's FAFO, never the owner's): the SKUs
+// ticked that the list has now, posted to the channel. {ok, at, counts: {storeKey: n}, sig}; {ok, same: true, at, sig}
+// when they're the picks the last post had, posting nothing; 429 {error: "limit", limit} past INTEREST_SENDS_PER_DAY posts
+// today (UTC); 502 {error: "discord"} when the post fails, with nothing recorded.
+async function interestsSend(request, env) {
+  const w = await interestLicense(request, env, false);
+  if (w.error) return w.error;
+  if (w.owner) return json({ error: "your FAFO keeps the list: buyers send their picks" }, 403, NO_STORE);
+  if (!env.DISCORD_WEBHOOK_URL) return json({ error: "the Discord channel isn't set up" }, 503, NO_STORE);
+  const text = await cappedBody(request, INTEREST_SEND_MAX);
+  if (text === null) return json({ error: "too large" }, 413, NO_STORE);
+  let b; try { b = JSON.parse(text); } catch { b = null; }
+  if (!b || typeof b !== "object" || Array.isArray(b)) return json({ error: "bad request" }, 400, NO_STORE);
+  let list;
+  try { list = await interestList(env); } catch (e) { console.error("interests", e); return json({ error: "try again in a minute" }, 503, NO_STORE); }
+  // Every store's, in the list's order; a store or SKU the list doesn't have is left out, and `interests` that isn't right
+  // counts as none ticked.
+  const want = interestWants(b.interests), kept = new Map();
+  for (const k of INTEREST_STORES) { const skus = interestKept(list, want, k); if (skus.length) kept.set(k, skus); }
+  const sig = await interestSig(kept), hash = w.lic.hash, today = day(Date.now());
+  const last = await env.DB.prepare("SELECT last_at, last_sig FROM interest_sends WHERE key_hash = ?").bind(hash).first();
+  if (last && last.last_at > 0 && last.last_sig === sig) return json({ ok: true, same: true, at: last.last_at, sig }, 200, NO_STORE);
+  // The post is counted before it goes, in one statement, so sends at once can't pass the limit together; one that doesn't
+  // reach the channel is taken off again. A license's first row says it never sent (last_at 0) until a post goes.
+  const got = await env.DB.prepare(`INSERT INTO interest_sends (key_hash, day, n, last_at, last_sig) VALUES (?1, ?2, 1, 0, '')
+    ON CONFLICT (key_hash) DO UPDATE SET n = CASE WHEN interest_sends.day = excluded.day THEN interest_sends.n + 1 ELSE 1 END, day = excluded.day
+    WHERE interest_sends.day <> excluded.day OR interest_sends.n < ?3 RETURNING n`).bind(hash, today, INTEREST_SENDS_PER_DAY).first();
+  if (!got) return json({ error: "limit", limit: INTEREST_SENDS_PER_DAY }, 429, NO_STORE);
+  // Who sent it: the name they typed in Submit's window, else their Discord name, as batches go by, then what else tells
+  // them apart, as a batch's message has it (@name, the license's last 4).
+  const name = typeof b.name === "string" ? b.name.replace(/\s+/g, " ").trim().slice(0, 60) : "", username = w.lic.username || "";
+  const shown = name || username || `license …${w.lic.last4}`;
+  const who = [name && username ? `@${md(username)}` : "", name || username ? `license …${w.lic.last4}` : ""].filter(Boolean).join(" · ");
+  const content = (kept.size ? `🎯 **${md(shown)}** sent their Interests: ${[...kept].map(([k, v]) => `${md(accountStoreName(k))} ${v.length}`).join(" · ")}`
+    : `🎯 **${md(shown)}** cleared their Interests: no products picked`) + (who ? `\n-# ${who}` : "");
+  // Named as a batch names its SKU files, one SKU per line.
+  const buyer = buyerSlug(name, username, w.lic.last4);
+  const files = [...kept].map(([k, v]) => ({ name: `${buyer}-${storeSlug(accountStoreName(k))}-skus.txt`, text: v.join("\r\n"), type: "text/plain" }));
+  let id = null;
+  try { id = await webhookPost(env, { content }, files); } catch (e) { console.error("webhook", e); }
+  if (!id) {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE interest_sends SET n = n - 1 WHERE key_hash = ? AND day = ? AND n > 0").bind(hash, today),
+      env.DB.prepare("DELETE FROM interest_sends WHERE key_hash = ? AND n = 0 AND last_at = 0").bind(hash),
+    ]).catch((e) => console.error("interests", e));
+    return json({ error: "discord" }, 502, NO_STORE);
+  }
+  // The newest post's picks win, if two went at once.
+  const at = Date.now();
+  await env.DB.prepare("UPDATE interest_sends SET last_at = ?1, last_sig = ?2 WHERE key_hash = ?3 AND last_at < ?1").bind(at, sig, hash).run()
+    .catch((e) => console.error("interests", e));
+  return json({ ok: true, at, counts: Object.fromEntries([...kept].map(([k, v]) => [k, v.length])), sig }, 200, NO_STORE);
 }
 
 // ---- inbox test (page 1.9.149) -------------------------------------------------------------------
@@ -6680,10 +6788,11 @@ function inboxTestTarget(env, host) {
   if (m && Number(m[2]) >= 1 && Number(m[2]) <= 65535) return { hostname: m[1], port: Number(m[2]) };
   return { hostname: host, port: 993 };
 }
-// The request's body, read with a cap (a chunked upload has no content-length): null when it's too large.
-async function inboxBody(request) {
+// The request's body, read with a cap (a chunked upload has no content-length): null when it's too large, more than `max`
+// bytes by its content-length or characters as read (POST /inbox/test, POST /interests/send).
+async function cappedBody(request, max) {
   const len = request.headers.get("content-length");
-  if (len !== null && Number(len) > INBOX_BODY_MAX) return null;
+  if (len !== null && Number(len) > max) return null;
   if (!request.body) return "";
   const reader = request.body.getReader(), parts = [];
   let size = 0;
@@ -6691,15 +6800,16 @@ async function inboxBody(request) {
     const { value, done } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > 2 * INBOX_BODY_MAX) { reader.cancel().catch(() => {}); return null; }
+    if (size > 2 * max) { reader.cancel().catch(() => {}); return null; }
     parts.push(value);
   }
   const all = new Uint8Array(size);
   let at = 0;
   for (const p of parts) { all.set(p, at); at += p.byteLength; }
   const text = new TextDecoder().decode(all);
-  return text.length > INBOX_BODY_MAX ? null : text;
+  return text.length > max ? null : text;
 }
+const inboxBody = (request) => cappedBody(request, INBOX_BODY_MAX);
 const INBOX_PW_BAD = /[\0\r\n\u2028\u2029]/;
 const untilMidnight = (now) => Math.max(1, Math.ceil((Math.floor(now / 86400000) * 86400000 + 86400000 - now) / 1000));
 // POST /inbox/test {email, password, host, port} (license Bearer): {ok:true, messages} or {ok:false, why, text}, as

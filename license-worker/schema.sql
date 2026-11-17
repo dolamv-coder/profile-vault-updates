@@ -671,3 +671,17 @@ CREATE TABLE IF NOT EXISTS inbox_tests (
   fails      INTEGER NOT NULL DEFAULT 0,
   busy_until INTEGER NOT NULL DEFAULT 0
 );
+
+-- Interests sent from the Interests page on their own (page 1.9.155; 2026-11-17, the owner: "Include a submit button in
+-- Interests, that way buyers doesn't have to unsubmit and submit their profiles again"): per license, how many posts it made
+-- today (UTC), for the limit of 20 a day, and when its last post went with a hash of the picks it had (last_sig: the first 16
+-- hex of the SHA-256 of the kept picks as JSON), so the same picks again post nothing and GET /interests can tell its FAFOs
+-- what was sent last. last_at 0 is a first post still going. The picks themselves aren't kept. A table of its own, as
+-- db:init can't add columns.
+CREATE TABLE IF NOT EXISTS interest_sends (
+  key_hash TEXT PRIMARY KEY,
+  day      TEXT NOT NULL,                       -- YYYY-MM-DD, UTC
+  n        INTEGER NOT NULL,
+  last_at  INTEGER NOT NULL DEFAULT 0,
+  last_sig TEXT NOT NULL DEFAULT ''
+);
