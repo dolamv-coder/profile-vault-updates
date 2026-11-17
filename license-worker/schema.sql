@@ -699,11 +699,15 @@ CREATE TABLE IF NOT EXISTS terms_accepts (
 
 -- A new user's sign-in waiting on the terms page (its request at status 'terms'), by the request's r: who signed in with
 -- Discord, so the page can be shown again and Accept and continue can go on without asking Discord again. Taken when the
--- form is sent; ones left over go with the requests' clean-up.
+-- form is sent; ones left over go with the requests' clean-up. Only the browser Discord sent back answers it, not anyone
+-- with the sign-in's state: the form carries `nonce`, and the page loaded again shows it only with the code whose hash is
+-- `code_hash`.
 CREATE TABLE IF NOT EXISTS terms_asks (
   r          TEXT PRIMARY KEY,
   discord_id TEXT NOT NULL,
   username   TEXT NOT NULL,
+  nonce      TEXT NOT NULL,                     -- random, in the terms page's form; POST /discord/terms needs it
+  code_hash  TEXT NOT NULL,                     -- SHA-256 of "terms-code:" + Discord's code (never the code)
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS terms_asks_created ON terms_asks (created_at);

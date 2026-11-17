@@ -60,6 +60,9 @@ const USERS = {
   max:   { id: snowflake(Date.parse("2022-08-03")), username: "max", guilds: [] },    // lets the sign-in expire
   nia:   { id: snowflake(Date.parse("2022-08-04")), username: "nia", guilds: [] },    // from the web version
   pia:   { id: snowflake(Date.parse("2022-08-05")), username: "pia", guilds: [] },    // presses Accept twice at once
+  rae:   { id: snowflake(Date.parse("2022-08-06")), username: "rae", guilds: [] },    // two sign-ins, denied between them
+  sol:   { id: snowflake(Date.parse("2022-08-07")), username: "sol", guilds: [] },    // two sign-ins, key turned off between them
+  tia:   { id: snowflake(Date.parse("2022-08-08")), username: "tia", guilds: [] },    // from the web version, approval off
 };
 const OWNER = snowflake(Date.parse("2017-02-01"));   // NOTIFY_USER_ID in approval mode
 
@@ -379,11 +382,17 @@ async function keyHash(key) {
 // accept. passTerms takes the page the callback answered: when it's the terms, it presses Accept and continue with the box
 // ticked (unless `accept` is false) and answers that page instead; `terms` says whether the terms showed. A connection
 // wrangler closed while the test read the database is tried again (as fetchOnce does further on).
+// The form only goes with the nonce the terms page carried (only the browser Discord sent back has it): termsPost sends
+// the one last seen for that state, or the one given (null: none).
 const TERMS_FORM = '<form class="tos-form" method="post" action="/discord/terms">';
+const termsNonces = new Map();
+const nonceIn = (html) => (html.match(/<input type="hidden" name="nonce" value="([^"]+)">/) || [])[1];
 const fetchAgain = async (url, opts, tries = 3) => { try { return await fetch(url, opts); } catch (e) { if (tries > 1 && e.cause && e.cause.code === "UND_ERR_SOCKET") return fetchAgain(url, opts, tries - 1); throw e; } };
-const termsPost = (state, fields) => fetchAgain(BASE + "/discord/terms", { method: "POST", redirect: "manual", body: new URLSearchParams({ state, ...fields }) });
+const termsPost = (state, fields, nonce = termsNonces.get(state)) => fetchAgain(BASE + "/discord/terms", { method: "POST", redirect: "manual",
+  body: new URLSearchParams({ state, ...(nonce == null ? {} : { nonce }), ...fields }) });
 async function passTerms(state, res, accept = true) {
   const text = await res.text(), terms = text.includes(TERMS_FORM);
+  if (terms) termsNonces.set(state, nonceIn(text));
   if (!terms || !accept) return { page: new Response(text, { status: res.status, headers: res.headers }), terms };
   return { page: await termsPost(state, { agree: "1", action: "accept" }), terms };
 }
@@ -498,6 +507,8 @@ try {
     assert.ok(!webhookPosts[0].content.includes(aliceKey));
     assert.ok(!webhookPosts[0].content.includes("<@"), "no NOTIFY_USER_ID, no ping");
     assert.deepEqual(webhookPosts[0].allowed_mentions, { parse: [] });
+    // With approval off there's no request to see the Terms of Service on: the notice says when they were accepted.
+    assert.match(webhookPosts[0].content, new RegExp(`^🔑 New FAFO license issued to \\*\\*@alice\\*\\* \\(Discord ID ${USERS.alice.id}\\)\\.\\nAccepted the Terms of Service \\(November 13, 2026 version\\) on [A-Z][a-z]{2} \\d{1,2}, \\d{4}, \\d{1,2}:\\d\\d [AP]M E[SD]T$`));
   });
   await test("the same Discord account gets the same key again", async () => {
     const r = rid();
@@ -596,17 +607,20 @@ try {
     assert.equal((await getJson("/discord/status/" + r)).status, "error");
   });
   await test("bots are turned away", async () => {
-    const r = rid(); await signIn(r, "robot");
+    const r = rid(); const { terms } = await signIn(r, "robot");
+    assert.equal(terms, false, "before the Terms of Service");
     const s = await getJson("/discord/status/" + r);
     assert.equal(s.status, "error"); assert.match(s.error, /Bot/);
   });
   await test("accounts younger than MIN_ACCOUNT_AGE_DAYS are turned away", async () => {
-    const r = rid(); await signIn(r, "fresh");
+    const r = rid(); const { terms } = await signIn(r, "fresh");
+    assert.equal(terms, false, "before the Terms of Service");
     const s = await getJson("/discord/status/" + r);
     assert.equal(s.status, "error"); assert.match(s.error, /30 days/);
   });
   await test("non-members of REQUIRED_GUILD_ID are turned away", async () => {
-    const r = rid(); await signIn(r, "outsider");
+    const r = rid(); const { terms } = await signIn(r, "outsider");
+    assert.equal(terms, false, "before the Terms of Service");
     const s = await getJson("/discord/status/" + r);
     assert.equal(s.status, "error"); assert.match(s.error, /member/);
   });
@@ -869,10 +883,18 @@ try {
     assert.ok(html.includes('<p class="small">Signed in as @kim</p>'));
     assert.ok(html.includes(TERMS_FORM));
     assert.ok(html.includes(`<input type="hidden" name="state" value="${htmlEsc(state)}">`), "the sign-in's state goes with the form");
+    assert.match(nonceIn(html) || "", /^[A-Za-z0-9_-]{32}$/, "and a nonce only this page has");
+    assert.ok(html.includes(`value="${htmlEsc(state)}">\n<input type="hidden" name="nonce" value="${nonceIn(html)}">`));
     assert.ok(html.includes(`<label class="tos-agree"><input type="checkbox" name="agree" value="1" id="tos-agree"><span>I've read and agree to FAFO's Terms of Service</span></label>`), "a real label");
     assert.ok(html.includes('<button class="ok" type="submit" name="action" value="accept" id="tos-accept">Accept and continue</button>'));
     assert.ok(html.includes('<button class="no" type="submit" name="action" value="decline">Decline</button>'));
     assert.match(html, /a\.disabled=!c\.checked/, "Accept and continue is off until the box is ticked");
+    // The form goes once (a double click would show the second press's page, without the key with approval off), never by
+    // turning the pressed button off (that leaves `action` out); free again when shown from the browser's cache.
+    assert.ok(html.includes('c.form.addEventListener("submit",function(e){if(s){e.preventDefault();return;}s=true;setTimeout(function(){s=false;},10000);});'), "a second submit is cancelled");
+    assert.ok(html.includes('window.addEventListener("pageshow",function(){s=false;f();});'));
+    assert.doesNotMatch(html, /\.disabled=true|submitter/);
+    assert.ok(html.includes("form.tos-form button.no{background:transparent;border:1px solid #c4372f;color:#ff8a80}"), "Decline is an outline, not the one bright button");
     assert.match(html, /This sign-in lasts 15 minutes from when you clicked Continue with Discord in FAFO\./);
     assert.doesNotMatch(html, /PVLT-|Back to FAFO|Request sent/);
     assert.deepEqual(await getJson("/discord/status/" + kimR), { status: "pending" });
@@ -885,15 +907,50 @@ try {
     assert.deepEqual(approvalRows(`SELECT * FROM terms_accepts WHERE discord_id = '${USERS.kim.id}'`), [], "not accepted yet");
   });
   await test("terms: their page loaded again shows them again, without asking Discord again", async () => {
-    const tokens = tokenCalls.length;
-    for (const extra of ["&code=kim", "&code=kim&error=access_denied", ""]) {
+    const tokens = tokenCalls.length, nonce = termsNonces.get(kimState);
+    for (const extra of ["&code=kim", "&code=kim&error=access_denied"]) {
       const res = await fetchAgain(`${BASE}/discord/callback?state=${encodeURIComponent(kimState)}${extra}`, { redirect: "manual" });
       assert.equal(res.status, 200, extra);
       const html = await res.text();
       assertTerms(html); assert.ok(html.includes(TERMS_FORM)); assert.ok(html.includes("Signed in as @kim"));
+      assert.equal(nonceIn(html), nonce, "the same form");
     }
     assert.equal(tokenCalls.length, tokens, "the code isn't exchanged again");
     assert.deepEqual(await (await fetchAgain(BASE + "/discord/status/" + kimR)).json(), { status: "pending" });
+  });
+  // The state isn't a secret (whoever called /discord/start has it, in the address Discord was opened at), so a link to
+  // Discord's sign-in with someone else's state would let them accept the terms for whoever signed in with it, or read
+  // their name. Only the browser Discord sent back answers them: its code in the address, or the form's nonce.
+  const assertElsewhere = async (res, what) => {
+    assert.equal(res.status, 403, what);
+    const html = await res.text();
+    assert.ok(html.includes("<h2>Finish where you signed in</h2><p>Accept the terms on the page Discord opened, in the browser where you signed in with Discord. Or go back to FAFO and click Continue with Discord again.</p></main>"), what);
+    assert.doesNotMatch(html, /kim|Signed in as|<form|name="nonce"|Effective /, what + ": no name, no form, no terms");
+  };
+  await test("terms: only the browser Discord sent back can answer them, never the state alone", async () => {
+    const tokens = tokenCalls.length, posts = webhookPosts.length, nonce = termsNonces.get(kimState);
+    for (const extra of ["", "&code=someone-else", "&code=kim2", "&error=access_denied"]) {
+      await assertElsewhere(await fetchAgain(`${BASE}/discord/callback?state=${encodeURIComponent(kimState)}${extra}`, { redirect: "manual" }), "loaded again with " + (extra || "no code"));
+    }
+    assert.equal(tokenCalls.length, tokens, "a wrong code isn't exchanged either");
+    for (const nonceSent of [null, "", "wrong-nonce-0123456789abcdefghij", nonce.slice(0, -1), nonce + "x"]) {
+      for (const fields of [{ agree: "1", action: "accept" }, { action: "accept" }, { action: "decline" }, { agree: "1", action: "decline" }]) {
+        await assertElsewhere(await termsPost(kimState, fields, nonceSent), `nonce ${JSON.stringify(nonceSent)}, ${JSON.stringify(fields)}`);
+      }
+    }
+    // The code isn't a nonce, nor the nonce a code.
+    await assertElsewhere(await termsPost(kimState, { agree: "1", action: "accept", code: "kim" }, null), "the code in the form");
+    await assertElsewhere(await fetchAgain(`${BASE}/discord/callback?state=${encodeURIComponent(kimState)}&code=${encodeURIComponent(nonce)}`, { redirect: "manual" }), "the nonce as the code");
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal(webhookPosts.length, posts, "nothing reaches the seller");
+    assert.deepEqual(await (await fetchAgain(BASE + "/discord/status/" + kimR)).json(), { status: "pending" }, "nothing declined");
+    assert.equal(await applicationOf("kim"), undefined, "nothing accepted");
+    assert.deepEqual(approvalRows(`SELECT * FROM terms_accepts WHERE discord_id = '${USERS.kim.id}'`), []);
+    assert.deepEqual(approvalRows(`SELECT discord_id, nonce FROM terms_asks WHERE r = '${kimR}'`), [{ discord_id: USERS.kim.id, nonce }], "the ask waits for them");
+    assert.equal(approvalRows(`SELECT code_hash FROM terms_asks WHERE r = '${kimR}'`)[0].code_hash.length, 64, "Discord's code only as a hash");
+    // Their own page still works.
+    const own = await (await fetchAgain(`${BASE}/discord/callback?state=${encodeURIComponent(kimState)}&code=kim`, { redirect: "manual" })).text();
+    assert.ok(own.includes("Signed in as @kim")); assert.equal(nonceIn(own), nonce);
   });
   await test("terms: Accept and continue without the box ticked is refused, with the terms again", async () => {
     for (const fields of [{ action: "accept" }, { agree: "", action: "accept" }, {}]) {
@@ -971,11 +1028,13 @@ try {
     approvalSql(`INSERT INTO applications (discord_id, username, review_token, created_at, webhook_message_id) VALUES ('${OLGA}', 'olga', 'olga-review-token-0123456789', ${Date.now() - 86400000}, 'msg-olga')`);
     const kim = await applicationOf("kim"), olga = await applicationOf("olga");
     const html = await (await fetchAgain(kim.review_url)).text();
-    assert.ok(html.includes(`UTC<br>${htmlEsc(acceptedLine(kim.terms.at))}</p>`), "under when it was requested");
+    // Both in Eastern time, as the channel's post and the Billing page have them.
+    assert.ok(html.includes(`Requested ${etWhen(kim.created_at)}<br>${htmlEsc(acceptedLine(kim.terms.at))}</p>`), "under when it was requested");
+    assert.doesNotMatch(html, /UTC/);
     assert.match(html, /Waiting for your decision/);
     assert.equal(olga.terms, null);
     const old = await (await fetchAgain(olga.review_url)).text();
-    assert.match(old, /@olga/); assert.match(old, /UTC<\/p>/); assert.doesNotMatch(old, /Terms of Service/);
+    assert.match(old, /@olga/); assert.ok(old.includes(`Requested ${etWhen(olga.created_at)}</p>`)); assert.doesNotMatch(old, /Terms of Service|UTC/);
   });
   await test("terms: the decision's edit keeps the acceptance, and from before it says nothing new", async () => {
     const kim = await applicationOf("kim"), olga = await applicationOf("olga");
@@ -1072,6 +1131,10 @@ try {
   await test("terms: the form takes only POST, and a wrong or large one goes nowhere", async () => {
     const g = await fetchAgain(BASE + "/discord/terms", { redirect: "manual" });
     assert.equal(g.status, 405); assert.equal(g.headers.get("allow"), "POST");
+    // The address a page after the form shows, entered again: no state, so nothing about the sign-in, but not blank.
+    const gHtml = await g.text();
+    assert.ok(gHtml.includes("<h2>Not allowed</h2><p>This address only takes the terms form, so there&#39;s nothing to show here. Go back to FAFO.</p>"));
+    assert.doesNotMatch(gHtml, /<form|Back to FAFO/);
     assert.equal((await get("/discord/terms", { method: "PUT", body: "state=x" })).status, 405);
     for (const fields of [{ state: "nope", agree: "1", action: "accept" }, { agree: "1" }]) {
       const res = await fetchAgain(BASE + "/discord/terms", { method: "POST", body: new URLSearchParams(fields) });
@@ -1084,6 +1147,63 @@ try {
     assert.deepEqual(await getJson("/discord/status/" + r), { status: "pending" });
     const big = await fetchAgain(BASE + "/discord/terms", { method: "POST", body: "state=" + "x".repeat(5000) });
     assert.equal(big.status, 413);
+  });
+  // Two sign-ins of one new user (two tabs, two FAFOs) both wait at the terms. Accepted in one, the request is decided
+  // before they accept in the other, which then goes as the callback would for them now: declined, or their key turned off.
+  await test("terms: accepted in a second sign-in after a denial, it's declined, and nothing is posted again", async () => {
+    await new Promise((ok) => setTimeout(ok, 300));
+    const r1 = tRid(), r2 = tRid();
+    const x1 = await signIn(r1, "rae", "", { accept: false }), x2 = await signIn(r2, "rae", "", { accept: false });
+    assert.equal(x1.terms, true); assert.equal(x2.terms, true, "not accepted yet, so the second shows them too");
+    assert.match(await (await termsPost(x1.state, { agree: "1", action: "accept" })).text(), /Request sent/);
+    await new Promise((ok) => setTimeout(ok, 400));
+    const app = await applicationOf("rae"), at = app.terms.at;
+    await reviewPost(app.review_url, "deny");
+    await new Promise((ok) => setTimeout(ok, 300));
+    const posts = webhookPosts.length;
+    const res = await termsPost(x2.state, { agree: "1", action: "accept" });
+    assert.equal(res.status, 403);
+    assert.ok((await res.text()).includes(`<h2>Request declined</h2><p>${htmlEsc("Your request for a key was declined. Contact the seller if you think this is a mistake.")}</p>`));
+    assert.deepEqual(await getJson("/discord/status/" + r2), { status: "error", error: "Your request for a key was declined. Contact the seller if you think this is a mistake." });
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal(webhookPosts.length, posts, "nothing posted again");
+    assert.equal((await applicationOf("rae")).terms.at, at, "the first acceptance stays");
+    assert.deepEqual(approvalRows(`SELECT COUNT(*) AS n FROM terms_asks WHERE discord_id = '${USERS.rae.id}'`), [{ n: 0 }]);
+  });
+  await test("terms: accepted in a second sign-in after their key was turned off, it says so", async () => {
+    await new Promise((ok) => setTimeout(ok, 300));
+    const r1 = tRid(), r2 = tRid();
+    const x1 = await signIn(r1, "sol", "", { accept: false }), x2 = await signIn(r2, "sol", "", { accept: false });
+    assert.equal(x1.terms, true); assert.equal(x2.terms, true);
+    assert.match(await (await termsPost(x1.state, { agree: "1", action: "accept" })).text(), /Request sent/);
+    await new Promise((ok) => setTimeout(ok, 400));
+    await reviewPost((await applicationOf("sol")).review_url, "approve");
+    assert.deepEqual(await (await admin("/admin/revoke", { discord_id: USERS.sol.id })).json(), { ok: true, changed: 1 });
+    await new Promise((ok) => setTimeout(ok, 300));
+    const posts = webhookPosts.length;
+    const res = await termsPost(x2.state, { agree: "1", action: "accept" });
+    assert.equal(res.status, 403);
+    assert.ok((await res.text()).includes(`<h2>License turned off</h2><p>${htmlEsc("The license for this Discord account was turned off. Contact the seller for help.")}</p>`));
+    assert.deepEqual(await getJson("/discord/status/" + r2), { status: "error", error: "The license for this Discord account was turned off. Contact the seller for help." });
+    await new Promise((ok) => setTimeout(ok, 300));
+    assert.equal(webhookPosts.length, posts);
+    // Sol leaves no key behind for the tests after these.
+    approvalSql(`DELETE FROM licenses WHERE discord_id = '${USERS.sol.id}'; DELETE FROM applications WHERE discord_id = '${USERS.sol.id}'; UPDATE list_state SET version = version + 1 WHERE id = 1`);
+  });
+  await test("terms: asks left over go with old sign-ins when a sign-in starts", async () => {
+    const old = Date.now() - 7 * 24 * 3600000 - 86400000 - 60000, recent = Date.now() - 7 * 24 * 3600000;
+    approvalSql(`INSERT INTO terms_asks (r, discord_id, username, nonce, code_hash, created_at) VALUES
+      ('old-ask-0123456789abcdef', '1', 'gone', 'n1', 'h1', ${old}), ('kept-ask-0123456789abcdef', '2', 'kept', 'n2', 'h2', ${recent})`);
+    const r = tRid(), start = await get("/discord/start?r=" + r);
+    assert.equal(start.status, 302);
+    let left;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((ok) => setTimeout(ok, 200));
+      left = approvalRows(`SELECT r FROM terms_asks WHERE r IN ('old-ask-0123456789abcdef', 'kept-ask-0123456789abcdef') ORDER BY r`).map((x) => x.r);
+      if (left.length < 2) break;
+    }
+    assert.deepEqual(left, ["kept-ask-0123456789abcdef"], "older than REVIEW_TTL_MS and a day: gone");
+    approvalSql(`DELETE FROM terms_asks WHERE r = 'kept-ask-0123456789abcdef'`);
   });
   await test("terms: GET /terms shows them to anyone, with no form", async () => {
     const res = await get("/terms");
@@ -1128,6 +1248,13 @@ try {
     await new Promise((ok) => setTimeout(ok, 400));
     assert.equal(webhookPosts.length, posts + 1);
     assert.match(webhookPosts.at(-1).content, /New FAFO license issued to \*\*@frank\*\*/);
+    // No request for the seller to see the acceptance on, so the notice says it.
+    const { licenses } = await (await admin("/admin/licenses")).json();
+    const fl = licenses.find((l) => l.username === "frank"), dl = licenses.find((l) => l.username === "dave");
+    assert.equal(fl.terms.version, "2026-11-13"); assert.ok(fl.terms.at <= Date.now() && fl.terms.at > Date.now() - 60000);
+    assert.equal(dl.terms, null, "a key from before the terms");
+    assert.ok(licenses.every((l) => Object.keys(l).sort().join() === "discord_id,issued_at,license_key,revoked_at,terms,username"));
+    assert.equal(webhookPosts.at(-1).content, `🔑 New FAFO license issued to **@frank** (Discord ID ${USERS.frank.id}).\n${acceptedLine(fl.terms.at)}`);
     const again = await termsPost(state, { agree: "1", action: "accept" });
     assert.equal(again.status, 200);
     const twice = await again.text();

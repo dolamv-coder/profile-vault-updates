@@ -13,8 +13,9 @@
 //   GET  /discord/start?r=ID   browser: sends the user to Discord's sign-in
 //   GET  /discord/callback     browser: Discord sends the user back here. A new user (no license, no request from before,
 //                              never accepted the terms) gets FAFO's Terms of Service first (2026-11-17)
-//   POST /discord/terms        browser: the terms page's form {state, agree, action}: Accept and continue (with agree) goes on
-//                              to the request or the key as the callback did; Decline ends the sign-in
+//   POST /discord/terms        browser: the terms page's form {state, nonce, agree, action}: Accept and continue (with agree)
+//                              goes on to the request or the key as the callback did; Decline ends the sign-in. Only with
+//                              the nonce the page Discord sent the user back to carries (never with the state alone)
 //   GET  /terms                the Terms of Service, read-only, for anyone
 //   GET  /discord/status/ID    app polls: pending | review | issued (with key + signed list) | error (the terms step
 //                              answers pending)
@@ -189,7 +190,8 @@
 //   POST /billing/list         {name}: the owner's own FAFO posts a link to the Billing page to the channel
 //   GET/POST /billing/list/ID?t=TOKEN     every buyer's plan and invoice: Friends and Family or Charge, Tester (test mode), waive,
 //                              mark paid, charge again, disputes, add checkouts (one, or pasted from the bot's log); 24 hours
-//   GET  /admin/licenses       every key issued            (Authorization: Bearer ADMIN_TOKEN)
+//   GET  /admin/licenses       every key issued, with the Terms of Service it accepted (terms: {version, at} or null)
+//                              (Authorization: Bearer ADMIN_TOKEN)
 //   GET  /admin/premium        the premium licenses (last 4, when, Discord name) and the license that sends order alerts
 //   GET  /admin/applications   every request and decision, with the Terms of Service it accepted (terms: {version, at} or null)
 //   GET  /admin/submissions    collecting keys (with review links), submissions sent (whether approved or declined,
@@ -252,7 +254,7 @@ export default {
         if (path === "/interests") return await interestsGet(request, env, url);
         if (path.startsWith("/interests/pic/")) return await interestPic(env, path.slice("/interests/pic/".length));
       }
-      if (path === "/discord/terms") return request.method === "POST" ? await termsPost(request, env, ctx, url) : notAllowed("POST");
+      if (path === "/discord/terms") return request.method === "POST" ? await termsPost(request, env, ctx, url) : notAllowed("POST", "This address only takes the terms form, so there's nothing to show here. Go back to FAFO.");
       if (path === "/interests" && request.method === "PUT") return await interestsPut(request, env);
       if (path === "/interests/pic" && request.method === "POST") return await interestPicPost(request, env);
       if (path === "/interests/send" && request.method === "POST") return await interestsSend(request, env);
@@ -380,8 +382,9 @@ async function callback(env, ctx, url) {
   const code = url.searchParams.get("code") || "";
   const req = state ? await signInRequest(env, state) : null;
   const webApp = webAppOf(state);
-  // Past Discord's step (waiting for the seller, done, failed, at the terms, expired): its page, never the code again.
-  const known = await signInPage(env, req, webApp);
+  // Past Discord's step (waiting for the seller, done, failed, at the terms, expired): its page, never the code again. At the
+  // terms, the form only for the browser Discord sent back here (the same code in the address).
+  const known = await signInPage(env, req, webApp, { code });
   if (known) return known;
 
   const fail = (title, msg, statusCode = 403) => signInFail(env, req.r, "pending", webApp, title, msg, statusCode);
@@ -409,22 +412,28 @@ async function callback(env, ctx, url) {
   // Service first (2026-11-17, the owner: "Before a key is issue, I want users to read the terms and conditions, accepts it
   // then a key will be generated for them to use"; "only new users accept"). The sign-in waits at 'terms' with who signed
   // in (terms_asks), so the page can be shown again without Discord, until Accept and continue (POST /discord/terms).
+  // The state alone doesn't answer them: whoever called /discord/start knows it (it's in the address Discord was opened
+  // at), so a link to Discord's sign-in with someone else's state would let them accept the terms for, or read the name
+  // of, whoever signed in with it. The ask keeps a nonce the form carries and a hash of Discord's code, which only the
+  // browser Discord sent back here has: the page loaded again shows the form only with that code.
   const [existing, prior, accepted] = await Promise.all([
     env.DB.prepare("SELECT discord_id FROM licenses WHERE discord_id = ?").bind(user.id).first(),
     env.DB.prepare("SELECT status FROM applications WHERE discord_id = ?").bind(user.id).first(),
     env.DB.prepare("SELECT discord_id FROM terms_accepts WHERE discord_id = ?").bind(user.id).first(),
   ]);
   if (!existing && !prior && !accepted) {
+    const nonce = randomId(24);
     const [, moved] = await env.DB.batch([
-      env.DB.prepare(`INSERT INTO terms_asks (r, discord_id, username, created_at)
-        SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM requests WHERE r = ?1 AND status = 'pending')
-        ON CONFLICT (r) DO UPDATE SET discord_id = excluded.discord_id, username = excluded.username, created_at = excluded.created_at`)
-        .bind(req.r, user.id, username, Date.now()),
+      env.DB.prepare(`INSERT INTO terms_asks (r, discord_id, username, nonce, code_hash, created_at)
+        SELECT ?1, ?2, ?3, ?4, ?5, ?6 WHERE EXISTS (SELECT 1 FROM requests WHERE r = ?1 AND status = 'pending')
+        ON CONFLICT (r) DO UPDATE SET discord_id = excluded.discord_id, username = excluded.username, nonce = excluded.nonce,
+          code_hash = excluded.code_hash, created_at = excluded.created_at`)
+        .bind(req.r, user.id, username, nonce, await termsCodeHash(code), Date.now()),
       env.DB.prepare("UPDATE requests SET status = 'terms', discord_id = ? WHERE r = ? AND status = 'pending'").bind(user.id, req.r),
     ]);
-    if (moved.meta && moved.meta.changes) return termsAskPage(200, state, username);
+    if (moved.meta && moved.meta.changes) return termsAskPage(200, state, username, nonce);
     // Another load of this page got there first (the code read twice): as that one left it.
-    return (await signInPage(env, await signInRequest(env, state), webApp)) || page(400, "Something went wrong", "Go back to FAFO and try again.", webApp ? backToWeb(webApp) : "");
+    return (await signInPage(env, await signInRequest(env, state), webApp, { code })) || page(400, "Something went wrong", "Go back to FAFO and try again.", webApp ? backToWeb(webApp) : "");
   }
   return finishSignIn(env, ctx, url.origin, req.r, "pending", user.id, username, webApp, { existing, prior });
 }
@@ -440,7 +449,9 @@ async function signInFail(env, r, from, webApp, title, msg, statusCode = 403) {
 // The page for a sign-in past Discord's step, as its status has it (the callback loaded again, or the terms form sent for a
 // sign-in that isn't at the terms any more), or null for one still waiting for Discord ('pending'). One at the terms whose
 // form was just sent (a double click: Accept and continue and Decline take its ask first) waits for that press's outcome.
-async function signInPage(env, req, webApp) {
+// One at the terms shows the form, and who signed in, only to the browser Discord sent back (`proof`: the callback's code,
+// or the form's nonce; termsOwned), and anyone else a page that says to finish there (termsElsewhere).
+async function signInPage(env, req, webApp, proof = null) {
   const back = webApp ? backToWeb(webApp) : "";
   for (let tries = 0; ; tries++) {
     // A request waiting for the seller lasts as long as the app waits for it (reloading its page later isn't "expired").
@@ -452,8 +463,8 @@ async function signInPage(env, req, webApp) {
       ? page(200, "You're all set", "FAFO has your key. Go back to it: your master password opens your vault there, or you choose one if you're new.", back)
       : page(200, "You're all set", "Go back to FAFO. It has your key.");
     if (req.status === "terms") {
-      const ask = await env.DB.prepare("SELECT username FROM terms_asks WHERE r = ?").bind(req.r).first();
-      if (ask) return termsAskPage(200, req.state, ask.username);
+      const ask = await env.DB.prepare("SELECT username, nonce, code_hash FROM terms_asks WHERE r = ?").bind(req.r).first();
+      if (ask) return (await termsOwned(ask, proof)) ? termsAskPage(200, req.state, ask.username, ask.nonce) : termsElsewhere(back);
       if (tries >= TERMS_SETTLE_TRIES) return page(400, "Something went wrong", "Go back to FAFO and click Continue with Discord again.", back);
       await new Promise((ok) => setTimeout(ok, 250));
       req = await signInRequest(env, req.state);
@@ -515,6 +526,7 @@ const TERMS_CSS = `  main.terms{max-width:640px}
   label.tos-agree{display:flex;align-items:flex-start;gap:10px;font-size:15px;color:#e6ecff;cursor:pointer}
   label.tos-agree input{flex:none;width:18px;height:18px;margin:2px 0 0}
   form.tos-form .row button{flex:1} button:disabled{opacity:.45;cursor:not-allowed}
+  form.tos-form button.no{background:transparent;border:1px solid #c4372f;color:#ff8a80}
   @media (max-width:420px){form.tos-form .row{flex-direction:column}}
 `;
 // "2026-11-13" as "November 13, 2026": the version a stored acceptance was for.
@@ -535,19 +547,36 @@ function termsHTML() {
 const termsPage = (statusCode, extra = "") => page(statusCode, TERMS.title, "Effective " + TERMS.effective, termsHTML() + extra, "terms", TERMS_CSS);
 
 // The terms with the form a new user's sign-in waits on: tick the box, then Accept and continue (off until ticked; the
-// server checks the box anyway), or Decline. `err` is shown above the box, which then takes the focus, so the page opens
-// scrolled to it (the terms are long).
-function termsAskPage(statusCode, state, username, err = "") {
+// server checks the box anyway), or Decline (an outline, so the one bright button under the box isn't the one that ends
+// the sign-in). `err` is shown above the box, which then takes the focus, so the page opens scrolled to it (the terms are
+// long). `nonce` goes with the form, as only this page has it (signInPage). The form goes once: a browser shows the page
+// of the last request it sent, so a second press (a double click or tap) would show the outcome as a sign-in loaded again
+// tells it, without the key (approval off) or the fuller text. Not by turning the button off when it's pressed, which
+// would leave `action` out of what's sent (so a Decline with the box ticked would read as an accept). Free again when the
+// page is shown again from the browser's cache, and after 10 seconds (a stopped or failed send).
+function termsAskPage(statusCode, state, username, nonce, err = "") {
   return termsPage(statusCode, `
 <p class="small">Signed in as @${esc(username)}</p>
 <form class="tos-form" method="post" action="/discord/terms">
 <input type="hidden" name="state" value="${esc(state)}">
+<input type="hidden" name="nonce" value="${esc(nonce)}">
 ${err ? `<p class="err" id="tos-err" role="alert">${esc(err)}</p>\n` : ""}<label class="tos-agree"><input type="checkbox" name="agree" value="1" id="tos-agree"${err ? ' aria-invalid="true" aria-describedby="tos-err" autofocus' : ""}><span>I've read and agree to FAFO's Terms of Service</span></label>
 <div class="row"><button class="ok" type="submit" name="action" value="accept" id="tos-accept">Accept and continue</button><button class="no" type="submit" name="action" value="decline">Decline</button></div>
 <p class="hint">This sign-in lasts ${REQUEST_TTL_MS / 60000} minutes from when you clicked Continue with Discord in FAFO. Without accepting the terms you can't get a key.</p>
 </form>
-<script>(function(){var c=document.getElementById("tos-agree"),a=document.getElementById("tos-accept");function f(){a.disabled=!c.checked;}c.addEventListener("change",f);f();})();</script>`);
+<script>(function(){var c=document.getElementById("tos-agree"),a=document.getElementById("tos-accept"),s=false;function f(){a.disabled=!c.checked;}c.addEventListener("change",f);c.form.addEventListener("submit",function(e){if(s){e.preventDefault();return;}s=true;setTimeout(function(){s=false;},10000);});window.addEventListener("pageshow",function(){s=false;f();});f();})();</script>`);
 }
+
+// Discord's code as the terms step keeps it: hashed, only to know the page loaded again is the browser that came back.
+const termsCodeHash = (code) => sha256Hex("terms-code:" + code);
+// Whether the request comes from the browser Discord sent back with this ask: the callback's code, or the form's nonce.
+async function termsOwned(ask, proof) {
+  if (!proof) return false;
+  if (proof.nonce && ask.nonce && await sameText(String(proof.nonce), ask.nonce)) return true;
+  return !!(proof.code && ask.code_hash && await sameText(await termsCodeHash(proof.code), ask.code_hash));
+}
+// For anyone else at a sign-in waiting on the terms: no name, no form, nothing changed.
+const termsElsewhere = (back) => page(403, "Finish where you signed in", "Accept the terms on the page Discord opened, in the browser where you signed in with Discord. Or go back to FAFO and click Continue with Discord again.", back);
 
 // GET /terms: the terms for anyone to read, with no form.
 function termsRead() {
@@ -556,43 +585,47 @@ function termsRead() {
   return res;
 }
 
-const notAllowed = (allow) => { const res = page(405, "Not allowed", ""); res.headers.set("allow", allow); return res; };
+// GET /discord/terms (the address a page after the terms form shows, entered again or opened from history): no state, so
+// nothing about the sign-in.
+const notAllowed = (allow, msg = "") => { const res = page(405, "Not allowed", msg); res.headers.set("allow", allow); return res; };
 
-// POST /discord/terms {state, agree, action}: the terms page's form. Accept and continue with the box ticked keeps the
-// acceptance (the first one stays) and goes on as the callback does for a new user (finishSignIn); without the box, the
-// terms again (400). Decline ends the sign-in. Each takes the sign-in's ask first, in the same D1 batch as the acceptance,
-// so a double click finishes it once (the second press waits for the first's outcome). A sign-in no longer at the terms
-// (done, waiting for the seller, failed, expired) gets its page as the callback would show it. The state is never logged.
+// POST /discord/terms {state, nonce, agree, action}: the terms page's form. Accept and continue with the box ticked keeps
+// the acceptance (the first one stays) and goes on as the callback does for a new user (finishSignIn); without the box, the
+// terms again (400). Decline ends the sign-in. Only with the ask's nonce, which only the page Discord sent the user back
+// to has: the state alone (whoever started the sign-in knows it) gets termsElsewhere, with no name, and changes nothing.
+// Each takes the sign-in's ask first, in the same D1 batch as the acceptance, so a double click finishes it once (the
+// second press waits for the first's outcome). A sign-in no longer at the terms (done, waiting for the seller, failed,
+// expired) gets its page as the callback would show it. The state and the nonce are never logged.
 async function termsPost(request, env, ctx, url) {
   const text = await cappedBody(request, TERMS_FORM_MAX).catch(() => null);
   if (text === null) return page(413, "Something went wrong", "Go back to FAFO and click Continue with Discord again.");
   const form = new URLSearchParams(text);
-  const state = form.get("state") || "", decline = form.get("action") === "decline", agree = !!form.get("agree");
-  const webApp = webAppOf(state), back = webApp ? backToWeb(webApp) : "";
+  const state = form.get("state") || "", nonce = form.get("nonce") || "", decline = form.get("action") === "decline", agree = !!form.get("agree");
+  const webApp = webAppOf(state), back = webApp ? backToWeb(webApp) : "", proof = { nonce };
   const req = state ? await signInRequest(env, state) : null;
   const expired = () => page(400, "This sign-in expired", "Go back to FAFO and click Continue with Discord again.", back);
-  if (!req || req.status !== "terms" || Date.now() - req.created_at > REQUEST_TTL_MS) return (await signInPage(env, req, webApp)) || expired();
+  const outcome = async () => (await signInPage(env, await signInRequest(env, state), webApp, proof)) || expired();
+  if (!req || req.status !== "terms" || Date.now() - req.created_at > REQUEST_TTL_MS) return (await signInPage(env, req, webApp, proof)) || expired();
+  const ask = await env.DB.prepare("SELECT username, nonce FROM terms_asks WHERE r = ?").bind(req.r).first();
+  if (!ask) return outcome();   // another press took it: its outcome
+  if (!(await termsOwned(ask, proof))) return termsElsewhere(back);
   const now = Date.now();
   if (decline) {
-    const taken = await env.DB.prepare("DELETE FROM terms_asks WHERE r = ? RETURNING r").bind(req.r).first();
-    if (!taken) return (await signInPage(env, await signInRequest(env, state), webApp)) || expired();
+    const taken = await env.DB.prepare("DELETE FROM terms_asks WHERE r = ? AND nonce = ? RETURNING r").bind(req.r, ask.nonce).first();
+    if (!taken) return outcome();
     await env.DB.prepare("UPDATE requests SET status = 'error', error = ? WHERE r = ? AND status = 'terms'").bind(TERMS_DECLINED_MSG, req.r).run();
     return page(200, "Terms not accepted", TERMS_DECLINED_MSG, back);
   }
-  if (!agree) {
-    const ask = await env.DB.prepare("SELECT username FROM terms_asks WHERE r = ?").bind(req.r).first();
-    if (ask) return termsAskPage(400, state, ask.username, "Tick the box to accept the terms.");
-    return (await signInPage(env, await signInRequest(env, state), webApp)) || expired();
-  }
+  if (!agree) return termsAskPage(400, state, ask.username, ask.nonce, "Tick the box to accept the terms.");
   const [, taken] = await env.DB.batch([
     env.DB.prepare(`INSERT INTO terms_accepts (discord_id, username, version, accepted_at)
-      SELECT discord_id, username, ?2, ?3 FROM terms_asks WHERE r = ?1
-      ON CONFLICT (discord_id) DO NOTHING`).bind(req.r, TERMS.version, now),
-    env.DB.prepare("DELETE FROM terms_asks WHERE r = ? RETURNING discord_id, username").bind(req.r),
+      SELECT discord_id, username, ?2, ?3 FROM terms_asks WHERE r = ?1 AND nonce = ?4
+      ON CONFLICT (discord_id) DO NOTHING`).bind(req.r, TERMS.version, now, ask.nonce),
+    env.DB.prepare("DELETE FROM terms_asks WHERE r = ? AND nonce = ? RETURNING discord_id, username").bind(req.r, ask.nonce),
   ]);
-  const ask = taken.results[0];
-  if (!ask) return (await signInPage(env, await signInRequest(env, state), webApp)) || expired();
-  return finishSignIn(env, ctx, url.origin, req.r, "terms", ask.discord_id, ask.username, webApp);
+  const took = taken.results[0];
+  if (!took) return outcome();
+  return finishSignIn(env, ctx, url.origin, req.r, "terms", took.discord_id, took.username, webApp);
 }
 
 async function exchangeCode(env, code, redirectUri) {
@@ -633,8 +666,13 @@ async function issueLicense(env, ctx, discordId, username, notify) {
       .bind(discordId, username, key, await keyHash(key), Date.now()),
     env.DB.prepare("UPDATE list_state SET version = version + 1 WHERE id = 1"),
   ]);
+  // With approval off there's no request for the seller to see the Terms of Service on: the notice says when they accepted
+  // them (written before this, by Accept and continue's batch), as a request would; nothing new for anyone else.
   if (notify && ins.meta && ins.meta.changes) {
-    ctx.waitUntil(webhookPost(env, { content: `🔑 New FAFO license issued to **@${md(username)}** (Discord ID ${discordId}).` }).catch(() => {}));
+    ctx.waitUntil((async () => {
+      const terms = await termsOf(env, discordId);
+      await webhookPost(env, { content: `🔑 New FAFO license issued to **@${md(username)}** (Discord ID ${discordId}).` + (terms ? "\n" + termsLine(terms) : "") });
+    })().catch(() => {}));
   }
   return env.DB.prepare("SELECT * FROM licenses WHERE discord_id = ?").bind(discordId).first();
 }
@@ -718,7 +756,7 @@ async function review(request, env, ctx, url, discordId) {
   const btn = (a, text, cls) => `<form method="post"><input type="hidden" name="t" value="${esc(t)}"><input type="hidden" name="action" value="${a}"><button class="${cls}" type="submit">${text}</button></form>`;
   return page(200, "Key request", done || label,
     `<p class="who">@${esc(cur.username)}</p>
-     <p class="small">Discord ID ${esc(cur.discord_id)}<br>Account created ${day(accountCreated(cur.discord_id))}<br>Requested ${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC${terms ? "<br>" + esc(termsLine(terms)) : ""}</p>
+     <p class="small">Discord ID ${esc(cur.discord_id)}<br>Account created ${day(accountCreated(cur.discord_id))}<br>Requested ${esc(etWhen(cur.created_at))}${terms ? "<br>" + esc(termsLine(terms)) : ""}</p>
      ${done ? `<p class="small">Status: ${esc(label)}</p>` : ""}
      ${keyBlock}
      <div class="row">${cur.status !== "approved" ? btn("approve", "Approve", "ok") : ""}${cur.status !== "denied" ? btn("deny", "Deny", "no") : ""}</div>`);
@@ -6202,9 +6240,11 @@ async function admin(request, env, path) {
     return json({ premium: results, alertSender: s ? { key_last4: s.key_last4, username: s.username || null } : null });
   }
   if (request.method === "GET" && path === "/admin/licenses") {
+    // Each with the Terms of Service its user accepted (2026-11-17): {version, at}, or null for a key from before them.
     const { results } = await env.DB.prepare(
-      "SELECT discord_id, username, license_key, issued_at, revoked_at FROM licenses ORDER BY issued_at DESC").all();
-    return json({ licenses: results });
+      `SELECT l.discord_id, l.username, l.license_key, l.issued_at, l.revoked_at, t.version AS terms_version, t.accepted_at AS terms_at
+       FROM licenses l LEFT JOIN terms_accepts t ON t.discord_id = l.discord_id ORDER BY l.issued_at DESC`).all();
+    return json({ licenses: results.map(({ terms_version, terms_at, ...l }) => ({ ...l, terms: terms_version ? { version: terms_version, at: terms_at } : null })) });
   }
   if (request.method === "GET" && path === "/admin/slots") {
     const origin = new URL(request.url).origin;
