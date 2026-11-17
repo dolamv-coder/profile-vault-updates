@@ -486,6 +486,8 @@ async function signInPage(env, req, webApp, proof = null) {
       req = await signInRequest(env, req.state);
       continue;
     }
+    // "Join the server first" loaded again (someone back from joining): the same page, with its Join button.
+    if (req.status === "error" && req.error === JOIN_MSG) return page(403, "Join the server first", JOIN_MSG, joinButton(env) + back);
     if (req.status !== "pending") return page(400, "Something went wrong", req.error || "Go back to FAFO and try again.", back);
     return null;
   }

@@ -1160,11 +1160,14 @@ By default, any Discord account except bots gets a key. To limit it, edit `[vars
   Discord with Developer Mode on: right-click the server, then **Copy Server ID**. Since 2026-11-17 it's FAFO's
   server, and it's checked only for an account with no key (and not one you denied): someone who has a key gets it
   back wherever they are, so leaving or being kicked from the server doesn't turn a key off (deny their request, or
-  `/admin/revoke`, does). A non-member gets **Join the server first**, which the app shows too. Discord's sign-in
-  asks new users to let FAFO see their servers. If Discord doesn't give the list, the sign-in fails ("Couldn't check
-  your Discord servers"), never "join first".
+  `/admin/revoke`, does). A non-member gets **Join the server first**, which the app shows too, and the same page
+  when they load it again. Discord's sign-in asks everyone to let FAFO see their servers (the worker can't know who
+  will sign in), but only new users are checked. If Discord doesn't give the list, the sign-in fails ("Couldn't check
+  your Discord servers"), never "join first"; a sign-in started before this was set (without the permission) fails
+  that way once, and works when tried again.
 - `REQUIRED_GUILD_INVITE`: the invite the **Join FAFO's ACO** button on that page opens (only an https
-  `discord.gg/…` or `discord.com/invite/…` address; anything else shows no button).
+  `discord.gg/…` or `discord.com/invite/…` address; anything else shows no button). Use an invite that never
+  expires, with no use limit: an expired one opens Discord's "Invite invalid".
 - `MIN_ACCOUNT_AGE_DAYS`: turns away Discord accounts newer than this, which stops
   people making throwaway accounts for extra keys. `30` is a reasonable value.
 

@@ -619,6 +619,15 @@ try {
     const s = await getJson("/discord/status/" + r);
     assert.equal(s.status, "error"); assert.match(s.error, /30 days/);
   });
+  // The server tests' sign-ins go an hour back once done, so the tests after keep their room under 20 starts an hour from this address.
+  const autoSql = (cmd, tries = 5) => {
+    try { return execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "auto"), "--command", cmd, "--json"], { cwd: root, env, stdio: "pipe" }); }
+    catch (e) {
+      if (tries > 1 && /SQLITE_BUSY|database is locked/.test(String(e.stderr || "") + String(e.stdout || ""))) { execFileSync("sleep", ["1"]); return autoSql(cmd, tries - 1); }
+      throw e;
+    }
+  };
+  const hourBack = (r) => autoSql(`UPDATE requests SET created_at = created_at - 3600000 WHERE r = '${r}'`);
   await test("non-members of REQUIRED_GUILD_ID are turned away", async () => {
     const r = rid(); const { terms, page: pg } = await signIn(r, "outsider");
     assert.equal(terms, false, "before the Terms of Service");
@@ -630,16 +639,8 @@ try {
     assert.match(html, /Already joined\? Go back to FAFO and click Continue with Discord again\./);
     const s = await getJson("/discord/status/" + r);
     assert.equal(s.status, "error"); assert.match(s.error, /member of FAFO's ACO server/);
+    hourBack(r);
   });
-  // These two sign-ins go an hour back once done, so the tests after keep their room under 20 starts an hour from this address.
-  const autoSql = (cmd, tries = 5) => {
-    try { return execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "auto"), "--command", cmd, "--json"], { cwd: root, env, stdio: "pipe" }); }
-    catch (e) {
-      if (tries > 1 && /SQLITE_BUSY|database is locked/.test(String(e.stderr || "") + String(e.stdout || ""))) { execFileSync("sleep", ["1"]); return autoSql(cmd, tries - 1); }
-      throw e;
-    }
-  };
-  const hourBack = (r) => autoSql(`UPDATE requests SET created_at = created_at - 3600000 WHERE r = '${r}'`);
   await test("only new users must be in the server: a key holder who left gets their key back", async () => {
     const was = USERS.alice.guilds; USERS.alice.guilds = ["123"];
     try {
@@ -649,6 +650,24 @@ try {
       assert.equal(s.status, "issued"); assert.equal(s.username, "alice");
       hourBack(r);
     } finally { USERS.alice.guilds = was; }
+  });
+  await test("the Join page loaded again (back from joining) is the same page, with its button", async () => {
+    const r = rid(); const { state } = await signIn(r, "outsider");
+    const again = await get(`/discord/callback?state=${encodeURIComponent(state)}&code=outsider`);
+    assert.equal(again.status, 403);
+    const html = await again.text();
+    assert.match(html, /<h2>Join the server first<\/h2>/); assert.match(html, /class="join" href="https:\/\/discord\.gg\/Sample123"/);
+    hourBack(r);
+  });
+  await test("a declined account outside the server is told it was declined, not to join", async () => {
+    autoSql(`INSERT INTO applications (discord_id, username, review_token, created_at, status) VALUES ('${USERS.outsider.id}', 'outsider', 'x', 0, 'denied')`);
+    try {
+      const r = rid(); const { terms, page: pg } = await signIn(r, "outsider");
+      assert.equal(terms, false);
+      const html = await pg.text();
+      assert.match(html, /Request declined/); assert.doesNotMatch(html, /Join the server first|class="join"/);
+      hourBack(r);
+    } finally { autoSql(`DELETE FROM applications WHERE discord_id = '${USERS.outsider.id}'`); }
   });
   await test("a server list Discord doesn't give is a failed sign-in, not 'join first'", async () => {
     const r = rid(); const { terms, page: pg } = await signIn(r, "gfail");
