@@ -372,9 +372,9 @@ try {
     await s.page.waitForFunction(() => !document.querySelector("#layers .panel"));
     await s.ev(() => { const { S, persist, render } = window.__t; S.profiles[0].cardId = "c1"; persist(); render(); });
     await s.page.waitForFunction(() => document.querySelector('#guide .guide-step[data-step="interests"].is-cur'));
-    // From 1.9.155 Interests has its own Send to seller.
+    // From 1.9.155 Interests has its own Send to seller, named Send to runner from 1.9.156.
     assert.match(await s.text("#guide .guide-body"), /async function interestsSend\(/.test(PAGE)
-      ? /^On Interests, tick the products you'd like your seller to run on your profiles, then press Send to seller\. They also go with your next Submit\. Open Interests Skip$/
+      ? new RegExp(`^On Interests, tick the products you'd like your seller to run on your profiles, then press Send to ${/"Send to runner"/.test(PAGE) ? "runner" : "seller"}\\. They also go with your next Submit\\. Open Interests Skip$`)
       : /^On Interests, tick the products you'd like your seller to run on your profiles\. Your ticks go to your seller with your next Submit\. Open Interests Skip$/);
   });
   await test("in a short window (1366 × 650), Open Interests brings the three ticks it rings out from under the guide", async () => {
