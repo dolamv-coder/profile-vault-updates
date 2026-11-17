@@ -1,10 +1,10 @@
 {
-  "version": "1.9.154",
-  "url": "index-1.9.154.html",
-  "sha256": "a6f81cee59fa5eb27be63030ea7091a1521b14639b7e566b8f66b04b3c67b477",
-  "signature": "O1jPl64F1YJGTqn56QlI3hQJFnoZOL+chmUl1Qwx4GZM+8DLX/JiLvW6q4l2hWt/xwUAj+rmjnzOwymuZ+/YBA==",
+  "version": "1.9.155",
+  "url": "index-1.9.155.html",
+  "sha256": "1f162962c17a8486dcb6cb463f1bcceebd2ad2c283ca0a5a81989d3ce4720b43",
+  "signature": "hJbSMY9BsXmNPbpGl1O6oSWsoRjYeg3asnDs7iwk+G6OB6TE4w0+XrXgkp5/5filErbhfW5QTaK2lXl9ifx7AQ==",
   "minAppVersion": "0",
-  "notes": "Checkouts are now priced by the order's amount before tax: $5 under $50, $10 from $50, $15 from $100, $20 from $150 and $25 from $200. Friends and Family still pay $5. Invoice shows the price list and, under each checkout, the amount it was priced on.",
+  "notes": "Interests has a new look, and a Send to seller button: your picks go straight to your seller, without submitting your profiles again. Interests shows whether your seller has your latest picks, and they still go with every batch you submit. A card number now has to have all its digits (16, or 15 for American Express) before a profile or card saves.",
   "installerUrl": "",
-  "publishedAt": "2026-11-16T22:54:10.152Z"
+  "publishedAt": "2026-11-17T05:39:34.560Z"
 }
