@@ -1,10 +1,10 @@
 {
-  "version": "1.9.155",
-  "url": "index-1.9.155.html",
-  "sha256": "1f162962c17a8486dcb6cb463f1bcceebd2ad2c283ca0a5a81989d3ce4720b43",
-  "signature": "hJbSMY9BsXmNPbpGl1O6oSWsoRjYeg3asnDs7iwk+G6OB6TE4w0+XrXgkp5/5filErbhfW5QTaK2lXl9ifx7AQ==",
+  "version": "1.9.156",
+  "url": "index-1.9.156.html",
+  "sha256": "4502d8752b3d2d5a3069be6e5dfbe09f50b342bde76aefab865406fcc7b39c6d",
+  "signature": "0CHXOlKo1ynUu/pg3qnDbiVmIFa305eOw3h/YD7EPjVMj/41rHlAj2jB5OmwD0ts9cDBTTsDnuBwbZ8CDNWJAQ==",
   "minAppVersion": "0",
-  "notes": "Interests has a new look, and a Send to seller button: your picks go straight to your seller, without submitting your profiles again. Interests shows whether your seller has your latest picks, and they still go with every batch you submit. A card number now has to have all its digits (16, or 15 for American Express) before a profile or card saves.",
+  "notes": "On Interests, Send to seller is now Send to runner, and Interests calls your seller your runner.",
   "installerUrl": "",
-  "publishedAt": "2026-11-17T05:39:34.560Z"
+  "publishedAt": "2026-11-17T06:09:15.890Z"
 }
