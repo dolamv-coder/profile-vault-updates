@@ -535,13 +535,14 @@ function termsHTML() {
 const termsPage = (statusCode, extra = "") => page(statusCode, TERMS.title, "Effective " + TERMS.effective, termsHTML() + extra, "terms", TERMS_CSS);
 
 // The terms with the form a new user's sign-in waits on: tick the box, then Accept and continue (off until ticked; the
-// server checks the box anyway), or Decline. `err` is shown above the box.
+// server checks the box anyway), or Decline. `err` is shown above the box, which then takes the focus, so the page opens
+// scrolled to it (the terms are long).
 function termsAskPage(statusCode, state, username, err = "") {
   return termsPage(statusCode, `
 <p class="small">Signed in as @${esc(username)}</p>
 <form class="tos-form" method="post" action="/discord/terms">
 <input type="hidden" name="state" value="${esc(state)}">
-${err ? `<p class="err" role="alert">${esc(err)}</p>\n` : ""}<label class="tos-agree"><input type="checkbox" name="agree" value="1" id="tos-agree"${err ? ' aria-invalid="true"' : ""}><span>I've read and agree to FAFO's Terms of Service</span></label>
+${err ? `<p class="err" id="tos-err" role="alert">${esc(err)}</p>\n` : ""}<label class="tos-agree"><input type="checkbox" name="agree" value="1" id="tos-agree"${err ? ' aria-invalid="true" aria-describedby="tos-err" autofocus' : ""}><span>I've read and agree to FAFO's Terms of Service</span></label>
 <div class="row"><button class="ok" type="submit" name="action" value="accept" id="tos-accept">Accept and continue</button><button class="no" type="submit" name="action" value="decline">Decline</button></div>
 <p class="hint">This sign-in lasts ${REQUEST_TTL_MS / 60000} minutes from when you clicked Continue with Discord in FAFO. Without accepting the terms you can't get a key.</p>
 </form>

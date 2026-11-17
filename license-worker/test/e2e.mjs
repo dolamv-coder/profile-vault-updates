@@ -901,8 +901,8 @@ try {
       assert.equal(res.status, 400, JSON.stringify(fields));
       const html = await res.text();
       assertTerms(html);
-      assert.ok(html.includes('<p class="err" role="alert">Tick the box to accept the terms.</p>'));
-      assert.ok(html.includes('id="tos-agree" aria-invalid="true">'));
+      assert.ok(html.includes('<p class="err" id="tos-err" role="alert">Tick the box to accept the terms.</p>'));
+      assert.ok(html.includes('id="tos-agree" aria-invalid="true" aria-describedby="tos-err" autofocus>'), "the box takes the focus, so the page opens at it");
       assert.ok(html.includes(`value="${htmlEsc(kimState)}"`));
     }
     await new Promise((ok) => setTimeout(ok, 300));
