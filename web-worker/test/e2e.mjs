@@ -123,8 +123,11 @@ try {
     assert.ok(logins.length >= 3, "Login with Discord in the header, the hero and the last call");
     for (const m of logins) assert.equal(m[1], "https://app.fafoaco.com");
     for (const gone of [/Download for Windows/, /Open in your browser/, /Windows 10 and 11/, /any browser/, /href="\/download"/, /<script[^>]+src=/]) assert.doesNotMatch(body, gone);
-    // Every link stays on the page or goes to the app; nothing points at a download.
-    for (const m of body.matchAll(/<a\b[^>]*?\shref="([^"]*)"/g)) assert.match(m[1], /^(#(main|how|features|faq)|\/|https:\/\/app\.fafoaco\.com)$/, "a link the front page shouldn't have: " + m[1]);
+    // Every link stays on the page or goes to the app, FAFO's Discord server or its Terms of Service (the license answer,
+    // 2026-11-17); nothing points at a download.
+    for (const m of body.matchAll(/<a\b[^>]*?\shref="([^"]*)"/g)) assert.match(m[1], /^(#(main|how|features|faq)|\/|https:\/\/app\.fafoaco\.com|https:\/\/discord\.gg\/AkjJmYAng|https:\/\/license\.fafoaco\.com\/terms)$/, "a link the front page shouldn't have: " + m[1]);
+    assert.match(body, /For now Pokémon Center, Target and Costco \(Costco on your own Costco account\), and more are on the way\./);
+    assert.match(body, /join <a href="https:\/\/discord\.gg\/AkjJmYAng" target="_blank" rel="noopener noreferrer">FAFO's ACO server<\/a> on Discord, and accept <a href="https:\/\/license\.fafoaco\.com\/terms" target="_blank" rel="noopener noreferrer">FAFO's Terms of Service<\/a>\./);
     for (const gone of [/FAFO-Windows\.zip/, /releases\/latest/, /\bWindows\b/]) assert.doesNotMatch(body, gone);
     const { sitePage } = await import("../src/site.js");
     const hostile = sitePage('1.9.0"><x', 'https://x" onmouseover="alert(1)');

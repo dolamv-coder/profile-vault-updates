@@ -21,6 +21,8 @@ const LOGO_ACO =
   "5 150.66ZM260.42 159.5L277.42 159.5L288.03 150.66L291.29 134.34L284.22 125.5L267.22 125.5L256.61 134.34L253.35 150.6" +
   "6ZM263.79 152.1L274.96 152.1L281.41 146.73L283.51 136.23L280.84 132.9L269.67 132.9L263.22 138.27L261.12 148.77Z";
 
+// The license worker imports logoSVG too (license-worker/src/index.js, page()): keep this file free of imports, and keep the
+// lg1, lg2, lg3, lg-aco and lg-glow classes, which its CSS colours.
 // The logo as inline SVG; `id` keeps each copy's gradient, mask and blur apart (one per place on the page).
 export function logoSVG(id) {
   const u = (k) => `url(#${id}-${k})`;

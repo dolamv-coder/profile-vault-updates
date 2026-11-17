@@ -4,7 +4,8 @@ FAFO was called Orbit until 1.9.75 (and Profile Vault before that), so older ver
 The worker's own names (`orbit-license`, its address and its D1 database) stay as they are: installed apps use them.
 
 Gives new users a license key through Discord. In FAFO (1.9.41 and later), a new user
-clicks **Continue with Discord** and signs in with Discord in their browser. Then either:
+clicks **Continue with Discord**, signs in with Discord in their browser, and accepts FAFO's
+[Terms of Service](#the-terms-of-service). Then either:
 
 - **You approve each request** (`REQUIRE_APPROVAL = "true"`, the setting in
   `wrangler.toml`): the request appears in your Discord channel with a link to approve or
@@ -185,6 +186,64 @@ the `/admin/applications` list below.
 
 To go back to handing keys out straight away, set `REQUIRE_APPROVAL = ""` in
 `wrangler.toml` and run `npm run deploy`. People you denied stay denied.
+
+## The Terms of Service
+
+From 2026-11-17 a new user reads FAFO's Terms of Service in their browser right after signing in with
+Discord, and their request reaches you (or, with `REQUIRE_APPROVAL = ""`, their key is made) only once they
+accept them. It all happens on this worker's pages, so every FAFO version gets it, desktop and web, with no
+update.
+
+- **Who sees them:** only a new user: a Discord account with no key, no request from before (waiting,
+  approved or denied) and no acceptance yet. People who already have a key get it back as before, a request
+  that's waiting stays waiting, and someone you denied is told so, all without the terms. Bots and accounts that
+  are too new are turned away first, as before, and so is a new user who isn't in `REQUIRED_GUILD_ID` (below).
+- **The page** shows the terms word for word (the title, the date they took effect, "In short", the seven
+  sections, "Questions? Ask staff."), who signed in, a box to tick, **I've read and agree to FAFO's Terms of
+  Service**, then **Accept and continue** (off until the box is ticked; the worker checks the box too) and
+  **Decline** (an outline button, so the bright one under the box isn't the one that ends the sign-in). The
+  sign-in lasts 15 minutes from **Continue with Discord**, as before; meanwhile FAFO keeps waiting
+  (`/discord/status` answers `pending`). Loading the page again shows the terms again without going back to
+  Discord.
+- **Only the browser Discord sent back** can answer them or see who signed in. The sign-in's `state` isn't a
+  secret (whoever started the sign-in has it), so someone who got a person to sign in with Discord from their
+  link could otherwise accept the terms in that person's name. The form carries a nonce only that page has, and
+  the page loaded again shows the form only with Discord's code in its address; anyone else gets "Finish where
+  you signed in", with no name, and nothing changes.
+- **Accept and continue** keeps the acceptance and goes on as a sign-in did before: with approval on, the
+  request is posted to your channel and the page says **Request sent**; with approval off, the key is made and
+  shown. The page sends the form once, so a double click shows the page the first press got (with the key,
+  with approval off); without JavaScript, a second press still sends one request.
+- **Decline** ends the sign-in ("Terms not accepted"). FAFO says they need to accept the terms to get a key, and
+  Continue with Discord starts again with the terms.
+- **What you see:** the request in your channel, its review page and `/admin/applications` (`terms`:
+  `{version, at}`) say when they accepted:
+
+  > 📝 **New FAFO key request** from **@name** · Discord ID … · account created …
+  > Accepted the Terms of Service (November 13, 2026 version) on Nov 17, 2026, 2:05 PM EST
+  > [Review: approve or deny](…)
+
+  The review page gives when it was requested in Eastern time too ("Requested Nov 17, 2026, 2:05 PM EST"; it was
+  UTC before). With approval off there's no request: the "🔑 New FAFO license issued" notice in your channel ends
+  with the same line, and `/admin/licenses` has each key's `terms`. Requests and keys from before the terms say
+  nothing new.
+- **Anyone can read them** at `/terms` (for example `https://license.fafoaco.com/terms`), with no form.
+
+The worker's side: the callback (`GET /discord/callback`) moves a new user's sign-in to the status `terms`
+and keeps who signed in in `terms_asks` (by the sign-in's id, with the form's `nonce` and a SHA-256 of
+Discord's code, never the code; cleaned up with old sign-ins); the page's form posts to `POST /discord/terms`
+(`state`, `nonce`, `agree`, `action` `accept` or `decline`; anything but POST is 405, and `GET /discord/terms`,
+the address a page after the form shows, says there's nothing to show there); each acceptance is kept once per
+Discord account, the first one, with the terms' version and when (`terms_accepts`). Both tables are new: the
+deploy Action adds them before it deploys (`npm run db:init`, safe to run again; run it yourself if you deploy by
+hand).
+
+### Changing the terms
+
+The terms are in `src/terms.js`, word for word as they're posted in FAFO's Discord. To change them, edit
+the text there, give them a new `version` (their effective date, as `2026-12-01`) and `effective`
+(`December 1, 2026`), and deploy. Only new users accept them: people who already have a key or a request
+aren't asked again, and an acceptance keeps the version it was for.
 
 ## Getting pinged for each post
 
@@ -1097,8 +1156,18 @@ shorten the limits). Never put them in `wrangler.toml`: the tests check it has n
 By default, any Discord account except bots gets a key. To limit it, edit `[vars]` in
 `wrangler.toml` and run `npm run deploy` again:
 
-- `REQUIRED_GUILD_ID`: only members of your Discord server get a key. Get the ID in
-  Discord with Developer Mode on: right-click the server, then **Copy Server ID**.
+- `REQUIRED_GUILD_ID`: only members of your Discord server get a new key. Get the ID in
+  Discord with Developer Mode on: right-click the server, then **Copy Server ID**. Since 2026-11-17 it's FAFO's
+  server, and it's checked only for an account with no key (and not one you denied): someone who has a key gets it
+  back wherever they are, so leaving or being kicked from the server doesn't turn a key off (deny their request, or
+  `/admin/revoke`, does). A non-member gets **Join the server first**, which the app shows too, and the same page
+  when they load it again. Discord's sign-in asks everyone to let FAFO see their servers (the worker can't know who
+  will sign in), but only new users are checked. If Discord doesn't give the list, the sign-in fails ("Couldn't check
+  your Discord servers"), never "join first"; a sign-in started before this was set (without the permission) fails
+  that way once, and works when tried again.
+- `REQUIRED_GUILD_INVITE`: the invite the **Join FAFO's ACO** button on that page opens (only an https
+  `discord.gg/…` or `discord.com/invite/…` address; anything else shows no button). Use an invite that never
+  expires, with no use limit: an expired one opens Discord's "Invite invalid".
 - `MIN_ACCOUNT_AGE_DAYS`: turns away Discord accounts newer than this, which stops
   people making throwaway accounts for extra keys. `30` is a reasonable value.
 
@@ -1109,10 +1178,10 @@ A single network address can start at most 20 sign-ins an hour.
 These need `ADMIN_TOKEN`. In PowerShell, use `curl.exe` rather than `curl`.
 
 ```
-# Every key issued, newest first
+# Every key issued, newest first, each with the Terms of Service it accepted
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/licenses
 
-# Every request and your decision, each with its review link
+# Every request and your decision, each with its review link and the Terms of Service it accepted
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/applications
 
 # Turn a key off (by key, or by Discord ID with {"discord_id":"..."})
@@ -1143,7 +1212,11 @@ Runs the worker in Wrangler's local runtime with a local database and a mock Dis
 once handing out keys straight away and once with approval on. It goes through sign-in,
 key pickup, repeat sign-in, cancelled and refused sign-ins, the account-age and server
 checks, revoke and restore, the rate limit, requests being posted, approved, denied
-and changed, slot limits, submissions and collecting keys, pulled slots, the Interests list (its pictures, the
+and changed, the Terms of Service (shown only to new users, loaded again without asking Discord again,
+answered only from the browser Discord sent back (the state alone, a wrong nonce or code), the box required,
+accepted with approval on and off (from the web version too), pressed twice at once, accepted in a second sign-in
+after a denial or the key turned off, declined, expired, old asks cleaned up, what the channel, the review page,
+`/admin/applications` and `/admin/licenses` say, and `/terms`), slot limits, submissions and collecting keys, pulled slots, the Interests list (its pictures, the
 products added to it once, the SKUs a batch carries, and picks sent on their own: the message and files, the same
 picks again, the daily limit, also sent at once, and a failed post), product pictures
 (against a stand-in catalog: exact names only, never a case, another edition or two that fit),

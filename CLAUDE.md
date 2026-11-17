@@ -55,6 +55,45 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   handing the sign-in to the browser) opens FAFO at once rather than closing back into Discord, and the page says to go
   back to FAFO in the Discord app or other browser where it was signed in. A request waiting for approval reloaded after
   15 minutes says Request sent, not expired (`REVIEW_TTL_MS`). The desktop app's sign-in pages are as before.
+  Since 2026-11-17 (the owner: "I want to revamp how new users get their license keys. Before a key is issue, I want users
+  to read the terms and conditions, accepts it then a key will be generated for them to use", then "Keep approval, I already
+  have the terms set up on FAFO discord, only new users accept") a **new user** (no `licenses` row, no `applications` row
+  whatever its status, no `terms_accepts` row) reads FAFO's **Terms of Service** after Discord's checks (bots, account age,
+  and FAFO's Discord server, below, still first): the callback puts the sign-in at status `terms`, with who signed in in `terms_asks` (by
+  its `r`; loaded again it shows them from there, never exchanging the code again), and shows `termsAskPage`: `TERMS` from
+  `license-worker/src/terms.js`, word for word as the owner posted them in FAFO's Discord (keep it so), who signed in, a box
+  (I've read and agree…), Accept and continue (off until ticked; the worker checks the box too) and Decline (an outline).
+  Only the browser Discord sent back answers them: the state isn't a secret (whoever called `/discord/start` has it), so
+  the ask keeps a `nonce` the form carries and `code_hash` (SHA-256 of Discord's code), the page loaded again shows the form
+  and the name only with that code (`termsOwned`), and anyone else gets `termsElsewhere` (403, no name, nothing changed; the
+  review's repro: a link to Discord with someone else's state let its maker accept the terms in the victim's name). `POST
+  /discord/terms` (`termsPost`; the form capped at 2 KB, the state and nonce never logged) takes the ask first (by its
+  nonce), in one D1 batch with the acceptance (`terms_accepts`: the first one kept, with its `version` and `accepted_at`),
+  so a double press finishes it once (the other waits for its outcome, `signInPage`), then goes on through `finishSignIn`,
+  the tail the callback uses for everyone else (approval on: `ensureApplication`, `review`, Request sent; off: the key), so
+  those pages are byte for byte as before; without the box it's 400 with the terms again; Decline is status `error` ("You
+  need to accept FAFO's Terms of Service to get a key…", the page "Terms not accepted"). The page's script sends the form
+  once (never by turning the pressed button off, which drops `action`), so a double click shows the first press's page,
+  with the key when approval is off. Past 15 minutes from Continue with Discord (`REQUEST_TTL_MS`) it has expired, and a
+  sign-in past the terms gets the callback's page for its status (Back to FAFO for the web); `GET /discord/terms` is 405
+  with a line saying there's nothing to show. `/discord/status` answers `pending` at `terms`. The channel's request
+  (`reviewMessage`, also when `decide` edits it), the review page (whose Requested line is Eastern now too) and
+  `/admin/applications` (`terms: {version, at}`, null for one from before) say "Accepted the Terms of Service (November 13,
+  2026 version) on Nov 17, 2026, 2:05 PM EST" (`termsLine`, `etWhen`: US Eastern); with approval off, the 🔑 notice
+  (`issueLicense`) and `/admin/licenses` do; requests and keys from before say nothing new. `GET /terms` shows them to
+  anyone, with no form (cached 5 minutes). Changing them is a new
+  `version` in `terms.js`: only new users accept, so no one is asked again. Worker only: no new page, and every app version,
+  desktop and web, gets it, since it all happens in the browser after Discord.
+  Also since 2026-11-17 (the owner: "require new users to be in my discord server", with its ID and invite) **new users must be
+  in FAFO's Discord server**: `REQUIRED_GUILD_ID` (wrangler.toml, `1542410391219605544`) is checked only for an account with no
+  key and no denied request, after the key lookups (a key holder who left, or was kicked, gets their key back: a key is turned
+  off by denying its request or `/admin/revoke`, never by leaving the server); a non-member gets **Join the server first**
+  (`JOIN_MSG`, "You need to be a member of FAFO's ACO server on Discord…", the request's error the app shows too) with a
+  **Join FAFO's ACO** button to `REQUIRED_GUILD_INVITE` (`https://discord.gg/AkjJmYAng`; `inviteUrl` takes only an https
+  discord.gg or discord.com/invite address) before the terms, and a server list Discord doesn't give is a failed sign-in
+  ("Couldn't check your Discord servers", 502), never "join first". And every page the worker draws (`page()`) is headed by
+  FAFO ACO's logo (the owner: "use the FAFO ACO logo too"), `logoSVG` imported from `web-worker/src/brand.js` (one source with
+  the front page) in its dark colours, where Bruno Ace SC wrote FAFO; screen readers read "FAFO ACO".
   It also keeps each license's slot limit (default 20 switched on at once on the
   Submit page, app 1.9.46+): `/slots/limit` and `/slots/request` take the license
   key as `Authorization: Bearer`, and requests are approved at `/slots/review/:id`.
@@ -2859,3 +2898,6 @@ the Orbit desktop app or the relay.
 Claude may merge its own pull requests into main once tests pass, except changes to licenses.json
 Before merging anything that ships (a new page, a worker change people see, a desktop download), send the owner
 screenshots of it and wait for their go-ahead (the owner's request, 2026-10-10).
+Before building anything people will see, show the owner a mockup screenshot of it first (the real page with sample data,
+the change drawn over it) and build only once they've seen it (the owner's request, 2026-11-17: "lets do this from now on.
+Screenshot first before building.").

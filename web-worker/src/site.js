@@ -13,6 +13,10 @@ export const APP_URL = "https://app.fafoaco.com";
 // version; index.js looks it up from RELEASES_URL), else DOWNLOAD_URL, GitHub's link to the latest release's
 // FAFO-Windows.zip, as every page before 1.9.146 links it.
 export const RELEASES_URL = "https://github.com/dolamv-coder/profile-vault-updates/releases";
+// FAFO's Discord server, which new users have to be in to get a key, and the terms they accept first (license worker,
+// 2026-11-17).
+export const DISCORD_INVITE = "https://discord.gg/AkjJmYAng";
+export const TERMS_URL = "https://license.fafoaco.com/terms";
 export const DOWNLOAD_URL = "https://github.com/dolamv-coder/profile-vault-updates/releases/latest/download/FAFO-Windows.zip";
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -378,6 +382,7 @@ section.sec#features{background:var(--band);margin-top:120px;padding:104px 0 112
 .qs details[open] summary .pm{transform:rotate(45deg);background:var(--btn);border-color:var(--btn);color:#fff}
 .qs details[open] summary{padding-bottom:18px}
 .qs details p{margin:0 56px 24px 0;color:var(--ink-2);font-size:16px;line-height:1.65}
+.qs details p a{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
 
 /* Last call */
 .final{position:relative;isolation:isolate;overflow:hidden;margin-top:128px;border-radius:34px;background:linear-gradient(180deg,#08142B 0%,#0A1B36 60%,#0D2A4C 100%);box-shadow:0 60px 90px -50px rgba(56,189,248,.6);color:#F8FAFC;text-align:center;padding:100px 24px 104px}
@@ -575,11 +580,11 @@ footer{margin-top:96px;border-top:1px solid var(--line)}
     <div class="wrap faq">
       <div class="head"><h2 class="display">Good to know.</h2><p>Anything else? Ask your runner in their Discord.</p></div>
       <div class="qs">
-        <details open><summary>How do I get a license?<span class="pm">${ic("plus")}</span></summary><p>Choose Login with Discord. Once your runner approves you, your license arrives in FAFO on its own.</p></details>
+        <details open><summary>How do I get a license?<span class="pm">${ic("plus")}</span></summary><p>Choose Login with Discord, join <a href="${DISCORD_INVITE}" target="_blank" rel="noopener noreferrer">FAFO's ACO server</a> on Discord, and accept <a href="${TERMS_URL}" target="_blank" rel="noopener noreferrer">FAFO's Terms of Service</a>. Once your runner approves you, your license arrives in FAFO on its own.</p></details>
         <details><summary>Do I need to download anything?<span class="pm">${ic("plus")}</span></summary><p>No. FAFO runs in your browser at ${appHost}, on your computer or your phone.</p></details>
         <details><summary>Who can see my cards and passwords?<span class="pm">${ic("plus")}</span></summary><p>Your vault is encrypted with your master password before it's saved or synced, so only you can open it. When you submit slots, your runner gets each slot's card, addresses and store logins, so they can check out with them. For slots on your own accounts, they also get each inbox's email and app password, so they can follow your orders.</p></details>
         <details><summary>What if I forget my master password?<span class="pm">${ic("plus")}</span></summary><p>No one can reset it, not even your runner: it's the key your vault is encrypted with. Keep it somewhere safe.</p></details>
-        <details><summary>Which stores does FAFO work with?<span class="pm">${ic("plus")}</span></summary><p>For now only Pokémon Center and Target, but more are on the way.</p></details>
+        <details><summary>Which stores does FAFO work with?<span class="pm">${ic("plus")}</span></summary><p>For now Pokémon Center, Target and Costco (Costco on your own Costco account), and more are on the way.</p></details>
         <details><summary>How do my orders get into FAFO?<span class="pm">${ic("plus")}</span></summary><p>Orders will be displayed after runner successfully checks out with your profiles.</p></details>
         <details><summary>Can I use FAFO on my phone and my computer?<span class="pm">${ic("plus")}</span></summary><p>Yes. Your vault syncs from the start: on the other device, choose Login with Discord and enter the same master password. Made it with Use this browser only? Turn on sync in Settings → Web version &amp; sync first.</p></details>
       </div>
