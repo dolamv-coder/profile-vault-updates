@@ -35,6 +35,7 @@ const USERS = {
   bob:   { id: snowflake(Date.parse("2020-06-01")), username: "bob", guilds: [GUILD] },
   fresh: { id: snowflake(Date.now() - 2 * 86400000), username: "fresh", guilds: [GUILD] },
   outsider: { id: snowflake(Date.parse("2018-01-01")), username: "outsider", guilds: ["123"] },
+  gfail: { id: snowflake(Date.parse("2018-02-01")), username: "gfail", guilds: [GUILD], guildsFail: true },
   robot: { id: snowflake(Date.parse("2018-01-01")), username: "robot", guilds: [GUILD], bot: true },
   carol: { id: snowflake(Date.parse("2021-03-01")), username: "carol_x", guilds: [] },
   dave:  { id: snowflake(Date.parse("2021-04-01")), username: "dave", guilds: [] },
@@ -232,7 +233,7 @@ const discord = createServer(async (req, res) => {
     return USERS[p.get("code")] ? send(200, { access_token: "tok-" + p.get("code"), token_type: "Bearer" }) : send(400, { error: "invalid_grant" });
   }
   if (req.url === "/users/@me" && USERS[who]) { const u = USERS[who]; return send(200, { id: u.id, username: u.username, bot: !!u.bot }); }
-  if (req.url === "/users/@me/guilds" && USERS[who]) return send(200, USERS[who].guilds.map((id) => ({ id })));
+  if (req.url === "/users/@me/guilds" && USERS[who]) return USERS[who].guildsFail ? send(500, { message: "down" }) : send(200, USERS[who].guilds.map((id) => ({ id })));
   const u = new URL(req.url, "http://x");
   if (req.method === "GET" && u.pathname === "/gh.json") return send(200, ghList);
   // The same list for one worker, which can be made unreadable (GitHub rate-limiting: a 429 that isn't JSON).
@@ -432,7 +433,7 @@ const cellT = (v) => /[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 
 try {
   console.log("Automatic mode");
-  await startWorker("auto", WORKER_PORT, ["REQUIRE_APPROVAL=", `REQUIRED_GUILD_ID=${GUILD}`, "MIN_ACCOUNT_AGE_DAYS=30"]);
+  await startWorker("auto", WORKER_PORT, ["REQUIRE_APPROVAL=", `REQUIRED_GUILD_ID=${GUILD}`, "REQUIRED_GUILD_INVITE=https://discord.gg/Sample123", "MIN_ACCOUNT_AGE_DAYS=30"]);
   let aliceKey, firstIssued;
   await test("ready reports configured", async () => assert.deepEqual(await getJson("/discord/ready"), { ready: true }));
   // A copy of GitHub's files for networks that block raw.githubusercontent.com (app 1.9.83+).
@@ -525,7 +526,7 @@ try {
     assert.equal(again.status, 200);
     const html = await again.text();
     assert.match(html, /all set/);
-    assert.match(html, /<title>FAFO · You&#39;re all set<\/title>/); assert.match(html, /<h1>FAFO<\/h1>/); assert.match(html, /family=Bruno\+Ace\+SC&text=FAFO/);
+    assert.match(html, /<title>FAFO · You&#39;re all set<\/title>/); assert.match(html, /<h1><span class="sr">FAFO ACO<\/span><svg class="logo-svg"/); assert.doesNotMatch(html, /Bruno/);
     assert.match(html, /Go back to FAFO/); assert.doesNotMatch(html, /Orbit/);
     const b = await verifyList(await getJson("/licenses"));
     assert.equal(b.keys.length, 2);
@@ -619,10 +620,44 @@ try {
     assert.equal(s.status, "error"); assert.match(s.error, /30 days/);
   });
   await test("non-members of REQUIRED_GUILD_ID are turned away", async () => {
-    const r = rid(); const { terms } = await signIn(r, "outsider");
+    const r = rid(); const { terms, page: pg } = await signIn(r, "outsider");
     assert.equal(terms, false, "before the Terms of Service");
+    assert.equal(pg.status, 403);
+    const html = await pg.text();
+    assert.match(html, /<h2>Join the server first<\/h2>/);
+    assert.match(html, /You need to be a member of FAFO&#39;s ACO server on Discord to get a key\. Join it, then click Continue with Discord in FAFO again\./);
+    assert.match(html, /<a class="join" href="https:\/\/discord\.gg\/Sample123" target="_blank" rel="noopener noreferrer">Join FAFO's ACO<\/a>/);
+    assert.match(html, /Already joined\? Go back to FAFO and click Continue with Discord again\./);
     const s = await getJson("/discord/status/" + r);
-    assert.equal(s.status, "error"); assert.match(s.error, /member/);
+    assert.equal(s.status, "error"); assert.match(s.error, /member of FAFO's ACO server/);
+  });
+  // These two sign-ins go an hour back once done, so the tests after keep their room under 20 starts an hour from this address.
+  const autoSql = (cmd, tries = 5) => {
+    try { return execFileSync(process.execPath, [...wrangler, "d1", "execute", "orbit-license", "--local", "--persist-to", join(tmp, "auto"), "--command", cmd, "--json"], { cwd: root, env, stdio: "pipe" }); }
+    catch (e) {
+      if (tries > 1 && /SQLITE_BUSY|database is locked/.test(String(e.stderr || "") + String(e.stdout || ""))) { execFileSync("sleep", ["1"]); return autoSql(cmd, tries - 1); }
+      throw e;
+    }
+  };
+  const hourBack = (r) => autoSql(`UPDATE requests SET created_at = created_at - 3600000 WHERE r = '${r}'`);
+  await test("only new users must be in the server: a key holder who left gets their key back", async () => {
+    const was = USERS.alice.guilds; USERS.alice.guilds = ["123"];
+    try {
+      const r = rid(); const { terms, page: pg } = await signIn(r, "alice");
+      assert.equal(terms, false); assert.match(await pg.text(), /all set/);
+      const s = await getJson("/discord/status/" + r);
+      assert.equal(s.status, "issued"); assert.equal(s.username, "alice");
+      hourBack(r);
+    } finally { USERS.alice.guilds = was; }
+  });
+  await test("a server list Discord doesn't give is a failed sign-in, not 'join first'", async () => {
+    const r = rid(); const { terms, page: pg } = await signIn(r, "gfail");
+    assert.equal(terms, false); assert.equal(pg.status, 502);
+    const html = await pg.text();
+    assert.match(html, /Sign-in failed/); assert.doesNotMatch(html, /Join the server first/);
+    const s = await getJson("/discord/status/" + r);
+    assert.equal(s.status, "error"); assert.match(s.error, /Couldn't check your Discord servers/);
+    hourBack(r);
   });
   await test("unknown state and unknown request id", async () => {
     assert.equal((await get("/discord/callback?state=nope&code=alice")).status, 400);

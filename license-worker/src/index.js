@@ -211,6 +211,8 @@
 
 import { INTEREST_SEED, INTEREST_ADDS } from "./interest-seed.js";
 import { TERMS } from "./terms.js";
+// FAFO ACO's logo, the front page's own (2026-11-17, the owner: "use the FAFO ACO logo too"), heading every page here.
+import { logoSVG } from "../../web-worker/src/brand.js";
 import { imapSignIn } from "./imap.js";
 
 const DISCORD_AUTHORIZE = "https://discord.com/oauth2/authorize";
@@ -387,7 +389,7 @@ async function callback(env, ctx, url) {
   const known = await signInPage(env, req, webApp, { code });
   if (known) return known;
 
-  const fail = (title, msg, statusCode = 403) => signInFail(env, req.r, "pending", webApp, title, msg, statusCode);
+  const fail = (title, msg, statusCode = 403, extra = "") => signInFail(env, req.r, "pending", webApp, title, msg, statusCode, extra);
   if (url.searchParams.get("error") || !code) return fail("Sign-in cancelled", "Discord sign-in was cancelled. Click Continue with Discord in FAFO to try again.", 400);
 
   const token = await exchangeCode(env, code, url.origin + "/discord/callback");
@@ -401,13 +403,6 @@ async function callback(env, ctx, url) {
   if (minDays > 0 && Date.now() - accountCreated(user.id) < minDays * 86400000) {
     return fail("Account too new", `Your Discord account must be at least ${minDays} days old to get a key.`);
   }
-  if (env.REQUIRED_GUILD_ID) {
-    const guilds = await discordGet(env, "/users/@me/guilds", token);
-    if (!Array.isArray(guilds) || !guilds.some((g) => g && g.id === env.REQUIRED_GUILD_ID)) {
-      return fail("Join the server first", "You need to be a member of our Discord server to get a key. Join it, then try again.");
-    }
-  }
-
   // A new user (no key, no request from before, whatever its decision, and never accepted the terms) reads FAFO's Terms of
   // Service first (2026-11-17, the owner: "Before a key is issue, I want users to read the terms and conditions, accepts it
   // then a key will be generated for them to use"; "only new users accept"). The sign-in waits at 'terms' with who signed
@@ -421,6 +416,14 @@ async function callback(env, ctx, url) {
     env.DB.prepare("SELECT status FROM applications WHERE discord_id = ?").bind(user.id).first(),
     env.DB.prepare("SELECT discord_id FROM terms_accepts WHERE discord_id = ?").bind(user.id).first(),
   ]);
+  // New users must be in FAFO's Discord server (REQUIRED_GUILD_ID; 2026-11-17, the owner: "require new users to be in my
+  // discord server"): an account without a key, unless it was declined (that answer stands, and joining wouldn't change it).
+  // Someone with a key gets it back wherever they are. A list Discord didn't give is a failed sign-in, not "join first".
+  if (env.REQUIRED_GUILD_ID && !existing && !(prior && prior.status === "denied")) {
+    const guilds = await discordGet(env, "/users/@me/guilds", token);
+    if (!Array.isArray(guilds)) return fail("Sign-in failed", "Couldn't check your Discord servers. Click Continue with Discord in FAFO to try again.", 502);
+    if (!guilds.some((g) => g && g.id === env.REQUIRED_GUILD_ID)) return fail("Join the server first", JOIN_MSG, 403, joinButton(env));
+  }
   if (!existing && !prior && !accepted) {
     const nonce = randomId(24);
     const [, moved] = await env.DB.batch([
@@ -441,10 +444,23 @@ async function callback(env, ctx, url) {
 const signInRequest = (env, state) => env.DB.prepare("SELECT * FROM requests WHERE state = ?").bind(state).first();
 
 // A sign-in that failed: the request says so (if it's still at `from`), and the page shows it.
-async function signInFail(env, r, from, webApp, title, msg, statusCode = 403) {
+async function signInFail(env, r, from, webApp, title, msg, statusCode = 403, extra = "") {
   await env.DB.prepare("UPDATE requests SET status = 'error', error = ? WHERE r = ? AND status = ?").bind(msg, r, from).run();
-  return page(statusCode, title, msg, webApp ? backToWeb(webApp) : "");
+  return page(statusCode, title, msg, extra + (webApp ? backToWeb(webApp) : ""));
 }
+
+// "Join the server first" (REQUIRED_GUILD_ID): what the app shows too (the request's error), and the page's Join FAFO's ACO
+// button to REQUIRED_GUILD_INVITE, only an https Discord invite (discord.gg/… or discord.com/invite/…), else no button.
+const JOIN_MSG = "You need to be a member of FAFO's ACO server on Discord to get a key. Join it, then click Continue with Discord in FAFO again.";
+const inviteUrl = (env) => {
+  const u = String(env.REQUIRED_GUILD_INVITE || "").trim();
+  return /^https:\/\/(discord\.gg|discord\.com\/invite)\/[A-Za-z0-9-]{2,32}$/.test(u) ? u : "";
+};
+const joinButton = (env) => {
+  const u = inviteUrl(env);
+  return (u ? `<p class="go"><a class="join" href="${esc(u)}" target="_blank" rel="noopener noreferrer">Join FAFO's ACO</a></p>` : "") +
+    `<p class="small">Already joined? Go back to FAFO and click Continue with Discord again.</p>`;
+};
 
 // The page for a sign-in past Discord's step, as its status has it (the callback loaded again, or the terms form sent for a
 // sign-in that isn't at the terms any more), or null for one still waiting for Discord ('pending'). One at the terms whose
@@ -7109,11 +7125,16 @@ function page(statusCode, title, msg, extra = "", wide = false, css = "") {
   return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
 <title>FAFO · ${esc(title)}</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bruno+Ace+SC&text=FAFO&display=swap">
 <style>
   body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1433;color:#e6ecff;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;padding:16px;box-sizing:border-box}
   main{max-width:440px;width:100%;background:#0f1d45;border:1px solid #2a3f7a;border-radius:16px;padding:28px;box-sizing:border-box}
-  h1{margin:0 0 4px;font:400 34px "Bruno Ace SC",system-ui,sans-serif;letter-spacing:.06em;color:#4a9dff}
+  h1{margin:0 0 10px;line-height:0}
+  .logo-svg{display:block;height:48px;width:calc(48px * 2.5264);filter:drop-shadow(0 0 14px rgba(56,189,248,.35))}
+  .logo-svg .lg1{stop-color:#7DD3FC}.logo-svg .lg2{stop-color:#38BDF8}.logo-svg .lg3{stop-color:#0EA5E9}
+  .logo-svg .lg-aco{fill:#7DD3FC}.logo-svg .lg-glow{opacity:.35}
+  .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+  a.join{display:block;text-align:center;padding:12px;border-radius:10px;font:600 16px system-ui,sans-serif;background:#5865F2;color:#fff;text-decoration:none}
+  a.join:focus-visible{outline:2px solid #e6ecff;outline-offset:2px}
   h2{margin:0 0 12px;font-size:18px}
   p{margin:0 0 12px;color:#b9c6ea}
   .small{font-size:14px;margin-top:20px;overflow-wrap:anywhere}
@@ -7166,6 +7187,6 @@ function page(statusCode, title, msg, extra = "", wide = false, css = "") {
     td.act{grid-column:3;grid-row:1 / span 2;align-self:center}
     td.act form{display:block;margin:4px 0}
   }
-${css}</style></head><body><main${wide ? ` class="${wide === true ? "wide" : esc(wide)}"` : ""}><h1>FAFO</h1><h2>${esc(title)}</h2>${msg ? `<p>${esc(msg)}</p>` : ""}${extra}</main></body></html>`,
+${css}</style></head><body><main${wide ? ` class="${wide === true ? "wide" : esc(wide)}"` : ""}><h1><span class="sr">FAFO ACO</span>${logoSVG("lg-p")}</h1><h2>${esc(title)}</h2>${msg ? `<p>${esc(msg)}</p>` : ""}${extra}</main></body></html>`,
     { status: statusCode, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
 }

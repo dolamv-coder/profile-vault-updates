@@ -59,7 +59,7 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   to read the terms and conditions, accepts it then a key will be generated for them to use", then "Keep approval, I already
   have the terms set up on FAFO discord, only new users accept") a **new user** (no `licenses` row, no `applications` row
   whatever its status, no `terms_accepts` row) reads FAFO's **Terms of Service** after Discord's checks (bots, account age,
-  `REQUIRED_GUILD_ID` still first): the callback puts the sign-in at status `terms`, with who signed in in `terms_asks` (by
+  and FAFO's Discord server, below, still first): the callback puts the sign-in at status `terms`, with who signed in in `terms_asks` (by
   its `r`; loaded again it shows them from there, never exchanging the code again), and shows `termsAskPage`: `TERMS` from
   `license-worker/src/terms.js`, word for word as the owner posted them in FAFO's Discord (keep it so), who signed in, a box
   (I've read and agree…), Accept and continue (off until ticked; the worker checks the box too) and Decline (an outline).
@@ -84,6 +84,16 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   anyone, with no form (cached 5 minutes). Changing them is a new
   `version` in `terms.js`: only new users accept, so no one is asked again. Worker only: no new page, and every app version,
   desktop and web, gets it, since it all happens in the browser after Discord.
+  Also since 2026-11-17 (the owner: "require new users to be in my discord server", with its ID and invite) **new users must be
+  in FAFO's Discord server**: `REQUIRED_GUILD_ID` (wrangler.toml, `1542410391219605544`) is checked only for an account with no
+  key and no denied request, after the key lookups (a key holder who left, or was kicked, gets their key back: a key is turned
+  off by denying its request or `/admin/revoke`, never by leaving the server); a non-member gets **Join the server first**
+  (`JOIN_MSG`, "You need to be a member of FAFO's ACO server on Discord…", the request's error the app shows too) with a
+  **Join FAFO's ACO** button to `REQUIRED_GUILD_INVITE` (`https://discord.gg/AkjJmYAng`; `inviteUrl` takes only an https
+  discord.gg or discord.com/invite address) before the terms, and a server list Discord doesn't give is a failed sign-in
+  ("Couldn't check your Discord servers", 502), never "join first". And every page the worker draws (`page()`) is headed by
+  FAFO ACO's logo (the owner: "use the FAFO ACO logo too"), `logoSVG` imported from `web-worker/src/brand.js` (one source with
+  the front page) in its dark colours, where Bruno Ace SC wrote FAFO; screen readers read "FAFO ACO".
   It also keeps each license's slot limit (default 20 switched on at once on the
   Submit page, app 1.9.46+): `/slots/limit` and `/slots/request` take the license
   key as `Authorization: Bearer`, and requests are approved at `/slots/review/:id`.
@@ -2888,3 +2898,6 @@ the Orbit desktop app or the relay.
 Claude may merge its own pull requests into main once tests pass, except changes to licenses.json
 Before merging anything that ships (a new page, a worker change people see, a desktop download), send the owner
 screenshots of it and wait for their go-ahead (the owner's request, 2026-10-10).
+Before building anything people will see, show the owner a mockup screenshot of it first (the real page with sample data,
+the change drawn over it) and build only once they've seen it (the owner's request, 2026-11-17: "lets do this from now on.
+Screenshot first before building.").

@@ -196,8 +196,8 @@ update.
 
 - **Who sees them:** only a new user: a Discord account with no key, no request from before (waiting,
   approved or denied) and no acceptance yet. People who already have a key get it back as before, a request
-  that's waiting stays waiting, and someone you denied is told so, all without the terms. Bots, accounts that
-  are too new and non-members of `REQUIRED_GUILD_ID` are turned away first, as before.
+  that's waiting stays waiting, and someone you denied is told so, all without the terms. Bots and accounts that
+  are too new are turned away first, as before, and so is a new user who isn't in `REQUIRED_GUILD_ID` (below).
 - **The page** shows the terms word for word (the title, the date they took effect, "In short", the seven
   sections, "Questions? Ask staff."), who signed in, a box to tick, **I've read and agree to FAFO's Terms of
   Service**, then **Accept and continue** (off until the box is ticked; the worker checks the box too) and
@@ -1156,8 +1156,15 @@ shorten the limits). Never put them in `wrangler.toml`: the tests check it has n
 By default, any Discord account except bots gets a key. To limit it, edit `[vars]` in
 `wrangler.toml` and run `npm run deploy` again:
 
-- `REQUIRED_GUILD_ID`: only members of your Discord server get a key. Get the ID in
-  Discord with Developer Mode on: right-click the server, then **Copy Server ID**.
+- `REQUIRED_GUILD_ID`: only members of your Discord server get a new key. Get the ID in
+  Discord with Developer Mode on: right-click the server, then **Copy Server ID**. Since 2026-11-17 it's FAFO's
+  server, and it's checked only for an account with no key (and not one you denied): someone who has a key gets it
+  back wherever they are, so leaving or being kicked from the server doesn't turn a key off (deny their request, or
+  `/admin/revoke`, does). A non-member gets **Join the server first**, which the app shows too. Discord's sign-in
+  asks new users to let FAFO see their servers. If Discord doesn't give the list, the sign-in fails ("Couldn't check
+  your Discord servers"), never "join first".
+- `REQUIRED_GUILD_INVITE`: the invite the **Join FAFO's ACO** button on that page opens (only an https
+  `discord.gg/…` or `discord.com/invite/…` address; anything else shows no button).
 - `MIN_ACCOUNT_AGE_DAYS`: turns away Discord accounts newer than this, which stops
   people making throwaway accounts for extra keys. `30` is a reasonable value.
 
