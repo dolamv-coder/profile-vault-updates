@@ -1,10 +1,10 @@
 {
-  "version": "1.9.156",
-  "url": "index-1.9.156.html",
-  "sha256": "4502d8752b3d2d5a3069be6e5dfbe09f50b342bde76aefab865406fcc7b39c6d",
-  "signature": "0CHXOlKo1ynUu/pg3qnDbiVmIFa305eOw3h/YD7EPjVMj/41rHlAj2jB5OmwD0ts9cDBTTsDnuBwbZ8CDNWJAQ==",
+  "version": "1.9.157",
+  "url": "index-1.9.157.html",
+  "sha256": "73fb3fdfd7aff919103aa09dfadfa8a3dc176ef5d2c1635e11bf87d61cac3104",
+  "signature": "FSVJjxfFOu82KWJVCGkqRfMiSJnc99fRthBHbLv8+9qNTim90ay4A74R4hWemwqJzJWZyFAGUhfJeA2H4rv+Bg==",
   "minAppVersion": "0",
-  "notes": "On Interests, Send to seller is now Send to runner, and Interests calls your seller your runner.",
+  "notes": "The IMAP tab is gone: its inbox list, status and Test are on Store logins now (your slot counts are on Submit). Each inbox and store login has a light: green when FAFO signed in to the inbox on its last check, red when it couldn't (hover over it to see why, then fix the app password and press Test on the inbox's card), and gray when it hasn't been checked yet. The counts at the top show only the logins that need an inbox or can't sign in when you click them. The lights are shared between your computers and the website.",
   "installerUrl": "",
-  "publishedAt": "2026-11-17T06:09:15.890Z"
+  "publishedAt": "2026-11-17T09:51:57.837Z"
 }
