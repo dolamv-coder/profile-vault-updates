@@ -1343,101 +1343,216 @@ try {
     approvalSql(`UPDATE requests SET created_at = created_at - 3600000 WHERE r = '${r}'`);
   });
 
-  console.log("\nSlots");
+  // Each store has its own slot limit (2026-11-18, the owner: "Each retailer should have their own slot request. Example:
+  // Costco --- 10, Pokemon Center --- 15, Target --- 30", then "the 20 slots cap should be per store"): 20 at Target, at
+  // Pokémon Center and at Costco until the owner approves more, a request asks for a number per store (or one total, from a
+  // FAFO before 1.9.158), and the owner approves a number per store.
+  console.log("\nSlots (a limit per store, 2026-11-18)");
   const slots = (path, key, body) => fetch(BASE + path, { method: body ? "POST" : "GET", headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" }, body: body && JSON.stringify(body) });
   const slotLink = (content) => (content.match(/\((http[^)]+\/slots\/review\/[^)]+)\)/) || [])[1];
-  const slotPost = (link, action, amount) => fetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), action, ...(amount != null ? { amount: String(amount) } : {}) }) });
+  // The review page's form: `amounts` {target, pokemoncenter, costco} as n_<store>, or any other fields as they are.
+  const slotPost = (link, action, amounts, extra = {}) => fetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), action,
+    ...Object.fromEntries(Object.entries(amounts || {}).map(([k, v]) => ["n_" + k, String(v)])), ...extra }) });
+  const limitOf = async (key) => (await slots("/slots/limit", key)).json();
+  const lastPost = () => new Promise((ok) => setTimeout(() => ok(webhookPosts.at(-1).content), 400));
+  const lastEdit = () => new Promise((ok) => setTimeout(() => ok(webhookEdits.at(-1).content), 400));
+  const STORES20 = { target: 20, pokemoncenter: 20, costco: 20 };
+  // The review page's row for a store: its name, its limit (now, or before the request once decided), what was asked
+  // (green when more than its limit; "–" for a total asked for by an older FAFO), and its box.
+  const limRow = (name, now, asked, up, key, value) => `<tr><th scope="row">${htmlEsc(name)}</th><td>${now}</td><td${up ? ' class="up"' : ""}>${asked}</td>`
+    + `<td><input type="number" id="n_${key}" name="n_${key}" min="1" max="500" step="1" value="${value}" required aria-label="${htmlEsc(name)}: slots to allow"></td></tr>`;
   let frankLink;
   await test("the limit needs a valid license key", async () => {
     assert.equal((await slots("/slots/limit")).status, 401);
     assert.equal((await slots("/slots/limit", "PVLT-AAAA-BBBB-CCCC-DDDD")).status, 401);
     assert.equal((await slots("/slots/limit", "not a key")).status, 401);
   });
-  await test("everyone starts at 20 slots", async () => {
-    assert.deepEqual(await (await slots("/slots/limit", frankKey)).json(), { limit: 20, request: null, canRequest: true });
+  await test("everyone starts at 20 slots at each store; limit is their sum, for FAFO before 1.9.158", async () => {
+    assert.deepEqual(await limitOf(frankKey), { limit: 60, stores: STORES20, base: 20, request: null, canRequest: true });
   });
   await test("keys made by hand (the GitHub list) work too", async () => {
-    assert.equal((await (await slots("/slots/limit", GH_KEY.toLowerCase())).json()).limit, 20);
+    const lim = await limitOf(GH_KEY.toLowerCase());
+    assert.deepEqual([lim.limit, lim.stores, lim.base], [60, STORES20, 20]);
   });
-  await test("asking for fewer slots than you have, or too many, is refused", async () => {
-    assert.equal((await slots("/slots/request", frankKey, { requested: 20 })).status, 400);
-    assert.equal((await slots("/slots/request", frankKey, { requested: 501 })).status, 400);
-    assert.equal((await slots("/slots/request", frankKey, { requested: "lots" })).status, 400);
+  await test("a number the owner approved before (one across every store) is each store's now", async () => {
+    approvalSql(`INSERT INTO slot_limits (key_hash, slot_limit, updated_at) VALUES ('${ghHash}', 30, ${Date.now()})`);
+    const lim = await limitOf(GH_KEY);
+    assert.deepEqual([lim.limit, lim.stores, lim.base], [90, { target: 30, pokemoncenter: 30, costco: 30 }, 30]);
   });
-  await test("a request is posted to the owner's channel with a review link", async () => {
+  await test("a request per store: below a store's limit, raising none, over 500 or not a whole number is refused, in words", async () => {
+    const bad = async (body) => { const r = await slots("/slots/request", frankKey, body); assert.equal(r.status, 400, JSON.stringify(body)); return (await r.json()).error; };
+    assert.equal(await bad({ stores: { target: 19, pokemoncenter: 30 } }), "Target's limit is 20 now: ask for 20 or more there.");
+    assert.equal(await bad({ stores: { target: 20 } }), "Ask for more slots than you have at one store at least (now Target 20 · Pokémon Center 20 · Costco 20).");
+    assert.equal(await bad({ stores: {} }), "Ask for more slots than you have at one store at least (now Target 20 · Pokémon Center 20 · Costco 20).", "a store left out keeps its limit");
+    assert.equal(await bad({ stores: { costco: 501 } }), "Ask for at most 500 slots at Costco.");
+    assert.equal(await bad({ stores: { target: 30.5 } }), "Put a whole number of slots for Target.");
+    assert.equal(await bad({ stores: { pokemoncenter: "lots" } }), "Put a whole number of slots for Pokémon Center.");
+    // One total, from FAFO before 1.9.158: more than the sum, and at most 500 a store.
+    assert.equal(await bad({ requested: 60 }), "Ask for more than 60 slots in all, and at most 1500.");
+    assert.equal(await bad({ requested: 1501 }), "Ask for more than 60 slots in all, and at most 1500.");
+    await bad({ requested: "lots" }); await bad({});
+    assert.equal((await limitOf(frankKey)).request, null, "nothing asked");
+  });
+  await test("a request is posted to the owner's channel with each store's numbers and a review link", async () => {
     const before = webhookPosts.length;
-    const r = await (await slots("/slots/request", frankKey, { requested: 40, name: "Frank_the_*shopper*", note: "Big drop\nthis weekend" })).json();
-    assert.equal(r.status, "pending"); assert.equal(r.request.requested, 40);
-    await new Promise((ok) => setTimeout(ok, 400));
+    const r = await (await slots("/slots/request", frankKey, { stores: { target: 30, pokemoncenter: "25" }, name: "Frank_the_*shopper*", note: "Big drop\nthis weekend" })).json();
+    assert.equal(r.status, "pending"); assert.equal(r.request.requested, 75, "the sum, for FAFO before 1.9.158");
+    assert.deepEqual(r.request.stores, { target: { current: 20, requested: 30, granted: null }, pokemoncenter: { current: 20, requested: 25, granted: null }, costco: { current: 20, requested: 20, granted: null } });
+    const m = await lastPost();
     assert.equal(webhookPosts.length, before + 1);
-    const m = webhookPosts.at(-1).content;
-    assert.match(m, /More slots requested/); assert.match(m, /20 → 40 slots/);
-    assert.match(m, /Frank\\_the\\_\\\*shopper\\\*/, "name is markdown-escaped");
-    assert.match(m, /@frank/); assert.match(m, new RegExp("license …" + frankKey.slice(-4)));
-    assert.match(m, /Big drop this weekend/, "note kept on one line");
+    assert.equal(m, `🎟️ **More slots requested** · **Frank\\_the\\_\\*shopper\\*** · @frank · license …${frankKey.slice(-4)}\nTarget 20 → **30** · Pokémon Center 20 → **25** · Costco stays 20\n> Big drop this weekend\n[Review: approve or deny](${slotLink(m)})`,
+      "name markdown-escaped, the note on one line");
     frankLink = slotLink(m);
     assert.ok(frankLink.startsWith(BASE + "/slots/review/"));
-    const lim = await (await slots("/slots/limit", frankKey)).json();
-    assert.equal(lim.limit, 20); assert.equal(lim.request.status, "pending");
+    const lim = await limitOf(frankKey);
+    assert.deepEqual([lim.limit, lim.stores], [60, STORES20]); assert.equal(lim.request.status, "pending"); assert.deepEqual(lim.request.stores, r.request.stores);
   });
-  await test("asking again while one is waiting doesn't post again", async () => {
+  await test("asking again while one is waiting doesn't post again, and answers the one waiting", async () => {
     const before = webhookPosts.length;
-    const r = await (await slots("/slots/request", frankKey, { requested: 60 })).json();
-    assert.equal(r.status, "pending"); assert.equal(r.request.requested, 40);
+    const r = await (await slots("/slots/request", frankKey, { stores: { target: 60 } })).json();
+    assert.equal(r.status, "pending"); assert.equal(r.request.requested, 75); assert.equal(r.request.stores.target.requested, 30);
     await new Promise((ok) => setTimeout(ok, 300));
     assert.equal(webhookPosts.length, before);
   });
-  await test("the review page needs the right token and changes nothing by itself", async () => {
+  await test("the review page needs the right token, shows each store's numbers in a table (no .sr class) and changes nothing by itself", async () => {
     assert.equal((await fetch(frankLink.replace(/t=[^&]+/, "t=nope"))).status, 404);
-    assert.equal((await slotPost(frankLink.replace(/t=[^&]+/, "t=nope"), "approve")).status, 404);
+    assert.equal((await slotPost(frankLink.replace(/t=[^&]+/, "t=nope"), "approve", { target: 30, pokemoncenter: 25, costco: 20 })).status, 404);
     const html = await (await fetch(frankLink)).text();
-    assert.match(html, /asked for <strong>40<\/strong>/); assert.match(html, /Waiting for your decision/);
-    assert.equal((await (await slots("/slots/limit", frankKey)).json()).limit, 20);
+    assert.ok(html.includes("<h2>Slot request</h2><p>Waiting for your decision</p>"));
+    assert.ok(html.includes('<p class="who">Frank_the_*shopper* · @frank</p>'));
+    assert.match(html, new RegExp(`<p class="small">License …${frankKey.slice(-4)}<br>Requested [A-Z][a-z]{2} \\d{1,2}, \\d{4}, \\d{1,2}:\\d{2} [AP]M E[SD]T</p>`), "when, in Eastern time");
+    assert.ok(html.includes("<p class=\"small\">“Big drop this weekend”</p>"));
+    assert.ok(html.includes('<table class="lim"><thead><tr><th scope="col">Store</th><th scope="col">Now</th><th scope="col">Asked</th><th scope="col">Allow</th></tr></thead>'));
+    assert.ok(html.includes(`<tbody>${limRow("Target", 20, 30, true, "target", 30)}${limRow("Pokémon Center", 20, 25, true, "pokemoncenter", 25)}${limRow("Costco", 20, 20, false, "costco", 20)}</tbody></table>`), "Allow starts at what was asked");
+    assert.equal(html.match(/class="sr"/g).length, 1, "only the logo's words for screen readers: the table isn't hidden");
+    assert.ok(!html.includes("in total"), "no total line");
+    assert.ok(html.includes('<button class="ok" type="submit" name="action" value="approve">Approve</button><button class="no" type="submit" name="action" value="deny" formnovalidate>Deny</button>'));
+    assert.deepEqual((await limitOf(frankKey)).stores, STORES20);
   });
-  await test("approving can grant a different number, and the channel message is updated", async () => {
-    const res = await slotPost(frankLink, "approve", 35);
-    assert.match(await res.text(), /can now use 35 slots/);
-    const lim = await (await slots("/slots/limit", frankKey)).json();
-    assert.equal(lim.limit, 35); assert.equal(lim.request.status, "approved"); assert.equal(lim.request.granted, 35);
+  await test("approving with other amounts sets each store's limit, and the channel message says so", async () => {
+    const res = await slotPost(frankLink, "approve", { target: 35, pokemoncenter: 25, costco: 22 });
+    const html = await res.text();
+    assert.ok(html.includes("<p>Approved. Their limits are now Target 35 · Pokémon Center 25 · Costco 22.</p>"));
+    assert.ok(html.includes('<th scope="col">Before</th>') && html.includes(">Change amounts</button>"), "once decided");
+    assert.ok(html.includes(limRow("Costco", 20, 20, false, "costco", 22)), "the box has what was approved");
+    const lim = await limitOf(frankKey);
+    assert.deepEqual([lim.limit, lim.stores, lim.base], [82, { target: 35, pokemoncenter: 25, costco: 22 }, 20]);
+    assert.deepEqual([lim.request.status, lim.request.granted], ["approved", 82]);
+    assert.deepEqual(lim.request.stores, { target: { current: 20, requested: 30, granted: 35 }, pokemoncenter: { current: 20, requested: 25, granted: 25 }, costco: { current: 20, requested: 20, granted: 22 } });
+    const e = await lastEdit();
+    assert.equal(e, `✅ **Approved: Target 35 · Pokémon Center 25 · Costco 22** · **Frank\\_the\\_\\*shopper\\*** · @frank · license …${frankKey.slice(-4)}\nTarget 20 → **30** · Pokémon Center 20 → **25** · Costco stays 20\n> Big drop this weekend\n[Change decision](${frankLink})`);
+    assert.ok((await (await fetch(frankLink)).text()).includes("<p>Approved: Target 35 · Pokémon Center 25 · Costco 22</p>"), "the page opened again");
+  });
+  await test("an amount out of range, not a whole number or missing changes nothing on the review page", async () => {
+    const edits = webhookEdits.length;
+    for (const [amounts, extra] of [[{ target: 35, pokemoncenter: 0, costco: 22 }], [{ target: 501, pokemoncenter: 25, costco: 22 }], [{ target: "2.5", pokemoncenter: 25, costco: 22 }],
+      [{ target: 35, pokemoncenter: 25 }], [{}, { amount: "40" }]]) {
+      const html = await (await slotPost(frankLink, "approve", amounts, extra)).text();
+      assert.ok(html.includes("<p>Choose between 1 and 500 slots at each store.</p>"), JSON.stringify(amounts));
+      if (amounts.pokemoncenter === 0) assert.ok(html.includes(limRow("Pokémon Center", 20, 25, true, "pokemoncenter", 0)), "what was typed stays in its box");
+    }
+    assert.deepEqual((await limitOf(frankKey)).stores, { target: 35, pokemoncenter: 25, costco: 22 });
     await new Promise((ok) => setTimeout(ok, 300));
-    assert.match(webhookEdits.at(-1).content, /Approved: 35 slots/);
+    assert.equal(webhookEdits.length, edits, "the message isn't edited");
   });
-  await test("an out-of-range amount is refused on the review page", async () => {
-    assert.match(await (await slotPost(frankLink, "approve", 0)).text(), /between 1 and 500/);
-    assert.equal((await (await slots("/slots/limit", frankKey)).json()).limit, 35);
+  await test("the amounts can be changed after approving", async () => {
+    await slotPost(frankLink, "approve", { target: 40, pokemoncenter: 30, costco: 22 });
+    const lim = await limitOf(frankKey);
+    assert.deepEqual([lim.limit, lim.stores, lim.request.granted], [92, { target: 40, pokemoncenter: 30, costco: 22 }, 92]);
+    assert.match(await lastEdit(), /^✅ \*\*Approved: Target 40 · Pokémon Center 30 · Costco 22\*\* · /);
   });
-  await test("denying after approving puts the limit back", async () => {
-    await slotPost(frankLink, "deny");
-    const lim = await (await slots("/slots/limit", frankKey)).json();
-    assert.equal(lim.limit, 20); assert.equal(lim.request.status, "denied");
-    await new Promise((ok) => setTimeout(ok, 300));
-    assert.match(webhookEdits.at(-1).content, /Slot request denied/);
+  await test("denying after approving puts each store's limit back", async () => {
+    const html = await (await slotPost(frankLink, "deny")).text();
+    assert.ok(html.includes("<p>Denied. Their limits are back to Target 20 · Pokémon Center 20 · Costco 20.</p>"));
+    assert.ok(html.includes(">Approve</button></div>") && !html.includes('value="deny"'), "no Deny once denied");
+    const lim = await limitOf(frankKey);
+    assert.deepEqual([lim.limit, lim.stores, lim.request.status, lim.request.granted], [60, STORES20, "denied", null]);
+    assert.equal(lim.request.stores.target.granted, null);
+    assert.match(await lastEdit(), /^⛔ \*\*Slot request denied\*\* · .*\nTarget 20 → \*\*30\*\* · Pokémon Center 20 → \*\*25\*\* · Costco stays 20\n/);
   });
   await test("a denied request can be approved later", async () => {
-    await slotPost(frankLink, "approve");
-    assert.equal((await (await slots("/slots/limit", frankKey)).json()).limit, 40);
+    await slotPost(frankLink, "approve", { target: 30, pokemoncenter: 25, costco: 20 });
+    const lim = await limitOf(frankKey);
+    assert.deepEqual([lim.limit, lim.stores], [75, { target: 30, pokemoncenter: 25, costco: 20 }]);
   });
   await test("a revoked key can't ask or read its limit", async () => {
     await admin("/admin/revoke", { key: frankKey });
     assert.equal((await slots("/slots/limit", frankKey)).status, 401);
-    assert.equal((await slots("/slots/request", frankKey, { requested: 80 })).status, 401);
+    assert.equal((await slots("/slots/request", frankKey, { stores: { target: 80 } })).status, 401);
     await admin("/admin/restore", { key: frankKey });
   });
   await test("at most 3 requests a day per license", async () => {
-    for (const n of [41, 42]){
-      const r = await (await slots("/slots/request", frankKey, { requested: n })).json();
+    for (const n of [41, 42]) {
+      const r = await (await slots("/slots/request", frankKey, { stores: { target: n } })).json();
       assert.equal(r.status, "pending");
-      const link = slotLink(await new Promise((ok) => setTimeout(() => ok(webhookPosts.at(-1).content), 300)));
-      await slotPost(link, "deny");
+      assert.deepEqual(r.request.stores.target, { current: 30, requested: n, granted: null }, "from the limit it has now");
+      await slotPost(slotLink(await lastPost()), "deny");
     }
-    assert.equal((await slots("/slots/request", frankKey, { requested: 43 })).status, 429);
+    assert.equal((await slots("/slots/request", frankKey, { stores: { target: 43 } })).status, 429);
+    assert.deepEqual((await limitOf(frankKey)).stores, { target: 30, pokemoncenter: 25, costco: 20 }, "denying a request that wasn't approved changes no limit");
   });
-  await test("admin lists limits and requests with review links", async () => {
+  let ghLink;
+  await test("a FAFO before 1.9.158 asks for one total: kept with no store raised, and the owner chooses each store's", async () => {
+    // GH_KEY has 30 at each store from its number from before (above): 90 in all.
+    assert.equal((await slots("/slots/request", GH_KEY, { requested: 90 })).status, 400, "at the total");
+    const r = await (await slots("/slots/request", GH_KEY, { requested: 100, name: "Gus" })).json();
+    assert.equal(r.status, "pending"); assert.equal(r.request.requested, 100);
+    assert.deepEqual(r.request.stores, { target: { current: 30, requested: 30, granted: null }, pokemoncenter: { current: 30, requested: 30, granted: null }, costco: { current: 30, requested: 30, granted: null } });
+    const m = await lastPost();
+    ghLink = slotLink(m);
+    assert.equal(m, `🎟️ **More slots requested** · **Gus** · license …${GH_KEY.slice(-4)}\nAsked for **100** slots in total, from 90: an older FAFO asks for one number for every store, so you choose each store's when you approve\n[Review: approve or deny](${ghLink})`);
+    const html = await (await fetch(ghLink)).text();
+    assert.ok(html.includes("<p class=\"small\">They asked for <strong>100</strong> slots in total, from 90: an older FAFO asks for one number for every store. Choose each store's below.</p>"));
+    assert.ok(html.includes(`<tbody>${limRow("Target", 30, "–", false, "target", 30)}${limRow("Pokémon Center", 30, "–", false, "pokemoncenter", 30)}${limRow("Costco", 30, "–", false, "costco", 30)}</tbody>`),
+      "the boxes start at each store's limit now");
+    await slotPost(ghLink, "approve", { target: 40, pokemoncenter: 30, costco: 30 });
+    const lim = await limitOf(GH_KEY);
+    assert.deepEqual([lim.limit, lim.stores, lim.base, lim.request.granted], [100, { target: 40, pokemoncenter: 30, costco: 30 }, 30, 100]);
+    assert.equal(await lastEdit(), `✅ **Approved: Target 40 · Pokémon Center 30 · Costco 30** · **Gus** · license …${GH_KEY.slice(-4)}\nAsked for **100** slots in total, from 90: an older FAFO asks for one number for every store, so you choose each store's when you approve\n[Change decision](${ghLink})`);
+    await slotPost(ghLink, "deny");
+    assert.deepEqual((await limitOf(GH_KEY)).stores, { target: 30, pokemoncenter: 30, costco: 30 }, "back to the number from before at each");
+  });
+  await test("a request from before 1.9.158 (one number, no rows per store) gets them when its page opens, and reviews the same way", async () => {
+    const t0 = Date.now() - 2 * 86400000;
+    // One waiting, and one approved under the one limit (20 → 35 across every store).
+    approvalSql(`INSERT INTO slot_requests (id, key_hash, key_last4, name, discord_id, username, current_limit, requested, granted, note, status, review_token, created_at, decided_at) VALUES
+      ('legacyWait0001', '${ghHash}', '${GH_KEY.slice(-4)}', 'Gus', NULL, NULL, 20, 40, NULL, 'Old ask', 'pending', 'legacyWaitToken0000000001', ${t0}, NULL),
+      ('legacyDone0001', '${ghHash}', '${GH_KEY.slice(-4)}', 'Gus', NULL, NULL, 20, 35, 35, '', 'approved', 'legacyDoneToken0000000001', ${t0 - 1000}, ${t0})`);
+    const wait = `${BASE}/slots/review/legacyWait0001?t=legacyWaitToken0000000001`, done = `${BASE}/slots/review/legacyDone0001?t=legacyDoneToken0000000001`;
+    assert.equal(approvalRows("SELECT COUNT(*) AS n FROM slot_request_stores WHERE request_id LIKE 'legacy%'")[0].n, 0);
+    let html = await (await fetch(wait)).text();
+    assert.ok(html.includes("<p>Waiting for your decision</p>") && html.includes("They asked for <strong>40</strong> slots in total, from 20:"));
+    assert.ok(html.includes(`<tbody>${limRow("Target", 30, "–", false, "target", 30)}${limRow("Pokémon Center", 30, "–", false, "pokemoncenter", 30)}${limRow("Costco", 30, "–", false, "costco", 30)}</tbody>`),
+      "each store's limit now, while it waits");
+    assert.equal(approvalRows("SELECT COUNT(*) AS n FROM slot_request_stores WHERE request_id = 'legacyWait0001'")[0].n, 3, "kept");
+    html = await (await slotPost(wait, "approve", { target: 45, pokemoncenter: 30, costco: 25 })).text();
+    assert.ok(html.includes("<p>Approved. Their limits are now Target 45 · Pokémon Center 30 · Costco 25.</p>"));
+    assert.deepEqual((await limitOf(GH_KEY)).stores, { target: 45, pokemoncenter: 30, costco: 25 });
+    // The approved one: its stores were each given 35 from 20; denying it now puts each back to 20.
+    html = await (await fetch(done)).text();
+    assert.ok(html.includes("<p>Approved: Target 35 · Pokémon Center 35 · Costco 35</p>") && html.includes('<th scope="col">Before</th>'));
+    assert.ok(html.includes(limRow("Target", 20, "–", false, "target", 35)));
+    html = await (await slotPost(done, "deny")).text();
+    assert.ok(html.includes("<p>Denied. Their limits are back to Target 20 · Pokémon Center 20 · Costco 20.</p>"));
+    assert.deepEqual((await limitOf(GH_KEY)).stores, STORES20);
+  });
+  await test("admin lists the limits (each store's too) and the requests with their stores and review links, never a token or a key hash", async () => {
     const d = await (await admin("/admin/slots")).json();
-    assert.equal(d.default, 20);
-    assert.equal(d.limits.length, 1); assert.equal(d.limits[0].slot_limit, 40);
-    assert.equal(d.requests.length, 3);
+    assert.equal(d.default, 20); assert.deepEqual(d.stores, ["target", "pokemoncenter", "costco"]);
+    assert.deepEqual(d.limits.map((x) => [x.key_hash, x.slot_limit]), [[ghHash, 30]], "the number from before");
+    const frank = d.storeLimits.find((x) => x.key_last4 === frankKey.slice(-4)), gh = d.storeLimits.find((x) => x.key_last4 === GH_KEY.slice(-4));
+    assert.deepEqual([frank.username, frank.base, frank.stores, frank.limit], ["frank", 20, { target: 30, pokemoncenter: 25, costco: 20 }, 75]);
+    assert.deepEqual([gh.username, gh.base, gh.stores, gh.limit], [null, 30, STORES20, 60]);
+    assert.ok(d.storeLimits.every((x) => x.key_hash === undefined), "by last 4, never a hash");
+    assert.equal(d.requests.length, 6);
     assert.ok(d.requests.every((q) => q.review_url.includes("/slots/review/") && q.review_token === undefined && q.key_hash === undefined));
+    const f = d.requests.find((q) => q.review_url === frankLink);
+    assert.deepEqual([f.status, f.current_limit, f.requested, f.granted], ["approved", 60, 75, 75]);
+    assert.deepEqual(f.stores, { target: { current: 20, requested: 30, granted: 30 }, pokemoncenter: { current: 20, requested: 25, granted: 25 }, costco: { current: 20, requested: 20, granted: 20 } });
+    assert.ok(d.requests.every((q) => q.stores), "every request here has its stores now");
+    // As it was for the tests after: GH_KEY on the default at each store.
+    approvalSql(`DELETE FROM slot_store_limits WHERE key_hash = '${ghHash}'`); approvalSql(`DELETE FROM slot_limits WHERE key_hash = '${ghHash}'`);
+    assert.deepEqual((await limitOf(GH_KEY)).stores, STORES20);
   });
   console.log("\nSubmissions");
   const b64u = (b) => Buffer.from(b).toString("base64url");
@@ -2216,27 +2331,37 @@ try {
     assert.deepEqual(emailsOf(aycdOf(m)[0]), [hal.email, "hal9@example.com"]); assert.deepEqual(plain(m)[0].text.split("\r\n").map((l) => l.split(":")[0]), [hal.email]);
     assert.equal(listGiven(await accounts()).filter((a) => a.key_last4 === ginaKey.slice(-4)).length, 10, "still 10"); assert.equal((await accounts()).stores[0].free, free);
   });
-  await test("a license whose slots were raised can be given that many accounts (2026-10-12)", async () => {
-    // At its limit of 10 (the tests' ASSIGNED_LIMIT) until the owner approves more slots: then as many as those.
-    assert.equal((await slots("/slots/request", ginaKey, { requested: 21, name: "Gina" })).status, 200);
+  await test("a license whose Target and Pokémon Center slots were raised can be given that many accounts (2026-10-12; per store, 2026-11-18)", async () => {
+    // At its limit of 10 (the tests' ASSIGNED_LIMIT) until the owner approves more slots at Target or Pokémon Center: then as
+    // many as those two stores' limits together. Costco's doesn't count: it never checks out on Use Assigned Account.
+    assert.equal((await slots("/slots/request", ginaKey, { stores: { target: 30, pokemoncenter: 25, costco: 50 }, name: "Gina" })).status, 200);
     const link = slotLink(await new Promise((ok) => setTimeout(() => ok(webhookPosts.at(-1).content), 300)));
-    await slotPost(link, "approve");
-    assert.equal((await (await slots("/slots/limit", ginaKey)).json()).limit, 21);
-    const before = webhookPosts.length;
-    const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Jo J0", "jo0@example.com"), slotRow("Jo J1", "jo1@example.com")]), assigned: 2 }];
-    const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: 2, batch: "asg5c" + rid(), stores: [{ name: "Target", n: 2, seller: 2 }] })).json();
-    assert.deepEqual(r.accounts, { Target: { asked: 2, got: 2 } }, "past 10 now");
-    const m = webhookPosts.slice(before).find((x) => x.content.startsWith("📦"));
-    assert.match(m.content, /\nTarget 2 \(2 assigned accounts\)\n/);
+    const send = async (names, batch) => {
+      const before = webhookPosts.length;
+      const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv(names.map((n) => slotRow(n, n.replace(" ", "").toLowerCase() + "@example.com"))), assigned: names.length }];
+      const r = await (await slots("/submissions", ginaKey, { files, name: "Gina", slots: names.length, batch: batch + rid(), stores: [{ name: "Target", n: names.length, seller: names.length }] })).json();
+      return { r, m: webhookPosts.slice(before).find((x) => x.content.startsWith("📦")) };
+    };
+    await slotPost(link, "approve", { target: 20, pokemoncenter: 20, costco: 50 });
+    assert.deepEqual((await (await slots("/slots/limit", ginaKey)).json()).stores, { target: 20, pokemoncenter: 20, costco: 50 });
+    let { r, m } = await send(["Jo J0"], "asg5c");
+    assert.deepEqual(r.accounts, { Target: { asked: 1, got: 0 } }, "only Costco's raised: still 10");
+    assert.match(m.content, /\nTarget 1 \(1 needs an account: this license is at its limit of 10\)\n/);
+    await slotPost(link, "approve", { target: 7, pokemoncenter: 5, costco: 50 });
+    assert.equal((await (await slots("/slots/limit", ginaKey)).json()).limit, 62);
+    ({ r, m } = await send(["Jo J0", "Jo J1", "Jo J2"], "asg5c2"));
+    assert.deepEqual(r.accounts, { Target: { asked: 3, got: 2 } }, "past 10 now: Target's 7 and Pokémon Center's 5");
+    assert.match(m.content, /\nTarget 3 \(2 assigned accounts, 1 needs an account: this license is at its limit of 12\)\n/);
     const mine = listGiven(await accounts()).filter((a) => a.key_last4 === ginaKey.slice(-4));
     assert.equal(mine.length, 12);
-    // As it was for the tests after: those two back on the list, and the slot limit back to the default.
+    // As it was for the tests after: those two back on the list, and the slot limits back to the default.
     for (const a of mine.filter((x) => /^Jo J/.test(x.profile))) assert.equal((await admin("/admin/accounts/free", { email: a.email })).status, 200);
     await slotPost(link, "deny");
+    assert.deepEqual((await (await slots("/slots/limit", ginaKey)).json()).stores, { target: 20, pokemoncenter: 20, costco: 20 });
     assert.equal(listGiven(await accounts()).filter((a) => a.key_last4 === ginaKey.slice(-4)).length, 10);
-    // Back at 10: nothing more for it.
-    const r2 = await (await slots("/submissions", ginaKey, { files: [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Jo J2", "jo2@example.com")]), assigned: 1 }], name: "Gina", slots: 1, batch: "asg5d" + rid(), stores: [{ name: "Target", n: 1, seller: 1 }] })).json();
-    assert.deepEqual(r2.accounts, { Target: { asked: 1, got: 0 } });
+    // Back at 10 (each store's limit is the default again): nothing more for it.
+    ({ r } = await send(["Jo J3"], "asg5d"));
+    assert.deepEqual(r.accounts, { Target: { asked: 1, got: 0 } });
   });
   await test("the list running out: the rest wait for an account", async () => {
     assert.equal((await accounts()).stores[0].free, 3);
@@ -5139,7 +5264,7 @@ try {
     assert.equal(l.dueAt, dueFor(today, l.createdAt));
     assert.equal(new Date(l.dueAt).getUTCDay(), 1, "a Sunday's end in Eastern time is Monday in UTC");
     const lim = await (await api("/slots/limit", vicKey)).json();
-    assert.deepEqual([lim.limit, lim.canRequest, lim.plan], [20, true, undefined], "their limit is as approved");
+    assert.deepEqual([lim.limit, lim.stores, lim.canRequest, lim.plan], [60, { target: 20, pokemoncenter: 20, costco: 20 }, true, undefined], "their limits are as approved");
   });
   await test("a buyer approved after payments began is refused until they pick a plan (402); the channel hears once", async () => {
     tessKey = await newBuyer("tess"); tessHash = hashOf(tessKey);
@@ -5439,7 +5564,7 @@ try {
     const st = await billOf(tessKey);
     assert.deepEqual([st.plan, st.nextPlan, st.sub, st.block], ["checkout", null, null, null]);
     assert.deepEqual(posts(n), ["🗓️ **Tess**'s monthly plan ended · pay per checkout · about 2 slots out"]);
-    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.canRequest]), [20, true], "back to the limit they had");
+    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.stores, x.canRequest]), [60, { target: 20, pokemoncenter: 20, costco: 20 }, true], "back to the limits they had");
   });
   let sub2;
   await test("a second monthly plan made alongside the first is canceled at once, and the channel hears", async () => {
@@ -5653,7 +5778,7 @@ try {
     assert.deepEqual([st.lines.find((l) => l.orderNo === "TB-4001").state, st.owed], ["due", 1000], "at the $10 it was billed at");
     for (const body of [{ kind: "monthly", extras: 0, on: 2 }, { kind: "extras", extras: 1, on: 2 }])
       assert.deepEqual(await checkout(tessKey, body), { status: 409, body: { error: "Friends and Family pay per checkout." } }, JSON.stringify(body));
-    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [20, true, undefined], "the limit you approved, not the paused plan's");
+    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [60, true, undefined], "the limits you approved, not the paused plan's");
     // A paused plan never holds their checkouts, even with its month run out and a renewal not charged (Stripe voids those).
     // (An order three days ahead: today is still covered by the plan that ended today, as they paid for it.)
     const was = dbRows(`SELECT paid_through, invoice_status FROM billing_subs WHERE sub_id = '${sub2.id}'`)[0];
@@ -5971,7 +6096,7 @@ try {
     assert.ok(dbRows("SELECT v FROM billing_config WHERE k = 'on_since:test'").length, "test mode's own start");
     assert.ok(dbRows("SELECT v FROM billing_config WHERE k = 'family_from:test'").length, "and when it charged Friends and Family");
     assert.equal((await submit(umaKey, [ownFile([["Uma One", "uma.one@example.com"]])], { on: 3, name: "Uma" })).status, 200, "not a tester: never refused");
-    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.plan]), [20, undefined], "no monthly plan in test mode");
+    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.plan]), [60, undefined], "no monthly plan in test mode");
     const r = await api("/billing/list", bobKey, { name: "Owner" });
     assert.equal(r.status, 429, "the day's 10 links are used up (any mode)");
     sqlRun(`UPDATE billing_lists SET created_at = created_at - ${86400000} WHERE key_hash = '${hashOf(bobKey)}'`);
@@ -6080,7 +6205,7 @@ try {
     sqlRun(`UPDATE billing SET plan = 'monthly', next_plan = 'checkout', sub_id = NULL WHERE key_hash = '${xiaHash}' AND mode = 'live'`);
     const gone = await billOf(xiaKey);
     assert.deepEqual([gone.plan, gone.nextPlan, gone.sub, gone.block], [null, null, null, NO_PLAN]);
-    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [20, true, undefined], "they ask you for slots as anyone does");
+    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [60, true, undefined], "they ask you for slots as anyone does");
     const p = await (await api("/billing/plan", xiaKey, { plan: "checkout" })).json();
     assert.deepEqual([p.plan, p.nextPlan, p.block, p.plans], ["checkout", null, null, ["checkout"]]);
   });
@@ -6092,6 +6217,8 @@ try {
     assert.deepEqual(await (await api("/slots/limit", xiaKey)).json(), { limit: 10, request: null, canRequest: false, plan: "monthly" });
     const req = await api("/slots/request", xiaKey, { requested: 30 });
     assert.deepEqual([req.status, await req.json()], [409, { error: "Your monthly plan has 10 slots" }]);
+    const perStore = await api("/slots/request", xiaKey, { stores: { target: 30 } });
+    assert.deepEqual([perStore.status, await perStore.json()], [409, { error: "Your monthly plan has 10 slots" }], "a request per store too (page 1.9.158)");
     // Covered: an order on an account given to them isn't billed. More slots on than the plan has are refused.
     sqlRun(`INSERT OR IGNORE INTO accounts (store, email, email_norm, password, added_at, offer_id) VALUES ('*', 'bill.pool9@example.com', 'bill.pool9@example.com', 'Sample-Pw-9', ${Date.now()}, 'test')`);
     const sent = await submit(xiaKey, [ownFile([["Xia Given", ""]], 1)], { name: "Xia", on: 1 });
@@ -6122,7 +6249,7 @@ try {
     assert.equal(await hook("customer.subscription.deleted", sub), 200);
     const after = await billOf(xiaKey);
     assert.deepEqual([after.plan, after.sub, after.block], [null, null, NO_PLAN]);
-    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [20, true, undefined]);
+    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [60, true, undefined]);
   });
   let offLink;
   const priceRow = () => dbRows("SELECT v FROM billing_config WHERE k = 'price:checkout'");

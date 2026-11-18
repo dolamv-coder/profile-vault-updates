@@ -269,28 +269,67 @@ run `npx wrangler secret delete NOTIFY_USER_ID`.
 
 ## Slot limits
 
-FAFO (1.9.46 and later) lets each license have at most **20 slots** switched on at once on
-the Submit page, across all stores. Change the starting number with `DEFAULT_SLOT_LIMIT` in
-`wrangler.toml`.
+FAFO lets each license have at most **20 slots** switched on at once on the Submit page **at each
+store**: 20 at Target, 20 at Pokémon Center and 20 at Costco (since 2026-11-18, page 1.9.158, at your
+request: "the 20 slots cap should be per store"; from 1.9.46 to 1.9.157 it was 20 across every store).
+Change the starting number with `DEFAULT_SLOT_LIMIT` in `wrangler.toml`; it's each store's. A buyer you
+had already given more keeps that number at each store: someone you'd approved 40 slots before has 40 at
+Target, 40 at Pokémon Center and 40 at Costco, so nobody has fewer than before.
 
-When someone needs more, they press **Request more slots** in FAFO, say how many they need in
-total and why. The request is posted to the same Discord channel as key requests:
+When someone needs more, they press **Request more slots** in FAFO and put the number they need at each
+store, and why. The request is posted to the same Discord channel as key requests:
 
 > 🎟️ **More slots requested** · **Kim** · @kim · license …ABCD
-> 20 → 40 slots
+> Target 20 → **30** · Pokémon Center 20 → **25** · Costco stays 20
+> > Big drop this weekend
 > [Review: approve or deny](…)
 
-The link opens a page where you can approve the number they asked for, change it first, or
-deny it. Their FAFO picks up the new limit within a minute or so while the Submit page is
-open, or the next time they unlock. You can change your mind later from the same link:
-denying an approved request puts their limit back to what it was.
+The link opens a page with who asked and when (US Eastern time), their note, and a table: each store's
+limit now, what they asked for there (green when it's more) and a box for the number to allow, which
+starts at what they asked. Change any of them, then **Approve**, or **Deny**. Approving sets all three
+stores at once, and the message becomes "✅ **Approved: Target 30 · Pokémon Center 25 · Costco 20**".
+Their FAFO picks up the new limits within a minute or so while the Submit page is open, or the next time
+they unlock. You can change your mind later from the same link: **Change amounts** sets other numbers,
+and denying an approved request puts each store's limit back to what it was before it.
 
-Each license can have one request waiting at a time and send at most 3 a day. Every limit and
-request, with its review link, is in `/admin/slots`:
+A FAFO older than 1.9.158 asks for one total, as it did before: more than its stores' limits together
+(which it shows as one limit, 60 to start). Its message says "Asked for **70** slots in total, from 60…",
+the table has no number asked at each store, and the boxes start at each store's limit now: you choose
+how it's split. A request sent before the change is shown the same way.
+
+Each license can have one request waiting at a time and send at most 3 a day. A buyer on the monthly
+plan (payments, below) has that plan's slots, one number for every store, and doesn't ask.
+
+### For the app (`GET /slots/limit`, `POST /slots/request`)
+
+Both take the license key as `Authorization: Bearer`.
+
+- `GET /slots/limit` answers `{limit, stores: {target, pokemoncenter, costco}, base, request, canRequest}`:
+  each store's limit (its own number, else `base`), `base` (the license's one number from before, else
+  `DEFAULT_SLOT_LIMIT`; a store FAFO has from older data, not one of these three, has this), and `limit`, the
+  three added up, which FAFO before 1.9.158 reads as one limit across every store. `request` is the latest
+  request, `{id, status, requested, granted, created_at, decided_at}` with `requested` and `granted` added
+  up over the stores, and `stores: {target: {current, requested, granted}, …}` once it has numbers per
+  store. On a monthly plan it's `{limit, request, canRequest: false, plan: "monthly"}` as before, with no
+  `stores`.
+- `POST /slots/request` takes `{stores: {target, pokemoncenter, costco}, name, note}` from FAFO 1.9.158:
+  each a whole number from that store's limit now up to 500, one left out keeping its limit, and at least
+  one store's more than its limit, or 400 with a sentence saying what's wrong. FAFO before 1.9.158 sends
+  `{requested, name, note}`, one total: more than `limit` and at most 1500 (500 a store). Either answers
+  `{status: "pending", request}`; one already waiting is answered instead of a new one; 409 on a monthly
+  plan, 429 past 3 a day, 503 without `DISCORD_WEBHOOK_URL`.
+
+Every request is in `/admin/slots`, with its review link and its numbers per store:
 
 ```
 curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit-app.workers.dev/admin/slots
 ```
+
+It answers `{default, stores, limits, storeLimits, requests}`: `limits` the one number per license from
+before (as it was), `storeLimits` each license with a number of its own at a store, by its last 4 and
+Discord name (`base`, `stores`, `limit` and when it last changed), and `requests` the newest 200, each with
+`stores` (`{current, requested, granted}` per store) once it has them. Never a review token or, for
+requests and `storeLimits`, a key's hash.
 
 ## Slots sent to your Discord
 
@@ -605,13 +644,16 @@ buyer gets it while they have it.
   slot is still out (or another with the same name) never gets that account, and older FAFOs, which
   don't say, get new accounts as before. An account from your list stays with its buyer's profile
   whichever FAFO sent it.
-- **Each license can be given as many accounts in all as its slot limit** (from 2026-10-12): 20
-  (`DEFAULT_SLOT_LIMIT`), or the number you approved when it asked for more slots, so a buyer you
-  approved 50 slots can be given 50 accounts. Before, it was a fixed `ASSIGNED_LIMIT` for everyone (20
-  from 2026-10-07, 10 before that), which still sets the default if you put it back in `[vars]`. An
-  account given back (above) isn't a new one. Slots past
+- **Each license can be given as many accounts in all as its Target and Pokémon Center slot limits
+  together** (from 2026-10-12, as its slot limit; per store since 2026-11-18, your choice): 40 to start
+  (`DEFAULT_SLOT_LIMIT` at each of the two), or the numbers you approved when it asked for more slots, so
+  a buyer you approved 30 at Target and 25 at Pokémon Center can be given 55 accounts, and one you'd
+  approved 50 before (50 at each store) 100. Costco's limit doesn't count: Costco never checks out on Use
+  Assigned Account. Before 2026-10-12, it was a fixed `ASSIGNED_LIMIT` for everyone (20 from 2026-10-07,
+  10 before that), which still sets the default for licenses on the default at both stores if you put it
+  back in `[vars]`. An account given back (above) isn't a new one. Slots past
   that, or past the end of the list, come last with no login line, and the store line says how many
-  and why, so you can assign those by hand: "(1 needs an account: this license is at its limit of 20)"
+  and why, so you can assign those by hand: "(1 needs an account: this license is at its limit of 40)"
   or "(1 needs an account: your list has none)". With no login for any of a store's slots, there's no
   logins file for that store.
 - **When the list runs low**, your channel is told: once when it's down to `ACCOUNTS_LOW_AT` free
@@ -888,7 +930,7 @@ prices are included before tax."; the details below are defaults chosen for the 
   1.9.143 offers only pay per checkout; an older FAFO that still shows the monthly plan is told "The monthly plan isn't
   offered any more."). A subscription that's already going carries on as it was until it ends: it covers its months once
   Stripe says each invoice is paid (checkouts while a renewal is being charged, or retried after it failed, wait: free
-  if it's paid, at their price if the plan ends unpaid), its 10 or 25 slots are that buyer's limit, and they can still
+  if it's paid, at their price if the plan ends unpaid), its 10 or 25 slots are that buyer's limit (one number for every store), and they can still
   cancel it or pay a failed payment in Invoice, but not resume one set to end. Once it ends they're on pay per checkout
   if they chose it, or else pick it in Invoice. A buyer who picked the monthly plan but never finished paying for it
   counts as having no plan. To offer the plan again, set `BILLING_MONTHLY = "on"` in `wrangler.toml`'s `[vars]` and
@@ -1216,7 +1258,9 @@ and changed, the Terms of Service (shown only to new users, loaded again without
 answered only from the browser Discord sent back (the state alone, a wrong nonce or code), the box required,
 accepted with approval on and off (from the web version too), pressed twice at once, accepted in a second sign-in
 after a denial or the key turned off, declined, expired, old asks cleaned up, what the channel, the review page,
-`/admin/applications` and `/admin/licenses` say, and `/terms`), slot limits, submissions and collecting keys, pulled slots, the Interests list (its pictures, the
+`/admin/applications` and `/admin/licenses` say, and `/terms`), slot limits (one per store, requests per store and as one
+total from an older FAFO, requests from before, the review page and its table, the accounts a license can be given),
+submissions and collecting keys, pulled slots, the Interests list (its pictures, the
 products added to it once, the SKUs a batch carries, and picks sent on their own: the message and files, the same
 picks again, the daily limit, also sent at once, and a failed post), product pictures
 (against a stand-in catalog: exact names only, never a case, another edition or two that fit),

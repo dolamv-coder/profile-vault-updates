@@ -44,11 +44,27 @@ CREATE TABLE IF NOT EXISTS applications (
   webhook_message_id TEXT
 );
 
--- How many slots a license can have switched on at once (DEFAULT_SLOT_LIMIT if no row).
+-- How many slots a license can have switched on at once (DEFAULT_SLOT_LIMIT if no row). Until 2026-11-18 it was one number
+-- across every store; since then each store has its own (slot_store_limits), and this one, which the owner approved before,
+-- is what each store has until it gets a number of its own (the owner chose that buyers they'd raised keep it at each store).
+-- Nothing writes it any more.
 CREATE TABLE IF NOT EXISTS slot_limits (
   key_hash   TEXT PRIMARY KEY,
   slot_limit INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
+);
+
+-- Each store's slot limit (2026-11-18, the owner: "Each retailer should have their own slot request. Example: Costco --- 10,
+-- Pokemon Center --- 15, Target --- 30", then "the 20 slots cap should be per store"): how many slots a license can have
+-- switched on at once at that store (target, pokemoncenter or costco), as the owner approved it on a slot request. A store
+-- with no row has the license's number in slot_limits, else DEFAULT_SLOT_LIMIT. A table of its own, as db:init can't add
+-- columns.
+CREATE TABLE IF NOT EXISTS slot_store_limits (
+  key_hash   TEXT NOT NULL,
+  store      TEXT NOT NULL,                     -- target | pokemoncenter | costco
+  slot_limit INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (key_hash, store)
 );
 
 -- Requests for more slots, and the owner's decision.
@@ -70,6 +86,21 @@ CREATE TABLE IF NOT EXISTS slot_requests (
   webhook_message_id TEXT
 );
 CREATE INDEX IF NOT EXISTS slot_requests_key ON slot_requests (key_hash, created_at);
+
+-- A slot request's numbers per store (2026-11-18, with slot_store_limits): each store's limit when it was asked for
+-- (current_limit, which taking back an approval puts back), the number asked for there, and the number the owner approved
+-- (granted, NULL until then and once denied). slot_requests keeps their sums, for older FAFOs and /admin. A FAFO before
+-- 1.9.158 asks for one total: its rows ask for each store's current limit, and slot_requests.requested is the total. A
+-- request from before 2026-11-18 gets its rows when its review page is first opened. A table of its own, as db:init can't
+-- add columns.
+CREATE TABLE IF NOT EXISTS slot_request_stores (
+  request_id    TEXT NOT NULL,                  -- slot_requests.id
+  store         TEXT NOT NULL,                  -- target | pokemoncenter | costco
+  current_limit INTEGER NOT NULL,
+  requested     INTEGER NOT NULL,
+  granted       INTEGER,
+  PRIMARY KEY (request_id, store)
+);
 
 -- Collecting keys submissions are encrypted to (from the owner's Orbit, Settings → Collecting).
 -- A key offered by the app waits until the owner confirms it from their Discord channel; one is

@@ -54,9 +54,15 @@
 //                              {ok:true, messages} or {ok:false, why, text}. Keeps and logs nothing about the inbox. One at
 //                              a time, 30 a day and 10 failed sign-ins a day per license, and 500 a day across every license
 //                              (429 busy / limit / fails / everyone)
-// Slots (app sends "Authorization: Bearer <license key>"):
-//   GET  /slots/limit          {limit, request}: how many slots this license can have on at once
-//   POST /slots/request        {requested, name, note}: ask for more; posted to DISCORD_WEBHOOK_URL
+// Slots (app sends "Authorization: Bearer <license key>"). Each store has its own limit (2026-11-18, page 1.9.158):
+//   GET  /slots/limit          {limit, stores:{target, pokemoncenter, costco}, base, request, canRequest}: how many slots
+//                              this license can have on at once at each store; limit is their sum (what FAFO before 1.9.158
+//                              reads as one limit), base what a store with no number of its own has. On a monthly plan
+//                              {limit, request, canRequest:false, plan:"monthly"}, as before. request: the latest, with
+//                              stores:{k:{current, requested, granted}} when it has numbers per store
+//   POST /slots/request        {stores:{target, pokemoncenter, costco}, name, note} (page 1.9.158+; a store left out keeps
+//                              its limit) or {requested, name, note} (one total, from FAFO before 1.9.158): ask for more;
+//                              posted to DISCORD_WEBHOOK_URL
 // Submissions (slots sent from the Submit page):
 //   GET  /submit/key           {pub, keyId}: the collecting key apps before 1.9.52 encrypt to (null until
 //                              the owner confirms one)
@@ -171,7 +177,8 @@
 // before the last change gets 403 {error:"password changed"} and doesn't count.
 // Owner:
 //   GET/POST /review/DISCORD_ID?t=TOKEN   approve or deny one request (link posted to the webhook)
-//   GET/POST /slots/review/ID?t=TOKEN     approve (optionally a different number) or deny more slots
+//   GET/POST /slots/review/ID?t=TOKEN     approve more slots (a number per store, n_target, n_pokemoncenter and n_costco,
+//                              starting at what was asked) or deny them
 //   GET/POST /submit/review/ID?t=TOKEN    confirm or refuse a collecting key
 //   GET/POST /submissions/review/ID?t=TOKEN  approve or decline a batch of slots (link on its message)
 //   GET/POST /accounts/review/ID?t=TOKEN  add or refuse accounts sent for Use Assigned Account
@@ -893,9 +900,17 @@ async function sign(env, text) {
 }
 
 // ---- slots ---------------------------------------------------------------------------
+//
+// Each store has its own slot limit (2026-11-18, the owner: "Each retailer should have their own slot request. Example:
+// Costco --- 10, Pokemon Center --- 15, Target --- 30", then "the 20 slots cap should be per store"): how many slots a
+// license can have switched on at once at Target, at Pokémon Center and at Costco (SLOT_STORES), DEFAULT_SLOT_LIMIT (20)
+// at each until the owner approves more. A store's number is its row in slot_store_limits, else the license's one number
+// from before (slot_limits: the owner chose that buyers they'd raised keep it at each store), else the default. A request
+// asks for a number per store, or one total from a FAFO before 1.9.158, and the owner approves a number per store.
 
 const SLOT_MAX = 500;
 const SLOT_REQUESTS_PER_DAY = 3;
+const SLOT_STORES = ["target", "pokemoncenter", "costco"];
 const slotDefault = (env) => Math.max(1, Math.floor(Number(env.DEFAULT_SLOT_LIMIT || 20)) || 20);
 // Keys made by hand are on the signed list on GitHub, not in this database.
 const GH_LICENSE_URL = "https://raw.githubusercontent.com/dolamv-coder/profile-vault-updates/main/licenses.json";
@@ -941,21 +956,47 @@ async function slotLicense(request, env) {
   return lic === "unknown" ? null : lic;
 }
 
-async function currentSlotLimit(env, hash) {
-  const row = await env.DB.prepare("SELECT slot_limit FROM slot_limits WHERE key_hash = ?").bind(hash).first();
-  return row ? row.slot_limit : slotDefault(env);
+// A license's slot limits: `base` (its one number from before 2026-11-18, else the default), each store's (its own row,
+// else base) and their sum, `limit`, which FAFO before 1.9.158 reads as one limit across every store.
+async function storeLimits(env, hash) {
+  const [one, own] = await env.DB.batch([
+    env.DB.prepare("SELECT slot_limit FROM slot_limits WHERE key_hash = ?").bind(hash),
+    env.DB.prepare("SELECT store, slot_limit FROM slot_store_limits WHERE key_hash = ?").bind(hash),
+  ]);
+  const base = one.results.length ? one.results[0].slot_limit : slotDefault(env);
+  const stores = Object.fromEntries(SLOT_STORES.map((k) => [k, base]));
+  for (const r of own.results) if (SLOT_STORES.includes(r.store)) stores[r.store] = r.slot_limit;
+  return { base, stores, limit: SLOT_STORES.reduce((n, k) => n + stores[k], 0) };
 }
-const slotRequestOut = (q) => q ? { id: q.id, status: q.status, requested: q.requested, granted: q.granted, created_at: q.created_at, decided_at: q.decided_at } : null;
+// A request's numbers per store (slot_request_stores), in SLOT_STORES' order; none for a request from before 2026-11-18
+// whose review page wasn't opened since.
+const slotRowsOrder = (rows) => [...rows].sort((a, b) => SLOT_STORES.indexOf(a.store) - SLOT_STORES.indexOf(b.store));
+const requestStores = async (env, id) =>
+  slotRowsOrder((await env.DB.prepare("SELECT store, current_limit, requested, granted FROM slot_request_stores WHERE request_id = ?").bind(id).all()).results);
+const slotRequestOut = (q, rows) => q ? { id: q.id, status: q.status, requested: q.requested, granted: q.granted, created_at: q.created_at, decided_at: q.decided_at,
+  ...(rows && rows.length ? { stores: Object.fromEntries(rows.map((r) => [r.store, { current: r.current_limit, requested: r.requested, granted: r.granted ?? null }])) } : {}) } : null;
+// "Target 30 · Pokémon Center 25 · Costco 20", from each row's `pick`.
+const slotNumbers = (rows, pick) => rows.map((r) => `${accountStoreName(r.store)} ${pick(r)}`).join(" · ");
+// A request that raises no store asked for one total: a FAFO before 1.9.158 does, as did every request before 2026-11-18.
+const slotTotalAsk = (rows) => !rows.some((r) => r.requested > r.current_limit);
+// A number of slots as the app sends it (a whole number, or its digits as text); NaN for anything else.
+const slotNumber = (v) => typeof v === "number" ? v : typeof v === "string" && /^\s*\d{1,6}\s*$/.test(v) ? Number(v) : NaN;
 
 async function slotLimit(request, env) {
   const lic = await slotLicense(request, env);
   if (!lic) return json({ error: "license not recognized" }, 401);
-  const latest = await env.DB.prepare("SELECT * FROM slot_requests WHERE key_hash = ? ORDER BY created_at DESC LIMIT 1").bind(lic.hash).first();
+  const [last, lastRows] = await env.DB.batch([
+    env.DB.prepare("SELECT * FROM slot_requests WHERE key_hash = ? ORDER BY created_at DESC LIMIT 1").bind(lic.hash),
+    env.DB.prepare(`SELECT store, current_limit, requested, granted FROM slot_request_stores
+      WHERE request_id = (SELECT id FROM slot_requests WHERE key_hash = ? ORDER BY created_at DESC LIMIT 1)`).bind(lic.hash),
+  ]);
+  const out = slotRequestOut(last.results[0], slotRowsOrder(lastRows.results));
   // A monthly plan's slots (payments): 10, or 25 with the extra 15, which the buyer adds in Invoice rather than asking (while
-  // the plan is offered; without it, only a subscription still going has them: planSlots).
+  // the plan is offered; without it, only a subscription still going has them: planSlots). One number, as before 1.9.158.
   const plan = await planSlots(env, lic.hash).catch((e) => { console.error("billing", e); return null; });
-  if (plan) return json({ limit: plan, request: slotRequestOut(latest), canRequest: false, plan: "monthly" }, 200, { "cache-control": "no-store" });
-  return json({ limit: await currentSlotLimit(env, lic.hash), request: slotRequestOut(latest), canRequest: !!env.DISCORD_WEBHOOK_URL }, 200, { "cache-control": "no-store" });
+  if (plan) return json({ limit: plan, request: out, canRequest: false, plan: "monthly" }, 200, { "cache-control": "no-store" });
+  const { limit, stores, base } = await storeLimits(env, lic.hash);
+  return json({ limit, stores, base, request: out, canRequest: !!env.DISCORD_WEBHOOK_URL }, 200, { "cache-control": "no-store" });
 }
 
 async function slotRequest(request, env, ctx, url) {
@@ -967,89 +1008,160 @@ async function slotRequest(request, env, ctx, url) {
   if (plan) return json({ error: monthlyOffered(env) ? "Add 15 slots in Invoice" : `Your monthly plan has ${plan} slots` }, 409);
   if (!env.DISCORD_WEBHOOK_URL) return json({ error: "requests aren't set up" }, 503);
   const b = await request.json().catch(() => ({}));
-  const current = await currentSlotLimit(env, lic.hash);
-  const requested = Math.floor(Number(b.requested));
-  if (!(requested > current && requested <= SLOT_MAX)) return json({ error: `ask for more than ${current} and at most ${SLOT_MAX}` }, 400);
+  const cur = await storeLimits(env, lic.hash);
+  let rows;
+  if (b && b.stores && typeof b.stores === "object" && !Array.isArray(b.stores)) {
+    // Page 1.9.158+: the number wanted at each store, from its limit now up to SLOT_MAX; one left out keeps its limit.
+    rows = [];
+    for (const k of SLOT_STORES) {
+      const has = cur.stores[k], name = accountStoreName(k), v = b.stores[k];
+      const n = v == null ? has : slotNumber(v);
+      if (!Number.isInteger(n)) return json({ error: `Put a whole number of slots for ${name}.` }, 400);
+      if (n < has) return json({ error: `${name}'s limit is ${has} now: ask for ${has} or more there.` }, 400);
+      if (n > has && n > SLOT_MAX) return json({ error: `Ask for at most ${SLOT_MAX} slots at ${name}.` }, 400);
+      rows.push({ store: k, current_limit: has, requested: n, granted: null });
+    }
+    if (slotTotalAsk(rows)) return json({ error: `Ask for more slots than you have at one store at least (now ${slotNumbers(rows, (r) => r.current_limit)}).` }, 400);
+  } else {
+    // A FAFO before 1.9.158 asks for one total, more than the sum of the stores' limits (the one limit it shows). Kept with
+    // each store asking for its limit now, so the owner chooses each store's number on the review page.
+    const n = Math.floor(Number(b && b.requested)), max = SLOT_MAX * SLOT_STORES.length;
+    if (!(n > cur.limit && n <= max)) return json({ error: `Ask for more than ${cur.limit} slots in all, and at most ${max}.` }, 400);
+    rows = SLOT_STORES.map((k) => ({ store: k, current_limit: cur.stores[k], requested: cur.stores[k], granted: null, total: n }));
+  }
   const pending = await env.DB.prepare("SELECT * FROM slot_requests WHERE key_hash = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1").bind(lic.hash).first();
-  if (pending) return json({ status: "pending", request: slotRequestOut(pending) });
+  if (pending) return json({ status: "pending", request: slotRequestOut(pending, await requestStores(env, pending.id)) });
   const now = Date.now();
   const recent = await env.DB.prepare("SELECT COUNT(*) AS n FROM slot_requests WHERE key_hash = ? AND created_at > ?").bind(lic.hash, now - 86400000).first();
   if (recent && recent.n >= SLOT_REQUESTS_PER_DAY) return json({ error: "too many requests today" }, 429);
   const q = {
     id: randomId(12), key_hash: lic.hash, key_last4: lic.last4,
     name: String(b.name || "").replace(/\s+/g, " ").trim().slice(0, 60),
-    discord_id: lic.discordId, username: lic.username, current_limit: current, requested,
+    discord_id: lic.discordId, username: lic.username,
+    // The sums, for older FAFOs and /admin; a total asked for by an older FAFO is that total.
+    current_limit: cur.limit, requested: rows[0].total || rows.reduce((n, r) => n + r.requested, 0),
     note: String(b.note || "").replace(/\s+/g, " ").trim().slice(0, 300),
     status: "pending", review_token: randomId(24), created_at: now,
   };
-  await env.DB.prepare(
-    `INSERT INTO slot_requests (id, key_hash, key_last4, name, discord_id, username, current_limit, requested, note, status, review_token, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
-  ).bind(q.id, q.key_hash, q.key_last4, q.name, q.discord_id, q.username, q.current_limit, q.requested, q.note, q.review_token, q.created_at).run();
+  rows = rows.map(({ total, ...r }) => r);
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO slot_requests (id, key_hash, key_last4, name, discord_id, username, current_limit, requested, note, status, review_token, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`
+    ).bind(q.id, q.key_hash, q.key_last4, q.name, q.discord_id, q.username, q.current_limit, q.requested, q.note, q.review_token, q.created_at),
+    ...rows.map((r) => env.DB.prepare("INSERT INTO slot_request_stores (request_id, store, current_limit, requested) VALUES (?, ?, ?, ?)").bind(q.id, r.store, r.current_limit, r.requested)),
+  ]);
   ctx.waitUntil((async () => {
-    const id = await webhookPost(env, { content: slotMessage(url.origin, q) });
+    const id = await webhookPost(env, { content: slotMessage(url.origin, q, rows) });
     if (id) await env.DB.prepare("UPDATE slot_requests SET webhook_message_id = ? WHERE id = ?").bind(id, q.id).run();
   })().catch((e) => console.error("webhook", e)));
-  return json({ status: "pending", request: slotRequestOut(q) });
+  return json({ status: "pending", request: slotRequestOut(q, rows) });
 }
 
-function slotMessage(origin, q) {
+// The channel's message: who, then each store's number asked for ("Target 20 → **30** · Pokémon Center 20 → **25** · Costco
+// stays 20"), or the total an older FAFO asked for, the note, and the review link. Edited when the owner decides.
+function slotMessage(origin, q, rows) {
   const who = [q.name ? `**${md(q.name)}**` : "", q.username ? `@${md(q.username)}` : "", `license …${q.key_last4}`].filter(Boolean).join(" · ");
   const link = `${origin}/slots/review/${q.id}?t=${q.review_token}`;
-  const head = q.status === "approved" ? `✅ **Approved: ${q.granted} slots**` : q.status === "denied" ? "⛔ **Slot request denied**" : "🎟️ **More slots requested**";
-  return `${head} · ${who}\n${q.current_limit} → ${q.requested} slots${q.note ? `\n> ${md(q.note)}` : ""}\n[${q.status === "pending" ? "Review: approve or deny" : "Change decision"}](${link})`;
+  const per = rows && rows.length > 0;
+  const head = q.status === "approved" ? `✅ **Approved: ${per && rows.every((r) => r.granted != null) ? slotNumbers(rows, (r) => r.granted) : `${q.granted} slots`}**`
+    : q.status === "denied" ? "⛔ **Slot request denied**" : "🎟️ **More slots requested**";
+  const asked = !per ? `${q.current_limit} → ${q.requested} slots`
+    : slotTotalAsk(rows) ? `Asked for **${q.requested}** slots in total, from ${q.current_limit}: an older FAFO asks for one number for every store, so you choose each store's when you approve`
+    : rows.map((r) => r.requested > r.current_limit ? `${accountStoreName(r.store)} ${r.current_limit} → **${r.requested}**` : `${accountStoreName(r.store)} stays ${r.current_limit}`).join(" · ");
+  return `${head} · ${who}\n${asked}${q.note ? `\n> ${md(q.note)}` : ""}\n[${q.status === "pending" ? "Review: approve or deny" : "Change decision"}](${link})`;
+}
+
+// A request's rows per store, made the first time a request from before 2026-11-18 (one number across every store) is
+// opened: each store's limit now as its current one and what it asks for while it waits; once decided, the one limit it
+// was asked from (what denying it puts back), and an approved one's number at each store (what that approval gave every
+// store).
+async function slotRequestRows(env, q) {
+  const rows = await requestStores(env, q.id);
+  if (rows.length) return rows;
+  const lim = q.status === "pending" ? await storeLimits(env, q.key_hash) : null;
+  await env.DB.batch(SLOT_STORES.map((k) => {
+    const cur = lim ? lim.stores[k] : q.current_limit;
+    return env.DB.prepare("INSERT OR IGNORE INTO slot_request_stores (request_id, store, current_limit, requested, granted) VALUES (?, ?, ?, ?, ?)")
+      .bind(q.id, k, cur, cur, q.status === "approved" ? q.granted : null);
+  }));
+  return requestStores(env, q.id);
 }
 
 async function slotReview(request, env, ctx, url, id) {
   const q = /^[A-Za-z0-9_-]{8,40}$/.test(id) ? await env.DB.prepare("SELECT * FROM slot_requests WHERE id = ?").bind(id).first() : null;
-  let t = url.searchParams.get("t") || "", action = "", amount = NaN;
+  let t = url.searchParams.get("t") || "", action = "";
+  const typed = {};
   if (request.method === "POST") {
     const form = await request.formData().catch(() => null);
     t = form && String(form.get("t") || "") || t;
     action = form && String(form.get("action") || "");
-    const raw = form && form.get("amount");
-    amount = raw == null || String(raw).trim() === "" ? NaN : Math.floor(Number(raw));
+    for (const k of SLOT_STORES) { const v = form && form.get("n_" + k); if (v != null) typed[k] = String(v).trim().slice(0, 12); }
   } else if (request.method !== "GET") {
     return page(405, "Not allowed", "");
   }
   if (!q || !(await sameText(t, q.review_token))) return page(404, "Request not found", "This review link isn't valid.");
 
+  let rows = await slotRequestRows(env, q);
   let done = "", err = "";
   if (action === "approve") {
-    const n = Number.isFinite(amount) ? amount : q.requested;
-    if (n < 1 || n > SLOT_MAX) err = `Choose between 1 and ${SLOT_MAX} slots.`;
+    // A number per store, each from 1 to SLOT_MAX; anything else changes nothing (a page opened before 2026-11-18 sends one
+    // `amount`, which isn't enough to go on).
+    const n = Object.fromEntries(SLOT_STORES.map((k) => [k, /^\d{1,6}$/.test(typed[k] || "") ? Number(typed[k]) : NaN]));
+    if (!SLOT_STORES.every((k) => n[k] >= 1 && n[k] <= SLOT_MAX)) err = `Choose between 1 and ${SLOT_MAX} slots at each store.`;
     else {
       const now = Date.now();
       await env.DB.batch([
-        env.DB.prepare(`INSERT INTO slot_limits (key_hash, slot_limit, updated_at) VALUES (?, ?, ?)
-          ON CONFLICT (key_hash) DO UPDATE SET slot_limit = excluded.slot_limit, updated_at = excluded.updated_at`).bind(q.key_hash, n, now),
-        env.DB.prepare("UPDATE slot_requests SET status = 'approved', granted = ?, decided_at = ? WHERE id = ?").bind(n, now, q.id),
+        ...SLOT_STORES.map((k) => env.DB.prepare(`INSERT INTO slot_store_limits (key_hash, store, slot_limit, updated_at) VALUES (?, ?, ?, ?)
+          ON CONFLICT (key_hash, store) DO UPDATE SET slot_limit = excluded.slot_limit, updated_at = excluded.updated_at`).bind(q.key_hash, k, n[k], now)),
+        env.DB.prepare("UPDATE slot_requests SET status = 'approved', granted = ?, decided_at = ? WHERE id = ?").bind(SLOT_STORES.reduce((s, k) => s + n[k], 0), now, q.id),
+        ...SLOT_STORES.map((k) => env.DB.prepare("UPDATE slot_request_stores SET granted = ? WHERE request_id = ? AND store = ?").bind(n[k], q.id, k)),
       ]);
-      done = `Approved. They can now use ${n} slots.`;
+      done = `Approved. Their limits are now ${slotNumbers(SLOT_STORES.map((k) => ({ store: k })), (r) => n[r.store])}.`;
     }
   } else if (action === "deny") {
     const now = Date.now();
-    const stmts = [env.DB.prepare("UPDATE slot_requests SET status = 'denied', granted = NULL, decided_at = ? WHERE id = ?").bind(now, q.id)];
-    // Taking back an approval puts the limit back where it was before this request.
-    if (q.status === "approved") stmts.push(env.DB.prepare(`INSERT INTO slot_limits (key_hash, slot_limit, updated_at) VALUES (?, ?, ?)
-      ON CONFLICT (key_hash) DO UPDATE SET slot_limit = excluded.slot_limit, updated_at = excluded.updated_at`).bind(q.key_hash, q.current_limit, now));
+    const stmts = [env.DB.prepare("UPDATE slot_requests SET status = 'denied', granted = NULL, decided_at = ? WHERE id = ?").bind(now, q.id),
+      env.DB.prepare("UPDATE slot_request_stores SET granted = NULL WHERE request_id = ?").bind(q.id)];
+    // Taking back an approval puts each store's limit back where it was before this request.
+    if (q.status === "approved") for (const r of rows) stmts.push(env.DB.prepare(`INSERT INTO slot_store_limits (key_hash, store, slot_limit, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT (key_hash, store) DO UPDATE SET slot_limit = excluded.slot_limit, updated_at = excluded.updated_at`).bind(q.key_hash, r.store, r.current_limit, now));
     await env.DB.batch(stmts);
-    done = "Denied.";
+    done = q.status === "approved" ? `Denied. Their limits are back to ${slotNumbers(rows, (r) => r.current_limit)}.` : "Denied.";
   }
   const cur = await env.DB.prepare("SELECT * FROM slot_requests WHERE id = ?").bind(q.id).first();
-  if (done && cur.webhook_message_id) ctx.waitUntil(webhookEdit(env, cur.webhook_message_id, { content: slotMessage(url.origin, cur) }).catch(() => {}));
-  const label = { pending: "Waiting for your decision", approved: `Approved: ${cur.granted} slots`, denied: "Denied" }[cur.status] || cur.status;
+  if (done) rows = await requestStores(env, q.id);
+  if (done && cur.webhook_message_id) ctx.waitUntil(webhookEdit(env, cur.webhook_message_id, { content: slotMessage(url.origin, cur, rows) }).catch(() => {}));
+  const approved = cur.status === "approved", total = slotTotalAsk(rows);
+  const label = { pending: "Waiting for your decision", approved: `Approved: ${slotNumbers(rows, (r) => r.granted ?? r.requested)}`, denied: "Denied" }[cur.status] || cur.status;
   const who = [cur.name, cur.username ? "@" + cur.username : ""].filter(Boolean).join(" · ") || "No name given";
   const hidden = `<input type="hidden" name="t" value="${esc(t)}">`;
+  // Each store: its limit (now, while it waits; before the request, once decided), what was asked there, and a box for the
+  // number to allow, starting at what was asked (what was approved, once approved), or what was typed when it was refused.
+  const line = (r) => {
+    const name = accountStoreName(r.store), up = !total && r.requested > r.current_limit;
+    const value = err && typed[r.store] != null ? typed[r.store] : approved && r.granted != null ? r.granted : r.requested;
+    return `<tr><th scope="row">${esc(name)}</th><td>${r.current_limit}</td><td${up ? ' class="up"' : ""}>${total ? "–" : r.requested}</td>`
+      + `<td><input type="number" id="n_${r.store}" name="n_${r.store}" min="1" max="${SLOT_MAX}" step="1" value="${esc(value)}" required aria-label="${esc(name)}: slots to allow"></td></tr>`;
+  };
+  const css = `table.lim{margin:18px 0 4px;font-size:15px}
+  table.lim thead{display:table-header-group} table.lim tr{display:table-row;border:0}
+  table.lim th,table.lim td{display:table-cell;padding:8px 6px;border-bottom:1px solid #1c2c5c;vertical-align:middle}
+  table.lim thead th{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#8090b8;border-bottom-color:#2a3f7a;text-align:right}
+  table.lim thead th:first-child,table.lim tbody th{text-align:left} table.lim tbody th{font-weight:600;color:#e6ecff;overflow-wrap:anywhere}
+  table.lim th:first-child{padding-left:0} table.lim td:last-child,table.lim th:last-child{padding-right:0}
+  table.lim td{color:#b9c6ea;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums} table.lim td.up{color:#5fd39a;font-weight:600}
+  table.lim input[type=number]{width:5.5em;margin:0;padding:8px 10px;font-size:16px;text-align:right}`;
   return page(200, "Slot request", err || done || label,
     `<p class="who">${esc(who)}</p>
-     <p class="small">License …${esc(cur.key_last4)}<br>Current limit ${cur.current_limit} · asked for <strong>${cur.requested}</strong><br>Requested ${esc(new Date(cur.created_at).toISOString().replace("T", " ").slice(0, 16))} UTC</p>
+     <p class="small">License …${esc(cur.key_last4)}<br>Requested ${esc(etWhen(cur.created_at))}</p>
      ${cur.note ? `<p class="small">“${esc(cur.note)}”</p>` : ""}
+     ${total ? `<p class="small">They asked for <strong>${cur.requested}</strong> slots in total, from ${cur.current_limit}: an older FAFO asks for one number for every store. Choose each store's below.</p>` : ""}
      <form method="post" class="stack">${hidden}
-       <label class="small" for="amount">Slots to allow</label>
-       <input id="amount" name="amount" type="number" min="1" max="${SLOT_MAX}" value="${cur.status === "approved" ? cur.granted : cur.requested}">
-       <div class="row"><button class="ok" type="submit" name="action" value="approve">${cur.status === "approved" ? "Change amount" : "Approve"}</button>${cur.status !== "denied" ? `<button class="no" type="submit" name="action" value="deny" formnovalidate>Deny</button>` : ""}</div>
-     </form>`);
+       <table class="lim"><thead><tr><th scope="col">Store</th><th scope="col">${cur.status === "pending" ? "Now" : "Before"}</th><th scope="col">Asked</th><th scope="col">Allow</th></tr></thead>
+       <tbody>${rows.map(line).join("")}</tbody></table>
+       <div class="row"><button class="ok" type="submit" name="action" value="approve">${approved ? "Change amounts" : "Approve"}</button>${cur.status !== "denied" ? `<button class="no" type="submit" name="action" value="deny" formnovalidate>Deny</button>` : ""}</div>
+     </form>`, false, css);
 }
 
 // ---- submissions -----------------------------------------------------------------------
@@ -1596,8 +1708,9 @@ async function submissionBatches(request, env, url) {
 // each such slot gets a random free account for its store: its email goes in the slot's row (the
 // `email` column, and on its AYCD profile) and email:password is added to that store's logins file (posted for every
 // store but Pokémon Center), so line N still goes with
-// row N. An account goes to one slot only; the buyer never sees it. A license gets as many in all as its slot limit
-// (accountLimit), and an account picked for a batch that never reached the channel goes back to the list.
+// row N. An account goes to one slot only; the buyer never sees it. A license gets as many in all as its Target and Pokémon
+// Center slot limits together (accountLimit), and an account picked for a batch that never reached the channel goes back to
+// the list.
 
 const ACCOUNT_OFFERS_PER_DAY = 5;
 const ACCOUNT_OFFER_MAX = 1000;
@@ -1606,14 +1719,16 @@ const ACCOUNT_OFFER_MAX = 1000;
 const offerTtlMs = (env) => Number(env.ACCOUNT_OFFER_TTL_MS) > 0 ? Number(env.ACCOUNT_OFFER_TTL_MS) : 7 * 86400000;
 const expireOffers = (env, now) => env.DB.prepare("UPDATE account_offers SET status = 'expired', accounts = '[]', decided_at = ? WHERE status = 'pending' AND created_at < ?")
   .bind(now, now - offerTtlMs(env)).run();
-// How many of the owner's accounts a license can be given in all: as many as the slots it can have on at once (2026-10-12,
-// the owner's request: they approved a buyer 50 slots, but that buyer's accounts stopped at the fixed 20 of ASSIGNED_LIMIT). A license
-// on the default slot limit (none approved, or an approval taken back) gets the default: ASSIGNED_LIMIT if it's set (the
-// tests set it), else DEFAULT_SLOT_LIMIT.
-const assignLimit = (env) => { const n = Math.floor(Number(env.ASSIGNED_LIMIT)); return String(env.ASSIGNED_LIMIT ?? "").trim() !== "" && n >= 0 ? n : slotDefault(env); };
+// How many of the owner's accounts a license can be given in all: as many as the slots it can have on at once at the stores
+// that get them (2026-10-12, the owner's request: they approved a buyer 50 slots, but that buyer's accounts stopped at the
+// fixed 20 of ASSIGNED_LIMIT). Since each store has its own limit (2026-11-18), that's Target's plus Pokémon Center's (the
+// owner's choice; Costco never checks out on Use Assigned Account). A license with both on the default (none approved, an
+// approval taken back, or only Costco's raised) gets the default: ASSIGNED_LIMIT if it's set (the tests set it), else
+// DEFAULT_SLOT_LIMIT at each of the two stores.
+const assignLimit = (env) => { const n = Math.floor(Number(env.ASSIGNED_LIMIT)); return String(env.ASSIGNED_LIMIT ?? "").trim() !== "" && n >= 0 ? n : 2 * slotDefault(env); };
 async function accountLimit(env, hash) {
-  const row = await env.DB.prepare("SELECT slot_limit FROM slot_limits WHERE key_hash = ?").bind(hash).first();
-  const n = row && row.slot_limit !== slotDefault(env) ? row.slot_limit : assignLimit(env);
+  const { stores } = await storeLimits(env, hash), def = slotDefault(env);
+  const n = stores.target !== def || stores.pokemoncenter !== def ? stores.target + stores.pokemoncenter : assignLimit(env);
   // On a monthly plan (payments), at least the plan's slots.
   const plan = await planSlots(env, hash).catch((e) => { console.error("billing", e); return null; });
   return plan ? Math.max(n, plan) : n;
@@ -6266,12 +6381,37 @@ async function admin(request, env, path) {
     return json({ licenses: results.map(({ terms_version, terms_at, ...l }) => ({ ...l, terms: terms_version ? { version: terms_version, at: terms_at } : null })) });
   }
   if (request.method === "GET" && path === "/admin/slots") {
+    // `limits`: the one number per license from before 2026-11-18 (each store's until it has its own); `storeLimits`: each
+    // license with a number of its own at a store, by its last 4 (each store's limit, the base the others have, their sum);
+    // each request with its numbers per store (`stores`, once it has them).
     const origin = new URL(request.url).origin;
-    const [limits, reqs] = await env.DB.batch([
+    const [limits, own, reqs, reqStores] = await env.DB.batch([
       env.DB.prepare("SELECT key_hash, slot_limit, updated_at FROM slot_limits ORDER BY updated_at DESC"),
+      env.DB.prepare(`SELECT s.key_hash, s.store, s.slot_limit, s.updated_at, b.slot_limit AS base, l.username,
+        COALESCE(substr(l.license_key, -4), (SELECT key_last4 FROM slot_requests r WHERE r.key_hash = s.key_hash ORDER BY r.created_at DESC LIMIT 1)) AS key_last4
+        FROM slot_store_limits s LEFT JOIN slot_limits b ON b.key_hash = s.key_hash LEFT JOIN licenses l ON l.key_hash = s.key_hash`),
       env.DB.prepare("SELECT * FROM slot_requests ORDER BY created_at DESC LIMIT 200"),
+      env.DB.prepare(`SELECT request_id, store, current_limit, requested, granted FROM slot_request_stores
+        WHERE request_id IN (SELECT id FROM slot_requests ORDER BY created_at DESC LIMIT 200)`),
     ]);
-    return json({ default: slotDefault(env), limits: limits.results, requests: reqs.results.map(({ review_token, key_hash, ...q }) => ({ ...q, review_url: `${origin}/slots/review/${q.id}?t=${review_token}` })) });
+    const byKey = new Map();
+    for (const r of own.results) {
+      let x = byKey.get(r.key_hash);
+      if (!x) {
+        const base = r.base ?? slotDefault(env);
+        byKey.set(r.key_hash, x = { key_last4: r.key_last4 || null, username: r.username || null, base, stores: Object.fromEntries(SLOT_STORES.map((k) => [k, base])), updated_at: 0 });
+      }
+      if (SLOT_STORES.includes(r.store)) x.stores[r.store] = r.slot_limit;
+      x.updated_at = Math.max(x.updated_at, r.updated_at);
+    }
+    const storeLimitsOut = [...byKey.values()].map((x) => ({ ...x, limit: SLOT_STORES.reduce((n, k) => n + x.stores[k], 0) })).sort((a, b) => b.updated_at - a.updated_at);
+    const rowsOf = new Map();
+    for (const r of reqStores.results) (rowsOf.get(r.request_id) || rowsOf.set(r.request_id, []).get(r.request_id)).push(r);
+    return json({ default: slotDefault(env), stores: SLOT_STORES, limits: limits.results, storeLimits: storeLimitsOut,
+      requests: reqs.results.map(({ review_token, key_hash, ...q }) => {
+        const out = slotRequestOut(q, slotRowsOrder(rowsOf.get(q.id) || []));
+        return { ...q, ...(out.stores ? { stores: out.stores } : {}), review_url: `${origin}/slots/review/${q.id}?t=${review_token}` };
+      }) });
   }
   if (request.method === "GET" && path === "/admin/submissions") {
     const origin = new URL(request.url).origin;
