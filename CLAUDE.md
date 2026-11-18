@@ -97,6 +97,41 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   It also keeps each license's slot limit (default 20 switched on at once on the
   Submit page, app 1.9.46+): `/slots/limit` and `/slots/request` take the license
   key as `Authorization: Bearer`, and requests are approved at `/slots/review/:id`.
+  Since 2026-11-18 (the owner, with a screenshot of Request more slots' "Slots you need in total": "Let's change this slot
+  request window. Each retailer should have their own slot request. Example: Costco --- 10, Pokemon Center --- 15, Target
+  --- 30", then "the 20 slots cap should be per store") **each store has its own slot limit**, at Target, Pokémon Center and
+  Costco (`SLOT_STORES`): its row in D1 `slot_store_limits` (by `key_hash` and store; a new table), else the license's one
+  number from before in `slot_limits` (the owner chose that buyers they'd raised keep it at each store, so no one has fewer
+  than before; nothing writes `slot_limits` any more), else `DEFAULT_SLOT_LIMIT`, 20 at each store now (`storeLimits`).
+  - **`GET /slots/limit`** answers `{limit, stores:{target, pokemoncenter, costco}, base, request, canRequest}`. `base` is
+    what a store with no number of its own has. `limit` is the smallest store's: the one limit a FAFO before 1.9.158 reads,
+    which lets the buyer set each store's cap while nothing here counts a batch's slots per store, so given the sum it would
+    let 60 go to one store (the review of 1.9.158). `request` (`slotRequestOut`) adds `stores: {k: {current, requested,
+    granted}}` from D1 `slot_request_stores` (a new table); `slot_requests` keeps the sums, for older pages and `/admin`. On
+    a monthly plan the answer is as before: the plan's one number, with no `stores`.
+  - **`POST /slots/request`** takes `{stores:{target, pokemoncenter, costco}, name, note}` from page 1.9.158: each a whole
+    number from that store's limit up to `SLOT_MAX` (500), one left out keeping its limit, and at least one raised, else 400
+    with a sentence ("Target's limit is 30 now: ask for 30 or more there.", "Ask for more than its limit at one store at
+    least (now Target 20 · Pokémon Center 20 · Costco 20)."). A FAFO before 1.9.158 sends `{requested, name, note}`, one
+    total: more than its `limit` and at most 500, kept with each store asking for its limit now and the total in
+    `slot_requests.requested`, so the owner picks each store's number. The rest is as before: 401, 409 on a monthly plan, 503
+    with no webhook, a request already waiting answered without a new one, 3 a day (429).
+  - **The channel's message** (`slotMessage`) names each store: "Target 20 → **30** · Pokémon Center 20 → **25** · Costco
+    stays 20", or for a total "Asked for **25** slots in total, from 20 (an older FAFO asks for one number for every store):
+    you choose each store's when you approve" (`slotTotalWords`). The owner's decision edits it to "✅ **Approved: Target 30 ·
+    Pokémon Center 25 · Costco 20**" or "⛔ **Slot request denied**", with Change decision.
+  - **The review page** (`slotReview`; Requested in Eastern time, `etWhen`) has a table (class `lim`, never `sr`, which
+    `page()` hides): Store, Now (Before once decided), Asked (green above its limit; "–" for a total) and Allow, a box per
+    store (`n_target`, `n_pokemoncenter`, `n_costco`) starting at what was asked. Each must be 1 to 500, or nothing changes.
+    Approve (then Change amounts) writes the three `slot_store_limits` rows, the request (`granted` the sum) and each store's
+    `granted` in one D1 batch. Deny after approving puts each store back to the limit it had when asked: the batch reads
+    whether it was approved itself, so an Approve committing at the same moment never leaves its numbers on a denied request
+    (the review of 1.9.158). A request from before 2026-11-18 gets its rows the first time its page opens (`slotRequestRows`,
+    `INSERT OR IGNORE`) and reviews the same way, saying it "asked for 40 slots, from 20, before each store had its own
+    limit".
+  - `/admin/slots` adds `stores`, `storeLimits` (each license with a number of its own at a store: its stores, `base`,
+    `total` and `limit`) and each request's `stores`. Assigned accounts follow Target's and Pokémon Center's limits
+    (`accountLimit`, below). Page 1.9.158 below.
   From 1.9.47, Submit sends slots straight to the owner's channel. 1.9.47–1.9.51 seal them for the
   owner's collecting key (`GET /submit/key`; the owner offers it from Settings → Password and
   sharing and confirms it at `/submit/review/:id`), and `POST /submissions` posts the sealed
@@ -133,6 +168,22 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   batch, else their Discord name, accents taken off) and the store: `<buyer>-<store>-aycd.json`, `-shikari.csv` and
   `-logins.txt`, in that order per store, where they were `orbit-slots-<time>-<name>-<store>-…`; 1.9.101 says "AYCD and
   Shikari files".
+  Since 2026-11-18 (the owner: "whenever someone submit costco, can you have it sent to my discord as hayha format?", then
+  "keep aycd but you can remove shikari format for costco submission" and "go ahead with the hayha file") **Costco's slots go
+  out as AYCD and Hayha**: `<buyer>-costco-aycd.json`, then `<buyer>-costco-hayha.Hayha` where its `-shikari.csv` was, then
+  its logins and inbox access as before; no Shikari CSV. A file is Costco's by its profiles file's `storeKey` (`costco` or
+  `other:costco`) or a store named exactly Costco (`isCostcoFile`; "Costco Wholesale" keeps its Shikari CSV). The `.Hayha`
+  file (`costcoHayha`, `hayhaFromCsv(text, sent, id)`, beside `shikariCsv`) is what Export profiles' HayhaAIO 2.0 writes
+  (`toHayha`, page 1.9.150, which matched the owner's own Hayha export byte for byte), made from the store's slots CSV once
+  the accounts are in it (the same rows, order and email column as its AYCD list): a JSON list, 2-space indent and no
+  newline at the end; one `groupId` (a v4 UUID) for the batch's Costco profiles and an `id` each; the name on card, Only one
+  checkout and billing-is-shipping taken from the page's own AYCD list (marked `app` when the page sent it, 1.9.87+), else
+  the billing name, false, and whether the billing columns equal the shipping ones. `export-formats.test.mjs` runs the
+  worker's `hayhaFromCsv` on the page's own slots CSV and AYCD list and wants the page's `toHayha` (ids swapped in), and
+  without an AYCD list too. It's counted in the batch's `bytes` as it is, and in Discord's 10 a message as the Shikari CSV
+  was. The message's line says "Per store: its profiles for AYCD (.json) and Shikari (.csv), Costco's for AYCD (.json) and
+  Hayha (.Hayha), with its logins…", or for a batch of only Costco "its profiles for AYCD (.json) and Hayha (.Hayha)".
+  Every other store is unchanged.
   Since 2026-11-13 (the owner: "What method can buyer input their imap so it can be sent to my private discord?", then
   "during submission only", "email - apppassword format" and "same where all the slots go") each store's slots on the
   buyer's own accounts also bring their **inbox access**: page 1.9.147+ sends a file of kind `imap` per store
@@ -204,7 +255,10 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   line of the logins file. Buyers never
   see them; each account goes to one slot (since 2026-10-13, one profile's slots at both stores, below); a license gets as many in all as its slot limit (`accountLimit`, from 2026-10-12,
   the owner's request: they'd approved a buyer 50 slots, whose accounts stopped at the fixed `ASSIGNED_LIMIT` of 20;
-  20 since 2026-10-07, 10 before; `ASSIGNED_LIMIT` is now only the default if set, else `DEFAULT_SLOT_LIMIT`); an account picked for a batch that never reached the channel goes back. Rows left without one come last, and
+  20 since 2026-10-07, 10 before; `ASSIGNED_LIMIT` is now only the default if set, else `DEFAULT_SLOT_LIMIT`; since each store
+  has its own slot limit, 2026-11-18, it's the Target and Pokémon Center limits together, the owner's choice, as Costco never
+  uses an assigned account, and while both are the default it's `ASSIGNED_LIMIT` if set, else `DEFAULT_SLOT_LIMIT` at each of
+  the two, 40); an account picked for a batch that never reached the channel goes back. Rows left without one come last, and
   since 2026-10-07 the store line says why ("N need an account: this license is at its limit of N", or "your list has
   none"; the owner couldn't tell what happened to a batch's Target logins). Also since 2026-10-07 (the owner's request)
   a profile sent again whose slot isn't out any more gets back the account it had, while it's still that license's,

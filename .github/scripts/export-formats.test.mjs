@@ -31,7 +31,7 @@ if (!/const EXPORT_FORMATS = \[/.test(HTML)) {
 // The app runs inside one function, so the copy served here hands the test a few of its own names (window.__t).
 const END = "\ntry { if (window.pvDesktop && window.pvDesktop.appReady) window.pvDesktop.appReady(); } catch(e){}\n})();";
 assert.equal(HTML.split(END).length, 2, "couldn't find the end of the app's code");
-const PAGE = HTML.replace(END, "\nwindow.__t = {get S(){ return S; }, UI, persist, render, flatProfile, slotRow, SLOT_COLS, EXPORT_FORMATS, openExport, closeAllLayers};" + END);
+const PAGE = HTML.replace(END, "\nwindow.__t = {get S(){ return S; }, UI, persist, render, flatProfile, slotRow, slotAycd, SLOT_COLS, EXPORT_FORMATS, openExport, closeAllLayers};" + END);
 let chromium;
 try { ({ chromium } = createRequire(import.meta.url)("playwright")); }
 catch (e) { console.error("This test needs Playwright: npm install --no-save playwright, then npx playwright install chromium"); process.exit(1); }
@@ -43,6 +43,10 @@ const fnSrc = (name) => { const i = WSRC.indexOf(`\nfunction ${name}(`); assert.
 const constSrc = (name) => { const i = WSRC.indexOf(`\nconst ${name} = `); assert.ok(i >= 0, "the worker's " + name); return WSRC.slice(i, WSRC.indexOf(";\n", i) + 2); };
 const workerShikari = new Function([fnSrc("parseCsv"), constSrc("csvCell"), constSrc("COUNTRIES"), constSrc("US_STATES"), constSrc("CA_PROVINCES"),
   constSrc("SHIKARI_COLS"), constSrc("placeCode"), constSrc("COUNTRY_ALIASES"), fnSrc("shikariCsv"), "return shikariCsv;"].join("\n"))();
+// And its HayhaAIO 2.0 file, which Costco's slots go to the seller's channel as (2026-11-18): hayhaFromCsv(slots CSV, the
+// page's AYCD list for those rows or null, id maker).
+const workerHayha = new Function([fnSrc("parseCsv"), constSrc("COUNTRIES"), constSrc("US_STATES"), constSrc("CA_PROVINCES"), constSrc("placeName"),
+  constSrc("aycdState"), constSrc("HAYHA_NORM"), fnSrc("hayhaStateCode"), fnSrc("hayhaPhone"), fnSrc("hayhaFromCsv"), "return hayhaFromCsv;"].join("\n"))();
 
 let passed = 0;
 const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok  " + name); } catch (e) { console.log("  FAIL " + name); throw e; } };
@@ -554,6 +558,30 @@ try {
     });
     assert.equal(workerShikari(slots), mine);
     assert.equal(mine, SHIKARI);
+  });
+
+  await test("Costco's .Hayha file in the seller's channel is this HayhaAIO 2.0 export (the worker's hayhaFromCsv on a slots CSV of the same profiles)", async () => {
+    // The page's HayhaAIO 2.0 export of the profiles, all in one group (the worker puts a batch's profiles in one Hayha group),
+    // and its slots CSV and AYCD list for them, as Submit sends them; with the AYCD list the worker's file is the same, ids
+    // swapped in order. Without one (a page before 1.9.87), the name on card is the billing name and Only one checkout is off.
+    const { slots, aycd, mine, older } = await s.ev(() => {
+      const T = window.__t, cell = (v) => { const x = String(v == null ? "" : v); return /[",\n\r]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
+      const ps = T.S.profiles.filter((p) => p.cardId).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+      const rows = ps.map((p) => ({ p, e: p.stores[0], l: null })), hayha = T.EXPORT_FORMATS.find((f) => f.id === "hayha");
+      const flat = ps.map((p) => Object.assign(T.flatProfile(p), { group: "" }));
+      return { slots: [T.SLOT_COLS.join(",")].concat(rows.map((r) => T.slotRow(r).map(cell).join(","))).join("\r\n"), aycd: rows.map(T.slotAycd), mine: hayha.make(flat),
+        older: hayha.make(flat.map((f) => Object.assign({}, f, { onlyCheckoutOnce: false, card: Object.assign({}, f.card, { holder: "" }) }))) };
+    });
+    const fixed = (text) => fixIds(text).text;
+    let n = 0;
+    const id = () => `aaaaaaaa-aaaa-4aaa-8aaa-${String(++n).padStart(12, "0")}`;
+    assert.equal(fixed(workerHayha(slots, aycd, id)), fixed(mine));
+    assert.equal(fixIds(mine).ids.length, 6, "one group and five profiles");
+    assert.equal(fixed(workerHayha(slots, null, id)), fixed(older));
+    assert.notEqual(fixed(mine), fixed(older), "the AYCD list's names on card and Only one checkout count");
+    // As the export's fixture, but for the one group.
+    const one = fixIds(HAYHA.replace(/"groupId": "[^"]+"/g, '"groupId": "' + "f".repeat(8) + "-ffff-4fff-8fff-" + "f".repeat(12) + '"')).text;
+    assert.equal(fixed(workerHayha(slots, aycd, id)), one);
   });
 
   await test("the picks are remembered across a reload, unknown ids are dropped, and storage that throws keeps them in memory", async () => {

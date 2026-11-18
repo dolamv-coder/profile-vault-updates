@@ -204,14 +204,15 @@ try {
     S.logins.push(...LG);
     S.addresses.push({ id: "a1", first: "Sam", last: "Sample", line1: "1 Sample St", city: "Austin", state: "TX", zip: "78701", country: "US" });
     S.cards.push({ id: "c1", nick: "Sample", number: "4111111111111111", expM: "7", expY: "31", cvv: "123", holder: "Sam Sample" });
-    // One profile on a login with no inbox (so the warning counts 1 profile), none on the other.
-    S.profiles.push({ id: "p1", name: "Sam T5", shipId: "a1", billSame: true, cardId: "c1", phone: "5125550100", email: "need.one@example.com", stores: [{ store: "target", mode: "login", loginId: "l-need1" }] });
+    // One profile on a login with no inbox (so the warning counts 1 profile), none on the other. Both at stores where a login
+    // needs an inbox (Costco and Pokémon Center): from 1.9.158 a Target login's is optional (target-inbox.test.mjs).
+    S.profiles.push({ id: "p1", name: "Sam C5", shipId: "a1", billSame: true, cardId: "c1", phone: "5125550100", email: "need.one@example.com", stores: [{ store: "costco", mode: "login", loginId: "l-need1" }] });
     T.persist(); T.render();
   }, { IB: [INBOX("ib-ok", "ok.sample@gmail.com"), INBOX("ib-bad", "bad.sample@gmail.com"), INBOX("ib-new", "new.sample@gmail.com"),
     INBOX("ib-blocked", "blocked.sample@gmail.com"), INBOX("ib-far", "far.custom@example.com", { provider: "custom", host: "mail.example.com", password: "Sample-Far-Pw" })],
   LG: [LOGIN("l-ok", "target", "ok.login@example.com", "ib-ok", "g1"), LOGIN("l-bad", "pokemoncenter", "bad.login@example.com", "ib-bad"), LOGIN("l-new", "costco", "new.login@example.com", "ib-new", "g1"),
     LOGIN("l-blocked", "target", "blocked.login@example.com", "ib-blocked"), LOGIN("l-far", "target", "far.login@example.com", "ib-far"),
-    LOGIN("l-need1", "target", "need.one@example.com", "", "g1"), LOGIN("l-need2", "target", "need.two@example.com", "")] });
+    LOGIN("l-need1", "costco", "need.one@example.com", "", "g1"), LOGIN("l-need2", "pokemoncenter", "need.two@example.com", "")] });
 
   await test("the IMAP tab is gone: not in the sidebar or the phone's tabs, and a saved or stale IMAP view opens Store logins", async () => {
     assert.equal(await page.$('#side [data-id="imap"]'), null, "no IMAP in the sidebar");

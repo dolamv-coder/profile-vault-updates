@@ -292,10 +292,16 @@ Their FAFO picks up the new limits within a minute or so while the Submit page i
 they unlock. You can change your mind later from the same link: **Change amounts** sets other numbers,
 and denying an approved request puts each store's limit back to what it was before it.
 
-A FAFO older than 1.9.158 asks for one total, as it did before: more than its stores' limits together
-(which it shows as one limit, 60 to start). Its message says "Asked for **70** slots in total, from 60…",
-the table has no number asked at each store, and the boxes start at each store's limit now: you choose
-how it's split. A request sent before the change is shown the same way.
+A FAFO older than 1.9.158 knows only one limit, for all its stores' slots together, and lets the buyer set
+each store's cap themselves. So it's given the smallest of the three stores' limits (20 to start, or what
+you'd approved before), never their sum: given 60, it would let someone switch on 40 at Target and send them
+where you allow 20. Once it updates, each store has its own. It asks for one total, as it did before: more than
+the one limit it shows, and at most 500. Its message says "Asked for **30** slots in total, from 20 (an older
+FAFO asks for one number for every store): you choose each store's when you approve", the table has no number
+asked at each store, and the boxes start at each store's limit now: you choose each store's number (it keeps
+using the smallest of them until it updates). A request sent before the change is shown the same way, its
+message saying "Asked for **40** slots, from 20, before each store had its own limit" once you decide on it;
+denying one you'd approved then puts each store back to the one limit it was asked from.
 
 Each license can have one request waiting at a time and send at most 3 a day. A buyer on the monthly
 plan (payments, below) has that plan's slots, one number for every store, and doesn't ask.
@@ -307,7 +313,8 @@ Both take the license key as `Authorization: Bearer`.
 - `GET /slots/limit` answers `{limit, stores: {target, pokemoncenter, costco}, base, request, canRequest}`:
   each store's limit (its own number, else `base`), `base` (the license's one number from before, else
   `DEFAULT_SLOT_LIMIT`; a store FAFO has from older data, not one of these three, has this), and `limit`, the
-  three added up, which FAFO before 1.9.158 reads as one limit across every store. `request` is the latest
+  smallest of the three, which FAFO before 1.9.158 reads as one limit across every store (so it can't put more
+  at one store than that store allows; FAFO 1.9.158 reads `stores`). `request` is the latest
   request, `{id, status, requested, granted, created_at, decided_at}` with `requested` and `granted` added
   up over the stores, and `stores: {target: {current, requested, granted}, …}` once it has numbers per
   store. On a monthly plan it's `{limit, request, canRequest: false, plan: "monthly"}` as before, with no
@@ -315,7 +322,7 @@ Both take the license key as `Authorization: Bearer`.
 - `POST /slots/request` takes `{stores: {target, pokemoncenter, costco}, name, note}` from FAFO 1.9.158:
   each a whole number from that store's limit now up to 500, one left out keeping its limit, and at least
   one store's more than its limit, or 400 with a sentence saying what's wrong. FAFO before 1.9.158 sends
-  `{requested, name, note}`, one total: more than `limit` and at most 1500 (500 a store). Either answers
+  `{requested, name, note}`, one total: more than `limit` and at most 500. Either answers
   `{status: "pending", request}`; one already waiting is answered instead of a new one; 409 on a monthly
   plan, 429 past 3 a day, 503 without `DISCORD_WEBHOOK_URL`.
 
@@ -327,9 +334,10 @@ curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit
 
 It answers `{default, stores, limits, storeLimits, requests}`: `limits` the one number per license from
 before (as it was), `storeLimits` each license with a number of its own at a store, by its last 4 and
-Discord name (`base`, `stores`, `limit` and when it last changed), and `requests` the newest 200, each with
-`stores` (`{current, requested, granted}` per store) once it has them. Never a review token or, for
-requests and `storeLimits`, a key's hash.
+Discord name (`base`, `stores`, `total` their sum, `limit` the smallest, and when it last changed), and
+`requests` the newest 200 (`current_limit`, `requested` and `granted` added up over the stores, but
+`requested` is the total an older FAFO asked for), each with `stores` (`{current, requested, granted}` per
+store) once it has them. Never a review token or, for requests and `storeLimits`, a key's hash.
 
 ## Slots sent to your Discord
 
@@ -360,9 +368,23 @@ request; before, `orbit-slots-<date>-<time>-Kim-target-aycd.json`):
   (the same columns), so it comes from every version. It's for loading into the bot, so its cells aren't
   Excel text (below); a cell that would start with `=`, `+`, `-` or `@` loses those characters instead,
   so nothing a buyer typed runs as a formula if you open it in Excel. (Excel shows a long card number
-  rounded, so load the file into Shikari rather than saving it from Excel.)
+  rounded, so load the file into Shikari rather than saving it from Excel.) Costco gets a Hayha file
+  instead (next).
+- `Kim-costco-hayha.Hayha` (Costco only, since 2026-11-18, at your request: "whenever someone submit costco,
+  can you have it sent to my discord as hayha format?", then "keep aycd but you can remove shikari format for
+  costco submission"): Costco's slots, in the same order, as a HayhaAIO 2.0 profile file, in the place
+  Costco's Shikari CSV had (Costco gets no Shikari CSV). It's exactly what FAFO's Export profiles →
+  HayhaAIO 2.0 writes (which matched a Hayha export of yours byte for byte): a list of profiles, `name,
+  shipping, cardInfo, oneCheckout, sameAsBilling, billing, groupId, id`, each address `firstName, lastName,
+  email, phone, address, address2, country, state, city, zipCode` with the country written out (`United
+  States`), the state as `{"shortCode": "TX", "name": "Texas"}`, the phone's digits and the account the slot
+  checks out with as the email, the card's number, name, month (`07`), year (`2031`) and CVV, and billing
+  written out even when it's the shipping address. The batch's Costco profiles are one Hayha group (one
+  `groupId`), each with an id of its own. FAFO 1.9.87 and later send the card's own name and Only one
+  checkout, which it takes from their AYCD list; for older versions it has the billing name and Only one
+  checkout off. Import it in Hayha's profile import.
 - `Kim-target-logins.txt`: that store's logins, one `email:password` per line, in the same
-  order as the first profiles of the AYCD list and the Shikari CSV. AYCD's profile format has no place
+  order as the first profiles of the AYCD list and the Shikari CSV (Costco's Hayha file). AYCD's profile format has no place
   for them. Pokémon Center gets none (since 2026-10-07, at your request): it checks out with just an
   email, which is on each of its profiles, so a Pokémon Center batch has no logins file.
 - `Kim-target-imap.txt` (FAFO 1.9.147 and later, since 2026-11-13, at your request: "during submission
@@ -374,8 +396,8 @@ request; before, `orbit-slots-<date>-<time>-Kim-target-aycd.json`):
   for a slot whose inbox (or its app password) isn't saved in FAFO, and none from your own FAFO's batches.
   A Pokémon Center email that forwards to another inbox (a Hide My Email alias, a catch-all domain) has no
   inbox FAFO can match it to, so FAFO asks the buyer to send you that inbox's access on Discord. It comes
-  right after the store's logins file, or after its Shikari CSV when there's none (Pokémon Center gets one
-  too), and only when there's a line. This worker checks it (each line an email and a password, no more
+  right after the store's logins file, or after its Shikari CSV (Costco's Hayha file) when there's none
+  (Pokémon Center gets one too), and only when there's a line. This worker checks it (each line an email and a password, no more
   lines than the store's slots) and keeps nothing of it.
 - `Kim-target-skus.txt` (FAFO 1.9.142 and later, since 2026-11-12, at your request): the products on your
   Interests list (below) the buyer had ticked for that store when they sent the batch, one SKU per line, in
@@ -383,7 +405,7 @@ request; before, `orbit-slots-<date>-<time>-Kim-target-aycd.json`):
   message itself doesn't mention it (you chose "A file only"); you approve or decline it with the batch.
 
 The app sends each store's slots as that CSV: this worker reads it to give out accounts and, for apps
-before 1.9.87, to make the AYCD list, and posts it as the Shikari CSV. From 2026-10-06 to 2026-10-09 it
+before 1.9.87, to make the AYCD list, and posts it as the Shikari CSV (Costco's as the Hayha file). From 2026-10-06 to 2026-10-09 it
 wasn't posted; until 2026-10-06 it went out as it came, as `orbit-slots-…-target.csv`.
 
 In a CSV posted for Excel (only FAFO 1.9.52's single file now), the phone, card number, expiry month, CVV and zip code cells are written as `="…"`, for
@@ -397,6 +419,9 @@ see the `="…"`, and FAFO's **Import** (1.9.68+) reads them as the text inside.
 > Target 3 · Walmart 3
 > Per store: its profiles for AYCD (.json) and Shikari (.csv), with its logins (email:password, .txt) in the same order, and the inbox access for its slots on the buyer's own accounts (email:app password, .txt).
 > ⏳ **Pending your approval** · Approve or decline
+
+With Costco slots in the batch, the line says "…AYCD (.json) and Shikari (.csv), Costco's for AYCD (.json) and
+Hayha (.Hayha), with its logins…", or for a batch of only Costco "…AYCD (.json) and Hayha (.Hayha)…".
 
 ### Approving or declining a batch
 
@@ -1259,8 +1284,10 @@ answered only from the browser Discord sent back (the state alone, a wrong nonce
 accepted with approval on and off (from the web version too), pressed twice at once, accepted in a second sign-in
 after a denial or the key turned off, declined, expired, old asks cleaned up, what the channel, the review page,
 `/admin/applications` and `/admin/licenses` say, and `/terms`), slot limits (one per store, requests per store and as one
-total from an older FAFO, requests from before, the review page and its table, the accounts a license can be given),
-submissions and collecting keys, pulled slots, the Interests list (its pictures, the
+total from an older FAFO, which gets the smallest store's limit, requests from before, the review page and its table,
+Approve and Deny pressed at once, the accounts a license can be given),
+submissions and collecting keys (Costco's as AYCD and Hayha, from FAFO with an AYCD list and without), pulled slots,
+the Interests list (its pictures, the
 products added to it once, the SKUs a batch carries, and picks sent on their own: the message and files, the same
 picks again, the daily limit, also sent at once, and a failed post), product pictures
 (against a stand-in catalog: exact names only, never a case, another edition or two that fit),

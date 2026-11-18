@@ -617,8 +617,10 @@ button.mini-chip{border:0;font-family:inherit;cursor:pointer}
 .lc-inbox .lt-line,.lc-inbox .lt-line span{overflow:visible;flex:none}
 .l-setup{margin-left:auto;flex:none}
 /* A Target login with no inbox (1.9.158): gray "No inbox", then "optional for Target", and Add inbox. */
-.l-opt{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:calc(12px*var(--fs));color:var(--ink-2);white-space:nowrap}
-.l-ibx-head{justify-content:flex-start}
+.l-opt{flex:none;font-size:calc(12px*var(--fs));color:var(--ink-2);white-space:nowrap}
+/* Its line wraps where the words and Add inbox don't fit on one (a card in three columns), Add inbox on the right. */
+.slip-slim .l-inbox-line.l-inbox-opt{flex-wrap:wrap;row-gap:6px}
+.section-head.l-ibx-head{justify-content:flex-start}
 .tag-opt{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:1px 9px;font-size:calc(11px*var(--fs));font-weight:600;color:var(--ink-2);white-space:nowrap}
 .tag-opt[hidden]{display:none}
 .l-setup-link{flex:none;font-size:inherit;white-space:nowrap}
@@ -1108,8 +1110,10 @@ button.p-kpi.p-kpi-bad[aria-pressed="true"]{border-color:var(--danger);box-shado
 .sr-heads > span{font-size:calc(11px*var(--fs));font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);padding-bottom:6px;border-bottom:1px solid var(--line-2)}
 .sr-heads .sr-now,.sr-heads .sr-in-h{text-align:right}
 .sr-st{display:flex;align-items:center;gap:8px;min-width:0;font-weight:600;color:var(--ink);padding:8px 0;cursor:pointer}
-.sr-st > span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* A store's name is never cut short ("Pokémon Cen…" on a phone): it wraps at its space, and phones give the box less room. */
+.sr-st > span:last-child{min-width:0;overflow-wrap:break-word}
 .sr-st .smark{width:22px;height:22px;border-radius:6px;font-size:calc(10px*var(--fs))}
+@media (max-width:420px){.sr-grid{grid-template-columns:minmax(0,1fr) auto 76px;column-gap:10px}}
 .sr-now{color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
 .sr-in{width:100%;min-width:0;min-height:42px;margin:4px 0;border:1px solid var(--line);border-radius:8px;background:var(--sheet-2);color:var(--ink);padding:8px 11px;font-size:calc(16px*var(--fs));text-align:right;font-variant-numeric:tabular-nums}
 .sr-in:focus{border-color:var(--ink)}
@@ -9834,7 +9838,7 @@ function openSettings(){
         const msg = $("#st-dc-msg", dc), old = $("#st-dc-go", dc); if (old) old.remove();
         if (!d){ msg.textContent = "Couldn't reach the license server. Check your connection, then open Settings again."; return; }
         if (d.pub === mine){
-          msg.innerHTML = `Version 1.9.52 and later send submitted slots to your Discord channel as files you open directly: an AYCD profile list and a Shikari CSV for each store, named after the person who sent them, and its logins in a separate file (none for Pokémon Center), then, from 1.9.147, the inbox access (email:app password) for its slots on the sender's own accounts. Each batch has a link to approve or decline it: the sender's FAFO shows those slots as Pending approval until you do, then Success or Declined. People still on an older version send a file encrypted for key ID <strong>${esc(id)}</strong>, which only this vault can open: download it, then drop it into <strong>Import</strong>.`;
+          msg.innerHTML = `Version 1.9.52 and later send submitted slots to your Discord channel as files you open directly: an AYCD profile list and a Shikari CSV for each store (for Costco, a Hayha file in place of the Shikari CSV, from 1.9.158), named after the person who sent them, and its logins in a separate file (none for Pokémon Center), then, from 1.9.147, the inbox access (email:app password) for its slots on the sender's own accounts. Each batch has a link to approve or decline it: the sender's FAFO shows those slots as Pending approval until you do, then Success or Declined. People still on an older version send a file encrypted for key ID <strong>${esc(id)}</strong>, which only this vault can open: download it, then drop it into <strong>Import</strong>.`;
           SELLER = {pub:mine, keyId:id}; return;
         }
         const other = d.pub ? ` Right now they're encrypted for a different key, ID <strong>${esc(d.keyId)}</strong>.` : "";
@@ -10908,6 +10912,7 @@ function openLoginEditor(existing, onSaved, opts){
       // (mailboxKey: a Gmail address's dot and +tag versions are the same inbox), so those don't become a second copy.
       const iEm = $('[name="i_email"]', panel), ibxSel = $('[name="inboxId"]', panel), ibxAuto = $("#l-ibx-auto", panel);
       let ibxHand = false, usHand = !!inbox0, usAuto = false, last = null;   // last: the setup's check (1.9.149; the desktop's too from 1.9.157)
+      let emHand = false;   // the new inbox's email typed by hand (1.9.158: at Target, one already saved is linked as before)
       const showSaved = (on) => { if (us) us.checked = on; $("#l-saved", panel).hidden = !on; $("#l-new", panel).hidden = on; };
       const followEmail = () => {
         const em = val(panel, "email");
@@ -10922,7 +10927,7 @@ function openLoginEditor(existing, onSaved, opts){
       };
       // Anything typed in the new inbox's fields (its password too) keeps it as it is, so a password never moves to another address.
       ["i_email", "i_password", "i_provider", "i_host", "i_port"].forEach(n => ["input", "change"].forEach(ev =>
-        $(`[name="${n}"]`, panel).addEventListener(ev, (e) => { if (e.isTrusted) ibxHand = true; })));
+        $(`[name="${n}"]`, panel).addEventListener(ev, (e) => { if (e.isTrusted){ ibxHand = true; if (n === "i_email") emHand = true; } })));
       if (ibxSel) ibxSel.addEventListener("change", (e) => { if (e.isTrusted){ usHand = true; usAuto = false; ibxAuto.hidden = true; } });
       wireImap(panel, {account:() => val(panel, "email"),
         useSaved: us ? (inbox) => { ibxSel.value = inbox.id; showSaved(true); usHand = true; usAuto = false; ibxAuto.hidden = true; setErr(panel, "inboxId", ""); } : null,
@@ -10987,8 +10992,9 @@ function openLoginEditor(existing, onSaved, opts){
         let inboxId = null, newInbox = null;
         if (us && us.checked){
           inboxId = val(panel,"inboxId"); e = inboxId ? "" : "Choose an inbox."; setErr(panel,"inboxId",e); if (e) bad = true;
-        } else if (inboxOptional(storeKeyOf(d)) && !$('[name="i_password"]', panel).value.trim()){
-          // At Target (1.9.158) no app password typed means no inbox, whatever the fields filled in for it.
+        } else if (inboxOptional(storeKeyOf(d)) && !$('[name="i_password"]', panel).value.trim() && !(emHand && savedInboxFor(val(panel, "i_email")))){
+          // At Target (1.9.158) no app password typed means no inbox, whatever the fields filled in for it (the account's email,
+          // which the inbox's follows): the owner's "Bypass". An inbox email typed by hand that's saved already is linked, as before.
           ["i_email", "i_password", "i_provider", "i_host", "i_port"].forEach(n => setErr(panel, n, ""));
           inboxId = null;
         } else {
@@ -11322,7 +11328,7 @@ function loginCardHTML(l){
       <div class="slip-head l-head">${loginPick(l, sel)}<div class="slip-nm login-nm"><span class="slip-st" title="${esc(storeLabel(l))}">${storeMark(l)}</span><span class="login-email" title="${esc(l.email)}">${esc(l.email)}</span></div>
         <div class="item-actions">${loginActions(l, true)}</div></div>
       <div class="p-line"><span class="p-mi">${ic("store")}</span><span>${sub.join(" · ")}</span></div>
-      <div class="p-line l-inbox-line"><span class="p-mi">${ic("mail")}</span>${inb ? `${lightHTML(inboxLight(inb))}<span class="login-inbox" title="${esc(inb.email + " · " + providerName(inb.provider))}">${esc(inb.email)}</span>` : loginNoInboxHTML(l)}</div>
+      <div class="p-line l-inbox-line${!inb && inboxOptional(storeKeyOf(l)) ? " l-inbox-opt" : ""}"><span class="p-mi">${ic("mail")}</span>${inb ? `${lightHTML(inboxLight(inb))}<span class="login-inbox" title="${esc(inb.email + " · " + providerName(inb.provider))}">${esc(inb.email)}</span>` : loginNoInboxHTML(l)}</div>
       <div class="p-line${n ? "" : " p-line-off"}"><span class="p-mi">${ic("dup")}</span><span>${n ? "Used by " + plural(n, "profile") : "Not linked yet"}</span></div>
     </article>`;
 }
@@ -11693,7 +11699,7 @@ const lightBadHead = (L) => { const by = L.by ? " " + LIGHT_BY[L.by] : ""; retur
 // What a light says on hover: when it was checked and by what, why it couldn't sign in, and a later try that couldn't tell.
 function lightTitle(L){
   if (L.k === "need") return "This store login has no inbox saved. Set one up so your bot can read its sign-in codes.";
-  if (L.k === "opt") return "This Target login has no inbox, which Target doesn't need. Add one if you want FAFO to pull its orders from its emails, and your seller to get its inbox access with your slots.";
+  if (L.k === "opt") return `This Target login has no inbox, which Target doesn't need. Add one if you want ${DESK ? "FAFO" : "the FAFO desktop app"} to pull its orders from its emails, and your seller to get its inbox access with your slots.`;
   const by = L.by ? " " + LIGHT_BY[L.by] : "";
   let t = L.k === "ok" ? `Signed in on its last check (${lightAgo(L.at)}${by}).`
     : L.k === "bad" ? `${lightBadHead(L)}: ${L.why}`
@@ -18933,11 +18939,17 @@ const andList = (xs) => xs.length < 2 ? xs.join("") : xs.slice(0, -1).join(", ")
 const storesOver = () => slotPerStore() ? slotOrder(storeGroups().filter(g => g.sel.length > g.cap), g => g.key) : [];
 const slotsOver = () => slotPerStore() ? storesOver().length > 0 : slotsInUse() > slotAllow();
 // What a request asks for, store by store ("Target 30 and Pokémon Center 25": the stores it raises), or, for one an older
-// FAFO sent (a total) or that raised none, its total: {stores: true|false, text}.
+// FAFO sent (a total) or that raised none, its total in words, never a bare number beside the stores' limits (the review of
+// 1.9.158): "90 slots in total", and "40 slots in total (before each store had its own limit)" for one made before the
+// worker kept each store's numbers (no stores, or each store's limit now as its own, which add up to what it asked or more,
+// so a smaller number doesn't read as asking for fewer): {stores: true|false, text}.
 function slotAskedOf(q){
   const st = q && slotStoresOf(q), up = st ? SLOT_STORES.filter(k => st[k] && Number(st[k].requested) > Number(st[k].current)) : [];
-  return up.length ? {stores:true, text:andList(up.map(k => `${slotStoreName(k)} ${Math.floor(Number(st[k].requested))}`))} : {stores:false, text:String(q && q.requested || "")};
+  if (up.length) return {stores:true, text:andList(up.map(k => `${slotStoreName(k)} ${Math.floor(Number(st[k].requested))}`))};
+  const n = Math.floor(Number(q && q.requested)) || 0, cur = st ? SLOT_STORES.reduce((s, k) => s + (Math.floor(Number(st[k] && st[k].current)) || 0), 0) : 0;
+  return {stores:false, text:`${n} slots in total${!st || cur >= n ? " (before each store had its own limit)" : ""}`};
 }
+const slotAskedLine = (q) => slotAskedOf(q).text;
 const slotsInUse = () => storeGroups().reduce((n, g) => n + g.sel.length, 0);
 const slotReq = () => (S.settings.slotAllow || {}).request || null;
 const canRequestSlots = () => !!sellerLic() && (S.settings.slotAllow || {}).canRequest !== false;
@@ -19055,15 +19067,18 @@ function slotsFiles(fresh){
 // The inbox access the seller gets with a batch (1.9.147; the owner's request, 2026-11-13: "What method can buyer input their
 // imap so it can be sent to my private discord?", then "during submission only", "email - apppassword format" and "same
 // where all the slots go"): a slot on the buyer's own account brings the email and app password of the inbox its account's
-// emails reach, so the seller can follow its orders. That's a store login's inbox (or, for a login with none linked, the
-// inbox saved for its email's mailbox), or the inbox saved for Pokémon Center's own checkout email (savedInboxFor: the same
+// emails reach, so the seller can follow its orders. That's a store login's inbox (or, for a login with none linked at a store
+// whose logins need one, the inbox saved for its email's mailbox: from 1.9.158 not at Target, where a login may have none on
+// purpose), or the inbox saved for Pokémon Center's own checkout email (savedInboxFor: the same
 // address, else the same mailbox, as 1.9.112's login editor finds one). Never Use Assigned Account: those accounts are the
 // seller's. Nor from the seller's own FAFO (imapOwnFafo, in slotImapLines and imapSubmitNote). {own:false}, or {own:true,
 // inbox} with null when none is saved with an app password FAFO can send on one line.
 function slotInbox(r){
   if (asksSeller(r.e)) return {own:false};
   const email = r.l ? r.l.email : modeOf(r.e) === "email" ? (r.e.email || r.p.email) : "";
-  const i = r.l ? inboxById(r.l.inboxId) || savedInboxFor(r.l.email) : email ? savedInboxFor(email) : null;
+  // At Target a login's inbox is optional (1.9.158), and one saved with none means none, as its light and editor say: never
+  // the inbox saved for its mailbox (the review of 1.9.158), which a login at a store that needs one still falls back to.
+  const i = r.l ? inboxById(r.l.inboxId) || (inboxOptional(storeKeyOf(r.l)) ? null : savedInboxFor(r.l.email)) : email ? savedInboxFor(email) : null;
   return {own:true, inbox:i && imapLineOf(i) ? i : null};
 }
 // One line, email:app password, as the license worker takes it: an address (254 characters at most) and a password (200 at
@@ -21082,8 +21097,9 @@ function openSlotRequest(){
 }
 // Request more slots per store (1.9.158, the owner's mockup): a row for each of Target, Pokémon Center and Costco (always all
 // three, in that order) with its limit now and a box starting there. The seller approves each store's number, or changes it.
-// Sent as {stores:{target, pokemoncenter, costco}, name, note}: every store's number, at least one above its limit.
-const slotAskedLine = (q) => { const a = slotAskedOf(q); return a.stores ? a.text : `${a.text} slots`; };
+// Sent as {stores:{target, pokemoncenter, costco}, name, note} with only the stores whose number was changed, at least one
+// above its limit: the worker reads a store left out as its limit now, so a limit the seller changed since this page last
+// asked (it asks once a minute) is never asked for again in a box the buyer didn't touch (the review of 1.9.158).
 function openStoreSlotRequest(){
   const q = slotReq(), L = {key:sellerLic()};
   if (q && q.status === "pending"){ toast(`You've asked for ${slotAskedLine(q)}. It's waiting for approval.`); return; }
@@ -21113,12 +21129,21 @@ function openStoreSlotRequest(){
       // A store asked to go above its limit gets the --info ring.
       const mark = () => SLOT_STORES.forEach(k => { $(`#sr-n-${k}`, panel).classList.toggle("is-up", read(k) > now[k]); });
       panel.addEventListener("input", (e) => { if (e.target.classList.contains("sr-in")){ mark(); const k = e.target.id.slice(5); $(`#sr-err-${k}`, panel).textContent = ""; err.textContent = ""; } });
+      // Enter in a store's box or Your name sends it, as other windows' boxes do (not the Note, where it's a new line; not an
+      // input method's Return, keyCode 229, nor a held key), once: not while it's being sent (the review of 1.9.158).
+      panel.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" || e.isComposing || e.keyCode === 229 || !e.target.matches(".sr-in, #sr-name")) return;
+        e.preventDefault();
+        if (e.repeat || go.disabled) return;
+        go.click();
+      });
       go.addEventListener("click", async () => {
+        if (go.disabled) return;
         const want = {}; let bad = null;
         SLOT_STORES.forEach(k => {
           const v = read(k), e = $(`#sr-err-${k}`, panel), ok = v >= now[k] && v <= SLOT_MAX;
           e.textContent = ok ? "" : `Enter a number from ${now[k]} to ${SLOT_MAX}.`;
-          if (ok) want[k] = v; else if (!bad) bad = $(`#sr-n-${k}`, panel);
+          if (ok && v !== now[k]) want[k] = v; else if (!ok && !bad) bad = $(`#sr-n-${k}`, panel);
         });
         if (bad){ err.textContent = ""; bad.focus(); return; }
         if (!SLOT_STORES.some(k => want[k] > now[k])){ err.textContent = "Raise at least one store's number."; $(`#sr-n-${SLOT_STORES[0]}`, panel).focus(); return; }
@@ -21141,12 +21166,16 @@ function openStoreSlotRequest(){
           return;
         }
         if (name) S.submitName = name;
-        const mine = {}; SLOT_STORES.forEach(k => { mine[k] = {current:now[k], requested:want[k]}; });
-        const req = d.request && typeof d.request === "object" ? d.request : {status:"pending", requested:SLOT_STORES.reduce((n, k) => n + want[k], 0), stores:mine};
+        // A store not sent keeps its limit (as the page last heard it, for an answer without the request).
+        const asked = (k) => k in want ? want[k] : now[k];
+        const mine = {}; SLOT_STORES.forEach(k => { mine[k] = {current:now[k], requested:asked(k)}; });
+        const req = d.request && typeof d.request === "object" ? d.request : {status:"pending", requested:SLOT_STORES.reduce((n, k) => n + asked(k), 0), stores:mine};
         S.settings.slotAllow = Object.assign({limit:slotAllow()}, S.settings.slotAllow || {}, {request:req});
         persist(); close(); renderMain();
-        // The worker answers a request already waiting with that one, and sends no new one.
-        const rs = slotStoresOf(req), same = !!rs && SLOT_STORES.every(k => Number((rs[k] || {}).requested) === want[k]);
+        // The worker answers a request already waiting with that one, and sends no new one: the same as this one when it asks
+        // for each store sent, and raises none of the others.
+        const rs = slotStoresOf(req), same = rs ? SLOT_STORES.every(k => { const x = rs[k] || {}; return k in want ? Number(x.requested) === want[k] : !(Number(x.requested) > Number(x.current)); })
+          : Number(req.requested) === SLOT_STORES.reduce((n, k) => n + asked(k), 0);
         toast(same ? "Request sent. You'll get more slots once it's approved." : `You'd already asked for ${slotAskedLine(req)}. It's waiting for approval.`);
       });
     }
@@ -21202,6 +21231,18 @@ function storeAllowHTML(){
   const more = !pending && canRequestSlots() && SLOT_STORES.some(k => storeLimit(k) < SLOT_MAX) ? `<button class="link" data-act="slot-request" style="font-size:calc(13px*var(--fs))">Request more slots</button>` : "";
   const lims = groups.map(g => `<span class="sub-lim${g.sel.length > g.cap ? " is-over" : ""}">${storeMark(g.rows[0].e)}<span>${esc(g.name)} <strong>${g.cap}</strong></span></span>`).join("");
   return `<div class="sub-allow sub-lims${over.length ? " is-over" : ""}"><span>Slot limits, per store:</span>${lims}${more}${over.length ? `<span class="sub-allow-tx sub-lims-tx">${over.map(g => `Switch ${g.sel.length - g.cap} off at ${esc(g.name)} before submitting.`).join(" ")}</span>` : ""}${status ? `<span class="sub-lims-st">${status}</span>` : ""}</div>`;
+}
+// What the seller's channel gets for each store (1.9.158; the owner, 2026-11-18: "whenever someone submit costco, can you have
+// it sent to my discord as hayha format?", then "keep aycd but you can remove shikari format for costco submission"): an AYCD
+// list and a Shikari CSV, or at Costco an AYCD list and a Hayha file, which the license worker makes. keys: the stores' keys.
+const costcoKey = (k) => k === "costco" || k === "other:costco";
+function sellerFilesShort(keys){
+  const c = keys.some(costcoKey), o = keys.some(k => !costcoKey(k));
+  return c && !o ? "AYCD and Hayha files" : c ? "AYCD and Shikari files (AYCD and Hayha for Costco)" : "AYCD and Shikari files";
+}
+function sellerFilesLong(keys){
+  const c = keys.some(costcoKey), o = keys.some(k => !costcoKey(k));
+  return c && !o ? "an AYCD profile list and a Hayha file for Costco" : c ? "an AYCD profile list and a Shikari CSV for each store (for Costco, a Hayha file in place of the Shikari CSV)" : "an AYCD profile list and a Shikari CSV for each store";
 }
 function renderSubmit(){
   setTimeout(() => { refreshSlotAllow(false); flushPulls(false); billDrawn(); refreshInterests(false); }, 0);
@@ -21265,7 +21306,7 @@ function renderSubmit(){
   const to = S.submitTo, viaCSV = csvToSeller(), seller = viaCSV ? null : submitToSeller();
   const action = `<div class="sub-act">
       <div class="sub-act-txt"><div class="sub-act-ttl">${slotsOver() ? "Too many slots switched on" : freshN ? `${plural(freshN, "new pick")} ready to send` : selN ? "Nothing new to send" : "Switch profiles on to stage them"}</div>
-        <p class="item-sub">Toggle profiles on, then submit. Only new picks are sent, so nothing is ever sent twice.${viaCSV ? ` Going straight to the seller's Discord channel as AYCD and Shikari files. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Send somewhere else</button>` : seller ? ` Going straight to the seller, encrypted so only they can open it. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Send somewhere else</button>` : to ? ` Going to <strong>${esc(to.keyId)}</strong>. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Change</button>` : ` <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Set who receives them</button>`}</p>${viaCSV ? interestSubmitLine(groups) : ""}</div>
+        <p class="item-sub">Toggle profiles on, then submit. Only new picks are sent, so nothing is ever sent twice.${viaCSV ? ` Going straight to the seller's Discord channel as ${sellerFilesShort(groups.map(g => g.key))}. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Send somewhere else</button>` : seller ? ` Going straight to the seller, encrypted so only they can open it. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Send somewhere else</button>` : to ? ` Going to <strong>${esc(to.keyId)}</strong>. <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Change</button>` : ` <button class="link" data-act="submit-to" style="font-size:calc(13px*var(--fs))">Set who receives them</button>`}</p>${viaCSV ? interestSubmitLine(groups) : ""}</div>
       <button class="btn btn-primary" data-act="submit-slots" ${freshN ? "" : "disabled"}>${ic("exp")}Submit ${freshN ? plural(freshN, "slot") : "slots"}</button>
       ${slotAllowHTML()}
     </div>`;
@@ -21281,7 +21322,7 @@ function renderSubmit(){
 function openSubmitTo(){
   openLayer({
     title:"Who receives your slots", small:true,
-    body:`<p style="margin:0 0 14px;color:var(--ink-2)">Paste the invite code they sent you. Your slots are encrypted so only they can open them. ${canSendToSeller() ? "Leave it empty to send them straight to the seller's Discord channel as AYCD and Shikari files." : "Leave it empty to download a plain file instead."}</p>
+    body:`<p style="margin:0 0 14px;color:var(--ink-2)">Paste the invite code they sent you. Your slots are encrypted so only they can open them. ${canSendToSeller() ? `Leave it empty to send them straight to the seller's Discord channel as ${sellerFilesShort(storeGroups().map(g => g.key))}.` : "Leave it empty to download a plain file instead."}</p>
       <div class="field"><label for="st-code">Invite code</label><textarea id="st-code" spellcheck="false" style="min-height:80px" placeholder="PVKEY1.…">${esc(S.submitTo ? "PVKEY1." + S.submitTo.pub : "")}</textarea><span class="err" id="st-err" role="alert"></span></div>
       <div class="note note-warn" id="st-lic-note" role="alert" hidden style="margin:12px 0 0"></div>
       <p class="note" id="st-id" hidden style="margin:12px 0 0"></p>`,
@@ -21512,7 +21553,7 @@ async function openSubmitSlots(){
     title:"Submit slots", dismiss:false,
     body:`<p style="margin:0 0 14px;color:var(--ink-2)">${plural(fresh.length, "new slot")} will be sent. Slots you already submitted are left out, so nothing is sent twice.</p>
       <div class="note" style="margin:0 0 14px"><ul class="summary-list" style="margin:0">${groups.filter(g => g.fresh.length).map(g => `<li><strong style="color:var(--ink)">${esc(g.name)}</strong>: ${esc(g.fresh.map(r => r.p.name).join(", "))}</li>`).join("")}</ul>${askN ? `<p style="margin:8px 0 0">${askN === fresh.length ? (askN === 1 ? "It uses" : "They all use") : `${plural(askN, "slot")} ${askN === 1 ? "uses" : "use"}`} an assigned account, so the seller provides the login.</p>` : ""}</div>
-      ${viaCSV ? `<p class="note" style="margin:0 0 14px">Goes to the seller's private Discord channel: an AYCD profile list and a Shikari CSV for each store, and its logins in a separate file (none for Pokémon Center). Your slots show Pending approval here until the seller approves or declines them.</p>${imapSubmitNote(fresh)}`
+      ${viaCSV ? `<p class="note" style="margin:0 0 14px">Goes to the seller's private Discord channel: ${sellerFilesLong(groups.filter(g => g.fresh.length).map(g => g.key))}, and its logins in a separate file (none for Pokémon Center). Your slots show Pending approval here until the seller approves or declines them.</p>${imapSubmitNote(fresh)}`
            : seller && changedKey ? `<p class="note note-warn" style="margin:0 0 14px">The seller's key has changed since you last sent (it was <strong>${esc(pin.keyId)}</strong>, now <strong>${esc(seller.keyId)}</strong>). Only send if the seller told you they changed it.</p>`
            : seller ? `<p class="note" style="margin:0 0 14px">Sent straight to the seller, encrypted so only they can open it (key ID <strong>${esc(seller.keyId)}</strong>).</p>`
            : to ? `<p class="note" style="margin:0 0 14px">Encrypted for key ID <strong>${esc(to.keyId)}</strong>. Only they can open it.</p>`
@@ -21864,7 +21905,7 @@ function guideState(){
     body:`<p>Go to <strong>Profiles</strong> and press <strong>New profile</strong>. Pick <strong>Target</strong>, <strong>Pokémon Center</strong> or <strong>Costco</strong>, then fill in the profile name, phone, shipping address and your card, and press <strong>Save profile</strong>.</p>
       <p><strong>How it checks out:</strong> pick one under "How this store checks out". Costco is always your own account.</p>
       <ul><li><strong>Use Assigned Account</strong> (easiest; Target and Pokémon Center only): your seller gives you the account. You don't add a login, an email or an inbox. You won't have access to that account's email; you'll see your order updates here in FAFO.</li>
-      <li><strong>Your own account</strong> (Target or Costco: Store login; Pokémon Center: Own email): your seller needs that email's IMAP access (the email and its app password) to follow your orders. FAFO sends it to your seller with your slots when you submit, so save that email's inbox in FAFO with its app password: on the store login, or on Store logins with Add inbox. At Target the inbox is optional.</li></ul>`,
+      <li><strong>Your own account</strong> (Target or Costco: Store login; Pokémon Center: Own email): your seller needs that email's IMAP access (the email and its app password) to follow your orders. FAFO sends it to your seller with your slots when you submit, so save that email's inbox in FAFO with its app password: on the store login, or on Store logins with Add inbox. At Target it's optional: Target doesn't need an inbox to check out.</li></ul>`,
     acts:go("make", "Make a profile") + `<button type="button" class="btn btn-sm" data-act="import">Import profiles</button>`});
   steps.push({id:"ready", title:"Check it's Ready to submit", done:ready,
     body:fix ? `<p><strong>${esc(fix.name || "Your profile")}</strong> isn't ready yet: ${esc(profileIssueWords(profileProblems(fix)).label)}. Open it, fix what's marked, and save. Profiles show <strong>Ready to submit</strong> when they're good to go.</p>`

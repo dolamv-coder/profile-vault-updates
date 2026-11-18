@@ -452,17 +452,17 @@ try {
   await test("Submit: a slot waiting for its store login says it has none linked, never that its inbox is missing; linked, its inbox goes with it", async () => {
     // The review of 1.9.148: Costco profiles often wait for a login (fixMode, Duplicate for Costco, Mass edit, Generate's
     // Import, when no Costco login has their email), and the window told the buyer to add an inbox that was saved already.
-    // "Target Gone" is linked to a login that's gone; "Target No Pw" has an inbox without its app password (a real miss).
+    // "Target Gone" is linked to a login that's gone; "PC No Pw" checks out on an email whose inbox has no app password (a real
+    // miss; from 1.9.158 a Target login's inbox is optional, so a Target slot is never one: target-inbox.test.mjs).
     await s.ev(() => {
       const { S, persist, render } = window.__t;
       S.inboxes.push({ id: "ibw", email: "wait.sample@example.com", password: "Sample-Wait-Pw", provider: "custom", host: "imap.example.com", port: "993" },
         { id: "ibn", email: "nopw.sample@example.com", password: "", provider: "custom", host: "imap.example.com", port: "993" });
-      S.logins.push({ id: "ltn", store: "target", storeName: "", label: "", email: "nopw.sample@example.com", password: "pw-ltn", inboxId: "ibn" });
       persist(); render();
     });
     await addProfiles(s, [{ id: "pcw", name: "Costco Waits", email: "wait.sample@example.com", stores: [entry("costco", "login")] },
       { id: "ptg", name: "Target Gone", stores: [entry("target", "login", { loginId: "lgone" })] },
-      { id: "ptn", name: "Target No Pw", stores: [entry("target", "login", { loginId: "ltn" })] }]);
+      { id: "ptn", name: "PC No Pw", stores: [entry("pokemoncenter", "email", { email: "nopw.sample@example.com" })] }]);
     const open = async (ids) => {
       await s.page.click('#side [data-id="submit"]');
       for (const id of ids) {
@@ -484,7 +484,7 @@ try {
       return W.subs.at(-1);
     };
     assert.deepEqual(await open(["pcw", "ptg", "ptn"]), { ok: "",
-      miss: "1 slot has no inbox app password saved in FAFO (Target: Target No Pw), so your seller can't follow its orders: add it in Store logins.",
+      miss: "1 slot has no inbox app password saved in FAFO (Pokémon Center: PC No Pw), so your seller can't follow its orders: add it in Store logins. If a checkout email forwards to another inbox, send your seller that inbox's email and app password on Discord yourself.",
       nologin: "2 slots have no store login linked (Costco: Costco Waits; Target: Target Gone), so your seller gets no login or inbox access for them: link their store logins in Store logins." });
     let b = await send();
     assert.deepEqual(b.files.filter((f) => f.kind === "imap"), [], "no inbox access without a login");

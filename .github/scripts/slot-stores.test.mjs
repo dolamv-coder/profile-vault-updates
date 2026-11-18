@@ -4,8 +4,10 @@
 // per store"). A license worker that answers GET /slots/limit with `stores` ({target, pokemoncenter, costco}) and `base` gives
 // each store its own limit: Submit's "Slot limits, per store:" line, each store's "Limit N" (where the buyer's own cap was),
 // Select all up to it, the swap window at it, a store over it blocking Submit (and the others not), Request more slots with a
-// number per store (always Target, Pokémon Center and Costco, in that order), what it sends, the line while it waits (only the
-// stores it raises), the toasts once the seller approves or declines, and a request from an older FAFO (a total). Without
+// number per store (always Target, Pokémon Center and Costco, in that order), what it sends (only the stores whose number
+// changed, so a limit the seller changed meanwhile isn't asked for again), Enter, the line while it waits (only the stores it
+// raises), the toasts once the seller approves or declines, and a request that asked for a total ("N slots in total", from an
+// older FAFO or from before each store had its own limit), and store names never cut short on a phone. Without
 // `stores` (an older worker, or the monthly plan) Submit is as 1.9.157: one number across all stores, the buyer's caps and
 // "Slots you need in total". Also the Send accounts window's words on the owner's FAFO, and a phone. The real page runs in
 // Chromium (Playwright) as the web version at app.fafoaco.com, against a pretend license worker that answers as the contract
@@ -40,7 +42,7 @@ const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok
 
 // ---- The pretend license worker (the contract: GET /slots/limit, POST /slots/request) ----
 const LIC = "PVLT-TEST-TEST-TEST-TEST";
-const W = { limit: null, requests: [], answer: null, owner: false };
+const W = { limit: null, requests: [], answer: null, owner: false, delay: 0 };
 const perStore = (target, pokemoncenter, costco, request = null, base = 20) => ({ limit: target + pokemoncenter + costco, stores: { target, pokemoncenter, costco }, base, request, canRequest: true });
 const CORS = { "access-control-allow-origin": "*" };
 const json = (route, status, body) => route.fulfill({ status, contentType: "application/json", headers: CORS, body: JSON.stringify(body) });
@@ -53,6 +55,7 @@ async function worker(route, req, u) {
   if (p === "/slots/request" && m === "POST") {
     const body = JSON.parse(req.postData());
     W.requests.push(body);
+    if (W.delay) await new Promise((r) => setTimeout(r, W.delay));
     const [status, answer] = W.answer ? W.answer(body) : [200, { ok: true, request: { id: "r" + W.requests.length, status: "pending", requested: 0, stores: {} } }];
     return json(route, status, answer);
   }
@@ -274,8 +277,10 @@ try {
     await s.clearToasts();
     const [req] = await Promise.all([s.page.waitForRequest((r) => new URL(r.url()).pathname === "/slots/request"), s.page.click(`${P} #sr-go`)]);
     assert.equal(req.headers().authorization, "Bearer " + LIC);
-    assert.deepEqual(JSON.parse(req.postData()), { stores: { target: 30, pokemoncenter: 25, costco: 20 }, name: "Sam Sample", note: "Weekend drop" });
-    assert.equal(req.postData(), JSON.stringify({ stores: { target: 30, pokemoncenter: 25, costco: 20 }, name: "Sam Sample", note: "Weekend drop" }));
+    // Only the stores whose number changed: Costco, left at its number, keeps its limit (the worker reads one left out as its
+    // limit now), so a limit the seller changed since the page last asked is never asked for again (the review of 1.9.158).
+    assert.deepEqual(JSON.parse(req.postData()), { stores: { target: 30, pokemoncenter: 25 }, name: "Sam Sample", note: "Weekend drop" });
+    assert.equal(req.postData(), JSON.stringify({ stores: { target: 30, pokemoncenter: 25 }, name: "Sam Sample", note: "Weekend drop" }));
     await s.page.waitForFunction(() => !document.querySelector("#layers .panel"));
     await s.until(async () => (await s.toasts()).includes("Request sent. You'll get more slots once it's approved."), "the toast");
     assert.equal(await s.allow(), "Slot limits, per store: Target 20 Pokémon Center 20 Costco 20 You've asked for Target 30 and Pokémon Center 25, and it's waiting for approval.");
@@ -337,16 +342,122 @@ try {
     await s.until(async () => (await s.toasts()).includes("Your request for more slots was declined"), "the toast");
     assert.equal(await s.allow(), "Slot limits, per store: Target 31 Pokémon Center 26 Costco 41 Request more slots Your last request for more was declined.");
   });
-  await test("a request from an older FAFO (a total, no store raised, or no stores at all) reads as before: You've asked for N", async () => {
-    W.limit = perStore(20, 20, 20, { id: "r3", status: "pending", requested: 90, current: 60, stores: { target: { current: 20, requested: 20 }, pokemoncenter: { current: 20, requested: 20 }, costco: { current: 20, requested: 20 } } });
+  await test("a request that asked for a total: N slots in total, and one from before each store had its own limit says so, never a bare number", async () => {
+    // From an older FAFO since 1.9.158's worker: no store raised, its total above the stores' limits.
+    const total = { id: "r3", status: "pending", requested: 90, current: 60, stores: { target: { current: 20, requested: 20 }, pokemoncenter: { current: 20, requested: 20 }, costco: { current: 20, requested: 20 } } };
+    W.limit = perStore(20, 20, 20, total);
     await s.refresh();
-    assert.equal(await s.allow(), "Slot limits, per store: Target 20 Pokémon Center 20 Costco 20 You've asked for 90, and it's waiting for approval.");
-    W.limit = perStore(20, 20, 20, { id: "r4", status: "pending", requested: 70 });
-    await s.refresh();
-    assert.equal(await s.allow(), "Slot limits, per store: Target 20 Pokémon Center 20 Costco 20 You've asked for 70, and it's waiting for approval.");
+    assert.equal(await s.allow(), "Slot limits, per store: Target 20 Pokémon Center 20 Costco 20 You've asked for 90 slots in total, and it's waiting for approval.");
     await s.clearToasts();
     await s.page.click("#stale-req");
-    await s.until(async () => (await s.toasts()).includes("You've asked for 70 slots. It's waiting for approval."), "the toast");
+    await s.until(async () => (await s.toasts()).includes("You've asked for 90 slots in total. It's waiting for approval."), "the toast");
+    // The window for a store over its limit says the same.
+    W.limit = perStore(2, 20, 20, total);
+    await s.refresh();
+    await s.setSlots([["t1", "target"], ["t2", "target"], ["t3", "target"]]);
+    await s.page.click('#main [data-act="submit-slots"]');
+    await s.page.waitForSelector(P);
+    assert.equal(await s.text(`${P} .panel-body`), "You have 3 switched on at Target, and its limit is 2. Switch 1 off before submitting, or ask the seller for more. You've already asked for 90 slots in total, and it's waiting for approval.");
+    await s.page.click(`${P} [data-close]`);
+    await s.page.waitForFunction(() => !document.querySelector("#layers .panel"));
+    // Made before the worker kept each store's numbers (asked for 40 from one limit of 20): no stores, or, once its review
+    // page was opened, rows at each store's limit now, which add up to more than it asked.
+    W.limit = perStore(20, 20, 20, { id: "r4", status: "pending", requested: 40 });
+    await s.refresh();
+    assert.equal(await s.allow(), "Slot limits, per store: Target 20 Pokémon Center 20 Costco 20 You've asked for 40 slots in total (before each store had its own limit), and it's waiting for approval.");
+    await s.clearToasts();
+    await s.page.click("#stale-req");
+    await s.until(async () => (await s.toasts()).includes("You've asked for 40 slots in total (before each store had its own limit). It's waiting for approval."), "the toast");
+    W.limit = perStore(20, 20, 20, { id: "r4", status: "pending", requested: 40, stores: { target: { current: 20, requested: 20 }, pokemoncenter: { current: 20, requested: 20 }, costco: { current: 20, requested: 20 } } });
+    await s.refresh();
+    assert.equal(await s.allow(), "Slot limits, per store: Target 20 Pokémon Center 20 Costco 20 You've asked for 40 slots in total (before each store had its own limit), and it's waiting for approval.");
+    await s.setSlots([]);
+  });
+  await test("a limit the seller changed since the page last asked: only the stores typed go, so none is asked for that the buyer didn't touch", async () => {
+    // The worker's rule (slotRequest): a store left out keeps its limit now; one below it is a 400; one above it is raised.
+    const NAMES = { target: "Target", pokemoncenter: "Pokémon Center", costco: "Costco" };
+    const real = (has) => (body) => {
+      const stores = {}; let req = 0, cur = 0;
+      for (const k of ["target", "pokemoncenter", "costco"]) {
+        const n = body.stores[k] ?? has[k];
+        if (n < has[k]) return [400, { error: `${NAMES[k]}'s limit is ${has[k]} now: ask for ${has[k]} or more there.` }];
+        stores[k] = { current: has[k], requested: n, granted: null }; req += n; cur += has[k];
+      }
+      return [200, { status: "pending", request: { id: "r6", status: "pending", requested: req, current: cur, stores } }];
+    };
+    // The page last heard 20 at each store; the seller has since raised Target to 30 (Change amounts).
+    W.limit = perStore(20, 20, 20);
+    await s.refresh();
+    W.limit = perStore(30, 20, 20);
+    W.answer = real({ target: 30, pokemoncenter: 20, costco: 20 });
+    await s.page.click('#main .sub-allow [data-act="slot-request"]');
+    await s.page.waitForSelector(`${P} #sr-n-target`);
+    assert.deepEqual((await ROWS(s)).map((r) => r[2]), ["Now 20", "Now 20", "Now 20"], "the page's numbers, from before");
+    await s.page.fill(`${P} #sr-n-pokemoncenter`, "25");
+    let [req] = await Promise.all([s.page.waitForRequest((r) => new URL(r.url()).pathname === "/slots/request"), s.page.click(`${P} #sr-go`)]);
+    assert.deepEqual(JSON.parse(req.postData()), { stores: { pokemoncenter: 25 }, name: "Sam Sample", note: "" });
+    await s.page.waitForFunction(() => !document.querySelector("#layers .panel"));
+    assert.equal(await s.allow(), "Slot limits, per store: Target 20 Pokémon Center 20 Costco 20 You've asked for Pokémon Center 25, and it's waiting for approval.");
+    // The other way: the page still shows Target 30, and the seller has taken that back (denied after approving it): 20.
+    W.limit = perStore(30, 20, 20);
+    await s.refresh();
+    W.limit = perStore(20, 20, 20);
+    W.answer = real({ target: 20, pokemoncenter: 20, costco: 20 });
+    await s.page.click('#main .sub-allow [data-act="slot-request"]');
+    await s.page.waitForSelector(`${P} #sr-n-target`);
+    assert.deepEqual((await ROWS(s)).map((r) => r[2]), ["Now 30", "Now 20", "Now 20"]);
+    await s.page.fill(`${P} #sr-n-pokemoncenter`, "25");
+    await s.clearToasts();
+    [req] = await Promise.all([s.page.waitForRequest((r) => new URL(r.url()).pathname === "/slots/request"), s.page.click(`${P} #sr-go`)]);
+    assert.deepEqual(JSON.parse(req.postData()), { stores: { pokemoncenter: 25 }, name: "Sam Sample", note: "" }, "Target isn't asked for");
+    await s.page.waitForFunction(() => !document.querySelector("#layers .panel"));
+    await s.until(async () => (await s.toasts()).includes("Request sent. You'll get more slots once it's approved."), "the toast");
+    assert.match(await s.allow(), /You've asked for Pokémon Center 25, and it's waiting for approval\.$/);
+    // A store typed below what the seller has now: the worker's words, in the window.
+    W.limit = perStore(20, 20, 20);
+    await s.refresh();
+    W.answer = real({ target: 30, pokemoncenter: 20, costco: 20 });
+    await s.page.click('#main .sub-allow [data-act="slot-request"]');
+    await s.page.waitForSelector(`${P} #sr-n-target`);
+    await s.page.fill(`${P} #sr-n-target`, "25");
+    await s.page.click(`${P} #sr-go`);
+    await s.page.waitForFunction(() => document.querySelector("#sr-err").textContent);
+    assert.equal(await s.text(`${P} #sr-err`), "Target's limit is 30 now: ask for 30 or more there.");
+    await s.page.click(`${P} [data-close]`);
+    await s.page.waitForFunction(() => !document.querySelector("#layers .panel"));
+    W.answer = null;
+  });
+  await test("Enter in a store's box or Your name sends the request, once; Enter in the Note is a new line", async () => {
+    W.limit = perStore(20, 20, 20);
+    await s.refresh();
+    W.answer = acceptRequest({ target: 20, pokemoncenter: 20, costco: 20 });
+    await s.page.click('#main .sub-allow [data-act="slot-request"]');
+    await s.page.waitForSelector(`${P} #sr-n-target`);
+    await s.page.waitForFunction(() => document.querySelector("#layers .panel").contains(document.activeElement));
+    const n = W.requests.length;
+    await s.page.fill(`${P} #sr-note`, "Line one");
+    await s.page.focus(`${P} #sr-note`);
+    await s.page.keyboard.press("Enter");
+    await s.page.keyboard.type("Line two");
+    assert.equal(await s.page.$eval(`${P} #sr-note`, (e) => e.value), "Line one\nLine two");
+    assert.equal(W.requests.length, n, "nothing sent from the Note");
+    // Nothing raised: Enter says so, as Send request does, and sends nothing.
+    await s.page.focus(`${P} #sr-name`);
+    await s.page.keyboard.press("Enter");
+    assert.equal(await s.text(`${P} #sr-err`), "Raise at least one store's number.");
+    assert.equal(W.requests.length, n);
+    await s.page.fill(`${P} #sr-n-target`, "30");
+    await s.page.focus(`${P} #sr-n-target`);
+    // Pressed twice while it's being sent (the worker takes a moment): one request.
+    W.delay = 600;
+    await Promise.all([s.page.waitForRequest((r) => new URL(r.url()).pathname === "/slots/request"), s.page.keyboard.press("Enter")]);
+    assert.equal(await s.text(`${P} #sr-go`), "Sending…");
+    await s.page.keyboard.press("Enter");
+    await s.page.waitForFunction(() => !document.querySelector("#layers .panel"));
+    W.delay = 0;
+    assert.equal(W.requests.length, n + 1, "sent once");
+    assert.deepEqual(W.requests.at(-1), { stores: { target: 30 }, name: "Sam Sample", note: "Line one\nLine two" });
+    W.answer = null;
   });
   await test("the worker answering a request already waiting, and its 400 and 429 words, shown in the window", async () => {
     W.limit = perStore(20, 20, 20);
@@ -461,6 +572,25 @@ try {
     assert.ok(fit.scroll && fit.inside && fit.inW >= 60, JSON.stringify(fit));
     w = await wide();
     assert.ok(w.doc <= w.win, JSON.stringify(w));
+    // Each store's name whole, never cut short ("Pokémon Cen…": the review of 1.9.158), at 375, 360 and 320 wide: it may
+    // wrap at its space, never inside a word.
+    const names = () => s.ev(() => [...document.querySelectorAll("#layers .sr-st > span:last-child")].map((e) => {
+      const t = e.firstChild, words = [], re = /\S+/g;
+      for (let m; (m = re.exec(t.data));) { const r = document.createRange(); r.setStart(t, m.index); r.setEnd(t, m.index + m[0].length); words.push(r.getClientRects().length); }
+      const box = e.getBoundingClientRect(), all = document.createRange(); all.selectNodeContents(e);
+      const right = Math.max(...[...all.getClientRects()].map((r) => r.right));
+      return { name: t.data, whole: e.scrollWidth <= e.clientWidth && right <= box.right + 0.5, words: words.every((n) => n === 1) };
+    }));
+    for (const [width, height] of [[375, 667], [360, 640], [320, 640]]) {
+      await s.page.setViewportSize({ width, height });
+      await s.page.waitForTimeout(50);
+      const got = await names();
+      assert.deepEqual(got.map((x) => x.name), ["Target", "Pokémon Center", "Costco"]);
+      assert.ok(got.every((x) => x.whole && x.words), `${width}: ${JSON.stringify(got)}`);
+      w = await wide();
+      assert.ok(w.doc <= w.win, `${width}: ${JSON.stringify(w)}`);
+    }
+    await s.page.setViewportSize({ width: 375, height: 667 });
     // Costco is at 500, the most there is: its box can't go higher, the others can.
     assert.deepEqual((await ROWS(s)).map((r) => r[2]), ["Now 120", "Now 20", "Now 500"]);
     await s.page.fill(`${P} #sr-n-costco`, "501");

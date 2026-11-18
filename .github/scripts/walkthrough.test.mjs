@@ -262,7 +262,9 @@ try {
     const imap = s.page.locator(`${P} .ret-cfg .ret-imap`);
     assert.equal(await imap.count(), 1);
     assert.ok(await imap.isVisible(), "Store login's note shows");
-    assert.equal(await imap.textContent(), "FAFO sends your seller this email's IMAP access (the email and its app password) with your slots when you submit, so they can follow your orders. It's the inbox saved on the store login: make sure it has its app password.");
+    // From 1.9.158 a Target store login's inbox is optional (target-inbox.test.mjs), and its note says so.
+    assert.equal(await imap.textContent(), /const inboxOptional = /.test(HTML) ? "An inbox is optional for Target. If this store login has one, with its app password, FAFO sends your seller its inbox access with your slots."
+      : "FAFO sends your seller this email's IMAP access (the email and its app password) with your slots when you submit, so they can follow your orders. It's the inbox saved on the store login: make sure it has its app password.");
     await s.page.selectOption(`${P} select[name="m_target"]`, "seller");
     assert.ok(!(await imap.isVisible()), "not on Use Assigned Account");
     const seller = s.page.locator(`${P} .ret-cfg .note-seller`);

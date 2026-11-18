@@ -5,7 +5,8 @@
 // made with Use this browser only, with a license key kept as Submit keeps one typed there. It checks the files /submissions
 // gets (an "imap" file per store with slots on the buyer's own accounts: one email:app password line per inbox, in the order
 // the store's slots go out, once per inbox and per mailbox, none for Use Assigned Account, a Pokémon Center own email's inbox
-// found by its mailbox, a login with no inbox linked, or linked to one that's gone, by its email's mailbox, an inbox with no
+// found by its mailbox, a login with no inbox linked, or linked to one that's gone, by its email's mailbox (until 1.9.158: from
+// then on these Target logins send none, as a Target login's inbox is optional; target-inbox.test.mjs has them at Costco), an inbox with no
 // app password left out, an address without its +tag, and app passwords the worker wouldn't take on one line left out, as
 // the pretend worker refuses a batch the license worker would), what Submit's window says (with and without slots it can't
 // send one for, and what to do about a checkout email that forwards elsewhere), a batch of only Use Assigned Account slots
@@ -114,6 +115,11 @@ async function send() {
   return W.subs.at(-1);
 }
 const imapOf = (body) => body.files.filter((f) => f.kind === "imap");
+// From 1.9.158 a Target store login's inbox is optional (the owner: "Technically, imap is not needed for Target"), so Submit's
+// window never warns about a Target slot with no inbox, or one without its app password, and a Target login with none linked
+// (or linked to one that's gone) sends none, never the inbox saved for its mailbox (the review of 1.9.158): it may have been
+// saved with none on purpose. target-inbox.test.mjs has that fallback at Costco, whose logins need an inbox. Before, it did.
+const OPT = /const inboxOptional = /.test(HTML);
 
 console.log(`Inbox access with Submit in ${file.split(/[\\/]/).pop()}`);
 try {
@@ -183,10 +189,12 @@ try {
   await test("Submit's window: how many slots bring their inbox access, and which can't (no inbox, or one without its app password)", async () => {
     const said = await openSubmit([["t1", "target"], ["t2", "target"], ["t3", "target"], ["t4", "target"], ["t5", "target"], ["t6", "target"],
       ["p1", "pokemoncenter"], ["p2", "pokemoncenter"], ["p3", "pokemoncenter"], ["p4", "pokemoncenter"]]);
-    assert.equal(said.ok, "Your inbox access for 5 of these slots (each inbox's email and app password) goes to your seller with them, so they can follow your orders.");
+    // Sam T5's login has no inbox linked: until 1.9.158 the one saved for its mailbox went with it.
+    assert.equal(said.ok, `Your inbox access for ${OPT ? 4 : 5} of these slots (each inbox's email and app password) goes to your seller with them, so they can follow your orders.`);
     // Sam P3's checkout email may forward to another inbox (a Hide My Email alias, a catch-all domain), which nothing can
     // link it to: that one goes on Discord.
-    assert.equal(said.miss, "3 slots have no inbox app password saved in FAFO (Pokémon Center: Sam P3; Target: Sam T3, Sam T4), so your seller can't follow those orders: add it in Store logins. If a checkout email forwards to another inbox, send your seller that inbox's email and app password on Discord yourself.");
+    assert.equal(said.miss, OPT ? "1 slot has no inbox app password saved in FAFO (Pokémon Center: Sam P3), so your seller can't follow its orders: add it in Store logins. If a checkout email forwards to another inbox, send your seller that inbox's email and app password on Discord yourself."
+      : "3 slots have no inbox app password saved in FAFO (Pokémon Center: Sam P3; Target: Sam T3, Sam T4), so your seller can't follow those orders: add it in Store logins. If a checkout email forwards to another inbox, send your seller that inbox's email and app password on Discord yourself.");
     assert.ok(await page.$eval("#ss-imap-miss", (e) => e.classList.contains("note-warn")), "a warning, not a refusal");
     assert.equal(await page.$eval("#ss-go", (e) => e.disabled), false, "Submit isn't blocked by it");
   });
@@ -199,8 +207,9 @@ try {
     assert.equal(pc.store, "Pokémon Center");
     assert.equal(tgt.store, "Target");
     // Target: Sam T1's inbox (its app password without the spaces), not Sam T2's (a copy of the same mailbox), none for Sam T3
-    // (no app password) or Sam T4 (no inbox), Sam T5's found by its email's mailbox; Sam T6 is on Use Assigned Account.
-    assert.equal(tgt.text, "sam.sample@gmail.com:abcdefghijklmnop\r\npc.sample@example.com:Sample-Pc-Pw-2");
+    // (no app password) or Sam T4 (no inbox), Sam T5's found by its email's mailbox (until 1.9.158: none from then on); Sam T6
+    // is on Use Assigned Account.
+    assert.equal(tgt.text, OPT ? "sam.sample@gmail.com:abcdefghijklmnop" : "sam.sample@gmail.com:abcdefghijklmnop\r\npc.sample@example.com:Sample-Pc-Pw-2");
     // Pokémon Center: Sam P1's own email reaches pc.sample@example.com's mailbox (a +tag), Sam P2's is that inbox (once),
     // Sam P3's has none saved, and Sam P4 is on Use Assigned Account.
     assert.equal(pc.text, "pc.sample@example.com:Sample-Pc-Pw-2");
@@ -229,18 +238,21 @@ try {
     // Sent before: switched off and on again, as a new batch.
     await ev(() => { const T = window.__t; for (const k of Object.keys(T.S.subs)) delete T.S.subs[k]; T.persist(); });
     const said = await openSubmit([["t3", "target"], ["t4", "target"]]);
-    assert.deepEqual(said, { ok: "", miss: "2 slots have no inbox app password saved in FAFO (Sam T3, Sam T4), so your seller can't follow those orders: add it in Store logins." });
+    // At Target from 1.9.158 nothing to warn about (target-inbox.test.mjs has one store's warning without its name, at Costco).
+    assert.deepEqual(said, { ok: "", miss: OPT ? "" : "2 slots have no inbox app password saved in FAFO (Sam T3, Sam T4), so your seller can't follow those orders: add it in Store logins." });
     const body = await send();
     assert.deepEqual(imapOf(body), []);
   });
   await test("an address without its +tag, a login linked to a deleted inbox by its mailbox, and app passwords the worker wouldn't take left out", async () => {
     await ev(() => { const T = window.__t; for (const k of Object.keys(T.S.subs)) delete T.S.subs[k]; T.persist(); });
     const said = await openSubmit([["v1", "target"], ["v2", "target"], ["v3", "target"], ["v4", "target"]]);
-    assert.deepEqual(said, { ok: "Your inbox access for 2 of these slots (each inbox's email and app password) goes to your seller with them, so they can follow your orders.",
-      miss: "2 slots have no inbox app password saved in FAFO (Sam V3, Sam V4), so your seller can't follow those orders: add it in Store logins." });
+    // Sam V2's login is linked to an inbox that's gone: from 1.9.158, at Target, none goes with it.
+    assert.deepEqual(said, { ok: OPT ? "Your inbox access for 1 of these slots (each inbox's email and app password) goes to your seller with it, so they can follow your orders."
+      : "Your inbox access for 2 of these slots (each inbox's email and app password) goes to your seller with them, so they can follow your orders.",
+      miss: OPT ? "" : "2 slots have no inbox app password saved in FAFO (Sam V3, Sam V4), so your seller can't follow those orders: add it in Store logins." });
     const refused = W.refused.length, body = await send();
     assert.equal(W.refused.length, refused, "the batch went through");
-    assert.deepEqual(imapOf(body).map((f) => f.text), ["tag.sample@example.com:Sample-Tag-Pw-6\r\nfallback.sample@example.com:Sample-Fb-Pw-7"]);
+    assert.deepEqual(imapOf(body).map((f) => f.text), [OPT ? "tag.sample@example.com:Sample-Tag-Pw-6" : "tag.sample@example.com:Sample-Tag-Pw-6\r\nfallback.sample@example.com:Sample-Fb-Pw-7"]);
     assert.ok(!JSON.stringify(imapOf(body)).includes("+box"), "no +tag");
   });
   await test("a recipient set by hand gets a sealed code as before: the window says nothing of inboxes", async () => {

@@ -1350,10 +1350,19 @@ try {
   console.log("\nSlots (a limit per store, 2026-11-18)");
   const slots = (path, key, body) => fetch(BASE + path, { method: body ? "POST" : "GET", headers: { ...(key ? { authorization: "Bearer " + key } : {}), "content-type": "application/json" }, body: body && JSON.stringify(body) });
   const slotLink = (content) => (content.match(/\((http[^)]+\/slots\/review\/[^)]+)\)/) || [])[1];
-  // The review page's form: `amounts` {target, pokemoncenter, costco} as n_<store>, or any other fields as they are.
-  const slotPost = (link, action, amounts, extra = {}) => fetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), action,
+  // The review page's form: `amounts` {target, pokemoncenter, costco} as n_<store>, or any other fields as they are. wrangler
+  // dev closes a connection left idle while a test reads or writes the database (approvalSql takes a few seconds), and fetch
+  // can reuse it just as it closes: tried again then, as the request never reached the worker (as fetchOnce, below).
+  const slotFetch = async (url, opts, tries = 3) => { try { return await fetch(url, opts); } catch (e) { if (tries > 1 && e.cause && e.cause.code === "UND_ERR_SOCKET") return slotFetch(url, opts, tries - 1); throw e; } };
+  const slotPost = (link, action, amounts, extra = {}) => slotFetch(link.split("?")[0], { method: "POST", body: new URLSearchParams({ t: new URL(link).searchParams.get("t"), action,
     ...Object.fromEntries(Object.entries(amounts || {}).map(([k, v]) => ["n_" + k, String(v)])), ...extra }) });
-  const limitOf = async (key) => (await slots("/slots/limit", key)).json();
+  // Every answer's `limit`, the one limit FAFO before 1.9.158 reads across every store, is the smallest store's, never more
+  // than a store allows (the review of 1.9.158: given the sum, that FAFO let a buyer switch on and submit 40 at Target).
+  const limitOf = async (key) => {
+    const d = await (await slotFetch(BASE + "/slots/limit", { headers: { authorization: "Bearer " + key } })).json();
+    if (d.stores) assert.equal(d.limit, Math.min(...Object.values(d.stores)), "limit is the smallest store's: " + JSON.stringify(d));
+    return d;
+  };
   const lastPost = () => new Promise((ok) => setTimeout(() => ok(webhookPosts.at(-1).content), 400));
   const lastEdit = () => new Promise((ok) => setTimeout(() => ok(webhookEdits.at(-1).content), 400));
   const STORES20 = { target: 20, pokemoncenter: 20, costco: 20 };
@@ -1367,29 +1376,29 @@ try {
     assert.equal((await slots("/slots/limit", "PVLT-AAAA-BBBB-CCCC-DDDD")).status, 401);
     assert.equal((await slots("/slots/limit", "not a key")).status, 401);
   });
-  await test("everyone starts at 20 slots at each store; limit is their sum, for FAFO before 1.9.158", async () => {
-    assert.deepEqual(await limitOf(frankKey), { limit: 60, stores: STORES20, base: 20, request: null, canRequest: true });
+  await test("everyone starts at 20 slots at each store; limit, for FAFO before 1.9.158, is the smallest store's", async () => {
+    assert.deepEqual(await limitOf(frankKey), { limit: 20, stores: STORES20, base: 20, request: null, canRequest: true });
   });
   await test("keys made by hand (the GitHub list) work too", async () => {
     const lim = await limitOf(GH_KEY.toLowerCase());
-    assert.deepEqual([lim.limit, lim.stores, lim.base], [60, STORES20, 20]);
+    assert.deepEqual([lim.limit, lim.stores, lim.base], [20, STORES20, 20]);
   });
   await test("a number the owner approved before (one across every store) is each store's now", async () => {
     approvalSql(`INSERT INTO slot_limits (key_hash, slot_limit, updated_at) VALUES ('${ghHash}', 30, ${Date.now()})`);
     const lim = await limitOf(GH_KEY);
-    assert.deepEqual([lim.limit, lim.stores, lim.base], [90, { target: 30, pokemoncenter: 30, costco: 30 }, 30]);
+    assert.deepEqual([lim.limit, lim.stores, lim.base], [30, { target: 30, pokemoncenter: 30, costco: 30 }, 30], "30, not 90, for FAFO before 1.9.158");
   });
   await test("a request per store: below a store's limit, raising none, over 500 or not a whole number is refused, in words", async () => {
     const bad = async (body) => { const r = await slots("/slots/request", frankKey, body); assert.equal(r.status, 400, JSON.stringify(body)); return (await r.json()).error; };
     assert.equal(await bad({ stores: { target: 19, pokemoncenter: 30 } }), "Target's limit is 20 now: ask for 20 or more there.");
-    assert.equal(await bad({ stores: { target: 20 } }), "Ask for more slots than you have at one store at least (now Target 20 · Pokémon Center 20 · Costco 20).");
-    assert.equal(await bad({ stores: {} }), "Ask for more slots than you have at one store at least (now Target 20 · Pokémon Center 20 · Costco 20).", "a store left out keeps its limit");
+    assert.equal(await bad({ stores: { target: 20 } }), "Ask for more than its limit at one store at least (now Target 20 · Pokémon Center 20 · Costco 20).");
+    assert.equal(await bad({ stores: {} }), "Ask for more than its limit at one store at least (now Target 20 · Pokémon Center 20 · Costco 20).", "a store left out keeps its limit");
     assert.equal(await bad({ stores: { costco: 501 } }), "Ask for at most 500 slots at Costco.");
     assert.equal(await bad({ stores: { target: 30.5 } }), "Put a whole number of slots for Target.");
     assert.equal(await bad({ stores: { pokemoncenter: "lots" } }), "Put a whole number of slots for Pokémon Center.");
-    // One total, from FAFO before 1.9.158: more than the sum, and at most 500 a store.
-    assert.equal(await bad({ requested: 60 }), "Ask for more than 60 slots in all, and at most 1500.");
-    assert.equal(await bad({ requested: 1501 }), "Ask for more than 60 slots in all, and at most 1500.");
+    // One total, from FAFO before 1.9.158: more than the one limit it shows (the smallest store's), and at most 500.
+    assert.equal(await bad({ requested: 20 }), "Ask for more than 20 slots, and at most 500.");
+    assert.equal(await bad({ requested: 501 }), "Ask for more than 20 slots, and at most 500.");
     await bad({ requested: "lots" }); await bad({});
     assert.equal((await limitOf(frankKey)).request, null, "nothing asked");
   });
@@ -1405,7 +1414,7 @@ try {
     frankLink = slotLink(m);
     assert.ok(frankLink.startsWith(BASE + "/slots/review/"));
     const lim = await limitOf(frankKey);
-    assert.deepEqual([lim.limit, lim.stores], [60, STORES20]); assert.equal(lim.request.status, "pending"); assert.deepEqual(lim.request.stores, r.request.stores);
+    assert.deepEqual([lim.limit, lim.stores], [20, STORES20]); assert.equal(lim.request.status, "pending"); assert.deepEqual(lim.request.stores, r.request.stores);
   });
   await test("asking again while one is waiting doesn't post again, and answers the one waiting", async () => {
     const before = webhookPosts.length;
@@ -1436,7 +1445,7 @@ try {
     assert.ok(html.includes('<th scope="col">Before</th>') && html.includes(">Change amounts</button>"), "once decided");
     assert.ok(html.includes(limRow("Costco", 20, 20, false, "costco", 22)), "the box has what was approved");
     const lim = await limitOf(frankKey);
-    assert.deepEqual([lim.limit, lim.stores, lim.base], [82, { target: 35, pokemoncenter: 25, costco: 22 }, 20]);
+    assert.deepEqual([lim.limit, lim.stores, lim.base], [22, { target: 35, pokemoncenter: 25, costco: 22 }, 20]);
     assert.deepEqual([lim.request.status, lim.request.granted], ["approved", 82]);
     assert.deepEqual(lim.request.stores, { target: { current: 20, requested: 30, granted: 35 }, pokemoncenter: { current: 20, requested: 25, granted: 25 }, costco: { current: 20, requested: 20, granted: 22 } });
     const e = await lastEdit();
@@ -1458,7 +1467,7 @@ try {
   await test("the amounts can be changed after approving", async () => {
     await slotPost(frankLink, "approve", { target: 40, pokemoncenter: 30, costco: 22 });
     const lim = await limitOf(frankKey);
-    assert.deepEqual([lim.limit, lim.stores, lim.request.granted], [92, { target: 40, pokemoncenter: 30, costco: 22 }, 92]);
+    assert.deepEqual([lim.limit, lim.stores, lim.request.granted], [22, { target: 40, pokemoncenter: 30, costco: 22 }, 92]);
     assert.match(await lastEdit(), /^✅ \*\*Approved: Target 40 · Pokémon Center 30 · Costco 22\*\* · /);
   });
   await test("denying after approving puts each store's limit back", async () => {
@@ -1466,14 +1475,14 @@ try {
     assert.ok(html.includes("<p>Denied. Their limits are back to Target 20 · Pokémon Center 20 · Costco 20.</p>"));
     assert.ok(html.includes(">Approve</button></div>") && !html.includes('value="deny"'), "no Deny once denied");
     const lim = await limitOf(frankKey);
-    assert.deepEqual([lim.limit, lim.stores, lim.request.status, lim.request.granted], [60, STORES20, "denied", null]);
+    assert.deepEqual([lim.limit, lim.stores, lim.request.status, lim.request.granted], [20, STORES20, "denied", null]);
     assert.equal(lim.request.stores.target.granted, null);
     assert.match(await lastEdit(), /^⛔ \*\*Slot request denied\*\* · .*\nTarget 20 → \*\*30\*\* · Pokémon Center 20 → \*\*25\*\* · Costco stays 20\n/);
   });
   await test("a denied request can be approved later", async () => {
     await slotPost(frankLink, "approve", { target: 30, pokemoncenter: 25, costco: 20 });
     const lim = await limitOf(frankKey);
-    assert.deepEqual([lim.limit, lim.stores], [75, { target: 30, pokemoncenter: 25, costco: 20 }]);
+    assert.deepEqual([lim.limit, lim.stores], [20, { target: 30, pokemoncenter: 25, costco: 20 }]);
   });
   await test("a revoked key can't ask or read its limit", async () => {
     await admin("/admin/revoke", { key: frankKey });
@@ -1493,35 +1502,35 @@ try {
   });
   let ghLink;
   await test("a FAFO before 1.9.158 asks for one total: kept with no store raised, and the owner chooses each store's", async () => {
-    // GH_KEY has 30 at each store from its number from before (above): 90 in all.
-    assert.equal((await slots("/slots/request", GH_KEY, { requested: 90 })).status, 400, "at the total");
-    const r = await (await slots("/slots/request", GH_KEY, { requested: 100, name: "Gus" })).json();
-    assert.equal(r.status, "pending"); assert.equal(r.request.requested, 100);
+    // GH_KEY has 30 at each store from its number from before (above), which its older FAFO shows as one limit: 30.
+    assert.equal((await slots("/slots/request", GH_KEY, { requested: 30 })).status, 400, "at the one limit it shows");
+    const r = await (await slots("/slots/request", GH_KEY, { requested: 40, name: "Gus" })).json();
+    assert.equal(r.status, "pending"); assert.equal(r.request.requested, 40);
     assert.deepEqual(r.request.stores, { target: { current: 30, requested: 30, granted: null }, pokemoncenter: { current: 30, requested: 30, granted: null }, costco: { current: 30, requested: 30, granted: null } });
     const m = await lastPost();
     ghLink = slotLink(m);
-    assert.equal(m, `🎟️ **More slots requested** · **Gus** · license …${GH_KEY.slice(-4)}\nAsked for **100** slots in total, from 90: an older FAFO asks for one number for every store, so you choose each store's when you approve\n[Review: approve or deny](${ghLink})`);
+    assert.equal(m, `🎟️ **More slots requested** · **Gus** · license …${GH_KEY.slice(-4)}\nAsked for **40** slots in total, from 30 (an older FAFO asks for one number for every store): you choose each store's when you approve\n[Review: approve or deny](${ghLink})`);
     const html = await (await fetch(ghLink)).text();
-    assert.ok(html.includes("<p class=\"small\">They asked for <strong>100</strong> slots in total, from 90: an older FAFO asks for one number for every store. Choose each store's below.</p>"));
+    assert.ok(html.includes("<p class=\"small\">They asked for <strong>40</strong> slots in total, from 30 (an older FAFO asks for one number for every store). Choose each store's below.</p>"));
     assert.ok(html.includes(`<tbody>${limRow("Target", 30, "–", false, "target", 30)}${limRow("Pokémon Center", 30, "–", false, "pokemoncenter", 30)}${limRow("Costco", 30, "–", false, "costco", 30)}</tbody>`),
       "the boxes start at each store's limit now");
     await slotPost(ghLink, "approve", { target: 40, pokemoncenter: 30, costco: 30 });
     const lim = await limitOf(GH_KEY);
-    assert.deepEqual([lim.limit, lim.stores, lim.base, lim.request.granted], [100, { target: 40, pokemoncenter: 30, costco: 30 }, 30, 100]);
-    assert.equal(await lastEdit(), `✅ **Approved: Target 40 · Pokémon Center 30 · Costco 30** · **Gus** · license …${GH_KEY.slice(-4)}\nAsked for **100** slots in total, from 90: an older FAFO asks for one number for every store, so you choose each store's when you approve\n[Change decision](${ghLink})`);
+    assert.deepEqual([lim.limit, lim.stores, lim.base, lim.request.granted], [30, { target: 40, pokemoncenter: 30, costco: 30 }, 30, 100]);
+    assert.equal(await lastEdit(), `✅ **Approved: Target 40 · Pokémon Center 30 · Costco 30** · **Gus** · license …${GH_KEY.slice(-4)}\nAsked for **40** slots in total, from 30 (an older FAFO asks for one number for every store)\n[Change decision](${ghLink})`, "once decided, without what's left to do");
     await slotPost(ghLink, "deny");
     assert.deepEqual((await limitOf(GH_KEY)).stores, { target: 30, pokemoncenter: 30, costco: 30 }, "back to the number from before at each");
   });
   await test("a request from before 1.9.158 (one number, no rows per store) gets them when its page opens, and reviews the same way", async () => {
     const t0 = Date.now() - 2 * 86400000;
     // One waiting, and one approved under the one limit (20 → 35 across every store).
-    approvalSql(`INSERT INTO slot_requests (id, key_hash, key_last4, name, discord_id, username, current_limit, requested, granted, note, status, review_token, created_at, decided_at) VALUES
-      ('legacyWait0001', '${ghHash}', '${GH_KEY.slice(-4)}', 'Gus', NULL, NULL, 20, 40, NULL, 'Old ask', 'pending', 'legacyWaitToken0000000001', ${t0}, NULL),
-      ('legacyDone0001', '${ghHash}', '${GH_KEY.slice(-4)}', 'Gus', NULL, NULL, 20, 35, 35, '', 'approved', 'legacyDoneToken0000000001', ${t0 - 1000}, ${t0})`);
+    approvalSql(`INSERT INTO slot_requests (id, key_hash, key_last4, name, discord_id, username, current_limit, requested, granted, note, status, review_token, created_at, decided_at, webhook_message_id) VALUES
+      ('legacyWait0001', '${ghHash}', '${GH_KEY.slice(-4)}', 'Gus', NULL, NULL, 20, 40, NULL, 'Old ask', 'pending', 'legacyWaitToken0000000001', ${t0}, NULL, NULL),
+      ('legacyDone0001', '${ghHash}', '${GH_KEY.slice(-4)}', 'Gus', NULL, NULL, 20, 35, 35, '', 'approved', 'legacyDoneToken0000000001', ${t0 - 1000}, ${t0}, 'legacyMsg0001')`);
     const wait = `${BASE}/slots/review/legacyWait0001?t=legacyWaitToken0000000001`, done = `${BASE}/slots/review/legacyDone0001?t=legacyDoneToken0000000001`;
     assert.equal(approvalRows("SELECT COUNT(*) AS n FROM slot_request_stores WHERE request_id LIKE 'legacy%'")[0].n, 0);
     let html = await (await fetch(wait)).text();
-    assert.ok(html.includes("<p>Waiting for your decision</p>") && html.includes("They asked for <strong>40</strong> slots in total, from 20:"));
+    assert.ok(html.includes("<p>Waiting for your decision</p>") && html.includes("<p class=\"small\">They asked for <strong>40</strong> slots, from 20, before each store had its own limit. Choose each store's below.</p>"), "asked before each store had its own limit");
     assert.ok(html.includes(`<tbody>${limRow("Target", 30, "–", false, "target", 30)}${limRow("Pokémon Center", 30, "–", false, "pokemoncenter", 30)}${limRow("Costco", 30, "–", false, "costco", 30)}</tbody>`),
       "each store's limit now, while it waits");
     assert.equal(approvalRows("SELECT COUNT(*) AS n FROM slot_request_stores WHERE request_id = 'legacyWait0001'")[0].n, 3, "kept");
@@ -1535,14 +1544,18 @@ try {
     html = await (await slotPost(done, "deny")).text();
     assert.ok(html.includes("<p>Denied. Their limits are back to Target 20 · Pokémon Center 20 · Costco 20.</p>"));
     assert.deepEqual((await limitOf(GH_KEY)).stores, STORES20);
+    // Its message, edited, says what it asked for, as it was asked.
+    await new Promise((ok) => setTimeout(ok, 400));
+    const e = webhookEdits.findLast((x) => x.id === "legacyMsg0001");
+    assert.equal(e && e.content, `⛔ **Slot request denied** · **Gus** · license …${GH_KEY.slice(-4)}\nAsked for **35** slots, from 20, before each store had its own limit\n[Change decision](${done})`);
   });
   await test("admin lists the limits (each store's too) and the requests with their stores and review links, never a token or a key hash", async () => {
     const d = await (await admin("/admin/slots")).json();
     assert.equal(d.default, 20); assert.deepEqual(d.stores, ["target", "pokemoncenter", "costco"]);
     assert.deepEqual(d.limits.map((x) => [x.key_hash, x.slot_limit]), [[ghHash, 30]], "the number from before");
     const frank = d.storeLimits.find((x) => x.key_last4 === frankKey.slice(-4)), gh = d.storeLimits.find((x) => x.key_last4 === GH_KEY.slice(-4));
-    assert.deepEqual([frank.username, frank.base, frank.stores, frank.limit], ["frank", 20, { target: 30, pokemoncenter: 25, costco: 20 }, 75]);
-    assert.deepEqual([gh.username, gh.base, gh.stores, gh.limit], [null, 30, STORES20, 60]);
+    assert.deepEqual([frank.username, frank.base, frank.stores, frank.limit, frank.total], ["frank", 20, { target: 30, pokemoncenter: 25, costco: 20 }, 20, 75]);
+    assert.deepEqual([gh.username, gh.base, gh.stores, gh.limit, gh.total], [null, 30, STORES20, 20, 60]);
     assert.ok(d.storeLimits.every((x) => x.key_hash === undefined), "by last 4, never a hash");
     assert.equal(d.requests.length, 6);
     assert.ok(d.requests.every((q) => q.review_url.includes("/slots/review/") && q.review_token === undefined && q.key_hash === undefined));
@@ -1553,6 +1566,70 @@ try {
     // As it was for the tests after: GH_KEY on the default at each store.
     approvalSql(`DELETE FROM slot_store_limits WHERE key_hash = '${ghHash}'`); approvalSql(`DELETE FROM slot_limits WHERE key_hash = '${ghHash}'`);
     assert.deepEqual((await limitOf(GH_KEY)).stores, STORES20);
+  });
+  await test("a FAFO before 1.9.158 gets the smallest store's limit as its one limit, and asks for a total from it", async () => {
+    // Given the sum (60 to start), that FAFO let a buyer set their own Target cap to 40 and submit 40 slots there, where the
+    // owner allows 20, and a buyer raised to 50 before got 150 (the review of 1.9.158).
+    approvalSql(`INSERT INTO slot_store_limits (key_hash, store, slot_limit, updated_at) VALUES ('${ghHash}', 'target', 40, 1), ('${ghHash}', 'pokemoncenter', 25, 1)`);
+    const lim = await limitOf(GH_KEY);
+    assert.deepEqual([lim.limit, lim.stores], [20, { target: 40, pokemoncenter: 25, costco: 20 }]);
+    assert.equal((await slots("/slots/request", GH_KEY, { requested: 20 })).status, 400, "not more than the one limit it shows");
+    const r = await (await slots("/slots/request", GH_KEY, { requested: 25, name: "Gus" })).json();
+    assert.deepEqual([r.status, r.request.requested], ["pending", 25]);
+    const m = await lastPost(), link = slotLink(m);
+    assert.equal(m, `🎟️ **More slots requested** · **Gus** · license …${GH_KEY.slice(-4)}\nAsked for **25** slots in total, from 20 (an older FAFO asks for one number for every store): you choose each store's when you approve\n[Review: approve or deny](${link})`,
+      "from the one limit that FAFO showed");
+    const html = await (await fetch(link)).text();
+    assert.ok(html.includes(`<tbody>${limRow("Target", 40, "–", false, "target", 40)}${limRow("Pokémon Center", 25, "–", false, "pokemoncenter", 25)}${limRow("Costco", 20, "–", false, "costco", 20)}</tbody>`));
+    assert.ok((await (await slotPost(link, "deny")).text()).includes("<p>Denied.</p>"));
+    assert.deepEqual((await limitOf(GH_KEY)).stores, { target: 40, pokemoncenter: 25, costco: 20 }, "denying one that wasn't approved changes no limit");
+    approvalSql(`DELETE FROM slot_store_limits WHERE key_hash = '${ghHash}'`);
+  });
+  await test("an Approve that commits while a Deny of the same request is under way is taken back: never Denied with the approved limits", async () => {
+    // The owner has the review link open twice and presses Approve in one and Deny in the other. Here the Approve commits
+    // after the Deny read the request (as waiting) and before its own batch: a trigger in the local database does what that
+    // Approve's batch does when the Deny's page adds the rows of a request from before 2026-11-18 (slotRequestRows). The
+    // Deny went by what it had read and left Target 30 · Pokémon Center 25 on a request that said Denied (the review of
+    // 1.9.158); it reads whether it was approved inside its batch now.
+    const t0 = Date.now() - 3 * 86400000;
+    approvalSql(`INSERT INTO slot_requests (id, key_hash, key_last4, name, discord_id, username, current_limit, requested, granted, note, status, review_token, created_at, decided_at, webhook_message_id) VALUES
+      ('raceWait0001', '${ghHash}', '${GH_KEY.slice(-4)}', 'Gus', NULL, NULL, 20, 40, NULL, '', 'pending', 'raceWaitToken00000000001', ${t0}, NULL, NULL)`);
+    approvalSql(`CREATE TRIGGER slot_race_approve AFTER INSERT ON slot_request_stores WHEN NEW.request_id = 'raceWait0001' BEGIN
+      UPDATE slot_requests SET status = 'approved', granted = 75, decided_at = ${t0 + 1000} WHERE id = 'raceWait0001';
+      UPDATE slot_request_stores SET granted = CASE NEW.store WHEN 'target' THEN 30 WHEN 'pokemoncenter' THEN 25 ELSE 20 END WHERE request_id = NEW.request_id AND store = NEW.store;
+      DELETE FROM slot_store_limits WHERE key_hash = '${ghHash}' AND store = NEW.store;
+      INSERT INTO slot_store_limits (key_hash, store, slot_limit, updated_at) VALUES ('${ghHash}', NEW.store, CASE NEW.store WHEN 'target' THEN 30 WHEN 'pokemoncenter' THEN 25 ELSE 20 END, ${t0 + 1000});
+    END`);
+    try {
+      const html = await (await slotPost(`${BASE}/slots/review/raceWait0001?t=raceWaitToken00000000001`, "deny")).text();
+      const stores = (await limitOf(GH_KEY)).stores;
+      const lims = approvalRows(`SELECT store, slot_limit FROM slot_store_limits WHERE key_hash = '${ghHash}' ORDER BY store`);
+      assert.equal(lims.length, 3, "the Approve went in first: its rows are there");
+      assert.ok(html.includes("<p>Denied. Their limits are back to Target 20 · Pokémon Center 20 · Costco 20.</p>"), "the page says what happened");
+      assert.deepEqual(lims.map((x) => [x.store, x.slot_limit]), [["costco", 20], ["pokemoncenter", 20], ["target", 20]], "each store back to where it was");
+      assert.deepEqual(stores, STORES20);
+      assert.deepEqual(approvalRows("SELECT status, granted FROM slot_requests WHERE id = 'raceWait0001'"), [{ status: "denied", granted: null }]);
+    } finally {
+      approvalSql("DROP TRIGGER IF EXISTS slot_race_approve");
+      approvalSql(`DELETE FROM slot_store_limits WHERE key_hash = '${ghHash}'`);
+    }
+    assert.deepEqual((await limitOf(GH_KEY)).stores, STORES20);
+  });
+  await test("Approve and Deny pressed at once: whichever commits last decides, and the limits always match it", async () => {
+    for (const [i, order] of [[1, ["approve", "deny"]], [2, ["deny", "approve"]], [3, ["approve", "deny"]]]) {
+      const id = `raceBoth000${i}`, tok = `raceBothToken0000000000${i}`, t0 = Date.now() - 3 * 86400000 - i;
+      approvalSql(`INSERT INTO slot_requests (id, key_hash, key_last4, name, current_limit, requested, note, status, review_token, created_at) VALUES
+        ('${id}', '${ghHash}', '${GH_KEY.slice(-4)}', 'Gus', 60, 75, '', 'pending', '${tok}', ${t0});
+        INSERT INTO slot_request_stores (request_id, store, current_limit, requested) VALUES ('${id}', 'target', 20, 30), ('${id}', 'pokemoncenter', 20, 25), ('${id}', 'costco', 20, 20)`);
+      const link = `${BASE}/slots/review/${id}?t=${tok}`;
+      await Promise.all(order.map((a) => slotPost(link, a, a === "approve" ? { target: 30, pokemoncenter: 25, costco: 20 } : null)));
+      const stores = (await limitOf(GH_KEY)).stores;
+      const [q] = approvalRows(`SELECT status, granted FROM slot_requests WHERE id = '${id}'`);
+      if (q.status === "approved") assert.deepEqual([q.granted, stores], [75, { target: 30, pokemoncenter: 25, costco: 20 }], order.join(" + "));
+      else assert.deepEqual([q.status, q.granted, stores], ["denied", null, STORES20], order.join(" + "));
+      approvalSql(`DELETE FROM slot_store_limits WHERE key_hash = '${ghHash}'`);
+    }
+    assert.deepEqual((await limitOf(GH_KEY)).stores, STORES20, "as it was for the tests after");
   });
   console.log("\nSubmissions");
   const b64u = (b) => Buffer.from(b).toString("base64url");
@@ -2348,7 +2425,8 @@ try {
     assert.deepEqual(r.accounts, { Target: { asked: 1, got: 0 } }, "only Costco's raised: still 10");
     assert.match(m.content, /\nTarget 1 \(1 needs an account: this license is at its limit of 10\)\n/);
     await slotPost(link, "approve", { target: 7, pokemoncenter: 5, costco: 50 });
-    assert.equal((await (await slots("/slots/limit", ginaKey)).json()).limit, 62);
+    assert.deepEqual(await (await slots("/slots/limit", ginaKey)).json().then((x) => [x.limit, x.stores]), [5, { target: 7, pokemoncenter: 5, costco: 50 }],
+      "an older FAFO gets the smallest store's");
     ({ r, m } = await send(["Jo J0", "Jo J1", "Jo J2"], "asg5c2"));
     assert.deepEqual(r.accounts, { Target: { asked: 3, got: 2 } }, "past 10 now: Target's 7 and Pokémon Center's 5");
     assert.match(m.content, /\nTarget 3 \(2 assigned accounts, 1 needs an account: this license is at its limit of 12\)\n/);
@@ -4919,6 +4997,97 @@ try {
     for (const x of [...Y_PW, "inbox.one@example.com", "inbox.two@example.com", "pc.inbox@example.com", "w.inbox@example.com", "t.inbox@example.com"]) assert.ok(!dump.includes(x), "not kept: " + x);
   });
 
+  console.log("\nCostco's slots as AYCD and Hayha (2026-11-18)");
+  // The owner: "whenever someone submit costco, can you have it sent to my discord as hayha format?", then "keep aycd but you
+  // can remove shikari format for costco submission". Costco's profiles go out as a HayhaAIO 2.0 file (.Hayha, JSON, as the
+  // page's Export profiles → HayhaAIO 2.0 writes it) in the Shikari CSV's place; every other store as before. Sample data only.
+  const coRows = [
+    ["Sam C1", "Sam", "Sample", "sam.c1@example.com", "(512) 555-0101", "4111 1111 1111 1111", "07", "2031", "123", "1 Warehouse Way", "", "Austin", "TX", "78701", "US",
+      "Sam", "Sample", "1 Warehouse Way", "", "Austin", "TX", "78701", "US"],
+    ["Sam C2", "Sam", "Sample", "sam.c2@example.com", "+1 416-555-0199", "378282246310005", "3", "31", "1234", "1 Maple Rd", "", "Toronto", "Ontario", "M5V 2T6", "CA",
+      "Pat", "Payer", "9 Bill Rd", "Suite 5", "Dallas", "TX", "75201", "US"],
+  ];
+  const coCsv = slotHead + "\r\n" + coRows.map((r) => r.map(cellT).join(",")).join("\r\n");
+  const coLogins = "sam.c1@example.com:Costco-Pw-1\r\nsam.c2@example.com:Costco-Pw-2";
+  const coImap = `sam.c1@example.com:${Y_PW[0]}\r\nsam.c2@example.com:${Y_PW[2]}`;
+  // The page's own AYCD list for those rows (1.9.87+): its name on card, Only one checkout and billing-is-shipping go in Hayha's.
+  const coPlace = (name, email, line1, line2, postCode, city, country, state) => ({ name, email, phone: "", line1, line2, line3: "", postCode, city, country, state });
+  const coAycd = [
+    { name: "Sam C1", notes: "", billingAddress: coPlace("Sam Sample", "sam.c1@example.com", "1 Warehouse Way", "", "78701", "Austin", "United States", "Texas"),
+      shippingAddress: coPlace("Sam Sample", "sam.c1@example.com", "1 Warehouse Way", "", "78701", "Austin", "United States", "Texas"),
+      paymentDetails: { nameOnCard: "Sam Q Sample", cardType: "Visa", cardNumber: "4111111111111111", cardExpMonth: "07", cardExpYear: "2031", cardCvv: "123" },
+      sameBillingAndShippingAddress: true, onlyCheckoutOnce: true, matchNameOnCardAndAddress: false },
+    { name: "Sam C2", notes: "", billingAddress: coPlace("Pat Payer", "sam.c2@example.com", "9 Bill Rd", "Suite 5", "75201", "Dallas", "United States", "Texas"),
+      shippingAddress: coPlace("Sam Sample", "sam.c2@example.com", "1 Maple Rd", "", "M5V 2T6", "Toronto", "Canada", "Ontario"),
+      paymentDetails: { nameOnCard: "Pat Payer", cardType: "Amex", cardNumber: "378282246310005", cardExpMonth: "03", cardExpYear: "2031", cardCvv: "1234" },
+      sameBillingAndShippingAddress: false, onlyCheckoutOnce: false, matchNameOnCardAndAddress: true },
+  ];
+  // What Hayha gets, as toHayha writes it (the country written out, the state as {shortCode, name}, the phone's 10 digits and
+  // the row's email on both addresses, expMonth "03", expYear a number), with the ids by shape and then swapped in order.
+  const hh = (firstName, lastName, email, address, address2, country, shortCode, name, city, zipCode) =>
+    ({ firstName, lastName, email, phone: email === "sam.c1@example.com" ? "5125550101" : "4165550199", address, address2, country, state: { shortCode, name }, city, zipCode });
+  const coShip1 = hh("Sam", "Sample", "sam.c1@example.com", "1 Warehouse Way", "", "United States", "TX", "Texas", "Austin", "78701");
+  const coShip2 = hh("Sam", "Sample", "sam.c2@example.com", "1 Maple Rd", "", "Canada", "ON", "Ontario", "Toronto", "M5V 2T6");
+  const coBill2 = hh("Pat", "Payer", "sam.c2@example.com", "9 Bill Rd", "Suite 5", "United States", "TX", "Texas", "Dallas", "75201");
+  const UU = (n) => "00000000-0000-4000-8000-" + String(n).padStart(12, "0");
+  const coHayha = (holder1, once1) => JSON.stringify([
+    { name: "Sam C1", shipping: coShip1, cardInfo: { cardNumber: "4111111111111111", holder: holder1, expMonth: "07", expYear: 2031, cvv: "123" }, oneCheckout: once1, sameAsBilling: true, billing: coShip1, groupId: UU(1), id: UU(2) },
+    { name: "Sam C2", shipping: coShip2, cardInfo: { cardNumber: "378282246310005", holder: "Pat Payer", expMonth: "03", expYear: 2031, cvv: "1234" }, oneCheckout: false, sameAsBilling: false, billing: coBill2, groupId: UU(1), id: UU(3) },
+  ], null, 2);
+  const V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  // A .Hayha file's text with its ids checked (one groupId for the batch's profiles, a new id each) and swapped for UU(1), UU(2)…
+  const hayhaFixed = (text) => {
+    const list = JSON.parse(text);
+    assert.ok(list.every((x) => V4.test(x.groupId) && V4.test(x.id)), "v4 UUIDs");
+    assert.equal(new Set(list.map((x) => x.groupId)).size, 1, "one Hayha group for the batch");
+    assert.equal(new Set(list.map((x) => x.id)).size, list.length, "an id each");
+    assert.ok(!list.some((x) => x.id === x.groupId));
+    const ids = [list[0].groupId, ...list.map((x) => x.id)];
+    return ids.reduce((t, id, i) => t.split(id).join(UU(i + 1)), text);
+  };
+  const coFile = (kind, text, o = {}) => ({ store: "Costco", storeKey: "costco", kind, text, ...o });
+  await test("Costco: a batch with Target and Costco slots posts Target's AYCD, Shikari and logins, then Costco's AYCD, Hayha, logins and inbox access", async () => {
+    const files = [yFile("Target", "target", ["Yuri One", "Yuri Two"]), yFile("Target", "target", null, "logins", tgtLogins),
+      coFile("profiles", coCsv), coFile("aycd", JSON.stringify(coAycd)), { store: "Costco", kind: "logins", text: coLogins }, coFile("imap", coImap)];
+    const s = await ySubmit(files, { name: "Sam Sample", interests: { target: ["88897898"] }, stores: [{ name: "Target", n: 2 }, { name: "Costco", n: 2 }] });
+    yBatches.push(s.d.id);
+    assert.equal(s.posts.length, 1);
+    assert.deepEqual(s.files.map((f) => f.name), ["Sam-Sample-target-aycd.json", "Sam-Sample-target-shikari.csv", "Sam-Sample-target-logins.txt", "Sam-Sample-target-skus.txt",
+      "Sam-Sample-costco-aycd.json", "Sam-Sample-costco-hayha.Hayha", "Sam-Sample-costco-logins.txt", "Sam-Sample-costco-imap.txt"], "no Costco Shikari CSV; Target's still there");
+    const hay = s.files.find((f) => f.name.endsWith("-hayha.Hayha"));
+    assert.equal(hayhaFixed(hay.text), coHayha("Sam Q Sample", true), "exactly as the page's HayhaAIO 2.0 export, with the app's name on card and Only one checkout");
+    assert.ok(!hay.text.endsWith("\n"), "no line break at the end");
+    assert.match(hay.type, /^application\/octet-stream/);
+    assert.equal(s.files.find((f) => f.name === "Sam-Sample-costco-aycd.json").text, JSON.stringify(coAycd, null, 2), "Costco's AYCD list as sent");
+    assert.deepEqual(s.files.filter((f) => /-(logins|imap)\.txt$/.test(f.name) && f.name.includes("costco")).map((f) => f.text), [coLogins, coImap]);
+    assert.equal(shikariOf(s).length, 1, "only Target's Shikari CSV");
+    const m = s.posts[0].content;
+    assert.ok(m.startsWith(`📦 **4 slots** from **Sam Sample** · @yuri · license …${yuriKey.slice(-4)}\nTarget 2 · Costco 2\n`), m);
+    assert.ok(m.includes("\n-# Per store: its profiles for AYCD (.json) and Shikari (.csv), Costco's for AYCD (.json) and Hayha (.Hayha), with its logins (email:password, .txt) in the same order, and the inbox access for its slots on the buyer's own accounts (email:app password, .txt).\n⏳ **Pending your approval** · [Approve or decline]("), m);
+  });
+  await test("Costco: a batch of only Costco says AYCD and Hayha; its bytes are what's posted (the Hayha file as it is)", async () => {
+    const s = await ySubmit([coFile("profiles", coCsv), coFile("aycd", JSON.stringify(coAycd)), { store: "Costco", kind: "logins", text: coLogins }], { name: "Sam Sample", stores: [{ name: "Costco", n: 2 }] });
+    yBatches.push(s.d.id);
+    assert.deepEqual(s.files.map((f) => f.name), ["Sam-Sample-costco-aycd.json", "Sam-Sample-costco-hayha.Hayha", "Sam-Sample-costco-logins.txt"]);
+    assert.ok(s.posts[0].content.includes("\n-# Per store: its profiles for AYCD (.json) and Hayha (.Hayha), with its logins (email:password, .txt) in the same order.\n"), s.posts[0].content);
+    const subs = (await (await admin("/admin/submissions")).json()).submissions;
+    assert.equal(subs.find((x) => x.id === s.d.id).bytes, s.files.reduce((n, f) => n + f.text.length, 0));
+  });
+  await test("Costco: from a page before 1.9.87 (no AYCD list) the Hayha file has the billing name on the card, no Only one checkout, and billing-is-shipping by the addresses", async () => {
+    // Older apps: no storeKey (the store's name says Costco), and no AYCD list.
+    for (const co of [{ store: "Costco" }, { store: "Costco", storeKey: "costco" }, { store: "costco", storeKey: "other:costco" }]) {
+      const s = await ySubmit([{ ...co, kind: "profiles", text: coCsv }], { name: "Sam Sample", stores: [{ name: co.store, n: 2 }] });
+      yBatches.push(s.d.id);
+      assert.deepEqual(s.files.map((f) => f.name), ["Sam-Sample-costco-aycd.json", "Sam-Sample-costco-hayha.Hayha"], JSON.stringify(co));
+      assert.equal(hayhaFixed(s.files[1].text), coHayha("Sam Sample", false), JSON.stringify(co));
+      assert.ok(s.posts[0].content.includes("\n-# Per store: its profiles for AYCD (.json) and Hayha (.Hayha).\n"), s.posts[0].content);
+    }
+    // Pokémon Center, Walmart and a store typed as something else keep their Shikari CSV.
+    const s = await ySubmit([yFile("Walmart", "walmart", ["Yuri W2"]), yFile("Costco Wholesale", "other:costco wholesale", ["Yuri X2"])], { stores: [{ name: "Walmart", n: 1 }, { name: "Costco Wholesale", n: 1 }] });
+    yBatches.push(s.d.id);
+    assert.deepEqual(s.files.map((f) => f.name), ["Yuri-walmart-aycd.json", "Yuri-walmart-shikari.csv", "Yuri-costco-wholesale-aycd.json", "Yuri-costco-wholesale-shikari.csv"]);
+  });
+
   console.log("\nInterests: products added once (INTEREST_ADDS; the owner's request, 2026-11-12)");
   // An addition goes onto a list the owner saved before it existed, once. Each case starts a worker on the same database with
   // nothing in memory, as a deploy does, so what's applied is read from D1 (interest_adds), not only the isolate's memory.
@@ -5264,7 +5433,7 @@ try {
     assert.equal(l.dueAt, dueFor(today, l.createdAt));
     assert.equal(new Date(l.dueAt).getUTCDay(), 1, "a Sunday's end in Eastern time is Monday in UTC");
     const lim = await (await api("/slots/limit", vicKey)).json();
-    assert.deepEqual([lim.limit, lim.stores, lim.canRequest, lim.plan], [60, { target: 20, pokemoncenter: 20, costco: 20 }, true, undefined], "their limits are as approved");
+    assert.deepEqual([lim.limit, lim.stores, lim.canRequest, lim.plan], [20, { target: 20, pokemoncenter: 20, costco: 20 }, true, undefined], "their limits are as approved");
   });
   await test("a buyer approved after payments began is refused until they pick a plan (402); the channel hears once", async () => {
     tessKey = await newBuyer("tess"); tessHash = hashOf(tessKey);
@@ -5564,7 +5733,7 @@ try {
     const st = await billOf(tessKey);
     assert.deepEqual([st.plan, st.nextPlan, st.sub, st.block], ["checkout", null, null, null]);
     assert.deepEqual(posts(n), ["🗓️ **Tess**'s monthly plan ended · pay per checkout · about 2 slots out"]);
-    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.stores, x.canRequest]), [60, { target: 20, pokemoncenter: 20, costco: 20 }, true], "back to the limits they had");
+    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.stores, x.canRequest]), [20, { target: 20, pokemoncenter: 20, costco: 20 }, true], "back to the limits they had");
   });
   let sub2;
   await test("a second monthly plan made alongside the first is canceled at once, and the channel hears", async () => {
@@ -5778,7 +5947,7 @@ try {
     assert.deepEqual([st.lines.find((l) => l.orderNo === "TB-4001").state, st.owed], ["due", 1000], "at the $10 it was billed at");
     for (const body of [{ kind: "monthly", extras: 0, on: 2 }, { kind: "extras", extras: 1, on: 2 }])
       assert.deepEqual(await checkout(tessKey, body), { status: 409, body: { error: "Friends and Family pay per checkout." } }, JSON.stringify(body));
-    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [60, true, undefined], "the limits you approved, not the paused plan's");
+    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [20, true, undefined], "the limits you approved, not the paused plan's");
     // A paused plan never holds their checkouts, even with its month run out and a renewal not charged (Stripe voids those).
     // (An order three days ahead: today is still covered by the plan that ended today, as they paid for it.)
     const was = dbRows(`SELECT paid_through, invoice_status FROM billing_subs WHERE sub_id = '${sub2.id}'`)[0];
@@ -6096,7 +6265,7 @@ try {
     assert.ok(dbRows("SELECT v FROM billing_config WHERE k = 'on_since:test'").length, "test mode's own start");
     assert.ok(dbRows("SELECT v FROM billing_config WHERE k = 'family_from:test'").length, "and when it charged Friends and Family");
     assert.equal((await submit(umaKey, [ownFile([["Uma One", "uma.one@example.com"]])], { on: 3, name: "Uma" })).status, 200, "not a tester: never refused");
-    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.plan]), [60, undefined], "no monthly plan in test mode");
+    assert.deepEqual(await (await api("/slots/limit", tessKey)).json().then((x) => [x.limit, x.plan]), [20, undefined], "no monthly plan in test mode");
     const r = await api("/billing/list", bobKey, { name: "Owner" });
     assert.equal(r.status, 429, "the day's 10 links are used up (any mode)");
     sqlRun(`UPDATE billing_lists SET created_at = created_at - ${86400000} WHERE key_hash = '${hashOf(bobKey)}'`);
@@ -6205,7 +6374,7 @@ try {
     sqlRun(`UPDATE billing SET plan = 'monthly', next_plan = 'checkout', sub_id = NULL WHERE key_hash = '${xiaHash}' AND mode = 'live'`);
     const gone = await billOf(xiaKey);
     assert.deepEqual([gone.plan, gone.nextPlan, gone.sub, gone.block], [null, null, null, NO_PLAN]);
-    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [60, true, undefined], "they ask you for slots as anyone does");
+    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [20, true, undefined], "they ask you for slots as anyone does");
     const p = await (await api("/billing/plan", xiaKey, { plan: "checkout" })).json();
     assert.deepEqual([p.plan, p.nextPlan, p.block, p.plans], ["checkout", null, null, ["checkout"]]);
   });
@@ -6249,7 +6418,7 @@ try {
     assert.equal(await hook("customer.subscription.deleted", sub), 200);
     const after = await billOf(xiaKey);
     assert.deepEqual([after.plan, after.sub, after.block], [null, null, NO_PLAN]);
-    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [60, true, undefined]);
+    assert.deepEqual(await (await api("/slots/limit", xiaKey)).json().then((x) => [x.limit, x.canRequest, x.plan]), [20, true, undefined]);
   });
   let offLink;
   const priceRow = () => dbRows("SELECT v FROM billing_config WHERE k = 'price:checkout'");
