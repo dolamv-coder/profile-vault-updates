@@ -4979,8 +4979,9 @@ try {
   // after it began, and the tests end that hour at once) could never move it.
   const pastDue = () => DUE.sundayEndOnOrAfter(Date.now() - 8 * DAY);
   // Something owed from now (Charge again, Keep, Undo waive, held lines released): due by the end of the Sunday after today,
-  // as of some moment of the request between t0 and t1.
-  const dueNowIn = (t0, t1, got) => [DUE.dueNow(t0), DUE.dueNow(t1)].includes(got);
+  // as of some moment of the request between t0 and t1, or by `was`, its due date before, when that's later (the worker's
+  // MAX(due_at, …): never earlier than it was).
+  const dueNowIn = (t0, t1, got, was = 0) => [DUE.dueNow(t0), DUE.dueNow(t1)].map((d) => Math.max(d, was)).includes(got);
   const billOf = async (key) => { const r = await fetchOnce(BASE + "/billing", { headers: { authorization: "Bearer " + key }, cache: "no-store" }); assert.equal(r.status, 200); assert.equal(r.headers.get("cache-control"), "no-store"); return r.json(); };
   const ownFile = (rows, assigned = 0) => ({ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv(rows.map(([n, e]) => slotRow(n, e || ""))), assigned });
   const loginsFile = (emails) => ({ store: "Target", storeKey: "target", kind: "logins", text: emails.map((e) => `${e}:Sample-Pw-1`).join("\r\n") });
@@ -5727,10 +5728,14 @@ try {
     assert.equal((await lineOf(tessKey, "TB-4001")).state, "paid");
     assert.equal(dbRows("SELECT pay_id FROM billing_lines WHERE order_no = 'TB-4001'")[0].pay_id, "manual");
     assert.equal(errOf((await act("waive", tessKey, "TB-4001")).location), "That checkout changed meanwhile, so nothing was done.");
+    // TB-1002 still has the due date its order gave it. That order is dated `today`, the UTC date: from Saturday 19:00 Eastern
+    // (20:00 in daylight time) to midnight it's already Sunday in UTC, so its due date is the Sunday after that one, a week
+    // after the Sunday after today in Eastern time, and Charge again keeps it.
+    const was = dueFor(today, (await lineOf(tessKey, "TB-1002")).createdAt);
     t0 = Date.now();
     const again = doneOf((await act("charge-again", tessKey, "TB-1002")).location);
     t1 = Date.now(); l = await lineOf(tessKey, "TB-1002");
-    assert.deepEqual([l.state, dueNowIn(t0, t1, l.dueAt), again], ["due", true, `It's owed again, due ${DUE.dueWords(l.dueAt)}.`]);
+    assert.deepEqual([l.state, dueNowIn(t0, t1, l.dueAt, was), again], ["due", true, `It's owed again, due ${DUE.dueWords(l.dueAt)}.`]);
     await act("waive", tessKey, "TB-1002");
     // One due later than that already keeps its date when the waive is undone.
     const later = dueLater();
