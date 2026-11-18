@@ -1,10 +1,10 @@
 {
-  "version": "1.9.157",
-  "url": "index-1.9.157.html",
-  "sha256": "73fb3fdfd7aff919103aa09dfadfa8a3dc176ef5d2c1635e11bf87d61cac3104",
-  "signature": "FSVJjxfFOu82KWJVCGkqRfMiSJnc99fRthBHbLv8+9qNTim90ay4A74R4hWemwqJzJWZyFAGUhfJeA2H4rv+Bg==",
+  "version": "1.9.158",
+  "url": "index-1.9.158.html",
+  "sha256": "25157633153a7dd9ad6ba50b0829a271da1695071dec0acfee4017004d46b362",
+  "signature": "qfkpaOUec0jf1i4shmtv00GPhjAPGPQxo+a8ioXpKCsbLr8OSySHy7z/dt1VpHTOAiOXJtv6kz5dw1FgamKzAA==",
   "minAppVersion": "0",
-  "notes": "The IMAP tab is gone: its inbox list, status and Test are on Store logins now (your slot counts are on Submit). Each inbox and store login has a light: green when FAFO signed in to the inbox on its last check, red when it couldn't (hover over it to see why, then fix the app password and press Test on the inbox's card), and gray when it hasn't been checked yet. The counts at the top show only the logins that need an inbox or can't sign in when you click them. The lights are shared between your computers and the website.",
+  "notes": "Each store now has its own slot limit: Target, Pokémon Center and Costco each start at 20, or at the number your seller already approved for you, now at every store. Submit shows each store's limit, and Request more slots asks for the number you need at each store. A Target store login no longer needs an inbox: leave the app password empty to save it without one. Costco and Pokémon Center logins still need theirs.",
   "installerUrl": "",
-  "publishedAt": "2026-11-17T09:51:57.837Z"
+  "publishedAt": "2026-11-18T08:25:33.644Z"
 }
