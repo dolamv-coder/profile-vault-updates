@@ -89,7 +89,7 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   key and no denied request, after the key lookups (a key holder who left, or was kicked, gets their key back: a key is turned
   off by denying its request or `/admin/revoke`, never by leaving the server); a non-member gets **Join the server first**
   (`JOIN_MSG`, "You need to be a member of FAFO's ACO server on Discord…", the request's error the app shows too) with a
-  **Join FAFO's ACO** button to `REQUIRED_GUILD_INVITE` (`https://discord.gg/AkjJmYAng`; `inviteUrl` takes only an https
+  **Join FAFO's ACO** button to `REQUIRED_GUILD_INVITE` (`https://discord.gg/VRk2fGe3xN`; `inviteUrl` takes only an https
   discord.gg or discord.com/invite address) before the terms, and a server list Discord doesn't give is a failed sign-in
   ("Couldn't check your Discord servers", 502), never "join first". And every page the worker draws (`page()`) is headed by
   FAFO ACO's logo (the owner: "use the FAFO ACO logo too"), `logoSVG` imported from `web-worker/src/brand.js` (one source with
