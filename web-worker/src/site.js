@@ -15,7 +15,7 @@ export const APP_URL = "https://app.fafoaco.com";
 export const RELEASES_URL = "https://github.com/dolamv-coder/profile-vault-updates/releases";
 // FAFO's Discord server, which new users have to be in to get a key, and the terms they accept first (license worker,
 // 2026-11-17).
-export const DISCORD_INVITE = "https://discord.gg/AkjJmYAng";
+export const DISCORD_INVITE = "https://discord.gg/VRk2fGe3xN";
 export const TERMS_URL = "https://license.fafoaco.com/terms";
 export const DOWNLOAD_URL = "https://github.com/dolamv-coder/profile-vault-updates/releases/latest/download/FAFO-Windows.zip";
 

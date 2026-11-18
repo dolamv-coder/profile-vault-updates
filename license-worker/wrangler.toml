@@ -18,7 +18,7 @@ REQUIRE_APPROVAL = "true"
 REQUIRED_GUILD_ID = "1542410391219605544"
 # The invite the "Join the server first" page links to (only an https discord.gg/… or discord.com/invite/… address).
 # Make it one that never expires, with no use limit (Server Settings > Invites).
-REQUIRED_GUILD_INVITE = "https://discord.gg/AkjJmYAng"
+REQUIRED_GUILD_INVITE = "https://discord.gg/VRk2fGe3xN"
 # Optional: Discord accounts younger than this many days are turned away. 0 turns the check off.
 MIN_ACCOUNT_AGE_DAYS = "0"
 # How many slots a license can have switched on at once until you approve more.
