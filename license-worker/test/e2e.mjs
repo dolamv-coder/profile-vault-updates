@@ -5842,6 +5842,47 @@ try {
     assert.ok(html.includes("Target #DST-SPRING") && new RegExp(`#DST-SPRING[\\s\\S]*?due ${springText}<`).test(html) && new RegExp(`#DST-FALL<[\\s\\S]*?due ${fallText}<`).test(html),
       "the Billing page names each one's Sunday");
   });
+  await test("an order on an account given out that evening is billed and pasted to its buyer: the day it was given out is an Eastern day, as due dates are, so a US evening after midnight UTC still counts; the day before doesn't, nor one given out after midnight Eastern", async () => {
+    // Two accounts given to Uma (pay per checkout), as the list gives them: at 01:00 UTC on today's Eastern day, which is
+    // 20:00 Eastern the evening before (21:00 in daylight time), and a moment after midnight Eastern today. An order's day is
+    // the local one of the owner's FAFO. Until 2026-11-18 the worker counted the day given out in UTC, so the first one's
+    // orders that evening went unbilled, and the Billing page's Paste found no one for them.
+    const T = DUE.etDay(Date.now()), D = DUE.addDays(T, -1), evening = Date.parse(T + "T01:00:00Z"), night = DUE.etMidnight(T) + 1;
+    assert.deepEqual([DUE.etDay(evening), DUE.etDay(night), evening <= Date.now()], [D, T, true]);
+    const given = [["uma.evening@example.com", "Uma Evening", evening], ["uma.night@example.com", "Uma Night", night]], nos = ["UE-0", "UE-1", "UN-1", "UN-2"];
+    sqlRun(`INSERT INTO accounts (store, email, email_norm, password, added_at, offer_id, key_hash, key_last4, batch, store_name, profile, assigned_at, sent_at) VALUES ${given.map(([e, p, t]) =>
+      `('target', '${e}', '${e}', 'Sample-Pw-9', ${t}, 'test', '${umaHash}', '${umaKey.slice(-4)}', 'ue${rid().slice(0, 10)}', 'Target', '${p}', ${t}, ${t})`).join(", ")}`);
+    // Billing as if it began weeks ago, so only the day each account was given out decides.
+    const since = dbRows("SELECT v FROM billing_config WHERE k = 'on_since:live'")[0].v;
+    sqlRun(`UPDATE billing_config SET v = '${Date.now() - 20 * DAY}' WHERE k = 'on_since:live'`);
+    try {
+      const a = await alerts([billEv({ account: "Uma.Evening@example.com", orderNo: "UE-1", at: D }), billEv({ account: "uma.evening@example.com", orderNo: "UE-0", at: DUE.addDays(D, -1) }),
+        billEv({ account: "uma.night@example.com", orderNo: "UN-1", at: D }), billEv({ account: "uma.night@example.com", orderNo: "UN-2", at: T })]);
+      assert.deepEqual([a.sent, a.unknown], [3, 1], "the alerts go as before: from the day before it was given out on");
+      const ue = await lineOf(umaKey, "UE-1");
+      assert.deepEqual(ue && [ue.source, ue.orderAt, ue.state, ue.profile], ["alert", D, "due", "Uma Evening"], "given out that evening, Eastern time: billed");
+      assert.equal(await lineOf(umaKey, "UE-0"), undefined, "the day before it was given out");
+      assert.equal(await lineOf(umaKey, "UN-1"), undefined, "given out after midnight Eastern: billed from that day on");
+      assert.equal((await lineOf(umaKey, "UN-2")).orderAt, T);
+      // The Billing page's Paste finds who had each one out that day the same way.
+      const paste = [`Target UE-PASTE-1 uma.evening@example.com ${D}`, `Target UN-PASTE-1 uma.night@example.com ${D}`, `Target UN-PASTE-2 uma.night@example.com ${T}`].join("\n");
+      const pv = await billPost(billLink, { action: "paste-preview", paste, store: "target", date: T });
+      assert.equal(pv.status, 200);
+      const found = (no, profile) => new RegExp(`#${no}[^<]*<\\/span><\\/td>\\s*<td>@uma · Uma<br><span[^>]*>${profile}<\\/span><\\/td>\\s*<td style="color:#5fd39a">Will add · `).test(pv.text);
+      assert.ok(found("UE-PASTE-1", "Uma Evening"), pv.text.slice(-4000));
+      assert.ok(/#UN-PASTE-1[^<]*<\/span><\/td>\s*<td><\/td>\s*<td>No slot out with this email on that date<\/td>/.test(pv.text), pv.text.slice(-4000));
+      assert.ok(found("UN-PASTE-2", "Uma Night"), pv.text.slice(-4000));
+      assert.equal(dbRows("SELECT COUNT(*) AS n FROM billing_lines WHERE order_no LIKE 'U_-PASTE-%'")[0].n, 0, "a preview writes nothing");
+    } finally {
+      sqlRun(`UPDATE billing_config SET v = '${since}' WHERE k = 'on_since:live'`);
+      // Uma's invoice and accounts as they were, for the tests after this one.
+      const list = nos.map((n) => `'${n}'`).join(", ");
+      sqlRun(`DELETE FROM billing_line_basis WHERE line_id IN (SELECT id FROM billing_lines WHERE key_hash = '${umaHash}' AND order_no IN (${list}))`);
+      sqlRun(`DELETE FROM billing_lines WHERE key_hash = '${umaHash}' AND order_no IN (${list})`);
+      sqlRun(`DELETE FROM alerts WHERE key_hash = '${umaHash}' AND order_no IN (${list})`);
+      sqlRun(`DELETE FROM accounts WHERE store = 'target' AND email_norm IN (${given.map(([e]) => `'${e}'`).join(", ")})`);
+    }
+  });
   await test("payments back on after the keys were gone: orders from before then aren't billed late", async () => {
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10), ub = umaHash.slice(0, 16);
     sqlRun(`INSERT INTO billing_config (k, v, updated_at) VALUES ('off_seen', '${Date.now() - 60000}', ${Date.now() - 60000})`);
