@@ -2957,6 +2957,93 @@ red light?" and "yes share between devices, only check on Test"; they approved a
   Interests after Store logins; each still passes on 1.9.156. Inboxes gain `chk` (synced), `deskChk`, `deskTry` and
   `syncErrAt` (per device).
 
+From 1.9.158 **each store has its own slot limit** and **a Target store login doesn't need an inbox** (the owner,
+2026-11-18; the license worker section above has the worker's side of both, and of Costco's Hayha file).
+- **Slot limits per store** (the owner, with a screenshot of Request more slots: "Let's change this slot request window. Each
+  retailer should have their own slot request. Example: Costco --- 10, Pokemon Center --- 15, Target --- 30", then "the 20
+  slots cap should be per store"; their choices: buyers they'd raised keep that number at each store, the buyer's own caps
+  go, and assigned accounts are Target's plus Pokémon Center's):
+  - **When:** `slotPerStore()`, while the worker's `/slots/limit` answer has `stores` and the buyer isn't on the monthly
+    plan. `refreshSlotAllow` keeps `stores` and `base` in `S.settings.slotAllow` (a per-device setting, `LOCAL_SETTINGS`).
+    Without them (an older worker, the monthly plan, whose slots are one number) Submit is 1.9.157's: one total and the
+    buyer's caps. A store not in `SLOT_STORES` (target, pokemoncenter, costco), a typed one, has `base` (`limitIn`,
+    `storeLimit`).
+  - **A store's cap is its limit** (`capOf`): the buyer's own caps (`S.caps`, 3 to start) stay in the data for older devices
+    and aren't used. Submit's panel line is "Slot limits, per store:" with each store Submit shows, its mark and its limit
+    in bold (`storeAllowHTML`), then Request more slots; while a request waits, no Request link and "You've asked for Target
+    30 and Pokémon Center 25, and it's waiting for approval." (only the stores it raises; `slotAskedOf`); a total an older
+    FAFO asked for is "90 slots in total", and one from before 2026-11-18 adds "(before each store had its own limit)", never
+    a bare number. Each store's header says "Limit 20 · 3 profiles" where the "20 slots cap" link was, "Limit reached" or
+    "Over its limit" where "Cap reached" was, "Select all fills up to its limit of 20.", and the note above the stores
+    says each store has its own slot limit. A cap link drawn before opens the request window (a stale `cap` click).
+  - **Checks go by store:** Select all fills a store up to its limit with no total across stores, a store over its limit
+    (one the seller lowered, a vault from before) is named and blocks Submit while the others don't (`storesOver`,
+    `slotsOver`, `storeLimitDialog`: "Too many slots switched on at Target", how many to switch off), and switching one on
+    at a store's limit asks which to swap out, titled "Target is at its limit of 20", with Request more slots in place of
+    Raise cap (`chooseSwap`).
+  - **Request more slots** (`openStoreSlotRequest`): "Each store has its own slot limit. Put the number you need at each
+    store; the seller gets your request and can approve it.", then Store, Your limit and You need (`.sr-grid`): a row for
+    Target, Pokémon Center and Costco, always all three in that order, each with its mark, "Now 20" and a box starting there,
+    ringed `--info` above its limit; "Leave a store at its number to keep it as it is."; Your name and Note as before. Each
+    box takes its limit to 500 (its own error under it), at least one raised ("Raise at least one store's number."). Only
+    the stores whose box changed are sent (`{stores, name, note}`), so a limit the seller changed since this page last asked
+    (it asks once a minute while Submit shows) is never asked for in a box the buyer didn't touch. Enter in a box or Your
+    name sends it once (not in the Note, not an input method's Return or a held key). The worker's 400 and 409 words show
+    in the window, with FAFO's for 401, 429, 503 and no connection. A store's name wraps at its space on a narrow phone,
+    never cut short.
+  - **Toasts:** "You can now use 30 slots at Target and 25 at Pokémon Center" when the seller raises stores, and "Your
+    request for more slots was declined". A billing refusal for over-limit keeps the monthly plan's one number (it drops
+    `stores` and `base`). The owner's Send accounts window says one person gets their Target and Pokémon Center slot
+    limits together.
+- **Costco's files:** Submit's panel, Send somewhere else and Submit's window say the channel gets AYCD and Shikari files,
+  "AYCD and Hayha for Costco", or "AYCD and Hayha files" for Costco alone, by the stores there (`sellerFilesShort`,
+  `sellerFilesLong`, `costcoKey`), and the owner's Settings text on what the channel gets names Costco's Hayha file.
+- **Inbox optional for Target** (the owner, with a screenshot of Add store login's inbox, its app password empty and "Enter
+  this inbox's app password, or tick Use a saved inbox": "Technically, imap is not needed for Target, can you make a Bypass
+  for this. IMAP is still required for Costco."): `inboxOptional(k)` is Target only; `loginNeedsInbox(l)` is a login with no
+  saved inbox (none, or one that's gone) anywhere else.
+  - **The store login editor:** at Target the Inbox heading has an outline tag, "Optional for Target" (`#l-ibx-opt`), and
+    its line says Target doesn't need one, to leave the app password empty to save the login without one, and to add one for
+    the FAFO desktop app ("FAFO" on the desktop) to pull its orders, and for the seller to get its inbox access with the
+    slots (`loginInboxLine`). Costco's says Costco sends a sign-in code to it, "so every Costco login needs one"; Pokémon
+    Center's and other stores' keep 1.9.157's words, "so every <store> login needs one". Both follow the store pills. Save
+    at Target with no app password typed and Use a saved inbox not ticked saves the login with no inbox (`inboxId` null)
+    and no error, whatever the inbox's fields were filled in with from the account's email; a password typed means an inbox,
+    checked as before, and an inbox email typed by hand that's saved already is linked, as before (`emHand`). Editing a
+    Target login and unticking Use a saved inbox with no password drops its inbox.
+  - **Store logins:** such a login's light is gray "No inbox" (`loginLight`'s `opt`, `LIGHT_WORD`, with its own hover
+    text), then "optional for Target" on the Comfortable card (a line that wraps), and Add inbox, which opens its editor as
+    Set up inbox does (`loginNoInboxHTML`, `loginSetupHTML`); Compact and the List say "No inbox". It's never counted in
+    Need an inbox, the warning, the Need an inbox filter (`loginFilterOk`) or the sidebar's and phone tab's red light
+    (`loginsAttention`); the counts strip adds a gray "No inbox, Target N" when there are any, so the counts still add up to
+    Logins.
+  - **Submit:** `imapSubmitNote` doesn't warn about a Target slot with no inbox or no app password, while a slot waiting for
+    its store login is still counted; a Target login's inbox still goes when it has one, but `slotInbox` no longer falls
+    back to the inbox saved for its mailbox there (one saved with none means none; the review of 1.9.158). Costco logins
+    and Pokémon Center's own email still do.
+  - **Words:** the profile editor's note on a Target store login is `GUIDE_IMAP_NOTE_TARGET` ("An inbox is optional for
+    Target. If this store login has one, with its app password, FAFO sends your seller its inbox access with your slots.");
+    Costco keeps `GUIDE_IMAP_NOTE`. The setup guide's step 1 adds "At Target it's optional: Target doesn't need an inbox to
+    check out."
+- **Tests:** `slot-stores.test.mjs` and `target-inbox.test.mjs` run the page in Chromium as the web version against a pretend
+  license worker (in CI after the inbox lights'; each fails if the newest page lacks `slotPerStore` or `inboxOptional`).
+  - `slot-stores`: the answer kept, Submit's line, limits, Select all and note, the swap window, a store over its limit, the
+    request window's rows and checks, the exact body (only the stores changed), a limit the seller changed meanwhile, Enter,
+    the line while it waits, approved and declined, a request for a total, the worker's answers, a stale cap click, the
+    owner's Send accounts, an older worker's answer and the monthly plan's (1.9.157's Submit), and phones at 375, 360 and
+    320 px wide.
+  - `target-inbox`: the editor at Target, Costco and Pokémon Center (the tag and line, Save with no inbox, a password typed,
+    a saved inbox typed by hand or ticked by the account's email, dropping an inbox), Store logins in all three layouts
+    (Add inbox, the counts, the warning, the filter, the sidebar's and phone's light), Submit's window and files (no
+    fallback to a saved mailbox at Target, Costco's still), Costco's AYCD and Hayha words, the profile editor's note and a
+    phone.
+  - `inbox-lights`, `imap-submit`, `costco` and `walkthrough` follow the new behaviour where the page has `inboxOptional` and
+    still pass on 1.9.157, and `export-formats` checks the worker's `hayhaFromCsv` against `toHayha`.
+- **Data:** nothing synced gains a field. `S.settings.slotAllow`, per device, gains `stores` and `base`. A Target store login
+  may now have `inboxId` null: a 1.9.157 device shows it as Needs an inbox (counted, with the red light), and its login
+  editor asks for an inbox on its next save. A FAFO before 1.9.158 gets the smallest store's limit as its one limit, with
+  the buyer's own caps, until it updates.
+
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
 one copy per license (`/vault`, D1 `vaults` and `vault_chunks`), sealed in the
