@@ -4735,6 +4735,10 @@ function usMidnight(d) {
 // The end of the first Sunday strictly after day d; the end of the Sunday on or after the instant t (the move of lines from
 // before); and the due date of something owed from today (Charge again, Keep, Undo waive, held lines released).
 const sundayEndAfter = (d) => { const wd = new Date(dayStart(d)).getUTCDay(); return etMidnight(addDays(d, wd === 0 ? 8 : 8 - wd)) - 1; };
+// When day d ends in Eastern time (00:00 Eastern the day after): an account given out before it was out on day d, by the
+// days billing counts in (2026-11-18). An order's day is the local one of the FAFO that saw it, so by UTC days an account
+// given out on a US evening after midnight UTC was out only from the day after, and that evening's checkouts went unbilled.
+const etDayEnd = (d) => etMidnight(addDays(d, 1));
 const sundayEndOnOrAfter = (t) => sundayEndAfter(addDays(etDay(t), -1));
 const dueNow = (now) => sundayEndAfter(etDay(now));
 const dueText = (t) => DUE_DAY.format(new Date(t));          // "Sun, Nov 15"
@@ -5208,11 +5212,11 @@ async function declineLines(env, keyHash, batch) {
 }
 
 // An order alert's line (the owner's FAFO saw an order on an account given to a buyer): placed from the day it was given out
-// on (no day before, for billing), and not after the buyer pulled that slot, priced on its amount before tax (`sub`) or its
-// total (lineBasis). The statements (lineStmt), or null.
+// on (no day before, for billing; by Eastern days, etDayEnd), and not after the buyer pulled that slot, priced on its amount
+// before tax (`sub`) or its total (lineBasis). The statements (lineStmt), or null.
 async function alertLine(env, c, a, store, orderNo, ev) {
   const d = realDay(ev.at) ? ev.at : day(c.now);
-  if (a.assigned_at && a.assigned_at >= dayStart(d) + 86400000) return null;
+  if (a.assigned_at && a.assigned_at >= etDayEnd(d)) return null;
   const w = await c.who(a.key_hash), ok = await billable(c, w, d);
   if (!ok.ok) return null;
   if ((await c.pulled(a.key_hash)).some((x) => x.store === store && x.profile === (a.profile || "") && x.batch === a.batch && x.pulled_at + TZ_SLACK_MS < dayStart(d))) return null;
@@ -6050,8 +6054,8 @@ function pasteLine(line, store, date) {
 // A pasted line's amount as a line's basis: the owner's word, the amount before tax.
 const pasteBasis = (x) => x.amount == null ? null : { basis: x.amount, from: "owner", total: "" };
 // The buyers who had that email out at that store that day: as their own account (a slot's login or checkout email) or as an
-// account the owner gave them (sent, and not pulled before that day, as for order alerts). The email is only hashed for the
-// first; the second is the owner's own list.
+// account the owner gave them (given out by the end of that day in Eastern time, sent, and not pulled before that day, as
+// for order alerts). The email is only hashed for the first; the second is the owner's own list.
 async function pasteMatches(env, x) {
   if (!x.email || !x.orderNo || !x.date) return [];
   const acct = await acctHash(x.email), start = dayStart(x.date);
@@ -6060,7 +6064,7 @@ async function pasteMatches(env, x) {
       .bind(acct, x.store, start + 86400000 + TZ_SLACK_MS, start - TZ_SLACK_MS),
     env.DB.prepare(`SELECT a.key_hash, a.profile FROM accounts a WHERE a.email_norm = ?1 AND a.store = ?2 AND a.key_hash IS NOT NULL AND a.sent_at IS NOT NULL AND a.assigned_at < ?3
       AND NOT EXISTS (SELECT 1 FROM billing_pulled p WHERE p.key_hash = a.key_hash AND p.store = a.store AND p.profile = COALESCE(a.profile, '') AND p.batch = a.batch AND p.pulled_at + ?4 < ?5)`)
-      .bind(x.email, x.store, start + 86400000, TZ_SLACK_MS, start),
+      .bind(x.email, x.store, etDayEnd(x.date), TZ_SLACK_MS, start),
   ]);
   const m = new Map();
   for (const r of [...own.results, ...given.results]) if (!m.has(r.key_hash)) m.set(r.key_hash, { hash: r.key_hash, profile: r.profile || "", acct });

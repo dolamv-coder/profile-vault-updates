@@ -667,7 +667,9 @@ alone (every store's rows of one account) from reading the whole table. Only
   pays per checkout on the slots they sent, plan picked or not (the owner's choice); a plan only decides whether they
   can submit. Checkouts (`billing_lines`, unique per buyer, mode, store and order number): orders on accounts the owner
   gave out, from POST /alerts (placed from the day given out, not after the buyer pulled that slot, `billing_pulled`;
-  any sender's 'canceled' voids by order number); orders on the buyer's own accounts reported by their FAFO
+  any sender's 'canceled' voids by order number; the day given out is an Eastern day since 2026-11-18, `etDayEnd`, as
+  Paste's match of an account given out is: an order's day is the owner's FAFO's local one, and by UTC days an account
+  given out on a US evening after midnight UTC left that evening's checkouts unbilled and unmatched); orders on the buyer's own accounts reported by their FAFO
   (`POST /billing/checkouts`), billed only while that account was out as one of their slots (`billing_accounts`: the
   slots CSVs' emails, hashed with `acctHash`, recorded once a batch is posted, closed by a pull the owner was told of,
   deleted with the lines reported on them when the batch is declined, `declineLines`); and the owner's, added by hand or
