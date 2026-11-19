@@ -9,8 +9,9 @@
 // for a login), Duplicate for Costco from a profile on Use Assigned Account, Paste, Mass edit to Costco never giving
 // Use Assigned Account, Generate's Import onto Costco (Store login, linked by email), Submit's files for a Costco slot (its
 // own AYCD list, slots CSV and logins, never assigned, also one left on Use Assigned Account in memory: asksSeller), what
-// Submit's window says of a slot waiting for its store login (none linked, not a missing inbox) and its inbox once linked,
-// the Profiles counts strip's dot, the share image, Send accounts (no Costco) and the setup guide's words. Sample data only.
+// Submit's window says of a slot waiting for its store login (none linked, not a missing inbox) and its inbox once linked
+// (from 1.9.159 on its login's line in Costco's logins file, email:::password:::imap email:::app password, with no inbox
+// access file: imap-submit.test.mjs has the rest), the Profiles counts strip's dot, the share image, Send accounts (no Costco) and the setup guide's words. Sample data only.
 //   node .github/scripts/costco.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must offer Costco in PICK_STORES; a page named on the command line that doesn't is skipped.
 import { readFileSync, readdirSync } from "node:fs";
@@ -115,6 +116,9 @@ const addProfiles = (s, list) => s.ev((list) => {
 const addLogins = (s, list) => s.ev((list) => { const { S, persist, render } = window.__t; S.logins.push(...list); persist(); render(); }, list);
 const costcoLogin = (id, email) => ({ id, store: "costco", storeName: "", label: "", email, password: "pw-" + id, inboxId: null });
 const P = "#layers .panel";
+// From 1.9.159 (the owner, 2026-11-19: "change costco-logins to email:::password:::imapemail:::apppassword format") a Costco
+// slot's logins line carries its inbox too, and Costco sends no inbox access file of its own (fmt "imap4").
+const FOUR = /fmt:"imap4"/.test(HTML);
 
 console.log(`Costco on Profiles in ${file.split(/[\\/]/).pop()}`);
 try {
@@ -433,11 +437,13 @@ try {
     assert.equal(W.subs.length, 1);
     const b = W.subs[0], costco = b.files.filter((f) => f.store === "Costco");
     assert.deepEqual(costco.map((f) => [f.kind, f.storeKey || "", f.assigned]), [["profiles", "costco", 0], ["aycd", "costco", undefined], ["logins", "", undefined]]);
+    assert.equal(costco[2].fmt, FOUR ? "imap4" : undefined);
     const rows = costco[0].text.split("\r\n");
     assert.equal(rows.length, 3);
     assert.match(rows[1], /^Costco One,Sam,Sample,sam\.costco@example\.com,5125550100,4111111111111111,07,2031,123,/);
     assert.match(rows[2], /^Costco Stale Sub,Sam,Sample,,5125550100,/, "after the slots with a login, with no account in its email");
-    assert.equal(costco[2].text, "sam.costco@example.com:pw-lc1");
+    // Its login has no inbox saved: the last two fields are empty (1.9.159).
+    assert.equal(costco[2].text, FOUR ? "sam.costco@example.com:::pw-lc1::::::" : "sam.costco@example.com:pw-lc1");
     assert.deepEqual(JSON.parse(costco[1].text).map((x) => [x.name, x.shippingAddress.email]), [["Costco One", "sam.costco@example.com"], ["Costco Stale Sub", ""]]);
     const target = b.files.filter((f) => f.store === "Target");
     assert.deepEqual(target.map((f) => [f.kind, f.assigned]), [["profiles", 1], ["aycd", undefined]], "Target's slot on Use Assigned Account, no logins file");
@@ -493,7 +499,10 @@ try {
     await s.ev(() => { const { S, persist, render } = window.__t; S.profiles.find((p) => p.id === "pcw").stores[0].loginId = "lcw"; delete S.subs["pcw@costco"]; persist(); render(); });
     assert.deepEqual(await open([]), { ok: "Your inbox access for this slot (each inbox's email and app password) goes to your seller with it, so they can follow your orders.", miss: "", nologin: "" });
     b = await send();
-    assert.deepEqual(b.files.filter((f) => f.kind === "imap").map((f) => [f.storeKey, f.text]), [["costco", "wait.sample@example.com:Sample-Wait-Pw"]]);
+    // From 1.9.159 on its login's line, with no inbox access file; before, in Costco's imap file.
+    assert.deepEqual(b.files.filter((f) => f.kind === "imap").map((f) => [f.storeKey, f.text]), FOUR ? [] : [["costco", "wait.sample@example.com:Sample-Wait-Pw"]]);
+    assert.deepEqual(b.files.filter((f) => f.kind === "logins").map((f) => [f.store, f.fmt, f.text]),
+      [["Costco", FOUR ? "imap4" : undefined, FOUR ? "wait.sample@example.com:::pw-lcw:::wait.sample@example.com:::Sample-Wait-Pw" : "wait.sample@example.com:pw-lcw"]]);
   });
   await s.close();
 

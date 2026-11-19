@@ -1,0 +1,1 @@
+Costco slots now go to your seller with each store login and its inbox together on one line (email, password, inbox email and app password), the format their bot reads, instead of the inbox access coming in a separate file. So make sure each Costco store login has its inbox saved with its app password: Submit tells you if one is missing.

@@ -388,8 +388,18 @@ request; before, `orbit-slots-<date>-<time>-Kim-target-aycd.json`):
   order as the first profiles of the AYCD list and the Shikari CSV (Costco's Hayha file). AYCD's profile format has no place
   for them. Pokémon Center gets none (since 2026-10-07, at your request): it checks out with just an
   email, which is on each of its profiles, so a Pokémon Center batch has no logins file.
+- `Kim-costco-logins.txt` (since 2026-11-19, at your request: "change costco-logins to
+  email:::password:::imapemail:::apppassword format"): Costco's logins carry each slot's inbox access, one
+  `email:::password:::imap email:::app password` per line, in the same order as the profiles of its AYCD list and
+  Hayha file, for example `sam.c1@example.com:::Costco-Pw-1:::sam.c1@example.com:::abcdefghijklmnop`. A slot whose
+  inbox (or its app password) isn't saved in FAFO has those two fields empty: `sam.c2@example.com:::Costco-Pw-2::::::`.
+  So Costco gets no `-imap.txt` (you chose to drop it); every other store's files are as before. FAFO 1.9.159 and
+  later write the lines so; for an older FAFO this worker writes them from its `email:password` lines, taking each
+  login's inbox from the Costco inbox access it sent (FAFO 1.9.147 to 1.9.158): the first line whose email is the
+  login's mailbox (any case, a `+tag` left off, and at Gmail the dots too, googlemail.com being gmail.com), else none.
 - `Kim-target-imap.txt` (FAFO 1.9.147 and later, since 2026-11-13, at your request: "during submission
-  only", "email - apppassword format", "same where all the slots go"): the inbox access for that store's
+  only", "email - apppassword format", "same where all the slots go"; never for Costco since 2026-11-19, whose
+  logins file has it): the inbox access for that store's
   slots on the buyer's own accounts (a Target store login, Pokémon Center's own email), one
   `email:app password` per line: each inbox's email (without a `+tag`, as a mail server takes it to sign
   in) and the app password the buyer saved in FAFO, so you can follow their orders. One line per inbox, in
@@ -397,9 +407,10 @@ request; before, `orbit-slots-<date>-<time>-Kim-target-aycd.json`):
   for a slot whose inbox (or its app password) isn't saved in FAFO, and none from your own FAFO's batches.
   A Pokémon Center email that forwards to another inbox (a Hide My Email alias, a catch-all domain) has no
   inbox FAFO can match it to, so FAFO asks the buyer to send you that inbox's access on Discord. It comes
-  right after the store's logins file, or after its Shikari CSV (Costco's Hayha file) when there's none
+  right after the store's logins file, or after its Shikari CSV when there's none
   (Pokémon Center gets one too), and only when there's a line. This worker checks it (each line an email and a password, no more
-  lines than the store's slots) and keeps nothing of it.
+  lines than the store's slots; an older FAFO's Costco one too, which it reads into Costco's logins file and doesn't post) and
+  keeps nothing of it.
 - `Kim-target-skus.txt` (FAFO 1.9.142 and later, since 2026-11-12, at your request): the products on your
   Interests list (below) the buyer had ticked for that store when they sent the batch, one SKU per line, in
   your list's order. It comes right after the store's other files, and only when they ticked any there. The
@@ -422,7 +433,10 @@ see the `="…"`, and FAFO's **Import** (1.9.68+) reads them as the text inside.
 > ⏳ **Pending your approval** · Approve or decline
 
 With Costco slots in the batch, the line says "…AYCD (.json) and Shikari (.csv), Costco's for AYCD (.json) and
-Hayha (.Hayha), with its logins…", or for a batch of only Costco "…AYCD (.json) and Hayha (.Hayha)…".
+Hayha (.Hayha), with its logins (email:password, .txt; Costco's as email:::password:::imap email:::app password) in the
+same order…", or for a batch of only Costco "…AYCD (.json) and Hayha (.Hayha), with its logins
+(email:::password:::imap email:::app password, .txt) in the same order." It mentions the inbox access only when a
+store's `-imap.txt` goes with the batch.
 
 ### Approving or declining a batch
 
@@ -1287,7 +1301,8 @@ after a denial or the key turned off, declined, expired, old asks cleaned up, wh
 `/admin/applications` and `/admin/licenses` say, and `/terms`), slot limits (one per store, requests per store and as one
 total from an older FAFO, which gets the smallest store's limit, requests from before, the review page and its table,
 Approve and Deny pressed at once, the accounts a license can be given),
-submissions and collecting keys (Costco's as AYCD and Hayha, from FAFO with an AYCD list and without), pulled slots,
+submissions and collecting keys (Costco's as AYCD and Hayha, from FAFO with an AYCD list and without, and its logins
+with their inbox access, from FAFO 1.9.159 and from older ones with or without their Costco inbox access), pulled slots,
 the Interests list (its pictures, the
 products added to it once, the SKUs a batch carries, and picks sent on their own: the message and files, the same
 picks again, the daily limit, also sent at once, and a failed post), product pictures

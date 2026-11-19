@@ -11,8 +11,13 @@
 // the pretend worker refuses a batch the license worker would), what Submit's window says (with and without slots it can't
 // send one for, and what to do about a checkout email that forwards elsewhere), a batch of only Use Assigned Account slots
 // (no file, no line), a recipient set by hand (the sealed code: no line), the seller's own FAFO (no file, no line, and
-// nothing says the seller gets one), and what Store logins, IMAP (until 1.9.156) and Settings say. Sample names, addresses, app passwords
-// and keys only.
+// nothing says the seller gets one), and what Store logins, IMAP (until 1.9.156) and Settings say. At Costco (1.9.148+, whose
+// slots check out only on a store login) the inbox access went in its own imap file until 1.9.158; from 1.9.159 (the owner,
+// 2026-11-19: "change costco-logins to email:::password:::imapemail:::apppassword format") each line of Costco's logins
+// file carries its login's inbox (fmt "imap4": email:::password:::imap email:::app password, one per slot in the slots'
+// order, the last two empty with none), and Costco sends no imap file, while Target's and Pokémon Center's files are as
+// before; the sealed code a recipient set by hand gets is unchanged, and the seller's own FAFO sends empty inbox fields.
+// Sample names, addresses, app passwords and keys only.
 //   node .github/scripts/imap-submit.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must send it (kind:"imap"); a page named on the command line that doesn't is skipped.
 import { readFileSync, readdirSync } from "node:fs";
@@ -33,7 +38,7 @@ if (!/kind:"imap"/.test(HTML)) {
 // The app runs inside one function, so the copy served here hands the test a few of its own names (window.__t).
 const END = "\ntry { if (window.pvDesktop && window.pvDesktop.appReady) window.pvDesktop.appReady(); } catch(e){}\n})();";
 assert.equal(HTML.split(END).length, 2, "couldn't find the end of the app's code");
-const PAGE = HTML.replace(END, "\nwindow.__t = {get S(){ return S; }, keepTypedLic, persist, render, slotKey, refreshPremium, isPremiumOwner, emailSectionHTML};" + END);
+const PAGE = HTML.replace(END, "\nwindow.__t = {get S(){ return S; }, keepTypedLic, persist, render, slotKey, refreshPremium, isPremiumOwner, emailSectionHTML, openSubmission};" + END);
 let chromium;
 try { ({ chromium } = createRequire(import.meta.url)("playwright")); }
 catch (e) { console.error("This test needs Playwright: npm install --no-save playwright, then npx playwright install chromium"); process.exit(1); }
@@ -62,7 +67,11 @@ async function worker(route, req, u) {
       return p.length !== 1 || files.filter((x) => x.kind === "imap" && x.storeKey === f.storeKey).length > 1 || lines.length > rows(p[0])
         || !lines.every((x) => { const m = WORKER_LINE.exec(x); return !!m && m[1].length <= 254 && m[2].length <= 200; });
     });
-    if (bad) { W.refused.push(body); return json(route, 400, { error: "files" }); }
+    // A logins file with its inboxes on its lines (1.9.159, fmt "imap4"): only Costco's, each line four fields.
+    const four = files.filter((f) => f.kind === "logins" && f.fmt !== undefined).some((f) => f.fmt !== "imap4"
+      || !files.some((x) => x.kind === "profiles" && x.store === f.store && (x.storeKey === "costco" || x.storeKey === "other:costco"))
+      || !f.text.split("\r\n").every((x) => x.split(":::").length === 4));
+    if (bad || four) { W.refused.push(body); return json(route, 400, { error: "files" }); }
     W.subs.push(body); return json(route, 200, { ok: true, id: "batch" + W.subs.length, review: "pending" });
   }
   if (p === "/submissions/status") return json(route, 200, { batches: {} });
@@ -120,6 +129,25 @@ const imapOf = (body) => body.files.filter((f) => f.kind === "imap");
 // (or linked to one that's gone) sends none, never the inbox saved for its mailbox (the review of 1.9.158): it may have been
 // saved with none on purpose. target-inbox.test.mjs has that fallback at Costco, whose logins need an inbox. Before, it did.
 const OPT = /const inboxOptional = /.test(HTML);
+// Costco (1.9.148+), and from 1.9.159 its inbox on its logins' lines (fmt "imap4") with no imap file of its own.
+const COSTCO = /const PICK_STORES = \[[^\]]*"costco"/.test(HTML);
+const FOUR = /fmt:"imap4"/.test(HTML);
+const filesOf = (body, store) => body.files.filter((f) => f.store === store);
+// Costco's slots C1 to C6, in the order they go out: C1's login has its own inbox, C2's is a +tag of it linked to the same
+// inbox (each slot gets its line, the inbox's twice), C3's inbox is another address (a Gmail app password saved with spaces),
+// C4's inbox has no app password, C5's inbox was saved with a +tag (sent without), and C6 waits for its store login (no line).
+const C_SLOTS = ["c1", "c2", "c3", "c4", "c5", "c6"].map((p) => [p, "costco"]);
+const C_LOGINS = FOUR
+  ? ["costco.one@example.com:::Store-C-1:::costco.one@example.com:::Costco-Pw-A", "costco.one+c2@example.com:::Store-C-2:::costco.one@example.com:::Costco-Pw-A",
+    "buyer.costco@example.com:::Store:C-3:::sam.sample@gmail.com:::abcdefghijklmnop", "nopw.costco@example.com:::Store-C-4::::::",
+    "tag.sample+c5@example.com:::Store-C-5:::tag.sample@example.com:::Sample-Tag-Pw-6"].join("\r\n")
+  : ["costco.one@example.com:Store-C-1", "costco.one+c2@example.com:Store-C-2", "buyer.costco@example.com:Store:C-3", "nopw.costco@example.com:Store-C-4",
+    "tag.sample+c5@example.com:Store-C-5"].join("\r\n");
+const ownerIs = async (on) => {
+  W.owner = on;
+  await ev(() => window.__t.refreshPremium(true));
+  await page.waitForFunction((on) => window.__t.isPremiumOwner() === on, on);
+};
 
 console.log(`Inbox access with Submit in ${file.split(/[\\/]/).pop()}`);
 try {
@@ -255,6 +283,42 @@ try {
     assert.deepEqual(imapOf(body).map((f) => f.text), [OPT ? "tag.sample@example.com:Sample-Tag-Pw-6" : "tag.sample@example.com:Sample-Tag-Pw-6\r\nfallback.sample@example.com:Sample-Fb-Pw-7"]);
     assert.ok(!JSON.stringify(imapOf(body)).includes("+box"), "no +tag");
   });
+  if (COSTCO) await test(`Costco: ${FOUR ? "each slot's logins line carries its inbox (email:::password:::imap email:::app password), in the slots' order, and no imap file" : "email:password logins and an imap file (before 1.9.159)"}; Target's and Pokémon Center's files as before`, async () => {
+    await ev(() => {
+      const T = window.__t, S = T.S;
+      for (const k of Object.keys(S.subs)) delete S.subs[k];
+      S.inboxes.push({ id: "icA", email: "costco.one@example.com", password: "Costco-Pw-A", provider: "custom", host: "imap.example.com", port: "993" });
+      S.logins.push(
+        { id: "lc1", store: "costco", email: "costco.one@example.com", password: "Store-C-1", inboxId: "icA" },
+        { id: "lc2", store: "costco", email: "costco.one+c2@example.com", password: "Store-C-2", inboxId: "icA" },
+        // A password with a colon goes as it is.
+        { id: "lc3", store: "costco", email: "buyer.costco@example.com", password: "Store:C-3", inboxId: "ib1" },
+        { id: "lc4", store: "costco", email: "nopw.costco@example.com", password: "Store-C-4", inboxId: "ib3" },
+        { id: "lc5", store: "costco", email: "tag.sample+c5@example.com", password: "Store-C-5", inboxId: "ib6" });
+      const add = (id, name, loginId) => {
+        S.addresses.push({ id: "a" + id, first: "Sam", last: "Sample", line1: "1 Sample St", city: "Austin", state: "TX", zip: "78701", country: "US" });
+        S.profiles.push({ id, name, shipId: "a" + id, billSame: true, cardId: "c1", phone: "5125550100", email: "", stores: [{ store: "costco", storeName: "", mode: "login", loginId, email: "", verified: false }] });
+      };
+      ["lc1", "lc2", "lc3", "lc4", "lc5", null].forEach((l, i) => add("c" + (i + 1), "Sam C" + (i + 1), l));
+      S.caps.costco = 20;
+      T.persist(); T.render();
+    });
+    const said = await openSubmit(C_SLOTS.concat([["t1", "target"], ["p2", "pokemoncenter"]]));
+    // The window as before: Costco's slots with an inbox count, C4's lacks its app password (C6 waits for its login).
+    assert.deepEqual(said, { ok: "Your inbox access for 6 of these slots (each inbox's email and app password) goes to your seller with them, so they can follow your orders.",
+      miss: "1 slot has no inbox app password saved in FAFO (Costco: Sam C4), so your seller can't follow its orders: add it in Store logins." });
+    const body = await send();
+    assert.deepEqual(filesOf(body, "Costco").map((f) => [f.kind, f.storeKey || "", f.fmt]),
+      [["profiles", "costco", undefined], ["aycd", "costco", undefined], ["logins", "", FOUR ? "imap4" : undefined]].concat(FOUR ? [] : [["imap", "costco", undefined]]));
+    assert.equal(filesOf(body, "Costco").find((f) => f.kind === "logins").text, C_LOGINS);
+    if (!FOUR) assert.equal(filesOf(body, "Costco").find((f) => f.kind === "imap").text, "costco.one@example.com:Costco-Pw-A\r\nsam.sample@gmail.com:abcdefghijklmnop\r\ntag.sample@example.com:Sample-Tag-Pw-6");
+    assert.equal(filesOf(body, "Costco")[0].text.split("\r\n").length, 7, "every slot in the profiles CSV, C6 too");
+    // Target and Pokémon Center as before: email:password logins and their own imap files.
+    assert.deepEqual(filesOf(body, "Target").map((f) => [f.kind, f.storeKey || "", f.fmt, f.kind === "logins" || f.kind === "imap" ? f.text : ""]), [
+      ["profiles", "target", undefined, ""], ["aycd", "target", undefined, ""], ["logins", "", undefined, "sam.sample+t1@gmail.com:Store-Pw-1"], ["imap", "target", undefined, "sam.sample@gmail.com:abcdefghijklmnop"]]);
+    assert.deepEqual(filesOf(body, "Pokémon Center").map((f) => [f.kind, f.storeKey || "", f.fmt, f.kind === "imap" ? f.text : ""]), [
+      ["profiles", "pokemoncenter", undefined, ""], ["aycd", "pokemoncenter", undefined, ""], ["imap", "pokemoncenter", undefined, "pc.sample@example.com:Sample-Pc-Pw-2"]]);
+  });
   await test("a recipient set by hand gets a sealed code as before: the window says nothing of inboxes", async () => {
     await ev(() => { const T = window.__t; for (const k of Object.keys(T.S.subs)) delete T.S.subs[k]; T.S.submitTo = { pub: "B" + "A".repeat(86), keyId: "ABCD-1234" }; T.persist(); });
     const said = await openSubmit([["t1", "target"], ["p1", "pokemoncenter"]]);
@@ -263,6 +327,35 @@ try {
     await page.click("#layers [data-close]");
     await page.waitForFunction(() => !document.querySelector("#ss-go"));
     await ev(() => { const T = window.__t; delete T.S.submitTo; T.persist(); });
+  });
+  if (COSTCO) await test("a recipient set by hand: the sealed code carries each Costco login with its inbox, as before, and nothing goes to /submissions", async () => {
+    // A real collecting key, so the code can be opened here.
+    await ev(async () => {
+      const T = window.__t, kp = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+      const raw = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
+      window.__jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+      for (const k of Object.keys(T.S.subs)) delete T.S.subs[k];
+      T.S.submitTo = { pub: btoa(String.fromCharCode(...raw)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""), keyId: "SAMP-1234" };
+      T.persist();
+    });
+    const said = await openSubmit([["c1", "costco"], ["c4", "costco"], ["c5", "costco"]]);
+    assert.deepEqual(said, { ok: "", miss: "" });
+    assert.match(await text("#layers .panel"), /Encrypted for key ID SAMP-1234/);
+    const n = W.subs.length, refused = W.refused.length;
+    await page.fill("#ss-from", "Sam");
+    await page.click("#ss-go");
+    await page.waitForFunction(() => /^PVSUB1\./.test((document.querySelector("#ss-code") || {}).value || ""));
+    const payload = await ev(async () => window.__t.openSubmission(document.querySelector("#ss-code").value, window.__jwk));
+    assert.equal(W.subs.length + W.refused.length, n + refused, "nothing went to /submissions");
+    const imap = (email, password, provider = "custom", host = "imap.example.com") => ({ email, password, provider, host, port: "993" });
+    assert.deepEqual(payload.slots.map((x) => [x.store, x.storeId, x.login]), [
+      ["Costco", "costco", { store: "Costco", storeId: "costco", label: "", email: "costco.one@example.com", password: "Store-C-1", imap: imap("costco.one@example.com", "Costco-Pw-A") }],
+      ["Costco", "costco", { store: "Costco", storeId: "costco", label: "", email: "nopw.costco@example.com", password: "Store-C-4", imap: imap("nopw.sample@example.com", "") }],
+      // The inbox as saved, with its +tag: the code is opened in the seller's FAFO, not read by their bot.
+      ["Costco", "costco", { store: "Costco", storeId: "costco", label: "", email: "tag.sample+c5@example.com", password: "Store-C-5", imap: imap("tag.sample+box@example.com", "Sample-Tag-Pw-6") }]]);
+    await page.click("#layers [data-close]");
+    await page.waitForFunction(() => !document.querySelector("#ss-go"));
+    await ev(() => { const T = window.__t; delete T.S.submitTo; for (const k of Object.keys(T.S.subs)) delete T.S.subs[k]; delete window.__jwk; T.persist(); });
   });
   // IMAP's tab is gone from 1.9.157 (inbox-lights.test.mjs): what it said about inbox passwords is under Store logins' Inboxes.
   const imapTab = async () => !!(await page.$('#side [data-id="imap"]'));
@@ -307,6 +400,22 @@ try {
     await page.waitForFunction(() => !window.__t.isPremiumOwner());
     // Back to a buyer's: the IMAP page (Store logins, from 1.9.157) says so again once the answer is in.
     await page.waitForFunction((tab) => (tab ? /FAFO sends your seller/ : /Your seller gets an inbox's email and app password/).test(document.querySelector("#main").textContent), tab);
+  });
+  if (COSTCO) await test(`the seller's own FAFO with Costco slots: ${FOUR ? "its logins' inbox fields empty" : "email:password logins"}, and no imap file for any store`, async () => {
+    await ownerIs(true);
+    try {
+      await ev(() => { const T = window.__t; for (const k of Object.keys(T.S.subs)) delete T.S.subs[k]; T.persist(); });
+      const said = await openSubmit([["c1", "costco"], ["c3", "costco"], ["c4", "costco"], ["t1", "target"], ["p2", "pokemoncenter"]]);
+      assert.deepEqual(said, { ok: "", miss: "" });
+      const body = await send();
+      assert.deepEqual(imapOf(body), []);
+      const byStore = (a, b) => (a[0] < b[0] ? -1 : 1);
+      assert.deepEqual(body.files.filter((f) => f.kind === "logins").map((f) => [f.store, f.fmt, f.text]).sort(byStore), [
+        ["Costco", FOUR ? "imap4" : undefined, FOUR ? "costco.one@example.com:::Store-C-1::::::\r\nbuyer.costco@example.com:::Store:C-3::::::\r\nnopw.costco@example.com:::Store-C-4::::::"
+          : "costco.one@example.com:Store-C-1\r\nbuyer.costco@example.com:Store:C-3\r\nnopw.costco@example.com:Store-C-4"],
+        ["Target", undefined, "sam.sample+t1@gmail.com:Store-Pw-1"]]);
+      for (const x of ["Costco-Pw-A", "abcdefghijklmnop", "Sample-Pc-Pw-2"]) assert.ok(!JSON.stringify(body.files).includes(x), "no app password: " + x);
+    } finally { await ownerIs(false); }
   });
 
   await test("the page threw nothing", () => assert.deepEqual(errors, []));

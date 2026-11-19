@@ -55,6 +55,7 @@ const USERS = {
   vic:   { id: snowflake(Date.parse("2022-04-01")), username: "vic", guilds: [] },   // approved before payments began
   yuri:  { id: snowflake(Date.parse("2022-06-01")), username: "yuri", guilds: [] },   // inbox access with Submit (page 1.9.147)
   zoe:   { id: snowflake(Date.parse("2022-07-01")), username: "zoe", guilds: [] },    // Interests sent on their own (page 1.9.155)
+  cora:  { id: snowflake(Date.parse("2022-07-15")), username: "cora", guilds: [] },   // Costco's logins with their inbox access (2026-11-19)
   // New users reading the Terms of Service first (2026-11-17), with approval on.
   kim:   { id: snowflake(Date.parse("2022-08-01")), username: "kim", guilds: [] },    // accepts
   lou:   { id: snowflake(Date.parse("2022-08-02")), username: "lou&<b>\"x\"</b>", guilds: [] },   // declines (a name to escape)
@@ -4876,7 +4877,8 @@ try {
   const yFile = (store, storeKey, names, kind = "profiles", text) => kind === "profiles"
     ? { store, storeKey, kind, text: slotCsv(names.map((n) => slotRow(n, `${n.split(" ")[1].toLowerCase()}.${storeKey}@example.com`))), assigned: 0 }
     : { store, storeKey: kind === "logins" ? undefined : storeKey, kind, text };
-  const ySend = (files, extra = {}) => fetchOnce(BASE + "/submissions", { method: "POST", headers: { authorization: "Bearer " + yuriKey, "content-type": "application/json" },
+  // `key` in extra sends it with another license (the Costco tests below, so this one stays under 30 batches an hour).
+  const ySend = (files, { key = yuriKey, ...extra } = {}) => fetchOnce(BASE + "/submissions", { method: "POST", headers: { authorization: "Bearer " + key, "content-type": "application/json" },
     body: JSON.stringify({ files, name: "Yuri", slots: files.filter((f) => f.kind === "profiles").reduce((n, f) => n + f.text.split("\r\n").length - 1, 0) || 1, batch: "imap" + rid(), ...extra }) });
   const ySubmit = async (files, extra = {}) => {
     const before = webhookPosts.length;
@@ -5046,32 +5048,49 @@ try {
     return ids.reduce((t, id, i) => t.split(id).join(UU(i + 1)), text);
   };
   const coFile = (kind, text, o = {}) => ({ store: "Costco", storeKey: "costco", kind, text, ...o });
-  await test("Costco: a batch with Target and Costco slots posts Target's AYCD, Shikari and logins, then Costco's AYCD, Hayha, logins and inbox access", async () => {
-    const files = [yFile("Target", "target", ["Yuri One", "Yuri Two"]), yFile("Target", "target", null, "logins", tgtLogins),
+  // Costco's logins file since 2026-11-19 (costcoLogins): email:::password:::imap email:::app password a line; from a page
+  // before 1.9.159 its email:password lines take their inbox from the imap file it sent, which isn't posted.
+  const coLogins4 = `sam.c1@example.com:::Costco-Pw-1:::sam.c1@example.com:::${Y_PW[0]}\r\nsam.c2@example.com:::Costco-Pw-2:::sam.c2@example.com:::${Y_PW[2]}`;
+  const CO_LINE = "email:::password:::imap email:::app password";
+  await test("Costco: a batch with Target and Costco slots posts Target's AYCD, Shikari, logins and inbox access, then Costco's AYCD, Hayha and logins (with its inbox access)", async () => {
+    const files = [yFile("Target", "target", ["Yuri One", "Yuri Two"]), yFile("Target", "target", null, "logins", tgtLogins), yFile("Target", "target", null, "imap", tgtImap),
       coFile("profiles", coCsv), coFile("aycd", JSON.stringify(coAycd)), { store: "Costco", kind: "logins", text: coLogins }, coFile("imap", coImap)];
     const s = await ySubmit(files, { name: "Sam Sample", interests: { target: ["88897898"] }, stores: [{ name: "Target", n: 2 }, { name: "Costco", n: 2 }] });
     yBatches.push(s.d.id);
     assert.equal(s.posts.length, 1);
-    assert.deepEqual(s.files.map((f) => f.name), ["Sam-Sample-target-aycd.json", "Sam-Sample-target-shikari.csv", "Sam-Sample-target-logins.txt", "Sam-Sample-target-skus.txt",
-      "Sam-Sample-costco-aycd.json", "Sam-Sample-costco-profile-hayha.Hayha", "Sam-Sample-costco-logins.txt", "Sam-Sample-costco-imap.txt"], "no Costco Shikari CSV; Target's still there");
+    assert.deepEqual(s.files.map((f) => f.name), ["Sam-Sample-target-aycd.json", "Sam-Sample-target-shikari.csv", "Sam-Sample-target-logins.txt", "Sam-Sample-target-imap.txt",
+      "Sam-Sample-target-skus.txt", "Sam-Sample-costco-aycd.json", "Sam-Sample-costco-profile-hayha.Hayha", "Sam-Sample-costco-logins.txt"],
+      "no Costco Shikari CSV or imap file; Target's still there");
     const hay = s.files.find((f) => f.name.endsWith("-hayha.Hayha"));
     assert.equal(hayhaFixed(hay.text), coHayha("Sam Q Sample", true), "exactly as the page's HayhaAIO 2.0 export, with the app's name on card and Only one checkout");
     assert.ok(!hay.text.endsWith("\n"), "no line break at the end");
     assert.match(hay.type, /^application\/octet-stream/);
     assert.equal(s.files.find((f) => f.name === "Sam-Sample-costco-aycd.json").text, JSON.stringify(coAycd, null, 2), "Costco's AYCD list as sent");
-    assert.deepEqual(s.files.filter((f) => /-(logins|imap)\.txt$/.test(f.name) && f.name.includes("costco")).map((f) => f.text), [coLogins, coImap]);
+    assert.deepEqual(s.files.filter((f) => /-(logins|imap)\.txt$/.test(f.name)).map((f) => [f.name, f.text]),
+      [["Sam-Sample-target-logins.txt", tgtLogins], ["Sam-Sample-target-imap.txt", tgtImap], ["Sam-Sample-costco-logins.txt", coLogins4]],
+      "Target's as sent; Costco's logins with each line's inbox");
     assert.equal(shikariOf(s).length, 1, "only Target's Shikari CSV");
     const m = s.posts[0].content;
     assert.ok(m.startsWith(`📦 **4 slots** from **Sam Sample** · @yuri · license …${yuriKey.slice(-4)}\nTarget 2 · Costco 2\n`), m);
-    assert.ok(m.includes("\n-# Per store: its profiles for AYCD (.json) and Shikari (.csv), Costco's for AYCD (.json) and Hayha (.Hayha), with its logins (email:password, .txt) in the same order, and the inbox access for its slots on the buyer's own accounts (email:app password, .txt).\n⏳ **Pending your approval** · [Approve or decline]("), m);
+    assert.ok(m.includes(`\n-# Per store: its profiles for AYCD (.json) and Shikari (.csv), Costco's for AYCD (.json) and Hayha (.Hayha), with its logins (email:password, .txt; Costco's as ${CO_LINE}) in the same order, and the inbox access for its slots on the buyer's own accounts (email:app password, .txt).\n⏳ **Pending your approval** · [Approve or decline](`), m);
+    for (const x of [...Y_PW, "Costco-Pw-1"]) assert.ok(!m.includes(x), "never in the message: " + x);
   });
-  await test("Costco: a batch of only Costco says AYCD and Hayha; its bytes are what's posted (the Hayha file as it is)", async () => {
+  await test("Costco: a batch of only Costco says AYCD and Hayha, and its logins' format; its bytes are what's posted (the Hayha and logins files as they are, never the imap file)", async () => {
+    // From a page before 1.9.147: no imap file, so every line's inbox fields are empty.
     const s = await ySubmit([coFile("profiles", coCsv), coFile("aycd", JSON.stringify(coAycd)), { store: "Costco", kind: "logins", text: coLogins }], { name: "Sam Sample", stores: [{ name: "Costco", n: 2 }] });
     yBatches.push(s.d.id);
     assert.deepEqual(s.files.map((f) => f.name), ["Sam-Sample-costco-aycd.json", "Sam-Sample-costco-profile-hayha.Hayha", "Sam-Sample-costco-logins.txt"]);
-    assert.ok(s.posts[0].content.includes("\n-# Per store: its profiles for AYCD (.json) and Hayha (.Hayha), with its logins (email:password, .txt) in the same order.\n"), s.posts[0].content);
+    assert.equal(s.files[2].text, "sam.c1@example.com:::Costco-Pw-1::::::\r\nsam.c2@example.com:::Costco-Pw-2::::::");
+    assert.ok(s.posts[0].content.includes(`\n-# Per store: its profiles for AYCD (.json) and Hayha (.Hayha), with its logins (${CO_LINE}, .txt) in the same order.\n`), s.posts[0].content);
+    // With its imap file (1.9.147–1.9.158): the same message (no inbox access file goes), and the imap file not counted.
+    const t = await ySubmit([coFile("profiles", coCsv), coFile("aycd", JSON.stringify(coAycd)), { store: "Costco", kind: "logins", text: coLogins }, coFile("imap", coImap)],
+      { name: "Sam Sample", stores: [{ name: "Costco", n: 2 }] });
+    yBatches.push(t.d.id);
+    assert.deepEqual(t.files.map((f) => f.name), ["Sam-Sample-costco-aycd.json", "Sam-Sample-costco-profile-hayha.Hayha", "Sam-Sample-costco-logins.txt"]);
+    assert.equal(t.files[2].text, coLogins4);
+    assert.ok(t.posts[0].content.includes(`\n-# Per store: its profiles for AYCD (.json) and Hayha (.Hayha), with its logins (${CO_LINE}, .txt) in the same order.\n`), t.posts[0].content);
     const subs = (await (await admin("/admin/submissions")).json()).submissions;
-    assert.equal(subs.find((x) => x.id === s.d.id).bytes, s.files.reduce((n, f) => n + f.text.length, 0));
+    for (const x of [s, t]) assert.equal(subs.find((y) => y.id === x.d.id).bytes, x.files.reduce((n, f) => n + f.text.length, 0));
   });
   await test("Costco: from a page before 1.9.87 (no AYCD list) the Hayha file has the billing name on the card, no Only one checkout, and billing-is-shipping by the addresses", async () => {
     // Older apps: no storeKey (the store's name says Costco), and no AYCD list.
@@ -5086,6 +5105,126 @@ try {
     const s = await ySubmit([yFile("Walmart", "walmart", ["Yuri W2"]), yFile("Costco Wholesale", "other:costco wholesale", ["Yuri X2"])], { stores: [{ name: "Walmart", n: 1 }, { name: "Costco Wholesale", n: 1 }] });
     yBatches.push(s.d.id);
     assert.deepEqual(s.files.map((f) => f.name), ["Yuri-walmart-aycd.json", "Yuri-walmart-shikari.csv", "Yuri-costco-wholesale-aycd.json", "Yuri-costco-wholesale-shikari.csv"]);
+  });
+
+  console.log("\nCostco's logins with their inbox access (2026-11-19)");
+  // The owner, with a screenshot of a batch's costco-logins.txt: "change costco-logins to
+  // email:::password:::imapemail:::apppassword format"; asked, they chose to drop Costco's imap file. Page 1.9.159 writes the
+  // lines so (fmt "imap4") and sends Costco no imap file; from an older page each email:password line takes the first line of
+  // the Costco imap file it sent (1.9.147–1.9.158) whose email is the login's mailbox, else empty inbox fields, and that imap
+  // file isn't posted. Every other store's files are as they were. Sent with cora's license. Sample data only.
+  let coraKey;
+  const cSubmit = (files, extra = {}) => ySubmit(files, { key: coraKey, name: "Cora", ...extra });
+  const cSend = (files, extra = {}) => ySend(files, { key: coraKey, name: "Cora", ...extra });
+  const coNames = (n) => Array.from({ length: n }, (_, i) => `Co N${i + 1}`);
+  const coLog = (text, o = {}) => ({ store: "Costco", kind: "logins", text, ...o });
+  const coText = (s) => (s.files.find((f) => f.name === "Cora-costco-logins.txt") || {}).text;
+  await test("Costco logins: a license for these tests", async () => { coraKey = await newKey("cora"); });
+  await test("Costco logins: from a page before 1.9.159, each email:password line takes the first imap line of its mailbox (the same address, a +tag, Gmail's dots and googlemail.com, any case, two logins on one inbox), else none", async () => {
+    const logins = ["same.addr@example.com:Pw-1", "kim+costco@example.com:Pw-2", "J.Doe.Sample+co@gmail.com:Pw-3", "UPPER@EXAMPLE.COM:Pw:4",
+      "share+a@example.org:Pw-5", "share+b@example.org:Pw-6", "lonely@example.com:Pw-7", "dot.ted@example.net:Pw-8"].join("\r\n");
+    const imap = ["same.addr@example.com:app-one", "Same.Addr@Example.com:app-later", "kim@example.com:app two", "jdoesample@googlemail.com:app-3",
+      "upper@example.com:app:4", "share@example.org:app-6", "dotted@example.net:app-8"].join("\r\n");
+    // Sent with the imap file before the logins file, as an order the worker puts right.
+    const s = await cSubmit([yFile("Costco", "costco", coNames(8)), coFile("imap", imap), coLog(logins)], { stores: [{ name: "Costco", n: 8 }] });
+    assert.deepEqual(s.files.map((f) => f.name), ["Cora-costco-aycd.json", "Cora-costco-profile-hayha.Hayha", "Cora-costco-logins.txt"], "no imap file");
+    assert.equal(coText(s), [
+      "same.addr@example.com:::Pw-1:::same.addr@example.com:::app-one",      // the first line for that mailbox
+      "kim+costco@example.com:::Pw-2:::kim@example.com:::app two",           // a +tag
+      "J.Doe.Sample+co@gmail.com:::Pw-3:::jdoesample@googlemail.com:::app-3",   // Gmail's dots, googlemail.com, any case
+      "UPPER@EXAMPLE.COM:::Pw:4:::upper@example.com:::app:4",                // a password after the first colon, either side
+      "share+a@example.org:::Pw-5:::share@example.org:::app-6",              // two logins on one inbox
+      "share+b@example.org:::Pw-6:::share@example.org:::app-6",
+      "lonely@example.com:::Pw-7::::::",                                     // no inbox for it
+      "dot.ted@example.net:::Pw-8::::::",                                    // dots count outside Gmail
+    ].join("\r\n"));
+    assert.ok(s.posts[0].content.includes("\n-# Per store: its profiles for AYCD (.json) and Hayha (.Hayha), with its logins (email:::password:::imap email:::app password, .txt) in the same order.\n"), s.posts[0].content);
+    for (const x of ["app-one", "Pw-1", "lonely@example.com"]) assert.ok(!s.posts[0].content.includes(x), "never in the message: " + x);
+    // With no imap file at all (a page before 1.9.147), and LF line breaks with one at the end, kept as they are.
+    const t = await cSubmit([yFile("Costco", "costco", coNames(2)), coLog("one.co@example.com:Pw-1\ntwo.co@example.com:Pw-2\n")], { stores: [{ name: "Costco", n: 2 }] });
+    assert.deepEqual(t.files.map((f) => f.name), ["Cora-costco-aycd.json", "Cora-costco-profile-hayha.Hayha", "Cora-costco-logins.txt"]);
+    assert.equal(coText(t), "one.co@example.com:::Pw-1::::::\ntwo.co@example.com:::Pw-2::::::\n");
+  });
+  await test("Costco logins: from page 1.9.159 (fmt imap4) they go byte for byte, empty inbox fields too; a line without ::: (as an assigned account's) gets its inbox; Target's imap file in the batch still goes, Costco's never", async () => {
+    const four = `one.co@example.com:::Co-Pw-1:::inbox.co@example.com:::${Y_PW[0]}\r\ntwo.co@example.com:::Co:Pw:2::::::\r\nthree+x@gmail.com:::Co Pw 3:::three@gmail.com:::${Y_PW[3]}`;
+    const files = [yFile("Target", "target", ["Yuri One", "Yuri Two"]), yFile("Target", "target", null, "logins", tgtLogins), yFile("Target", "target", null, "imap", tgtImap),
+      yFile("Costco", "costco", coNames(3)), coLog(four, { fmt: "imap4" })];
+    const s = await cSubmit(files, { stores: [{ name: "Target", n: 2 }, { name: "Costco", n: 3 }] });
+    assert.deepEqual(s.files.map((f) => f.name), ["Cora-target-aycd.json", "Cora-target-shikari.csv", "Cora-target-logins.txt", "Cora-target-imap.txt",
+      "Cora-costco-aycd.json", "Cora-costco-profile-hayha.Hayha", "Cora-costco-logins.txt"]);
+    assert.equal(coText(s), four, "exactly as sent");
+    assert.deepEqual(s.files.filter((f) => f.name.startsWith("Cora-target-") && f.name.endsWith(".txt")).map((f) => f.text), [tgtLogins, tgtImap], "Target's as before");
+    assert.ok(s.posts[0].content.includes("\n-# Per store: its profiles for AYCD (.json) and Shikari (.csv), Costco's for AYCD (.json) and Hayha (.Hayha), with its logins (email:password, .txt; Costco's as email:::password:::imap email:::app password) in the same order, and the inbox access for its slots on the buyer's own accounts (email:app password, .txt).\n"), s.posts[0].content);
+    // A line without ::: (assignAccounts adds email:password ones) is written the same way, and a Costco imap file (which page
+    // 1.9.159 never sends) gives it its inbox and isn't posted; the lines already written stay as they are.
+    const t = await cSubmit([yFile("Costco", "costco", coNames(4)), coLog(four + "\r\nadded@example.com:Added-Pw", { fmt: "imap4" }),
+      coFile("imap", `added@example.com:${Y_PW[1]}\r\none.co@example.com:another-app-pw`)], { stores: [{ name: "Costco", n: 4 }] });
+    assert.deepEqual(t.files.map((f) => f.name), ["Cora-costco-aycd.json", "Cora-costco-profile-hayha.Hayha", "Cora-costco-logins.txt"]);
+    assert.equal(coText(t), `${four}\r\nadded@example.com:::Added-Pw:::added@example.com:::${Y_PW[1]}`);
+    assert.ok(!t.files.some((f) => f.text.includes("another-app-pw")));
+  });
+  await test("Costco logins: with Pokémon Center, its imap file goes and Costco's doesn't; a store typed as Costco Wholesale keeps email:password", async () => {
+    const s = await cSubmit([yFile("Pokémon Center", "pokemoncenter", ["Yuri Four"]), yFile("Pokémon Center", "pokemoncenter", null, "imap", pcImap),
+      yFile("Costco", "costco", coNames(2)), coLog(coLogins), coFile("imap", coImap)], { stores: [{ name: "Pokémon Center", n: 1 }, { name: "Costco", n: 2 }] });
+    assert.deepEqual(s.files.map((f) => f.name), ["Cora-pokemon-center-aycd.json", "Cora-pokemon-center-shikari.csv", "Cora-pokemon-center-imap.txt",
+      "Cora-costco-aycd.json", "Cora-costco-profile-hayha.Hayha", "Cora-costco-logins.txt"]);
+    assert.deepEqual([s.files[2].text, coText(s)], [pcImap, coLogins4]);
+    assert.ok(s.posts[0].content.includes("\n-# Per store: its profiles for AYCD (.json) and Shikari (.csv), Costco's for AYCD (.json) and Hayha (.Hayha), with its logins (email:::password:::imap email:::app password, .txt) in the same order (none for Pokémon Center), and the inbox access for its slots on the buyer's own accounts (email:app password, .txt).\n"), s.posts[0].content);
+    const w = await cSubmit([yFile("Costco Wholesale", "other:costco wholesale", ["Yuri X3"]), coLog("x3.cw@example.com:Cw-Pw", { store: "Costco Wholesale" }),
+      yFile("Costco Wholesale", "other:costco wholesale", null, "imap", `x3.cw@example.com:${Y_PW[0]}`)], { stores: [{ name: "Costco Wholesale", n: 1 }] });
+    assert.deepEqual(w.files.map((f) => [f.name, f.name.endsWith(".txt") ? f.text : ""]), [["Cora-costco-wholesale-aycd.json", ""], ["Cora-costco-wholesale-shikari.csv", ""],
+      ["Cora-costco-wholesale-logins.txt", "x3.cw@example.com:Cw-Pw"], ["Cora-costco-wholesale-imap.txt", `x3.cw@example.com:${Y_PW[0]}`]]);
+    assert.ok(w.posts[0].content.includes("\n-# Per store: its profiles for AYCD (.json) and Shikari (.csv), with its logins (email:password, .txt) in the same order, and the inbox access for its slots on the buyer's own accounts (email:app password, .txt).\n"), w.posts[0].content);
+  });
+  await test("Costco logins: Costco's imap file isn't one of Discord's 10 a message, nor in the batch's bytes", async () => {
+    // Walmart's 4 files, Target's 3 and Costco's 3: one message of 10, where its imap file would have made an 11th.
+    const files = [yFile("Walmart", "walmart", ["Yuri W5"]), yFile("Walmart", "walmart", null, "logins", "w5.walmart@example.com:Store-Pw"), yFile("Walmart", "walmart", null, "imap", `w.inbox@example.com:${Y_PW[0]}`),
+      yFile("Target", "target", ["Yuri T5"]), yFile("Target", "target", null, "logins", "t5.target@example.com:Store-Pw"),
+      yFile("Costco", "costco", coNames(2)), coLog(coLogins), coFile("imap", coImap)];
+    const s = await cSubmit(files);
+    assert.equal(s.posts.length, 1);
+    assert.deepEqual(s.files.map((f) => f.name), ["Cora-walmart-aycd.json", "Cora-walmart-shikari.csv", "Cora-walmart-logins.txt", "Cora-walmart-imap.txt",
+      "Cora-target-aycd.json", "Cora-target-shikari.csv", "Cora-target-logins.txt", "Cora-costco-aycd.json", "Cora-costco-profile-hayha.Hayha", "Cora-costco-logins.txt"]);
+    assert.equal(coText(s), coLogins4);
+    // The same batch without Costco's imap file: its bytes differ only by what that file put in its logins file.
+    const t = await cSubmit(files.slice(0, -1));
+    assert.equal(t.files.length, 10);
+    const subs = (await (await admin("/admin/submissions")).json()).submissions, bytes = (x) => subs.find((y) => y.id === x.d.id).bytes;
+    assert.equal(bytes(s) - bytes(t), coText(s).length - coText(t).length);
+  });
+  await test("Costco logins: a long text is answered at once (read with indexOf, never a regex that backtracks); only a store's slots' worth of lines are rewritten", async () => {
+    const co = yFile("Costco", "costco", ["Co One"]), im = coFile("imap", `a@b.co:${Y_PW[0]}`);
+    // A logins file isn't checked, so these go through (200); JSON's escapes keep each body under the 4 MB cap.
+    for (const [what, text, check] of [
+      ["line breaks, then a letter", "\n".repeat(1_900_000) + "x", (o) => o === "\n".repeat(1_900_000) + "x:::::::::"],
+      ["CRLFs, then a letter", "\r\n".repeat(900_000) + "x", (o) => o === "\r\n".repeat(900_000) + "x:::::::::"],
+      ["one long line of colons", "a@b.co:" + ":".repeat(3_000_000), (o) => o === `a@b.co:::${":".repeat(3_000_000)}:::a@b.co:::${Y_PW[0]}`],
+      ["many short lines", "a@b.co:p\r\n".repeat(40_000), (o) => o === `a@b.co:::p:::a@b.co:::${Y_PW[0]}\r\n`.repeat(500) + "a@b.co:p\r\n".repeat(39_500)],
+    ]) {
+      const at = Date.now(), r = await cSend([co, coLog(text), im]), ms = Date.now() - at;
+      assert.equal(r.status, 200, what + ": " + (r.status === 200 ? "" : await r.text()));
+      assert.ok(ms < 3000, `${what}: answered in ${ms} ms`);
+      const post = webhookPosts.findLast((m) => m.files.some((f) => f.name === "Cora-costco-logins.txt"));
+      assert.ok(check(post.files.find((f) => f.name === "Cora-costco-logins.txt").text), what);
+    }
+    // Its imap file is checked as any store's: a long one is refused at once.
+    for (const [what, text] of [["line breaks, then a letter", "\n".repeat(400000) + "x"], ["a dotted domain with no colon", "a@" + "a.".repeat(200000)]]) {
+      const at = Date.now(), r = await cSend([co, coLog("a@b.co:p"), coFile("imap", text)]), ms = Date.now() - at;
+      assert.equal(r.status, 400, what);
+      assert.deepEqual(await r.json(), { error: "files" }, what);
+      assert.ok(ms < 3000, `${what}: refused in ${ms} ms`);
+    }
+  });
+  await test("Costco logins: a Costco imap file that isn't email:app password lines, has more lines than its slots, or comes twice is still refused (400 files)", async () => {
+    const co = yFile("Costco", "costco", coNames(2)), lg = coLog(coLogins);
+    for (const files of [[co, lg, coFile("imap", "not-an-email:pw")], [co, lg, coFile("imap", "sam.c1@example.com:")],
+      [co, lg, coFile("imap", `a@example.com:pw\r\nb@example.com:pw\r\nc@example.com:pw`)], [co, lg, coFile("imap", coImap), coFile("imap", coImap)],
+      [co, lg, coFile("imap", coImap, { storeKey: "other:costco" })]]) {
+      const before = webhookPosts.length, r = await cSend(files);
+      assert.equal(r.status, 400, JSON.stringify(files.map((f) => [f.kind, f.storeKey, f.text.slice(0, 40)])));
+      assert.deepEqual(await r.json(), { error: "files" });
+      assert.equal(webhookPosts.length, before, "nothing posted");
+    }
   });
 
   console.log("\nInterests: products added once (INTEREST_ADDS; the owner's request, 2026-11-12)");
