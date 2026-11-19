@@ -170,7 +170,8 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   Shikari files".
   Since 2026-11-18 (the owner: "whenever someone submit costco, can you have it sent to my discord as hayha format?", then
   "keep aycd but you can remove shikari format for costco submission" and "go ahead with the hayha file") **Costco's slots go
-  out as AYCD and Hayha**: `<buyer>-costco-aycd.json`, then `<buyer>-costco-hayha.Hayha` where its `-shikari.csv` was, then
+  out as AYCD and Hayha**: `<buyer>-costco-aycd.json`, then `<buyer>-costco-profile-hayha.Hayha` (named `-costco-hayha.Hayha` until
+  2026-11-19, the owner: "label these submission as costco-profile-hayha") where its `-shikari.csv` was, then
   its logins and inbox access as before; no Shikari CSV. A file is Costco's by its profiles file's `storeKey` (`costco` or
   `other:costco`) or a store named exactly Costco (`isCostcoFile`; "Costco Wholesale" keeps its Shikari CSV). The `.Hayha`
   file (`costcoHayha`, `hayhaFromCsv(text, sent, id)`, beside `shikariCsv`) is what Export profiles' HayhaAIO 2.0 writes
@@ -184,6 +185,10 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   was. The message's line says "Per store: its profiles for AYCD (.json) and Shikari (.csv), Costco's for AYCD (.json) and
   Hayha (.Hayha), with its logins…", or for a batch of only Costco "its profiles for AYCD (.json) and Hayha (.Hayha)".
   Every other store is unchanged.
+  On 2026-11-19 the owner also asked for a master list of every buyer's Costco accounts, new and old, in Hayha's account
+  export (`imapUsername, imapPassword, imapProvider, username, password, groupId, id, site, status, cookies`), with each Costco
+  batch; it needs this worker to keep every account's password and app password, which the owner declined ("Only the rename
+  for now"), so it isn't built. Never put the owner's export, which has a real account's passwords and cookies, in this repo.
   Since 2026-11-13 (the owner: "What method can buyer input their imap so it can be sent to my private discord?", then
   "during submission only", "email - apppassword format" and "same where all the slots go") each store's slots on the
   buyer's own accounts also bring their **inbox access**: page 1.9.147+ sends a file of kind `imap` per store

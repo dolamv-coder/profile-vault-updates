@@ -81,7 +81,7 @@
 //                              one email:app password line per inbox of its slots on the buyer's own accounts (never Use
 //                              Assigned Account), posted as <buyer>-<store>-imap.txt after that store's logins file (or its
 //                              Shikari CSV when there's none, as at Pokémon Center), never stored here. Costco's
-//                              profiles go as a HayhaAIO 2.0 file, <buyer>-costco-hayha.Hayha, in its Shikari CSV's place
+//                              profiles go as a HayhaAIO 2.0 file, <buyer>-costco-profile-hayha.Hayha, in its Shikari CSV's place
 //                              (2026-11-18: the owner's "keep aycd but you can remove shikari format for costco").
 //                              Each store in `stores`
 //                              may carry `seller`: how many of its slots ask the owner to assign an
@@ -1563,7 +1563,8 @@ async function submission(request, env, url, ctx) {
     // Each file is labeled with the buyer and the store (the owner's request, 2026-10-09): Kim-target-aycd.json,
     // Kim-target-shikari.csv and Kim-target-logins.txt; the name they sent with, or their Discord name. No logins
     // for Pokémon Center (2026-10-07). The slots CSV itself goes out only as Shikari's, or for Costco as Hayha's
-    // (Kim-costco-hayha.Hayha in the Shikari CSV's place, 2026-11-18). Then Kim-target-imap.txt, the inbox access for the
+    // (Kim-costco-profile-hayha.Hayha in the Shikari CSV's place, 2026-11-18; named -costco-hayha until the owner's
+    // "label these submission as costco-profile-hayha", 2026-11-19). Then Kim-target-imap.txt, the inbox access for the
     // store's slots on the buyer's own accounts (page 1.9.147), Pokémon Center's too.
     const buyer = buyerSlug(s.name, s.username, s.key_last4);
     const used = new Map();
@@ -1582,7 +1583,7 @@ async function submission(request, env, url, ctx) {
     attach = posted.flatMap((f, i) => {
       const one = f.kind === "aycd"
         ? { name: `${buyer}-${label(f.store)}-aycd.json`, text: aycdText(f.list), type: "application/json" }
-        : f.kind === "profiles" && isCostcoFile(f, files) ? { name: `${buyer}-${label(f.store)}-hayha.Hayha`, text: costcoHayha(f, files), type: "application/octet-stream" }
+        : f.kind === "profiles" && isCostcoFile(f, files) ? { name: `${buyer}-${label(f.store)}-profile-hayha.Hayha`, text: costcoHayha(f, files), type: "application/octet-stream" }
         : f.kind === "profiles" ? { name: `${buyer}-${label(f.store)}-shikari.csv`, text: shikariCsv(f.text), type: "text/csv" }
         : f.kind === "imap" ? { name: `${buyer}-${label(f.store)}-imap.txt`, text: f.text, type: "text/plain" }
         : { name: `${buyer}-${label(f.store)}-logins.txt`, text: f.text };

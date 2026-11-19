@@ -5053,7 +5053,7 @@ try {
     yBatches.push(s.d.id);
     assert.equal(s.posts.length, 1);
     assert.deepEqual(s.files.map((f) => f.name), ["Sam-Sample-target-aycd.json", "Sam-Sample-target-shikari.csv", "Sam-Sample-target-logins.txt", "Sam-Sample-target-skus.txt",
-      "Sam-Sample-costco-aycd.json", "Sam-Sample-costco-hayha.Hayha", "Sam-Sample-costco-logins.txt", "Sam-Sample-costco-imap.txt"], "no Costco Shikari CSV; Target's still there");
+      "Sam-Sample-costco-aycd.json", "Sam-Sample-costco-profile-hayha.Hayha", "Sam-Sample-costco-logins.txt", "Sam-Sample-costco-imap.txt"], "no Costco Shikari CSV; Target's still there");
     const hay = s.files.find((f) => f.name.endsWith("-hayha.Hayha"));
     assert.equal(hayhaFixed(hay.text), coHayha("Sam Q Sample", true), "exactly as the page's HayhaAIO 2.0 export, with the app's name on card and Only one checkout");
     assert.ok(!hay.text.endsWith("\n"), "no line break at the end");
@@ -5068,7 +5068,7 @@ try {
   await test("Costco: a batch of only Costco says AYCD and Hayha; its bytes are what's posted (the Hayha file as it is)", async () => {
     const s = await ySubmit([coFile("profiles", coCsv), coFile("aycd", JSON.stringify(coAycd)), { store: "Costco", kind: "logins", text: coLogins }], { name: "Sam Sample", stores: [{ name: "Costco", n: 2 }] });
     yBatches.push(s.d.id);
-    assert.deepEqual(s.files.map((f) => f.name), ["Sam-Sample-costco-aycd.json", "Sam-Sample-costco-hayha.Hayha", "Sam-Sample-costco-logins.txt"]);
+    assert.deepEqual(s.files.map((f) => f.name), ["Sam-Sample-costco-aycd.json", "Sam-Sample-costco-profile-hayha.Hayha", "Sam-Sample-costco-logins.txt"]);
     assert.ok(s.posts[0].content.includes("\n-# Per store: its profiles for AYCD (.json) and Hayha (.Hayha), with its logins (email:password, .txt) in the same order.\n"), s.posts[0].content);
     const subs = (await (await admin("/admin/submissions")).json()).submissions;
     assert.equal(subs.find((x) => x.id === s.d.id).bytes, s.files.reduce((n, f) => n + f.text.length, 0));
@@ -5078,7 +5078,7 @@ try {
     for (const co of [{ store: "Costco" }, { store: "Costco", storeKey: "costco" }, { store: "costco", storeKey: "other:costco" }]) {
       const s = await ySubmit([{ ...co, kind: "profiles", text: coCsv }], { name: "Sam Sample", stores: [{ name: co.store, n: 2 }] });
       yBatches.push(s.d.id);
-      assert.deepEqual(s.files.map((f) => f.name), ["Sam-Sample-costco-aycd.json", "Sam-Sample-costco-hayha.Hayha"], JSON.stringify(co));
+      assert.deepEqual(s.files.map((f) => f.name), ["Sam-Sample-costco-aycd.json", "Sam-Sample-costco-profile-hayha.Hayha"], JSON.stringify(co));
       assert.equal(hayhaFixed(s.files[1].text), coHayha("Sam Sample", false), JSON.stringify(co));
       assert.ok(s.posts[0].content.includes("\n-# Per store: its profiles for AYCD (.json) and Hayha (.Hayha).\n"), s.posts[0].content);
     }

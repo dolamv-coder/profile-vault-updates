@@ -370,7 +370,8 @@ request; before, `orbit-slots-<date>-<time>-Kim-target-aycd.json`):
   so nothing a buyer typed runs as a formula if you open it in Excel. (Excel shows a long card number
   rounded, so load the file into Shikari rather than saving it from Excel.) Costco gets a Hayha file
   instead (next).
-- `Kim-costco-hayha.Hayha` (Costco only, since 2026-11-18, at your request: "whenever someone submit costco,
+- `Kim-costco-profile-hayha.Hayha` (Costco only, since 2026-11-18, named `Kim-costco-hayha.Hayha` until
+  2026-11-19, at your request: "whenever someone submit costco,
   can you have it sent to my discord as hayha format?", then "keep aycd but you can remove shikari format for
   costco submission"): Costco's slots, in the same order, as a HayhaAIO 2.0 profile file, in the place
   Costco's Shikari CSV had (Costco gets no Shikari CSV). It's exactly what FAFO's Export profiles →
