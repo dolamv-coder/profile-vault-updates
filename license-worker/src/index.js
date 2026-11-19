@@ -81,8 +81,13 @@
 //                              one email:app password line per inbox of its slots on the buyer's own accounts (never Use
 //                              Assigned Account), posted as <buyer>-<store>-imap.txt after that store's logins file (or its
 //                              Shikari CSV when there's none, as at Pokémon Center), never stored here. Costco's
-//                              profiles go as a HayhaAIO 2.0 file, <buyer>-costco-hayha.Hayha, in its Shikari CSV's place
-//                              (2026-11-18: the owner's "keep aycd but you can remove shikari format for costco").
+//                              profiles go as a HayhaAIO 2.0 file, <buyer>-costco-profile-hayha.Hayha, in its Shikari CSV's place
+//                              (2026-11-18: the owner's "keep aycd but you can remove shikari format for costco"), and
+//                              its logins as email:::password:::imap email:::app password lines, with no imap file of its
+//                              own (2026-11-19: the owner's "change costco-logins to
+//                              email:::password:::imapemail:::apppassword format"; costcoLogins). Page 1.9.159+ writes
+//                              them so (`fmt: "imap4"`) and sends Costco no imap file; an older page's email:password
+//                              lines take their inbox from the imap file it sent, which isn't posted.
 //                              Each store in `stores`
 //                              may carry `seller`: how many of its slots ask the owner to assign an
 //                              account. App 1.9.52 sends {csv, ...}, one .csv; older apps {code, keyId, ...},
@@ -1197,8 +1202,9 @@ async function slotReview(request, env, ctx, url, id) {
 // give out accounts and make the AYCD list for apps before 1.9.87, isn't posted. Since 2026-11-13 (page 1.9.147, the
 // owner's request: buyers on their own accounts no longer send their inbox access on Discord themselves) each store's
 // slots on the buyer's own accounts also bring their inboxes' access, one email:app password line per inbox (kind
-// "imap"), posted as <buyer>-<store>-imap.txt. Full card numbers, CVVs, and store and email passwords pass through here
-// and sit in the channel. The owner chose this. Nothing is kept here but who sent how many slots.
+// "imap"), posted as <buyer>-<store>-imap.txt; Costco's go in its logins file instead, email:::password:::imap
+// email:::app password a line (2026-11-19, costcoLogins). Full card numbers, CVVs, and store and email passwords pass
+// through here and sit in the channel. The owner chose this. Nothing is kept here but who sent how many slots.
 //
 // Older apps seal each batch with the owner's collecting key from Orbit (Settings → Password and
 // sharing), so for them the worker and Discord only see ciphertext. The owner downloads that .txt
@@ -1376,8 +1382,8 @@ const isPokemonCenterFile = (f, files) => {
   return [key.replace(/^other:/, ""), f.store].some((x) => /^pokemon ?cent(er|re)$/.test(plain(x)));
 };
 // Costco's slots go out as a HayhaAIO 2.0 file in place of the Shikari CSV (2026-11-18, the owner's request: hayhaFromCsv),
-// beside its AYCD list, logins and inbox access as before. A file is Costco's by its profiles file's key (page 1.9.148+
-// sends "costco"), or by the store's name.
+// beside its AYCD list and its logins, which carry its inbox access since 2026-11-19 (costcoLogins). A file is Costco's by
+// its profiles file's key (page 1.9.148+ sends "costco"), or by the store's name.
 const isCostcoFile = (f, files) => {
   const key = f.storeKey || (files.find((x) => x.kind === "profiles" && x.store === f.store) || {}).storeKey || "";
   return [key.replace(/^other:/, ""), f.store].some((x) => String(x).trim().toLowerCase() === "costco");
@@ -1387,6 +1393,64 @@ const costcoHayha = (f, files) => {
   const a = files.find((x) => x.kind === "aycd" && x.store === f.store && x.storeKey === f.storeKey);
   return hayhaFromCsv(f.text, a && a.app ? a.list : null);
 };
+// A mailbox, as the page's mailboxKey reads one: lower case, its +tag off, and at Gmail its dots off, googlemail.com being
+// gmail.com, so a login made with a dot or +tag version of an inbox's address finds that inbox. indexOf and split only.
+const mailboxKey = (email) => {
+  const e = String(email).trim().toLowerCase(), at = e.lastIndexOf("@");
+  if (at < 1) return e;
+  let local = e.slice(0, at), dom = e.slice(at + 1);
+  const plus = local.indexOf("+");
+  if (plus >= 0) local = local.slice(0, plus);
+  if (dom === "googlemail.com") dom = "gmail.com";
+  if (dom === "gmail.com") local = local.split(".").join("");
+  return local + "@" + dom;
+};
+// Costco's logins file as the owner's bot takes it (2026-11-19, the owner, with a screenshot of a batch's costco-logins.txt:
+// "change costco-logins to email:::password:::imapemail:::apppassword format"; they chose to drop Costco's imap file): a line
+// per slot with a login, in the same order, `<login email>:::<password>:::<inbox email>:::<app password>`, the inbox's two
+// fields empty when the slot has none. Page 1.9.159+ writes it so (`fmt: "imap4"`), and it goes as sent, but for a line
+// without ":::" (one assignAccounts added, email:password). From an older page each email:password line (the email before
+// the first colon, the password the rest) takes the first line of its store's imap file (1.9.147–1.9.158) whose email is
+// the login's mailbox (mailboxKey), else none. Its own line breaks stay (CRLF from pages). A request can carry megabytes,
+// so it's read once with indexOf, never a regex that backtracks, and only the first SLOT_MAX lines with something on them
+// (a store's slots at most) are rewritten: the rest stay as they came, so a text of many short lines can't make one many
+// times its size.
+const costcoLogins = (f, files) => {
+  // Its store's group: the profiles file before it (logins follow their store's profiles), else the first by name.
+  let i = files.indexOf(f), p = null;
+  while (--i >= 0 && !p) if (files[i].kind === "profiles" && files[i].store === f.store) p = files[i];
+  p = p || files.find((x) => x.kind === "profiles" && x.store === f.store);
+  const imap = p ? files.find((x) => x.kind === "imap" && x.store === p.store && x.storeKey === p.storeKey) : null;
+  // The imap file passed imapOk: each line email:app password, at most a line per slot.
+  const inbox = new Map();
+  if (imap) for (const line of imap.text.split("\n")) {
+    const x = line.endsWith("\r") ? line.slice(0, -1) : line, c = x.indexOf(":");
+    if (c < 1) continue;
+    const k = mailboxKey(x.slice(0, c));
+    if (!inbox.has(k)) inbox.set(k, `${x.slice(0, c)}:::${x.slice(c + 1)}`);
+  }
+  const t = f.text, four = f.fmt === "imap4";
+  let out = "", pos = 0, n = 0;
+  while (pos <= t.length) {
+    let nl = t.indexOf("\n", pos);
+    if (nl < 0) nl = t.length;
+    const end = nl > pos && t[nl - 1] === "\r" ? nl - 1 : nl, x = t.slice(pos, end);
+    if (n < SLOT_MAX && x.trim() && !(four && x.includes(":::"))) {
+      n++;
+      const c = x.indexOf(":"), email = c < 0 ? x : x.slice(0, c);
+      out += `${email}:::${c < 0 ? "" : x.slice(c + 1)}:::${inbox.get(mailboxKey(email)) || ":::"}`;
+    } else {
+      if (x.trim()) n++;
+      out += x;
+    }
+    out += t.slice(end, nl + 1);
+    pos = nl + 1;
+  }
+  return out;
+};
+// The files that go to the channel: Pokémon Center's logins file and Costco's imap file stay here (its inbox access is in its
+// logins file).
+const postedFile = (f, files) => !(f.kind === "logins" && isPokemonCenterFile(f, files)) && !(f.kind === "imap" && isCostcoFile(f, files));
 
 async function submission(request, env, url, ctx) {
   const lic = await slotLicense(request, env);
@@ -1397,8 +1461,9 @@ async function submission(request, env, url, ctx) {
   if (text.length > SUBMISSION_MAX_CHARS + 20000) return json({ error: "too large" }, 413);
   let b; try { b = JSON.parse(text) || {}; } catch { b = {}; }
   // App 1.9.53 and later send `files`: each store's profiles as CSV in the owner's columns, and its
-  // logins (email:password lines); page 1.9.147+ also its inbox access (`imap`, email:app password lines). 1.9.52 sends
-  // one `csv`; older apps send a sealed code. The first two need no key.
+  // logins (email:password lines); page 1.9.147+ also its inbox access (`imap`, email:app password lines), and 1.9.159+
+  // Costco's inbox access in its logins file instead (`fmt: "imap4"`, costcoLogins). 1.9.52 sends one `csv`; older apps
+  // send a sealed code. The first two need no key.
   const given = Array.isArray(b.files) ? b.files : null;
   const csv = given === null && typeof b.csv === "string" ? b.csv : null;
   let code = "", keyId, files = null;
@@ -1414,7 +1479,8 @@ async function submission(request, env, url, ctx) {
       // login) are on Use Assigned Account, to get accounts from the owner's list.
       const storeKey = typeof f.storeKey === "string" && /^([a-z0-9]{2,24}|other:[^\r\n]{1,40})$/.test(f.storeKey) ? f.storeKey : "";
       const assigned = kind === "profiles" && storeKey ? Math.min(SLOT_MAX, Math.max(0, Math.floor(Number(f.assigned)) || 0)) : 0;
-      files.push({ store, kind, text: t, storeKey, assigned });
+      // Page 1.9.159+: a Costco logins file already in email:::password:::imap email:::app password lines (costcoLogins).
+      files.push({ store, kind, text: t, storeKey, assigned, ...(kind === "logins" && f.fmt === "imap4" ? { fmt: "imap4" } : {}) });
     }
     if (!files.some((f) => f.kind === "profiles")) return json({ error: "files" }, 400);
     if (files.reduce((n, f) => n + f.text.length, 0) > SUBMISSION_MAX_CHARS) return json({ error: "too large" }, 413);
@@ -1498,9 +1564,11 @@ async function submission(request, env, url, ctx) {
   };
   // Recorded before any account is picked or anything is posted, so a retry that arrives meanwhile
   // isn't handled twice.
-  // (A store's slots CSV stands for its Shikari CSV, made from it; Costco's .Hayha file is counted as it is.)
-  const bytes = files !== null ? files.reduce((n, f) => n + (f.kind === "aycd" ? aycdText(f.list) : f.kind === "logins" && isPokemonCenterFile(f, files) ? ""
-    : f.kind === "profiles" && isCostcoFile(f, files) ? costcoHayha(f, files) : f.text).length, 0) : (csv !== null ? csv : code).length;
+  // (A store's slots CSV stands for its Shikari CSV, made from it; Costco's .Hayha file and logins file are counted as they're
+  // posted, and files that aren't posted, Pokémon Center's logins and Costco's imap, not at all.)
+  const bytes = files !== null ? files.reduce((n, f) => n + (!postedFile(f, files) ? "" : f.kind === "aycd" ? aycdText(f.list)
+    : f.kind === "profiles" && isCostcoFile(f, files) ? costcoHayha(f, files) : f.kind === "logins" && isCostcoFile(f, files) ? costcoLogins(f, files)
+    : f.text).length, 0) : (csv !== null ? csv : code).length;
   const ins = await env.DB.prepare(
     `INSERT OR IGNORE INTO submissions (id, key_hash, key_last4, name, username, slots, bytes, key_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -1527,11 +1595,17 @@ async function submission(request, env, url, ctx) {
   }
   // What goes to the channel: each store's AYCD list, its Shikari CSV (made from its slots CSV; Costco's a .Hayha file
   // instead, 2026-11-18) and its logins file, with no logins file for Pokémon Center, then its inbox access (page 1.9.147),
-  // Pokémon Center's too.
-  const posted = files !== null ? files.filter((f) => !(f.kind === "logins" && isPokemonCenterFile(f, files))) : [];
+  // Pokémon Center's too; Costco's is in its logins file (2026-11-19), so its imap file isn't posted.
+  const posted = files !== null ? files.filter((f) => postedFile(f, files)) : [];
   const pokemonCenter = files !== null && files.some((f) => f.kind === "profiles" && isPokemonCenterFile(f, files));
   const costco = files !== null && files.some((f) => f.kind === "profiles" && isCostcoFile(f, files));
   const shikari = files !== null && files.some((f) => f.kind === "profiles" && !isCostcoFile(f, files));
+  // Whose logins go out: Costco's are email:::password:::imap email:::app password (costcoLogins), every other store's
+  // email:password.
+  const coLogins = posted.some((f) => f.kind === "logins" && isCostcoFile(f, files)), otherLogins = posted.some((f) => f.kind === "logins" && !isCostcoFile(f, files));
+  const CO_FMT = "email:::password:::imap email:::app password";
+  const loginsLine = !coLogins && !otherLogins ? ""
+    : `, with its logins (${otherLogins ? `email:password, .txt${coLogins ? `; Costco's as ${CO_FMT}` : ""}` : `${CO_FMT}, .txt`}) in the same order${pokemonCenter ? " (none for Pokémon Center)" : ""}`;
   const stamp = new Date(now).toISOString().slice(0, 16).replace("T", "-").replace(":", "");
   const slug = s.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
   const who = [s.name ? `**${md(s.name)}**` : "", s.username ? `@${md(s.username)}` : "", `license …${s.key_last4}`].filter(Boolean).join(" · ");
@@ -1550,7 +1624,7 @@ async function submission(request, env, url, ctx) {
   const storeLine = stores.map((x) => `${md(x.name)} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
   const plainStores = stores.map((x) => `${x.name} ${x.n}${accts(x)}`).join(" · ").slice(0, 1200);
   const tail = files !== null
-    ? `-# Per store: its profiles for AYCD (.json) and ${shikari ? `Shikari (.csv)${costco ? ", Costco's for AYCD (.json) and Hayha (.Hayha)" : ""}` : "Hayha (.Hayha)"}${posted.some((f) => f.kind === "logins") ? `, with its logins (email:password, .txt) in the same order${pokemonCenter ? " (none for Pokémon Center)" : ""}` : ""}${posted.some((f) => f.kind === "imap") ? ", and the inbox access for its slots on the buyer's own accounts (email:app password, .txt)" : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
+    ? `-# Per store: its profiles for AYCD (.json) and ${shikari ? `Shikari (.csv)${costco ? ", Costco's for AYCD (.json) and Hayha (.Hayha)" : ""}` : "Hayha (.Hayha)"}${loginsLine}${posted.some((f) => f.kind === "imap") ? ", and the inbox access for its slots on the buyer's own accounts (email:app password, .txt)" : ""}.${stores.some((x) => short(x)) ? " Profiles that need an account come last." : ""}`
     : csv !== null ? "-# CSV attached." : `-# Encrypted for key ${keyId}. To open: download the file, then in FAFO choose **Import** and drop it in.`;
   const content = `📦 **${slots} slot${slots === 1 ? "" : "s"}** from ${who}${storeLine ? `\n${storeLine}` : ""}\n${tail}`;
   const base = `orbit-slots-${stamp}${slug ? "-" + slug : ""}`;
@@ -1563,8 +1637,10 @@ async function submission(request, env, url, ctx) {
     // Each file is labeled with the buyer and the store (the owner's request, 2026-10-09): Kim-target-aycd.json,
     // Kim-target-shikari.csv and Kim-target-logins.txt; the name they sent with, or their Discord name. No logins
     // for Pokémon Center (2026-10-07). The slots CSV itself goes out only as Shikari's, or for Costco as Hayha's
-    // (Kim-costco-hayha.Hayha in the Shikari CSV's place, 2026-11-18). Then Kim-target-imap.txt, the inbox access for the
-    // store's slots on the buyer's own accounts (page 1.9.147), Pokémon Center's too.
+    // (Kim-costco-profile-hayha.Hayha in the Shikari CSV's place, 2026-11-18; named -costco-hayha until the owner's
+    // "label these submission as costco-profile-hayha", 2026-11-19). Then Kim-target-imap.txt, the inbox access for the
+    // store's slots on the buyer's own accounts (page 1.9.147), Pokémon Center's too, but not Costco's: Kim-costco-logins.txt
+    // has it, email:::password:::imap email:::app password a line (2026-11-19, costcoLogins).
     const buyer = buyerSlug(s.name, s.username, s.key_last4);
     const used = new Map();
     const label = (store) => {
@@ -1582,10 +1658,10 @@ async function submission(request, env, url, ctx) {
     attach = posted.flatMap((f, i) => {
       const one = f.kind === "aycd"
         ? { name: `${buyer}-${label(f.store)}-aycd.json`, text: aycdText(f.list), type: "application/json" }
-        : f.kind === "profiles" && isCostcoFile(f, files) ? { name: `${buyer}-${label(f.store)}-hayha.Hayha`, text: costcoHayha(f, files), type: "application/octet-stream" }
+        : f.kind === "profiles" && isCostcoFile(f, files) ? { name: `${buyer}-${label(f.store)}-profile-hayha.Hayha`, text: costcoHayha(f, files), type: "application/octet-stream" }
         : f.kind === "profiles" ? { name: `${buyer}-${label(f.store)}-shikari.csv`, text: shikariCsv(f.text), type: "text/csv" }
         : f.kind === "imap" ? { name: `${buyer}-${label(f.store)}-imap.txt`, text: f.text, type: "text/plain" }
-        : { name: `${buyer}-${label(f.store)}-logins.txt`, text: f.text };
+        : { name: `${buyer}-${label(f.store)}-logins.txt`, text: isCostcoFile(f, files) ? costcoLogins(f, files) : f.text };
       const key = !keys.slice(i + 1).includes(keys[i]) && keys[i];
       if (!key || !skus.has(key) || skusSent.has(key)) return [one];
       skusSent.add(key);
@@ -2209,6 +2285,15 @@ async function claimListAccount(env, lic, batch, f, profile, at, owner = false) 
   return a ? { email: a.email, password: a.password, emailNorm: a.email_norm } : null;
 }
 
+// The text without the line breaks at its end (CR or LF, any mix), as /[\r\n]+$/ would take them off, in one pass from the
+// end: that regex backtracks on a long run of line breaks followed by anything else (160,000 then a letter took 8.7 seconds,
+// the review of 1.9.159), and a logins file is whatever the buyer's FAFO sent.
+const trimLineBreaks = (s) => {
+  let e = s.length;
+  while (e > 0 && (s.charCodeAt(e - 1) === 10 || s.charCodeAt(e - 1) === 13)) e--;
+  return s.slice(0, e);
+};
+
 async function assignAccounts(env, lic, batch, files, now, moves, active) {
   const picks = new Map();
   // Pokémon Center after Target, so it can reuse the Target accounts given out in the same batch.
@@ -2297,7 +2382,7 @@ async function assignAccounts(env, lic, batch, files, now, moves, active) {
       f.text = rows.map((r) => r.map(csvCell).join(",")).join(eol);
       if (aycd && aycd.kind === "aycd") aycdEmails(aycd.list, lines.length, got.map((a) => a.email));
       const add = got.map((a) => `${a.email}:${a.password}`);
-      if (logins) logins.text = logins.text.replace(/[\r\n]+$/, "") + (lines.length ? eol : "") + add.join(eol);
+      if (logins) logins.text = trimLineBreaks(logins.text) + (lines.length ? eol : "") + add.join(eol);
       else files.splice(files.indexOf(f) + 1, 0, { store: f.store, kind: "logins", text: add.join(eol), storeKey: f.storeKey, assigned: 0 });
     }
     picks.set(f.store, { asked: f.assigned, got: got.length, ...(reused ? { reused, from: [...from.keys()].filter(Boolean) } : {}), ...(back ? { back } : {}),

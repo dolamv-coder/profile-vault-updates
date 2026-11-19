@@ -11,8 +11,8 @@
 // "No inbox, Target", the warning, the Need an inbox filter and the sidebar's and phone tab's light leaving Target out),
 // Submit's window (no warning for a Target slot with no inbox or no app password, while a Costco one is still warned, a
 // Target slot waiting for its login still counted, and an inbox a Target login has still sent; what the seller's channel
-// gets, with Costco's AYCD and Hayha files), and the profile editor's note on a Target store login. Sample names, addresses,
-// app passwords and keys only.
+// gets, with Costco's AYCD and Hayha files, and from 1.9.159 Costco's inbox on its logins' lines), and the profile editor's
+// note on a Target store login. Sample names, addresses, app passwords and keys only.
 //   node .github/scripts/target-inbox.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must have it (inboxOptional); a page named on the command line that doesn't is skipped.
 import { readFileSync, readdirSync } from "node:fs";
@@ -130,6 +130,10 @@ const TARGET_LINE = "Target doesn't need one: leave the app password empty to sa
 const COSTCO_LINE = "Where this account's sign-in codes and order emails arrive. Costco sends a sign-in code to it, so every Costco login needs one.";
 const PC_LINE = "Where this account's sign-in codes and order emails arrive. The FAFO desktop app reads it to add the account's orders, so every Pokémon Center login needs one.";
 const NEED_PW = "Enter this inbox's app password, or tick Use a saved inbox. Not sure how? Press Set it up step by step.";
+// From 1.9.159 Costco's logins file has each login's inbox on its line (email:::password:::imap email:::app password, fmt
+// "imap4") and Costco sends no inbox access file; Target's are as before (imap-submit.test.mjs has the rest).
+const FOUR = /fmt:"imap4"/.test(HTML);
+const loginsOf = (b) => b.files.filter((f) => f.kind === "logins").map((f) => [f.store, f.fmt, f.text]).sort((x, y) => (x[0] < y[0] ? -1 : 1));   // by store
 
 console.log(`An optional inbox for Target store logins in ${file.split(/[\\/]/).pop()}`);
 try {
@@ -374,6 +378,9 @@ try {
     // The inbox a Target login has still goes with its slot; none for the others.
     const b = await send();
     assert.deepEqual(b.files.filter((f) => f.kind === "imap").map((f) => [f.storeKey, f.text]), [["target", "saved.sample@gmail.com:abcdefghijklmnop"]]);
+    // Target's logins as before; Costco's from 1.9.159 with empty inbox fields, as Sam C1's login has none.
+    assert.deepEqual(loginsOf(b), [["Costco", FOUR ? "imap4" : undefined, FOUR ? "c.none@example.com:::Store-Pw-Sample::::::" : "c.none@example.com:Store-Pw-Sample"],
+      ["Target", undefined, "t.none@example.com:Store-Pw-Sample\r\nt.ibx@example.com:Store-Pw-Sample\r\nt.gone@example.com:Store-Pw-Sample\r\nnopw.sample@example.com:Store-Pw-Sample"]]);
   });
   await test("only Target slots with no inbox: nothing about inboxes, and the channel gets AYCD and Shikari files", async () => {
     const said = await openSubmit([["t1", "target"], ["t3", "target"]]);
@@ -433,8 +440,12 @@ try {
     const said = await openSubmit([["t7", "target"], ["t9", "target"], ["c8", "costco"], ["c9", "costco"]]);
     assert.deepEqual([said.ok, said.miss, said.nologin], ["Your inbox access for 2 of these slots (each inbox's email and app password) goes to your seller with them, so they can follow your orders.", "", ""]);
     const b = await send();
-    assert.deepEqual(b.files.filter((f) => f.kind === "imap").map((f) => [f.storeKey, f.text]), [["costco", "fb.sample@example.com:Sample-Fb-Pw\r\nfb2.sample@example.com:Sample-Fb2-Pw"]]);
+    // From 1.9.159 Costco's go on its logins' lines (the inbox's address without the login's +tag), with no imap file.
+    assert.deepEqual(b.files.filter((f) => f.kind === "imap").map((f) => [f.storeKey, f.text]), FOUR ? [] : [["costco", "fb.sample@example.com:Sample-Fb-Pw\r\nfb2.sample@example.com:Sample-Fb2-Pw"]]);
     assert.ok(!JSON.stringify(b.files.filter((f) => f.kind === "imap")).includes("saved.sample"), "not the inbox saved for the Target login's mailbox");
+    assert.deepEqual(loginsOf(b), [["Costco", FOUR ? "imap4" : undefined, FOUR ? "fb.sample+c8@example.com:::Store-Pw-Sample:::fb.sample@example.com:::Sample-Fb-Pw\r\nfb2.sample+c9@example.com:::Store-Pw-Sample:::fb2.sample@example.com:::Sample-Fb2-Pw"
+        : "fb.sample+c8@example.com:Store-Pw-Sample\r\nfb2.sample+c9@example.com:Store-Pw-Sample"],
+      ["Target", undefined, "saved.sample+t7@gmail.com:Store-Pw-Sample\r\nfb.sample+t9@example.com:Store-Pw-Sample"]]);
   });
 
   // ======================== The profile editor ========================
