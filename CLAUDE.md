@@ -172,7 +172,7 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   "keep aycd but you can remove shikari format for costco submission" and "go ahead with the hayha file") **Costco's slots go
   out as AYCD and Hayha**: `<buyer>-costco-aycd.json`, then `<buyer>-costco-profile-hayha.Hayha` (named `-costco-hayha.Hayha` until
   2026-11-19, the owner: "label these submission as costco-profile-hayha") where its `-shikari.csv` was, then
-  its logins and inbox access as before; no Shikari CSV. A file is Costco's by its profiles file's `storeKey` (`costco` or
+  its logins (with each slot's inbox access on its line since 2026-11-19, below, and no `-imap.txt`); no Shikari CSV. A file is Costco's by its profiles file's `storeKey` (`costco` or
   `other:costco`) or a store named exactly Costco (`isCostcoFile`; "Costco Wholesale" keeps its Shikari CSV). The `.Hayha`
   file (`costcoHayha`, `hayhaFromCsv(text, sent, id)`, beside `shikariCsv`) is what Export profiles' HayhaAIO 2.0 writes
   (`toHayha`, page 1.9.150, which matched the owner's own Hayha export byte for byte), made from the store's slots CSV once
@@ -194,8 +194,8 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   buyer's own accounts also bring their **inbox access**: page 1.9.147+ sends a file of kind `imap` per store
   (`{store, storeKey, kind:"imap", text}`), one `email:app password` line per inbox (never for Use Assigned Account), which
   the worker posts as `<buyer>-<store>-imap.txt`, through the same `POST /submissions` and `DISCORD_WEBHOOK_URL` as the
-  slots, right after the store's logins file, or its Shikari CSV when there's none (Pokémon Center gets one too), before its
-  `-skus.txt`, counted in Discord's 10 a message and in the batch's `bytes`. The worker places it there whatever order it's
+  slots, right after the store's logins file, or its Shikari CSV when there's none (Pokémon Center gets one too; Costco none
+  since 2026-11-19, below), before its `-skus.txt`, counted in Discord's 10 a message and in the batch's `bytes`. The worker places it there whatever order it's
   sent in, and refuses the batch (400 `files`) for one with no profiles file of its store (by `store` and `storeKey`), a
   second for a store, a line that isn't an email-shaped address (254 characters at most), a colon and a password with
   something but spaces in it (200 at most) (`imapLineOk`, `imapOk`; line breaks at the end are fine), or more lines than
@@ -206,6 +206,35 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   (`SUBMISSION_MAX_FILES`, four a store; 60 before). The message's description adds ", and the inbox access for its slots
   on the buyer's own accounts (email:app password, .txt)" when one went. Nothing of it is kept (no table gains it), and
   it's never in a message's text, a pull alert or the review page. Older pages send none, and nothing changes for them.
+  Since 2026-11-19 (the owner, with a screenshot of a Costco batch's `<buyer>-costco-logins.txt` in Discord: "change
+  costco-logins to email:::password:::imapemail:::apppassword format"; asked, they chose to drop Costco's `-imap.txt`)
+  **Costco's logins carry their inbox access** (`costcoLogins`, for a logins file `isCostcoFile` says is Costco's, so a store
+  typed "Costco Wholesale" keeps email:password and its imap file): a line per slot with a store login, in the same order as
+  before, `<login email>:::<password>:::<inbox email>:::<app password>`, the last two empty (`…::::::`) for a slot with none.
+  - **Page 1.9.159+** writes the lines itself (`{store, kind:"logins", fmt:"imap4", text}`; the worker keeps `fmt` only on a
+    logins file) and sends Costco no imap file. They go as sent, but for a line without `:::` (as `assignAccounts` adds,
+    email:password), which is written as an older page's.
+  - **An older page's** email:password lines are written so: the email before the first colon, the password the rest (a line
+    with no colon is `<line>:::::::::`), and the inbox the first line of the store's imap file (1.9.147–1.9.158; the store's
+    group is the profiles file before the logins, else the first of that name) whose email has the login's mailbox
+    (`mailboxKey`, as the page's: lower case, the +tag off, at Gmail the dots off, googlemail.com as gmail.com), split at its
+    first colon, else none (a page before 1.9.147 sends no imap file, so every line's are empty).
+  - The file's own line breaks stay (CRLF from pages). It's read once with `indexOf`, never a regex that backtracks, and only
+    the first `SLOT_MAX` (500) lines with something on them are rewritten, the rest posted as they came, so a text of many
+    short lines can't grow to many times its size (a store has no more slots than that).
+  - Costco's imap file, from any page, is never posted (`postedFile`, which also leaves out Pokémon Center's logins file), nor
+    counted in the batch's `bytes` or among Discord's 10 a message, and it's still checked as before (a bad one is still 400
+    `files`). The `bytes` count Costco's logins file as it's posted.
+  - The message's line (`loginsLine`) says "with its logins (email:password, .txt; Costco's as email:::password:::imap
+    email:::app password) in the same order", with only Costco's logins "with its logins (email:::password:::imap email:::app
+    password, .txt) in the same order" (" (none for Pokémon Center)" after either, as before), and names the inbox access only
+    when a store's `-imap.txt` goes. A batch without Costco reads as before.
+  - Target's and Pokémon Center's files are as they were. A Costco password with `:::` in it isn't escaped.
+  - `e2e.mjs` (with its own license, `cora`): an older page's lines with and without an imap file (the same address, a +tag,
+    Gmail's dots, googlemail.com and capitals, a colon in a password, two logins on one inbox, no match, dots outside Gmail,
+    LF breaks), 1.9.159's byte for byte, Pokémon Center and Costco Wholesale beside it, 10 files to a message and the bytes,
+    long hostile texts answered within 3 seconds (200 for a logins file, 400 for an imap file), and bad Costco imap files
+    still refused.
   Since 2026-10-06 (the owner's requests) the owner approves or declines each batch: its message (the first, when there
   are several) ends with **Pending your approval · Approve or decline**, a link to `/submissions/review/:id?t=…` (D1
   `submission_reviews`, kept 90 days; its own table, since `db:init` can't add columns). Approve edits the message to
@@ -3050,6 +3079,39 @@ From 1.9.158 **each store has its own slot limit** and **a Target store login do
   may now have `inboxId` null: a 1.9.157 device shows it as Needs an inbox (counted, with the red light), and its login
   editor asks for an inbox on its next save. A FAFO before 1.9.158 gets the smallest store's limit as its one limit, with
   the buyer's own caps, until it updates.
+
+From 1.9.159 **Costco's logins file carries each slot's inbox access** on its line, and Costco sends no inbox access file
+(the owner, 2026-11-19, with a screenshot of a Costco batch's `<buyer>-costco-logins.txt` in Discord: "change costco-logins
+to email:::password:::imapemail:::apppassword format"; asked, they chose to drop Costco's `-imap.txt`; the worker section
+above has the worker's side, which also writes an older page's Costco lines so).
+- **`slotsFiles`:** for a store where `loginOnly(key)` is true (Costco, and a store typed as Costco, `other:costco`), the
+  logins file is `{store, kind:"logins", fmt:"imap4", text}`: the same rows in the same order as 1.9.158's email:password
+  lines, each `slotImap4Line(r)`, CRLF between and none at the end, and that store gets no `kind:"imap"` file. Every other
+  store's files are 1.9.158's, with no `fmt`.
+- **`slotImap4Line(r)`:** `<login email>:::<login password>:::<inbox email>:::<app password>`, the inbox `slotInbox(r).inbox`
+  written as `imapLineOf` writes it (its email without the +tag, `baseMailAddr`; the password `cleanAppPw`'s) and split at
+  its first ":" (an email has none). Every slot gets its line, slots sharing an inbox too (`slotImapLines` gave each inbox
+  once). The last two are empty (`email:::password::::::`) with no inbox saved with an app password FAFO can send, and from
+  the seller's own FAFO (`imapOwnFafo`), which never sends inbox access. A login password with `:::` in it isn't escaped.
+- **What's unchanged:** Submit's window (`imapSubmitNote`: the inbox access still goes with the slots, and the warnings for
+  slots with no app password or no store login), Submit's panel, Send somewhere else, `sellerFilesShort`/`sellerFilesLong`,
+  the setup guide and the `GUIDE_IMAP_NOTE*` notes, all still true; and the sealed code a recipient set by hand gets, which
+  carries each login's inbox as saved (`loginOut`, +tag and all), as before.
+- **Words:** only the owner's Settings text on what the channel gets changed: its logins "(none for Pokémon Center; Costco's
+  as email:::password:::imap email:::app password)", and the inbox access "(Costco's is on its logins' lines instead)".
+- **Tests** (each knows the new behaviour by `fmt:"imap4"` in the page, so it still passes on 1.9.158):
+  - `imap-submit.test.mjs`, only where the page has Costco: Costco's C1 to C6 beside Target and Pokémon Center (a login with
+    its own inbox and a +tag login linked to the same one, the inbox on both lines; an inbox at another address with a Gmail
+    app password saved with spaces, sent without them; an inbox with no app password, empty fields; an inbox saved with a
+    +tag, sent without it; a slot waiting for its login, no line; a login password with a colon, as it is), the lines in
+    order, no Costco imap file, and Target's and Pokémon Center's files exactly as before; a recipient set by hand, its code
+    opened in the test with a real key (each Costco login's inbox as saved, nothing to `/submissions`); and the seller's own
+    FAFO (empty inbox fields, no imap file for any store). Its pretend worker refuses an `imap4` logins file that isn't a
+    Costco profiles file's, or has a line without four fields.
+  - `costco.test.mjs`: the `fmt` and the four-field line, empty with no inbox, then the inbox once the login is linked, and
+    no Costco imap file. `target-inbox.test.mjs`: Target's logins still email:password with their imap file, Costco's four
+    fields, also with the inbox saved for a +tag login's mailbox (Costco still falls back to it, 1.9.158).
+- Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
