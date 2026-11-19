@@ -3692,6 +3692,11 @@ try {
     assert.ok(before.filter((a) => a.orderNo === "BOB-7").length === 0 && (await alertsOf(bobKey)).every((a) => a.orderNo !== "SH-1"), "nobody else's");
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM billing_lines")[0].n, 0, "never billed");
   });
+  await test("Add to their invoice (1.9.161) with payments off: the order goes, its bill answers off, and no invoice gets it", async () => {
+    const r = await (await share(ginaId, [shareEvent({ orderNo: "SH-OFF-1", bill: true, sub: "$99.98" }), shareEvent({ orderNo: "SH-OFF-2" })])).json();
+    assert.deepEqual(r, { ok: true, sent: 2, already: 0, updated: 0, bad: 0, other: 0, res: ["sent", "sent"], bill: ["off", null] }, "one answer per event, null for one sent without bill");
+    assert.equal(dbRows("SELECT COUNT(*) AS n FROM billing_lines")[0].n, 0, "never billed");
+  });
   await test("a step not sent yet goes; one sent goes again only as an update when its details changed", async () => {
     const t0 = Math.max(...(await alertsOf(ginaKey)).map((a) => a.createdAt));
     assert.deepEqual(await (await share(ginaId, [shareEvent()])).json(), { ok: true, sent: 0, already: 1, updated: 0, bad: 0, other: 0, res: ["already"] }, "nothing changed");
@@ -5642,6 +5647,53 @@ try {
     assert.deepEqual((await r.json()).res, ["sent", "sent", "sent"]);
     assert.equal((await billOf(tessKey)).lines.length, before, "no line for them");
     assert.equal((await lineOf(tessKey, "TB-1001")).state, "due", "the cancel sent with them voids nothing");
+  });
+  // Add to their invoice (1.9.161; the owner, 2026-11-19: "Is there a way to invoice him automatically anytime I use the function
+  // send to buyer"): an event sent with bill puts the order on that buyer's invoice as the Billing page's Add a checkout does.
+  const shareEv = (o) => ({ store: "target", storeName: "Target", item: "Sample Elite Trainer Box", qty: "1", total: "$133.80", stage: "placed", at: today, shipTo: "Tess Sample",
+    shipAddr: "1 Main St, Austin, TX 78701", tracking: [], ...o });
+  const shareTo = async (key, events) => { const r = await api("/alerts/share", bobKey, { to: (await hashOfKey(key.toUpperCase())).slice(0, 16), events }); assert.equal(r.status, 200); return r.json(); };
+  await test("Add to their invoice: an order sent with bill goes on their invoice, priced by its amount before tax ($15 on $120.00), as added by the seller, due by the end of the Sunday after it; sent again it's there once", async () => {
+    const before = (await billOf(tessKey)).lines.length;
+    const r = await shareTo(tessKey, [shareEv({ orderNo: "ts-b1", bill: true, sub: "$120.00", account: "Tess.Own@example.com" })]);
+    assert.deepEqual([r.res, r.bill], [["sent"], ["added"]]);
+    const l = await lineOf(tessKey, "TS-B1");
+    assert.deepEqual([l.source, l.amount, l.state, l.orderAt, l.item, l.basis, l.basisFrom, l.acctHash, l.profile], ["owner", 1500, "due", today, "Sample Elite Trainer Box", 12000, "sub", acctOf("tess.own@example.com"), ""]);
+    assert.equal(l.dueAt, dueFor(today, l.createdAt));
+    const again = await shareTo(tessKey, [shareEv({ orderNo: "TS-B1", bill: true, sub: "$120.00" }), shareEv({ orderNo: "TS-B1", stage: "shipped", bill: true, sub: "$120.00" })]);
+    assert.deepEqual([again.res, again.bill], [["already", "sent"], ["had", "had"]]);
+    const st = await billOf(tessKey);
+    assert.deepEqual([st.lines.length, st.lines.filter((x) => x.orderNo === "TS-B1").length], [before + 1, 1], "one line per order");
+    // With no amount before tax, its total prices it as an alert's does ($59.98: about $53.79 before tax, so $10).
+    const t = await shareTo(tessKey, [shareEv({ orderNo: "TS-B2", bill: true, total: "$59.98" })]);
+    assert.deepEqual(t.bill, ["added"]);
+    assert.deepEqual(await lineOf(tessKey, "TS-B2").then((x) => [x.amount, x.basis, x.basisFrom, x.basisTotal]), [1000, 5379, "total", "$59.98"]);
+  });
+  await test("Add to their invoice: the store canceling it takes it off (sent with bill), never one already paid or another source's; an order already on their invoice, or on another buyer's, isn't added", async () => {
+    const c = await shareTo(tessKey, [shareEv({ orderNo: "TS-B2", stage: "canceled", bill: true }), shareEv({ orderNo: "TS-NONE", stage: "canceled", bill: true })]);
+    assert.deepEqual(c.bill, ["canceled", "none"]);
+    assert.equal((await lineOf(tessKey, "TS-B2")).state, "canceled");
+    // An order on their invoice already, from an alert for an account given to them: kept as it is.
+    const had = await shareTo(tessKey, [shareEv({ orderNo: "TB-1001", account: tessAcct, bill: true, sub: "$500.00" }), shareEv({ orderNo: "TB-1001", account: tessAcct, stage: "canceled", bill: true })]);
+    assert.deepEqual(had.bill, ["had", "none"], "an alert's line isn't the owner's to take off this way");
+    assert.deepEqual(await lineOf(tessKey, "TB-1001").then((x) => [x.source, x.amount, x.state]), ["alert", 1000, "due"]);
+    // On another buyer's invoice: not on this one's too.
+    const other = await shareTo(ginaKey, [shareEv({ orderNo: "TB-1001", bill: true })]);
+    assert.deepEqual(other.bill, ["not"]);
+    assert.equal(await lineOf(ginaKey, "TB-1001"), undefined);
+    // Taken off once it's done here, so the totals later tests count are as before.
+    assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: "TS-B1", stage: "canceled", bill: true })])).bill, ["canceled"]);
+    assert.equal((await lineOf(tessKey, "TS-B1")).state, "canceled");
+  });
+  await test("Add to their invoice: Friends and Family pay $5 whatever the amount; the owner's own FAFO is never a buyer", async () => {
+    const r = await shareTo(ginaKey, [shareEv({ orderNo: "GS-B1", bill: true, sub: "$250.00" })]);
+    assert.deepEqual(r.bill, ["added"]);
+    assert.deepEqual(await lineOf(ginaKey, "GS-B1").then((x) => [x.source, x.amount, x.basisFrom]), ["owner", 500, "family"]);
+    assert.deepEqual((await shareTo(ginaKey, [shareEv({ orderNo: "GS-B1", stage: "canceled", bill: true })])).bill, ["canceled"]);
+    assert.equal((await lineOf(ginaKey, "GS-B1")).state, "canceled", "taken off, so later tests see Gina paid up");
+    const own = await api("/alerts/share", bobKey, { to: (await hashOfKey(bobKey.toUpperCase())).slice(0, 16), events: [shareEv({ orderNo: "OWN-B1", bill: true })] });
+    assert.equal(own.status, 400);
+    assert.equal(await lineOf(bobKey, "OWN-B1"), undefined);
   });
   await test("the store canceling an order before it's paid makes it free; the buyer's own report can't cancel an alert's line", async () => {
     const r = await (await api("/billing/checkouts", tessKey, { orders: [{ account: tessAcct, store: "target", orderNo: "TB-1001", at: today, stage: "canceled" }] })).json();

@@ -786,6 +786,12 @@ alerts (above), on the desktop or the web.
 - The worker keeps them as that buyer's alerts (`POST /alerts/share`), with the ship-to, tracking and dates in the
   `alert_details` table, which `npm run db:init` (and the deploy Action) adds. A buyer on a FAFO before 1.9.138 gets the
   orders and their steps without the ship-to and tracking.
+- **Add to their invoice** (FAFO 1.9.161), ticked each time the Send to buyer window opens, also puts each order on that
+  buyer's invoice as a checkout, as the Billing page's Add a checkout does: "Added by your seller" on their Invoice, priced
+  like their other checkouts ($5 for Friends and Family, otherwise by the order's amount before tax), due by the Sunday after.
+  An order already on their invoice isn't added twice, and the store canceling it takes it off. With Also send future
+  orders ticked, orders FAFO sends to that address by itself go on their invoice too. Untick it to send an order without
+  billing it; to take one off afterwards, Waive it on the Billing page. Nothing is billed while payments are off.
 
 ## Premium buyers
 

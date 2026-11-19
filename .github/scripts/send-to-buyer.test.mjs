@@ -30,6 +30,7 @@ const code = [
   block("const JIG_DIRS = ", "function jigAssign(rows"),   // Jig's tables, jigOrdinal, JIG_UNIT_AT_END and jigChoices
   block("const pkcNum = ", "// One key per building"), fn("function pkcForms(b){"),   // Jig for Pokémon Center's ways of writing an address
   line(/^const orderNoPlain = .*$/m), line(/^const ORDER_NO_MAIL = .*$/m), fn("function mailboxKey(email){"), line(/^const cleanBoxKey = .*$/m), fn("function syncHash(str){"),
+  ...(html.includes("function orderSubBeforeTax(o){") ? [line(/^const moneyCents = [^\n]*\n[^\n]*\n[^\n]*\n\};$/m), fn("function orderSubBeforeTax(o){")] : []),
   block("/* SHARE-START", "/* SHARE-END */"),
   block("const SHARE = {busy", "// Send to buyer, on the Orders selection bar"), fn("function dropBuyerAddrs(m, gone){"),
   line(/^const SELLER_DET_FROM = .*$/m), fn("async function pollSellerAlerts(){"), fn("function applySellerAlerts(list, seenBefore){"),
@@ -233,6 +234,63 @@ await test("an order a remembered address sends gets that buyer once it's sent, 
   assert.deepEqual([r.shareTo, r.shareTold], [undefined, undefined]);
 });
 
+// Add to their invoice (1.9.161): the page that has it sends `bill` with an order's step as it is now, until the worker answered.
+const BILL = html.includes("needBill");
+if (BILL) await test("Add to their invoice: the order's step as it is now asks for the bill, with its amount before tax, until the worker answered; a cancel takes it off", () => {
+  const to = { id: "b1", name: "@sam", by: "hand", bill: true };
+  const o = order({ shareTo: to, stage: "shipped", priceEach: "$59.99", qty: "2", total: "$129.38" });
+  let it = api.sharePlan([o], {}).get("b1")[0];
+  assert.deepEqual(it.steps, ["placed", "shipped"]);
+  assert.deepEqual(it.events.map((e) => [e.stage, e.bill, e.sub]), [["placed", undefined, undefined], ["shipped", true, "119.98"]], "only the step as it is now asks for it");
+  api.shareMark(o, it, T0, ["sent", "sent"], [null, null]);
+  assert.equal(o.shareTold.billed, undefined, "the worker couldn't: not marked");
+  it = api.sharePlan([o], {}).get("b1")[0];
+  assert.deepEqual(it.steps, ["shipped"], "its step goes again, for the bill alone");
+  assert.equal(it.events[0].bill, true);
+  api.shareMark(o, it, T0, ["already"], ["added"]);
+  assert.equal(o.shareTold.billed, 1);
+  assert.equal(api.sharePlan([o], {}).size, 0, "billed: nothing to send");
+  o.stage = "delivered";
+  it = api.sharePlan([o], {}).get("b1")[0];
+  assert.deepEqual(it.events.map((e) => [e.stage, e.bill]), [["delivered", undefined]], "a new step after it's billed doesn't ask again");
+  api.shareMark(o, it, T0, ["sent"], undefined);
+  assert.equal(o.shareTold.billed, 1, "kept");
+  o.stage = "canceled"; o.shareTo = { id: "b1", name: "@sam", by: "hand" };   // sent again later with the box unticked
+  it = api.sharePlan([o], {}).get("b1")[0];
+  assert.deepEqual(it.events.map((e) => [e.stage, e.bill]), [["canceled", true]], "billed once: its cancel still takes it off");
+  // One canceled before it went never goes on: only its cancel asks, and the worker has nothing to take off.
+  const c = order({ orderNo: "C1", stage: "canceled", shareTo: to });
+  it = api.sharePlan([c], {}).get("b1")[0];
+  assert.deepEqual(it.events.map((e) => [e.stage, e.bill]), [["placed", undefined], ["canceled", true]]);
+  api.shareMark(c, it, T0, ["sent", "sent"], [null, "none"]);
+  assert.equal(c.shareTold.billed, 1, "answered: not asked again");
+  // Unticked: no bill, as before 1.9.161; a worker before 1.9.161 (no list) can't bill, so it isn't asked again either.
+  const u = order({ orderNo: "U1", shareTo: { id: "b1", name: "@sam", by: "hand" } });
+  assert.ok(api.sharePlan([u], {}).get("b1")[0].events.every((e) => !("bill" in e) && !("sub" in e)));
+  const v = order({ orderNo: "V1", shareTo: to });
+  api.shareMark(v, api.sharePlan([v], {}).get("b1")[0], T0, ["sent"]);
+  assert.equal(v.shareTold.billed, 1);
+  // A new buyer starts over, the bill too.
+  o.shareTo = { id: "b2", name: "@kim", by: "hand", bill: true }; o.stage = "shipped";
+  it = api.sharePlan([o], {}).get("b2")[0];
+  assert.deepEqual(it.events.map((e) => [e.stage, e.bill]), [["placed", undefined], ["shipped", true]]);
+  // An order the total doesn't explain (several items) sends no amount: the worker goes by its total.
+  const w = order({ orderNo: "W1", shareTo: to, priceEach: "$10.00", qty: "1", total: "$80.00" });
+  assert.equal(api.sharePlan([w], {}).get("b1")[0].events[0].sub, "");
+});
+if (BILL) await test("Add to their invoice on a remembered address: its future orders are billed too, and the order keeps it once sent", () => {
+  assert.deepEqual(api.shareTargetOf(order(), addrs({ bill: true })), { id: "b1", name: "@sam", by: "addr", bill: true });
+  assert.deepEqual(api.shareTargetOf(order(), addrs()), { id: "b1", name: "@sam", by: "addr" }, "one remembered without it: not billed");
+  const o = order({ orderNo: "R1" }), it = api.sharePlan([o], addrs({ bill: true })).get("b1")[0];
+  assert.deepEqual(it.events.map((e) => [e.stage, e.auto, e.bill]), [["placed", true, true]]);
+  api.shareMark(o, it, T0 + 5, ["sent"], ["added"]);
+  assert.deepEqual(o.shareTo, { id: "b1", name: "@sam", by: "addr", at: T0 + 5, bill: true });
+  assert.equal(o.shareTold.billed, 1);
+  const q = order({ orderNo: "R2" });
+  api.shareMark(q, api.sharePlan([q], addrs({ bill: true })).get("b1")[0], T0, ["other"], [null]);
+  assert.deepEqual([q.shareTo.off, q.shareTold], [true, undefined], "on another buyer's account: neither sent nor billed");
+});
+
 console.log("\nSending them (a pretend license worker)");
 const ok = (body) => ({ ok: true, status: 200, json: async () => body || { ok: true } });
 const no = (status, error) => ({ ok: false, status, json: async () => ({ error }) });
@@ -256,6 +314,24 @@ await test("each buyer's orders go in requests of up to 100 events, an order's e
   assert.equal(r.sent, 119, "the one the worker didn't take isn't counted");
   assert.equal(many[3].shareTold, undefined, "nor marked (sent by hand: no stop)");
   assert.ok(many.filter((o) => o.id !== "m3").every((o) => o.shareTold.steps.shipped));
+});
+if (BILL) await test("Add to their invoice: the worker's answer per event marks each order, and the run counts those put on the invoice", async () => {
+  const to = { id: "b1", name: "@sam", by: "hand", bill: true };
+  const orders = [order({ id: "p1", orderNo: "P1", shareTo: to }), order({ id: "p2", orderNo: "P2", stage: "shipped", shareTo: to }), order({ id: "p3", orderNo: "P3", shareTo: to }),
+    order({ id: "p4", orderNo: "P4", shareTo: { id: "b1", name: "@sam", by: "hand" } })];
+  reset(orders);
+  api.setServer(async (path, body) => ok({ ok: true, res: body.events.map(() => "sent"),
+    bill: body.events.map((e) => !e.bill ? null : e.orderNo === "P3" ? null : e.orderNo === "P2" ? "had" : "added") }));
+  const r = await api.reportSharedOrders();
+  assert.deepEqual(posts()[0][1].events.map((e) => [e.orderNo, e.stage, !!e.bill]), [["P1", "placed", true], ["P2", "placed", false], ["P2", "shipped", true], ["P3", "placed", true], ["P4", "placed", false]]);
+  assert.equal(r.sent, 4); assert.equal(r.byBuyer.b1.billed, 1, "only the one added");
+  assert.deepEqual(orders.map((o) => o.shareTold.billed), [1, 1, undefined, undefined]);
+  api.calls.length = 0;
+  api.setServer(async (path, body) => ok({ ok: true, res: body.events.map(() => "already"), bill: body.events.map((e) => e.bill ? "added" : null) }));
+  const again = await api.reportSharedOrders();
+  assert.deepEqual(posts()[0][1].events.map((e) => [e.orderNo, e.stage, !!e.bill]), [["P3", "placed", true]], "the one the worker couldn't bill goes again");
+  assert.equal(again.byBuyer.b1.billed, 1);
+  assert.equal(orders[2].shareTold.billed, 1);
 });
 await test("a buyer the worker refuses is noted, left an hour, and the others still go; a busy or unreachable worker stops them all until the next run", async () => {
   const orders = [order({ id: "a", orderNo: "A1", shareTo: { id: "b1", name: "@sam", by: "hand" } }), order({ id: "b", orderNo: "B1", shareTo: { id: "b2", name: "@kim", by: "hand" } })];
