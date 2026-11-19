@@ -1,10 +1,10 @@
 {
-  "version": "1.9.159",
-  "url": "index-1.9.159.html",
-  "sha256": "5ec8efc8d9ce367a209f9b12b076365f861c29686873705ef2bd414b8c7f8a45",
-  "signature": "psrqebuXJnBfwX9O/2ZvxRLQabovSYAumz709uTsbMeWNDBxl1WSR/xvP0keNobvYvmNyRr1lPYPEfhxWhIYCA==",
+  "version": "1.9.160",
+  "url": "index-1.9.160.html",
+  "sha256": "4979fe35c8e43c0dfa2b306c76ad540a5e2ab22f687f75f08cb13595329ff4c8",
+  "signature": "r92rJCZovLVMhSPLlWSsS8ub3igbheYLBCwQlNgvM9At5vgr87tB3xX7JGk7MCRfH2vEdDKYua730ZS2uxQ2BA==",
   "minAppVersion": "0",
-  "notes": "Costco slots now go to your seller with each store login and its inbox together on one line (email, password, inbox email and app password), the format their bot reads, instead of the inbox access coming in a separate file. So make sure each Costco store login has its inbox saved with its app password: Submit tells you if one is missing.",
+  "notes": "Fixes Costco slots sent from the seller's own FAFO, which went out without each store login's inbox email and app password on its line. Nothing changes for the Costco slots buyers send.",
   "installerUrl": "",
-  "publishedAt": "2026-11-19T07:07:00.287Z"
+  "publishedAt": "2026-11-19T07:54:13.100Z"
 }
