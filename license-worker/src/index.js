@@ -2285,6 +2285,15 @@ async function claimListAccount(env, lic, batch, f, profile, at, owner = false) 
   return a ? { email: a.email, password: a.password, emailNorm: a.email_norm } : null;
 }
 
+// The text without the line breaks at its end (CR or LF, any mix), as /[\r\n]+$/ would take them off, in one pass from the
+// end: that regex backtracks on a long run of line breaks followed by anything else (160,000 then a letter took 8.7 seconds,
+// the review of 1.9.159), and a logins file is whatever the buyer's FAFO sent.
+const trimLineBreaks = (s) => {
+  let e = s.length;
+  while (e > 0 && (s.charCodeAt(e - 1) === 10 || s.charCodeAt(e - 1) === 13)) e--;
+  return s.slice(0, e);
+};
+
 async function assignAccounts(env, lic, batch, files, now, moves, active) {
   const picks = new Map();
   // Pokémon Center after Target, so it can reuse the Target accounts given out in the same batch.
@@ -2373,7 +2382,7 @@ async function assignAccounts(env, lic, batch, files, now, moves, active) {
       f.text = rows.map((r) => r.map(csvCell).join(",")).join(eol);
       if (aycd && aycd.kind === "aycd") aycdEmails(aycd.list, lines.length, got.map((a) => a.email));
       const add = got.map((a) => `${a.email}:${a.password}`);
-      if (logins) logins.text = logins.text.replace(/[\r\n]+$/, "") + (lines.length ? eol : "") + add.join(eol);
+      if (logins) logins.text = trimLineBreaks(logins.text) + (lines.length ? eol : "") + add.join(eol);
       else files.splice(files.indexOf(f) + 1, 0, { store: f.store, kind: "logins", text: add.join(eol), storeKey: f.storeKey, assigned: 0 });
     }
     picks.set(f.store, { asked: f.assigned, got: got.length, ...(reused ? { reused, from: [...from.keys()].filter(Boolean) } : {}), ...(back ? { back } : {}),

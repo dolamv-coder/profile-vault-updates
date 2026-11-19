@@ -2442,6 +2442,24 @@ try {
     ({ r } = await send(["Jo J3"], "asg5d"));
     assert.deepEqual(r.accounts, { Target: { asked: 1, got: 0 } });
   });
+  await test("a logins file of many line breaks then a letter gets its accounts' lines at once (no regex that backtracks)", async () => {
+    // assignAccounts takes the line breaks off the end of the store's logins file before adding the accounts' lines: with
+    // /[\r\n]+$/ this text took tens of seconds (the review of 1.9.159). Bob has no accounts yet; the one he gets goes back.
+    assert.equal((await accounts()).stores[0].free, 3);
+    const junk = "\n".repeat(300000) + "x", before = webhookPosts.length;
+    const files = [{ store: "Target", storeKey: "target", kind: "profiles", text: slotCsv([slotRow("Rex R0", "rex0@example.com"), slotRow("Rex R1", "rex1@example.com")]), assigned: 1 },
+      { store: "Target", kind: "logins", text: junk }];
+    const at = Date.now(), res = await slots("/submissions", bobKey, { files, name: "Bob", slots: 2, batch: "asg5e" + rid(), stores: [{ name: "Target", n: 2, seller: 1 }] }), ms = Date.now() - at;
+    assert.equal(res.status, 200, await res.clone().text());
+    assert.ok(ms < 3000, `answered in ${ms} ms`);
+    assert.deepEqual((await res.json()).accounts, { Target: { asked: 1, got: 1 } });
+    const m = webhookPosts.slice(before).find((x) => x.content.startsWith("📦")), em = emailsOf(aycdOf(m)[0]);
+    assert.ok(/^pool\d+@outlook\.com$/.test(em[1]), em);
+    assert.equal(plain(m).find((f) => f.name === "Bob-target-logins.txt").text, `${junk}\r\n${em[1]}:Test-Pw-1!`, "its line after the text as sent");
+    assert.equal((await admin("/admin/accounts/free", { email: em[1] })).status, 200);
+    assert.equal((await accounts()).stores[0].free, 3);
+    assert.ok(!listGiven(await accounts()).some((a) => a.key_last4 === bobKey.slice(-4)));
+  });
   await test("the list running out: the rest wait for an account", async () => {
     assert.equal((await accounts()).stores[0].free, 3);
     const rows = Array.from({ length: 4 }, (_, i) => slotRow(`Ida I${i}`, `ida${i}@example.com`));

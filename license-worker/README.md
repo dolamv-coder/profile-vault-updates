@@ -432,11 +432,12 @@ see the `="…"`, and FAFO's **Import** (1.9.68+) reads them as the text inside.
 > Per store: its profiles for AYCD (.json) and Shikari (.csv), with its logins (email:password, .txt) in the same order, and the inbox access for its slots on the buyer's own accounts (email:app password, .txt).
 > ⏳ **Pending your approval** · Approve or decline
 
-With Costco slots in the batch, the line says "…AYCD (.json) and Shikari (.csv), Costco's for AYCD (.json) and
-Hayha (.Hayha), with its logins (email:password, .txt; Costco's as email:::password:::imap email:::app password) in the
-same order…", or for a batch of only Costco "…AYCD (.json) and Hayha (.Hayha), with its logins
-(email:::password:::imap email:::app password, .txt) in the same order." It mentions the inbox access only when a
-store's `-imap.txt` goes with the batch.
+When Costco's logins go with another store's (Target's, say), the line says "…AYCD (.json) and Shikari (.csv), Costco's
+for AYCD (.json) and Hayha (.Hayha), with its logins (email:password, .txt; Costco's as email:::password:::imap
+email:::app password) in the same order…". When Costco's are the only logins that go (a batch of only Costco, or Costco
+with Pokémon Center, which gets none), it says "…with its logins (email:::password:::imap email:::app password, .txt) in
+the same order…". Either way " (none for Pokémon Center)" follows when the batch has Pokémon Center slots. It mentions
+the inbox access only when a store's `-imap.txt` goes with the batch.
 
 ### Approving or declining a batch
 

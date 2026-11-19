@@ -230,6 +230,10 @@ The release feed for installed copies of Orbit. It is not the full source tree.
     password, .txt) in the same order" (" (none for Pokémon Center)" after either, as before), and names the inbox access only
     when a store's `-imap.txt` goes. A batch without Costco reads as before.
   - Target's and Pokémon Center's files are as they were. A Costco password with `:::` in it isn't escaped.
+  - `assignAccounts` takes the line breaks off the end of a store's logins file before adding its accounts' lines with
+    `trimLineBreaks`, one pass from the end. Its `/[\r\n]+$/` backtracked (an older bug: a Target logins file of 300,000
+    line breaks then a letter, with a slot on Use Assigned Account, took tens of seconds from any license, as a logins
+    file isn't checked; the review of 1.9.159), and `e2e.mjs` sends that and wants the batch within 3 seconds.
   - `e2e.mjs` (with its own license, `cora`): an older page's lines with and without an imap file (the same address, a +tag,
     Gmail's dots, googlemail.com and capitals, a colon in a password, two logins on one inbox, no match, dots outside Gmail,
     LF breaks), 1.9.159's byte for byte, Pokémon Center and Costco Wholesale beside it, 10 files to a message and the bytes,
