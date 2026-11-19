@@ -1,10 +1,10 @@
 {
-  "version": "1.9.158",
-  "url": "index-1.9.158.html",
-  "sha256": "25157633153a7dd9ad6ba50b0829a271da1695071dec0acfee4017004d46b362",
-  "signature": "qfkpaOUec0jf1i4shmtv00GPhjAPGPQxo+a8ioXpKCsbLr8OSySHy7z/dt1VpHTOAiOXJtv6kz5dw1FgamKzAA==",
+  "version": "1.9.159",
+  "url": "index-1.9.159.html",
+  "sha256": "5ec8efc8d9ce367a209f9b12b076365f861c29686873705ef2bd414b8c7f8a45",
+  "signature": "psrqebuXJnBfwX9O/2ZvxRLQabovSYAumz709uTsbMeWNDBxl1WSR/xvP0keNobvYvmNyRr1lPYPEfhxWhIYCA==",
   "minAppVersion": "0",
-  "notes": "Each store now has its own slot limit: Target, Pokémon Center and Costco each start at 20, or at the number your seller already approved for you, now at every store. Submit shows each store's limit, and Request more slots asks for the number you need at each store. A Target store login no longer needs an inbox: leave the app password empty to save it without one. Costco and Pokémon Center logins still need theirs.",
+  "notes": "Costco slots now go to your seller with each store login and its inbox together on one line (email, password, inbox email and app password), the format their bot reads, instead of the inbox access coming in a separate file. So make sure each Costco store login has its inbox saved with its app password: Submit tells you if one is missing.",
   "installerUrl": "",
-  "publishedAt": "2026-11-18T08:25:33.644Z"
+  "publishedAt": "2026-11-19T07:07:00.287Z"
 }
