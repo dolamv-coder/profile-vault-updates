@@ -35,7 +35,7 @@ if (!/function inboxLight\(/.test(HTML)) {
 }
 const END = "\ntry { if (window.pvDesktop && window.pvDesktop.appReady) window.pvDesktop.appReady(); } catch(e){}\n})();";
 assert.equal(HTML.split(END).length, 2, "couldn't find the end of the app's code");
-const PAGE = HTML.replace(END, "\nwindow.__t = {get S(){ return S; }, get UI(){ return UI; }, get DESK(){ return DESK; }, get SYNC(){ return SYNC; }, keepTypedLic, persist, render, renderLock, lock, syncUnits, syncOneInbox, inboxLight, ibxFp, refreshPremium, syncNote, syncHashes, syncBaseFrom, syncMerge, orderKey};" + END);
+const PAGE = HTML.replace(END, "\nwindow.__t = {get S(){ return S; }, get UI(){ return UI; }, get DESK(){ return DESK; }, get SYNC(){ return SYNC; }, keepTypedLic, persist, render, renderLock, lock, syncUnits, syncOneInbox, inboxLight, ibxFp, refreshPremium, isPremiumOwner, emailSectionHTML, syncNote, syncHashes, syncBaseFrom, syncMerge, orderKey};" + END);
 let chromium;
 try { ({ chromium } = createRequire(import.meta.url)("playwright")); }
 catch (e) { console.error("This test needs Playwright: npm install --no-save playwright, then npx playwright install chromium"); process.exit(1); }
@@ -45,7 +45,9 @@ const test = async (name, fn) => { try { await fn(); passed++; console.log("  ok
 
 // ---- The pretend license worker ----
 const LIC = "PVLT-TEST-TEST-TEST-TEST";
-const W = { tests: [] };
+const W = { tests: [], owner: false };
+// From 1.9.160 the seller's own FAFO's Settings → Email import lock line names its Costco slots (OWN_COSTCO_IMAP).
+const OWN4 = /OWN_COSTCO_IMAP/.test(HTML);
 // POST /inbox/test answers by the address's first word (before a dot or a digit): [status, body, wait].
 const ANSWERS = {
   ok: [200, { ok: true, messages: 7 }],
@@ -72,7 +74,7 @@ async function worker(route, req, u) {
   }
   if (auth !== "Bearer " + LIC) return json(route, 401, { error: "license not recognized" });
   if (p === "/billing") return json(route, 200, { on: false });
-  if (p === "/premium") return json(route, 200, { premium: false, owner: false });
+  if (p === "/premium") return json(route, 200, { premium: W.owner, owner: W.owner });
   if (p === "/interests") return json(route, 200, { rev: 1, owner: false, items: [] });
   if (p === "/slots/limit") return json(route, 200, { limit: 50, request: null, canRequest: true });
   if (p === "/submissions/status") return json(route, 200, { batches: {} });
@@ -889,6 +891,26 @@ try {
     i = await inboxOf(id);
     assert.equal(i.chk.ok, true); assert.equal(i.chk.by, "desktop");
     assert.deepEqual((await loginLight("setup.login@gmail.com")).slice(0, 2), ["Inbox OK", "ok"]);
+  });
+
+  await test(`desktop: Settings → Email import's lock line, a buyer's and the seller's own${OWN4 ? " (1.9.160: its Costco slots' inboxes)" : ""}`, async () => {
+    const lock = () => ev(() => { const d = document.createElement("div"); d.innerHTML = window.__t.emailSectionHTML(); return d.textContent.replace(/\s+/g, " "); });
+    const BUYER = "App passwords are stored encrypted in your vault. FAFO sends them to your email provider to sign in, and with the slots you submit on an inbox's accounts, so your seller can follow your orders.";
+    assert.ok((await lock()).includes(BUYER), await lock());
+    W.owner = true;
+    await ev(() => window.__t.refreshPremium(true));
+    await page.waitForFunction(() => window.__t.isPremiumOwner());
+    try {
+      const t = await lock();
+      assert.ok(t.includes("App passwords are stored encrypted in your vault. FAFO sends them to your email provider to sign in"
+        + (OWN4 ? ", and on the logins' lines of the Costco slots you submit on an inbox's accounts, for your bot to sign in." : ".")), t);
+      assert.doesNotMatch(t, /your seller can follow|leave it only/);
+    } finally {
+      W.owner = false;
+      await ev(() => window.__t.refreshPremium(true));
+      await page.waitForFunction(() => !window.__t.isPremiumOwner());
+    }
+    assert.ok((await lock()).includes(BUYER), "a buyer's again");
   });
 
   await test("a page before 1.9.157 syncs the new field as it is (it isn't one of its device fields)", async () => {

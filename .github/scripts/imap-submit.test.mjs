@@ -137,7 +137,7 @@ const COSTCO = /const PICK_STORES = \[[^\]]*"costco"/.test(HTML);
 const FOUR = /fmt:"imap4"/.test(HTML);
 // 1.9.160: the seller's own FAFO sends its Costco slots' inboxes on their logins' lines, and says so.
 const OWN4 = /OWN_COSTCO_IMAP/.test(HTML);
-const OWN_WORDS = "on the logins' lines of the Costco slots you submit, for your bot to sign in";
+const OWN_WORDS = (whose) => `on the logins' lines of the Costco slots you submit on ${whose} accounts, for your bot to sign in`;
 const filesOf = (body, store) => body.files.filter((f) => f.store === store);
 // Costco's slots C1 to C6, in the order they go out: C1's login has its own inbox, C2's is a +tag of it linked to the same
 // inbox (each slot gets its line, the inbox's twice), C3's inbox is another address (a Gmail app password saved with spaces),
@@ -400,10 +400,10 @@ try {
     const tab = await imapTab();
     if (tab) await page.click('#side [data-id="imap"]');
     assert.doesNotMatch(await text("#main"), /FAFO sends your seller|leave it only with the slots|with the slots you submit/);
-    assert.ok((await text("#main")).includes(OWN4 ? "Your inbox passwords are kept in your encrypted vault, and leave it when you press Test (FAFO's server signs in with it and keeps nothing) and " + OWN_WORDS + "."
+    assert.ok((await text("#main")).includes(OWN4 ? "Your inbox passwords are kept in your encrypted vault, and leave it when you press Test (FAFO's server signs in with it and keeps nothing) and " + OWN_WORDS("that inbox's") + "."
       : "Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test (FAFO's server signs in with it and keeps nothing)."), "the web note");
     if (OWN4) assert.doesNotMatch(await text("#main"), /leave it only/, "never \"only\" for the owner: a sealed code carries every store's inbox");
-    if (OWN4) assert.ok((await text("#main")).includes("Its email and app password go " + OWN_WORDS + "."), "the Inboxes line");
+    if (OWN4) assert.ok((await text("#main")).includes("Its email and app password go " + OWN_WORDS("its") + "."), "the Inboxes line");
     W.owner = false;
     await ev(() => window.__t.refreshPremium(true));
     await page.waitForFunction(() => !window.__t.isPremiumOwner());
@@ -425,8 +425,9 @@ try {
           : FOUR ? "costco.one@example.com:::Store-C-1::::::\r\nbuyer.costco@example.com:::Store:C-3::::::\r\nnopw.costco@example.com:::Store-C-4::::::"
           : "costco.one@example.com:Store-C-1\r\nbuyer.costco@example.com:Store:C-3\r\nnopw.costco@example.com:Store-C-4"],
         ["Target", undefined, "sam.sample+t1@gmail.com:Store-Pw-1"]]);
-      // Only Costco's lines carry an app password: Target's and Pokémon Center's still go without their imap files.
-      const notCostco = JSON.stringify(body.files.filter((f) => f.store !== "Costco"));
+      // Only Costco's logins' lines carry an app password: never its profiles CSV or AYCD list, and Target's and Pokémon
+      // Center's files still go without their imap files.
+      const notCostco = JSON.stringify(body.files.filter((f) => !(f.store === "Costco" && f.kind === "logins")));
       for (const x of ["Costco-Pw-A", "abcdefghijklmnop", "Sample-Pc-Pw-2"]) assert.ok(!(OWN4 ? notCostco : JSON.stringify(body.files)).includes(x), "no app password: " + x);
       assert.ok(!JSON.stringify(body.files).includes("Sample-Pc-Pw-2"), "no Pokémon Center app password");
     } finally { await ownerIs(false); }

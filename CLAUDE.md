@@ -3127,18 +3127,23 @@ alerts' license).
   <inbox email>:::<app password>`, the last two empty only with no inbox saved with an app password FAFO can send. The
   owner's Target and Pokémon Center slots still send no imap file (`slotImapLines`), and its Submit window still says
   nothing of inbox access (`imapSubmitNote`).
-- **The owner's words** say where its inbox passwords go now (`OWN_COSTCO_IMAP`: "on the logins' lines of the Costco slots
-  you submit, for your bot to sign in"): Store logins' Inboxes line ("Its email and app password go …"), the web note under
-  it ("…leave it when you press Test (…) and …", or with no license key "…, and leave it …") and the desktop's Settings →
-  Email import lock line ("FAFO sends them to your email provider to sign in, and …"). Never "only" there: a sealed code for
-  Send somewhere else carries every store's inbox (`loginOut`), the owner's too (the review of 1.9.160). A buyer's words
-  are 1.9.159's.
+- **The owner's words** say where its inbox passwords go now (`OWN_COSTCO_IMAP(whose)`: "on the logins' lines of the Costco
+  slots you submit on <its / that inbox's / an inbox's> accounts, for your bot to sign in"): Store logins' Inboxes line
+  ("Its email and app password go …"), the web note under it ("…leave it when you press Test (…) and …", or with no license
+  key "…, and leave it …") and the desktop's Settings → Email import lock line ("FAFO sends them to your email provider to
+  sign in, and …"). Never "only" there: a sealed code for Send somewhere else carries every store's inbox (`loginOut`), the
+  owner's too; and "on its accounts", as a buyer's words say, since only the inboxes of its Costco slots' accounts go (both
+  from the review of 1.9.160). A buyer's words are 1.9.159's.
 - An older page from the owner's FAFO sends Costco no imap file, so the worker has nothing to fill those lines from: the
   owner reloads the web version or restarts the desktop app into 1.9.160.
-- **Tests:** `imap-submit.test.mjs` (by `OWN_COSTCO_IMAP` in the page, so it still passes on 1.9.159): the owner's Costco
-  lines with their inboxes (C4's empty, with no app password), no app password in any other store's files and no imap file,
-  and the owner's web note and Inboxes line; `web-inbox-test.test.mjs` the owner's web note with its Costco clause. Both
-  still pass on 1.9.159.
+- **Tests** (by `OWN_COSTCO_IMAP` in the page, so each still passes on 1.9.159): `imap-submit.test.mjs`, the owner's Costco
+  lines with their inboxes (C4's empty, with no app password), no app password in any file but Costco's logins (its profiles
+  CSV and AYCD list included: a page that put one in its AYCD `notes` fails it) and no imap file, and the owner's web note
+  and Inboxes line; `web-inbox-test.test.mjs` the owner's web note; `inbox-lights.test.mjs` the desktop's Email import lock
+  line, a buyer's and the owner's.
+- A buyer who presses Settings → Order alerts for buyers' Turn on is taken for the owner (`orderAlertsOn`, set before the
+  owner allows it) by `imapOwnFafo` and `guideBuyer`, since 1.9.145 and 1.9.147: its batches then bring no imap files. On
+  2026-11-19 D1's `alert_senders` had only the owner's license, so no buyer is, and it's left as it is.
 - Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
