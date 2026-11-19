@@ -2454,8 +2454,8 @@ go"), where the buyer had sent it on Discord themselves (1.9.145's notes said so
   that inbox, so the buyer sends that one on Discord (the review of 1.9.147; below).
 - **Never from the seller's own FAFO** (`imapOwnFafo`, as the setup guide knows it, `guideBuyer`: it sends order alerts,
   or its `/premium` answer, billing or the Interests list says it's the owner's): its own batches bring no inbox access
-  (the review of 1.9.147: they posted the owner's own app passwords), its Submit window says nothing of it, and Store
-  logins, IMAP and Settings don't say a seller gets one. An answer that changes it redraws Settings, Store logins and IMAP
+  (the review of 1.9.147: they posted the owner's own app passwords), but for its Costco slots' logins' lines from 1.9.160
+  (below), its Submit window says nothing of it, and Store logins, IMAP and Settings don't say a seller gets one. An answer that changes it redraws Settings, Store logins and IMAP
   (`premiumApply`).
 - **The file** (`slotsFiles`): per store with a line, `{store, storeKey, kind:"imap", text}` after its logins file (or its
   AYCD list), one `email:app password` line per inbox (`imapLineOf`: the inbox's email without its +tag, `baseMailAddr`,
@@ -3095,8 +3095,8 @@ above has the worker's side, which also writes an older page's Costco lines so).
 - **`slotImap4Line(r)`:** `<login email>:::<login password>:::<inbox email>:::<app password>`, the inbox `slotInbox(r).inbox`
   written as `imapLineOf` writes it (its email without the +tag, `baseMailAddr`; the password `cleanAppPw`'s) and split at
   its first ":" (an email has none). Every slot gets its line, slots sharing an inbox too (`slotImapLines` gave each inbox
-  once). The last two are empty (`email:::password::::::`) with no inbox saved with an app password FAFO can send, and from
-  the seller's own FAFO (`imapOwnFafo`), which never sends inbox access. A login password with `:::` in it isn't escaped.
+  once). The last two are empty (`email:::password::::::`) with no inbox saved with an app password FAFO can send, and (in
+  1.9.159 only) from the seller's own FAFO (`imapOwnFafo`). A login password with `:::` in it isn't escaped.
 - **What's unchanged:** Submit's window (`imapSubmitNote`: the inbox access still goes with the slots, and the warnings for
   slots with no app password or no store login), Submit's panel, Send somewhere else, `sellerFilesShort`/`sellerFilesLong`,
   the setup guide and the `GUIDE_IMAP_NOTE*` notes, all still true; and the sealed code a recipient set by hand gets, which
@@ -3115,6 +3115,28 @@ above has the worker's side, which also writes an older page's Costco lines so).
   - `costco.test.mjs`: the `fmt` and the four-field line, empty with no inbox, then the inbox once the login is linked, and
     no Costco imap file. `target-inbox.test.mjs`: Target's logins still email:password with their imap file, Costco's four
     fields, also with the inbox saved for a +tag login's mailbox (Costco still falls back to it, 1.9.158).
+- Nothing gains a field.
+
+From 1.9.160 **the seller's own FAFO sends its Costco slots' inboxes too** (the owner, 2026-11-19, with their own batch's
+`<buyer>-costco-logins.txt`, every line `email:::password::::::`: "we're missing imapemail and imappassword in the list", then
+"make sure to format it as email:::password:::imapemail:::imappassword"). Their bot signs in to a Costco account with its inbox
+whoever's slot it is, and 1.9.159's `slotImap4Line` left the last two fields empty under `imapOwnFafo`, the 1.9.147 rule that
+keeps the owner's own app passwords out of their channel (the license worker's D1 showed the batch came from the order
+alerts' license).
+- **`slotImap4Line(r)`** no longer looks at `imapOwnFafo`: every FAFO's Costco line is `<login email>:::<login password>:::
+  <inbox email>:::<app password>`, the last two empty only with no inbox saved with an app password FAFO can send. The
+  owner's Target and Pokémon Center slots still send no imap file (`slotImapLines`), and its Submit window still says
+  nothing of inbox access (`imapSubmitNote`).
+- **The owner's words** say where its inbox passwords go now (`OWN_COSTCO_IMAP`: "on the logins' lines of the Costco slots
+  you submit, for your bot to sign in"): Store logins' Inboxes line ("Its email and app password go …"), the web note under
+  it ("…leave it only when you press Test (…) and …", or with no license key "…, and leave it only …") and the desktop's
+  Settings → Email import lock line ("FAFO sends them to your email provider to sign in, and …"). A buyer's words are
+  1.9.159's.
+- An older page from the owner's FAFO sends Costco no imap file, so the worker has nothing to fill those lines from: the
+  owner reloads the web version or restarts the desktop app into 1.9.160.
+- **Tests:** `imap-submit.test.mjs` (by `OWN_COSTCO_IMAP` in the page, so it still passes on 1.9.159): the owner's Costco
+  lines with their inboxes (C4's empty, with no app password), no app password in any other store's files and no imap file,
+  and the owner's web note and Inboxes line.
 - Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the

@@ -16,7 +16,10 @@
 // 2026-11-19: "change costco-logins to email:::password:::imapemail:::apppassword format") each line of Costco's logins
 // file carries its login's inbox (fmt "imap4": email:::password:::imap email:::app password, one per slot in the slots'
 // order, the last two empty with none), and Costco sends no imap file, while Target's and Pokémon Center's files are as
-// before; the sealed code a recipient set by hand gets is unchanged, and the seller's own FAFO sends empty inbox fields.
+// before; the sealed code a recipient set by hand gets is unchanged, and the seller's own FAFO sends empty inbox fields until
+// 1.9.159. From 1.9.160 (the owner, 2026-11-19, with their own batch's costco-logins.txt: "we're missing imapemail and
+// imappassword in the list") its Costco lines carry their inbox too, its words say so (OWN_COSTCO_IMAP), and its Target and
+// Pokémon Center slots still send no imap file.
 // Sample names, addresses, app passwords and keys only.
 //   node .github/scripts/imap-submit.test.mjs [path/to/index-X.Y.Z.html]
 // The newest page must send it (kind:"imap"); a page named on the command line that doesn't is skipped.
@@ -132,6 +135,9 @@ const OPT = /const inboxOptional = /.test(HTML);
 // Costco (1.9.148+), and from 1.9.159 its inbox on its logins' lines (fmt "imap4") with no imap file of its own.
 const COSTCO = /const PICK_STORES = \[[^\]]*"costco"/.test(HTML);
 const FOUR = /fmt:"imap4"/.test(HTML);
+// 1.9.160: the seller's own FAFO sends its Costco slots' inboxes on their logins' lines, and says so.
+const OWN4 = /OWN_COSTCO_IMAP/.test(HTML);
+const OWN_WORDS = "on the logins' lines of the Costco slots you submit, for your bot to sign in";
 const filesOf = (body, store) => body.files.filter((f) => f.store === store);
 // Costco's slots C1 to C6, in the order they go out: C1's login has its own inbox, C2's is a +tag of it linked to the same
 // inbox (each slot gets its line, the inbox's twice), C3's inbox is another address (a Gmail app password saved with spaces),
@@ -394,14 +400,16 @@ try {
     const tab = await imapTab();
     if (tab) await page.click('#side [data-id="imap"]');
     assert.doesNotMatch(await text("#main"), /FAFO sends your seller|leave it only with the slots|with the slots you submit/);
-    assert.match(await text("#main"), /Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test \(FAFO's server signs in with it and keeps nothing\)\./);
+    assert.ok((await text("#main")).includes("Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test (FAFO's server signs in with it and keeps nothing)"
+      + (OWN4 ? " and " + OWN_WORDS : "") + "."), "the web note");
+    if (OWN4) assert.ok((await text("#main")).includes("Its email and app password go " + OWN_WORDS + "."), "the Inboxes line");
     W.owner = false;
     await ev(() => window.__t.refreshPremium(true));
     await page.waitForFunction(() => !window.__t.isPremiumOwner());
     // Back to a buyer's: the IMAP page (Store logins, from 1.9.157) says so again once the answer is in.
     await page.waitForFunction((tab) => (tab ? /FAFO sends your seller/ : /Your seller gets an inbox's email and app password/).test(document.querySelector("#main").textContent), tab);
   });
-  if (COSTCO) await test(`the seller's own FAFO with Costco slots: ${FOUR ? "its logins' inbox fields empty" : "email:password logins"}, and no imap file for any store`, async () => {
+  if (COSTCO) await test(`the seller's own FAFO with Costco slots: ${OWN4 ? "its logins' lines carry their inbox (1.9.160)" : FOUR ? "its logins' inbox fields empty" : "email:password logins"}, and no imap file for any store`, async () => {
     await ownerIs(true);
     try {
       await ev(() => { const T = window.__t; for (const k of Object.keys(T.S.subs)) delete T.S.subs[k]; T.persist(); });
@@ -411,10 +419,15 @@ try {
       assert.deepEqual(imapOf(body), []);
       const byStore = (a, b) => (a[0] < b[0] ? -1 : 1);
       assert.deepEqual(body.files.filter((f) => f.kind === "logins").map((f) => [f.store, f.fmt, f.text]).sort(byStore), [
-        ["Costco", FOUR ? "imap4" : undefined, FOUR ? "costco.one@example.com:::Store-C-1::::::\r\nbuyer.costco@example.com:::Store:C-3::::::\r\nnopw.costco@example.com:::Store-C-4::::::"
+        ["Costco", FOUR ? "imap4" : undefined, OWN4
+          ? "costco.one@example.com:::Store-C-1:::costco.one@example.com:::Costco-Pw-A\r\nbuyer.costco@example.com:::Store:C-3:::sam.sample@gmail.com:::abcdefghijklmnop\r\nnopw.costco@example.com:::Store-C-4::::::"
+          : FOUR ? "costco.one@example.com:::Store-C-1::::::\r\nbuyer.costco@example.com:::Store:C-3::::::\r\nnopw.costco@example.com:::Store-C-4::::::"
           : "costco.one@example.com:Store-C-1\r\nbuyer.costco@example.com:Store:C-3\r\nnopw.costco@example.com:Store-C-4"],
         ["Target", undefined, "sam.sample+t1@gmail.com:Store-Pw-1"]]);
-      for (const x of ["Costco-Pw-A", "abcdefghijklmnop", "Sample-Pc-Pw-2"]) assert.ok(!JSON.stringify(body.files).includes(x), "no app password: " + x);
+      // Only Costco's lines carry an app password: Target's and Pokémon Center's still go without their imap files.
+      const notCostco = JSON.stringify(body.files.filter((f) => f.store !== "Costco"));
+      for (const x of ["Costco-Pw-A", "abcdefghijklmnop", "Sample-Pc-Pw-2"]) assert.ok(!(OWN4 ? notCostco : JSON.stringify(body.files)).includes(x), "no app password: " + x);
+      assert.ok(!JSON.stringify(body.files).includes("Sample-Pc-Pw-2"), "no Pokémon Center app password");
     } finally { await ownerIs(false); }
   });
 
