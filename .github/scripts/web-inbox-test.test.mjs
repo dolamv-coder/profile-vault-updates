@@ -119,6 +119,8 @@ const PW = "sample-pass-149";
 const ready = () => page.waitForSelector('#side [data-id="orders"]', { timeout: 30000 });
 // The words each page says (1.9.149 to 1.9.156, or with the lights from 1.9.157), and where IMAP's cards are.
 const LIGHTS = /function inboxLight\(/.test(HTML);
+// From 1.9.160 the seller's own FAFO sends its Costco slots' inboxes on their logins' lines, and its note says so.
+const OWN4 = /OWN_COSTCO_IMAP/.test(HTML);
 const W_OK = LIGHTS ? "Signed in · checked just now" : "Connected · checked just now";
 const W_ERR = LIGHTS ? "Couldn't sign in · checked just now" : "Error · checked just now";
 const W_CC = LIGHTS ? "Couldn't check from FAFO's server · just now" : "Couldn't check from FAFO's server · checked just now";
@@ -728,13 +730,14 @@ try {
     has(await cardOf(id), W_OK);
   });
 
-  await test("the seller's own FAFO: Test still works, and the note has no slots clause", async () => {
+  await test(`the seller's own FAFO: Test still works, and the note has ${OWN4 ? "its Costco clause (1.9.160)" : "no slots clause"}`, async () => {
     W.owner = true;
     await ev(() => window.__t.refreshPremium(true));
     await page.waitForFunction(() => window.__t.isPremiumOwner());
     await view("logins"); await view("imap");
     const main = await text("#main");
-    assert.ok(main.includes("Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test (FAFO's server signs in with it and keeps nothing)."), main.slice(0, 1200));
+    assert.ok(main.includes("Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test (FAFO's server signs in with it and keeps nothing)"
+      + (OWN4 ? " and on the logins' lines of the Costco slots you submit, for your bot to sign in" : "") + "."), main.slice(0, 1200));
     assert.doesNotMatch(main, /with the slots you submit/);
     const t = await cardTest("ib-ok");
     assert.equal(t.body.email, "ok.sample@gmail.com");

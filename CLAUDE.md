@@ -3136,7 +3136,8 @@ alerts' license).
   owner reloads the web version or restarts the desktop app into 1.9.160.
 - **Tests:** `imap-submit.test.mjs` (by `OWN_COSTCO_IMAP` in the page, so it still passes on 1.9.159): the owner's Costco
   lines with their inboxes (C4's empty, with no app password), no app password in any other store's files and no imap file,
-  and the owner's web note and Inboxes line.
+  and the owner's web note and Inboxes line; `web-inbox-test.test.mjs` the owner's web note with its Costco clause. Both
+  still pass on 1.9.159.
 - Nothing gains a field.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
