@@ -131,7 +131,8 @@
 //                              the owner sends that buyer whatever account they were placed on, with the ship-to, tracking
 //                              and each step's date; {ok, sent, already, updated, bad, other, res: [one per event]}. Billed
 //                              only with bill (1.9.161: an event with bill:true, sub? puts the order on that buyer's invoice,
-//                              a canceled one takes it off; then bill: [one per event, null for those without])
+//                              a canceled one takes it off any buyer's, as POST /alerts' cancel; then bill: [one per event,
+//                              null for those without])
 //                              From 1.9.139 the account it was placed on goes to the buyer too (GET /alerts' `account`)
 //   POST /alerts/forward/claim the sender only (app 1.9.139+, desktop 15): {to, ids:[24 hex]}: the store's emails about orders
 //                              sent to that buyer, by a hash of their Message-ID, claimed before the owner's FAFO forwards
@@ -4213,15 +4214,17 @@ async function alertsShare(request, env, ctx) {
 // Add a checkout puts one there (ownerOutcome: their exemption, Friends and Family's $5 and from when, a monthly plan's days, an
 // order on another buyer's invoice or already on theirs; lineStmt: priced by its amount before tax, due by the Sunday after),
 // as the owner's (source 'owner': "Added by your seller" on their Invoice), on the account it was placed on. A canceled step takes
-// off that buyer's unpaid line the owner put there (it's free); `gone` gets those lines, for the pay sessions holding them. The
-// answer, per event: "added", "had" (already on their invoice), "not" (not billed: why is the Billing page's), "off" (payments
-// off), "canceled", "none" (nothing to take off), or null (it failed: the owner's FAFO sends it again).
+// it off, free, as POST /alerts' cancel does (cancelStmt): every buyer's unpaid, unwaived line for it that the owner or an alert
+// put there, so one the owner moved to another buyer comes off the first's invoice too (the review of 1.9.161); never a buyer's
+// own report, nor one paid or waived. The owner's FAFO sends a cancel with bill until it's answered once, so one the owner charges
+// again stays. `gone` gets those lines, for the pay sessions holding them. The answer, per event: "added", "had" (already on
+// their invoice), "not" (not billed: why is the Billing page's), "off" (payments off), "canceled", "none" (nothing to take off),
+// or null (it failed: the owner's FAFO sends it again).
 async function shareBill(env, c, hash, x, gone) {
   if (!c) return "off";
   try {
     if (x.stage === "canceled") {
-      const { results } = await env.DB.prepare(`UPDATE billing_lines SET canceled_at = ?1, cancel_src = 'alert' WHERE key_hash = ?2 AND mode = ?3 AND store = ?4 AND order_no = ?5
-        AND source = 'owner' AND paid_at IS NULL AND canceled_at IS NULL AND waived_at IS NULL RETURNING id`).bind(c.now, hash, c.mode, x.store, x.orderNo).all();
+      const { results } = await cancelStmt(env, c, x.store, x.orderNo).all();
       gone.push(...results.map((r) => r.id));
       return results.length ? "canceled" : "none";
     }

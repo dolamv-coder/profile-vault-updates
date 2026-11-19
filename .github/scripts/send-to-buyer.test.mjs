@@ -219,7 +219,7 @@ await test("an order a remembered address sends gets that buyer once it's sent, 
   const o = order();
   const it = api.sharePlan([o], addrs()).get("b1")[0];
   api.shareMark(o, it, T0 + 5, ["sent"]);
-  assert.deepEqual(o.shareTo, { id: "b1", name: "@sam", by: "addr", at: T0 + 5 });
+  assert.deepEqual(o.shareTo, Object.assign({ id: "b1", name: "@sam", by: "addr", at: T0 + 5 }, html.includes("needBill") ? { bill: false } : {}));
   assert.equal(api.sharePlan([o], {}).size, 0, "forgetting the address doesn't take back what went, nor send it again");
   const q = order({ orderNo: "77" });
   api.shareMark(q, api.sharePlan([q], addrs()).get("b1")[0], T0, ["other"]);
@@ -289,6 +289,49 @@ if (BILL) await test("Add to their invoice on a remembered address: its future o
   const q = order({ orderNo: "R2" });
   api.shareMark(q, api.sharePlan([q], addrs({ bill: true })).get("b1")[0], T0, ["other"], [null]);
   assert.deepEqual([q.shareTo.off, q.shareTold], [true, undefined], "on another buyer's account: neither sent nor billed");
+});
+
+if (BILL) await test("Add to their invoice: a cancel goes with bill until the worker answered it, also after the order moved to another buyer; one done never goes again", () => {
+  const o = order({ orderNo: "X1", shareTo: { id: "b1", name: "@sam", by: "hand", bill: true } });
+  api.shareMark(o, api.sharePlan([o], {}).get("b1")[0], T0, ["sent"], ["added"]);
+  assert.deepEqual([o.shareTold.billed, o.shareTold.onInv], [1, 1]);
+  o.stage = "canceled";
+  let it = api.sharePlan([o], {}).get("b1")[0];
+  assert.deepEqual(it.events.map((e) => [e.stage, e.bill]), [["canceled", true]]);
+  api.shareMark(o, it, T0, ["sent"], [null]);
+  assert.equal(o.shareTold.cx, undefined, "the worker couldn't: it goes again");
+  it = api.sharePlan([o], {}).get("b1")[0];
+  assert.deepEqual(it.events.map((e) => [e.stage, e.bill]), [["canceled", true]], "its cancel again, for the bill alone");
+  api.shareMark(o, it, T0, ["already"], ["canceled"]);
+  assert.deepEqual([o.shareTold.cx, o.shareTold.onInv], [1, undefined]);
+  assert.equal(api.sharePlan([o], {}).size, 0);
+  o.shipTo = "Sam B Buyer";
+  it = api.sharePlan([o], {}).get("b1")[0];
+  assert.deepEqual(it.events.map((e) => [e.stage, e.bill]), [["canceled", undefined]], "sent again for its ship-to: never cancels a line the owner charged again");
+  // On an invoice, then moved to another buyer with the box unticked: its cancel still goes with bill (the worker takes it off
+  // the first buyer's invoice).
+  const m = order({ orderNo: "X2", shareTo: { id: "b1", name: "@sam", by: "hand", bill: true } });
+  api.shareMark(m, api.sharePlan([m], {}).get("b1")[0], T0, ["sent"], ["added"]);
+  m.shareTo = { id: "b2", name: "@kim", by: "hand" };
+  api.shareMark(m, api.sharePlan([m], {}).get("b2")[0], T0, ["sent"], undefined);
+  assert.deepEqual([m.shareTold.id, m.shareTold.onInv], ["b2", 1], "kept across the move");
+  m.stage = "canceled";
+  assert.deepEqual(api.sharePlan([m], {}).get("b2")[0].events.map((e) => [e.stage, e.bill]), [["canceled", true]]);
+  // Never on an invoice and not to be billed: its cancel goes without bill, as before 1.9.161.
+  const n = order({ orderNo: "X3", stage: "canceled", shareTo: { id: "b1", name: "@sam", by: "hand" } });
+  assert.ok(api.sharePlan([n], {}).get("b1")[0].events.every((e) => !e.bill));
+});
+if (BILL) await test("Add to their invoice: a remembered address's order a FAFO before 1.9.161 gave the buyer is billed if it was given after the address was billed", () => {
+  const ent = addrs({ bill: true, billFrom: T0 + 100 });
+  const mk = (to) => order({ orderNo: "Y" + ++seq, shareTo: Object.assign({ id: "b1", name: "@sam", by: "addr" }, to) });
+  assert.equal(api.shareTargetOf(mk({ at: T0 + 200 }), ent).bill, true, "given after: billed");
+  assert.equal(api.shareTargetOf(mk({ at: T0 + 50 }), ent).bill, undefined, "given before it was billed: not after the fact");
+  assert.equal(api.shareTargetOf(mk({ at: T0 + 200, bill: false }), ent).bill, false, "one 1.9.161 marked keeps what it said");
+  assert.equal(api.shareTargetOf(mk({ at: T0 + 200 }), addrs()).bill, undefined, "an address remembered without it");
+  assert.equal(api.shareTargetOf(mk({ at: T0 + 200, id: "b9" }), ent).bill, undefined, "another buyer's entry");
+  // One with no buyer yet: billed when FAFO added it from then on.
+  assert.equal(api.shareTargetOf(order({ createdAt: T0 + 200 }), ent).bill, true);
+  assert.equal(api.shareTargetOf(order({ createdAt: T0 + 50 }), ent).bill, undefined);
 });
 
 console.log("\nSending them (a pretend license worker)");

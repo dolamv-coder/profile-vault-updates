@@ -12747,7 +12747,16 @@ function shareDatesOf(o){
 // goes on that buyer's invoice (Send to buyer's Add to their invoice, kept on the order's shareTo and the address's entry).
 function shareTargetOf(o, addrs){
   if (!o || !o.orderNo || o.fromSeller) return null;
-  if (o.shareTo) return o.shareTo.off || !o.shareTo.id ? null : o.shareTo;
+  if (o.shareTo){
+    if (o.shareTo.off || !o.shareTo.id) return null;
+    // One a remembered address gave a buyer on a FAFO before 1.9.161, which writes no bill (1.9.161 writes it, true or false):
+    // billed when that address's entry for that buyer is, if it was given after the entry was billed (billFrom).
+    if (o.shareTo.by === "addr" && !("bill" in o.shareTo)){
+      const k = shareAddrKey(o.shipAddr), e = k && Object.values(addrs || {}).find(e => e && e.key === k && e.id === o.shareTo.id);
+      if (e && e.bill && (+o.shareTo.at || 0) >= (+e.billFrom || 0)) return Object.assign({}, o.shareTo, {bill:true});
+    }
+    return o.shareTo;
+  }
   const k = shareAddrKey(o.shipAddr); if (!k) return null;
   const ents = Object.values(addrs || {}).filter(e => e && e.key === k && e.id);
   if (!ents.length || new Set(ents.map(e => e.id)).size > 1) return null;
@@ -12755,7 +12764,7 @@ function shareTargetOf(o, addrs){
   // An entry that started over because another buyer had the address (strict) only takes orders FAFO adds from then on: one
   // placed earlier that day was waiting between the two.
   if (!((+o.createdAt || 0) >= (+e.at || 0) || (!e.strict && (o.at || "") >= day))) return null;
-  return Object.assign({id:e.id, name:e.name || "", by:"addr"}, e.bill ? {bill:true} : {});
+  return Object.assign({id:e.id, name:e.name || "", by:"addr"}, e.bill && (+o.createdAt || 0) >= (+e.billFrom || 0) ? {bill:true} : {});
 }
 // What to send: Map(buyer id -> [{o, to, det, steps, events}]), each step not sent to that buyer yet (the order itself, then
 // where it is now), or its step again when only the ship-to or tracking changed. A buyer changed starts over. only: order ids.
@@ -12770,15 +12779,18 @@ function sharePlan(orders, addrs, only){
     if (!steps.length && (told.det !== det || (acct && (told.acct || "") !== acct))) steps = [step];
     // Add to their invoice (1.9.161): an order not billed to that buyer yet goes again, its step as it is, until the worker
     // answered for its bill (told.billed). Only its step as it is now asks for the bill, so one canceled before it went is
-    // never added; and its cancel goes with bill whenever it was billed or is to be, so the store canceling it takes it off.
-    const bill = !!to.bill, needBill = bill && !told.billed;
-    if (!steps.length && needBill) steps = [step];
+    // never added. Its cancel goes with bill (the worker then takes it off any buyer's invoice the owner or an alert put it on)
+    // when it's to be billed or was on an invoice (onInv, kept when the order moves to another buyer), until the worker
+    // answered for that cancel (told.cx): a failed one goes again, and one done never cancels a line the owner charged again.
+    const bill = !!to.bill, needBill = bill && !told.billed, onInv = !!(o.shareTold && o.shareTold.onInv);
+    const needCx = step === "canceled" && !told.cx && (bill || onInv);
+    if (!steps.length && (needBill || needCx)) steps = [step];
     if (!steps.length) continue;
     const base = {store:storeKeyOf(o), storeName:orderStoreLabel(o), orderNo:o.orderNo, item:o.item || "", qty:String(o.qty || "1"), total:o.total || "", at:o.at || "",
       account:acct, auto:to.by === "addr",
       shipTo:o.shipTo || "", shipAddr:o.shipAddr || "", tracking:(o.tracking || []).map(t => ({number:t.number, carrier:t.carrier})), dates:shareDatesOf(o)};
     if (!by.has(to.id)) by.set(to.id, []);
-    const billOn = (x, i) => (needBill && i === steps.length - 1) || (x === "canceled" && (bill || !!told.billed));
+    const billOn = (x, i) => (needBill && i === steps.length - 1) || (x === "canceled" && needCx);
     const sub = steps.some(billOn) && typeof orderSubBeforeTax === "function" ? orderSubBeforeTax(o) : "";
     by.get(to.id).push({o, to, det, acct, steps, events:steps.map((x, i) => Object.assign({stage:x}, base, billOn(x, i) ? {bill:true, sub} : {}))});
   }
@@ -12787,7 +12799,9 @@ function sharePlan(orders, addrs, only){
 // Once the worker answered an order's events (res: "sent", "already", "updated", or "other": on an account given to another
 // buyer, which a remembered address never sends): what that buyer has now, and the buyer a remembered address gave it. bills
 // (1.9.161): the worker's answer for each event sent with bill ("added", "had", "not", "off", "canceled", "none"; null: it
-// couldn't, so it goes again), or no list from a worker before it, which can't bill.
+// couldn't, so it goes again), or no list from a worker before it, which can't bill. billed: the bill was answered; cx: its
+// cancel was (a canceled order's answer is both: it's never added); onInv: it's on an invoice ("added", "had"), kept when
+// another buyer gets the order, until a cancel is answered.
 function shareMark(o, it, now, res, bills){
   if ((res || []).includes("other")){
     // Only while it's still that address's: a buyer picked by hand meanwhile stays.
@@ -12796,9 +12810,17 @@ function shareMark(o, it, now, res, bills){
   }
   if ((res || []).includes("bad")) return;
   const told = o.shareTold && o.shareTold.id === it.to.id ? o.shareTold : {steps:{}};
-  const asked = it.events.some(e => e.bill), billed = !!told.billed || (asked && (!Array.isArray(bills) || bills.some(b => b != null)));
-  o.shareTold = Object.assign({id:it.to.id, steps:Object.assign({}, told.steps, ...it.steps.map(x => ({[x]:1}))), det:it.det}, it.acct ? {acct:it.acct} : {}, billed ? {billed:1} : {});
-  if (!o.shareTo && it.to.by === "addr") o.shareTo = Object.assign({id:it.to.id, name:it.to.name, by:"addr", at:now}, it.to.bill ? {bill:true} : {});
+  let billed = !!told.billed, cx = !!told.cx, onInv = !!(o.shareTold && o.shareTold.onInv);
+  it.events.forEach((e, i) => {
+    if (!e.bill) return;
+    const a = Array.isArray(bills) ? bills[i] : "old";
+    if (a == null) return;
+    if (e.stage === "canceled"){ billed = cx = true; onInv = false; }
+    else { billed = true; if (a === "added" || a === "had") onInv = true; }
+  });
+  o.shareTold = Object.assign({id:it.to.id, steps:Object.assign({}, told.steps, ...it.steps.map(x => ({[x]:1}))), det:it.det}, it.acct ? {acct:it.acct} : {},
+    billed ? {billed:1} : {}, cx ? {cx:1} : {}, onInv ? {onInv:1} : {});
+  if (!o.shareTo && it.to.by === "addr") o.shareTo = {id:it.to.id, name:it.to.name, by:"addr", at:now, bill:!!it.to.bill};
 }
 // On the buyer's FAFO: what the seller sent with an alert. Only what the seller changed since the last alert is put in (sellerSent
 // keeps that), so the buyer's own edits stay: the ship-to name and address, where they're empty or still the seller's (a clear
@@ -12973,8 +12995,8 @@ async function loadShareBuyers(force){
   return SHARE.buyers;
 }
 // Sends what sharePlan finds, a buyer at a time, 100 events to a request (only: those orders, sent by hand now, whether or not
-// this copy has caught up). Answers {sent, failed: [[buyer name, why]], byBuyer: {id: {sent, why, billed}}} (billed: orders put
-// on their invoice, 1.9.161). A run under way: this one follows it.
+// this copy has caught up). Answers {sent, failed: [[buyer name, why]], byBuyer: {id: {sent, why, billed, notBilled}}} (1.9.161:
+// orders put on their invoice, and ones the worker wouldn't put there). A run under way: this one follows it.
 function reportSharedOrders(only){
   if (SHARE.running) return SHARE.running.catch(() => {}).then(() => reportSharedOrders(only));
   const run = shareRun(only).finally(() => { SHARE.running = null; });
@@ -13026,6 +13048,7 @@ async function shareRun(only){
           const got = out ? out.slice(k, k + it.events.length) : it.events.map(() => "sent");
           const bills = billAns ? billAns.slice(k, k + it.events.length) : null; k += it.events.length;
           if (bills && bills.includes("added")) mine.billed = (mine.billed || 0) + 1;
+          else if (bills && bills.includes("not") && !bills.includes("had")) mine.notBilled = (mine.notBilled || 0) + 1;
           const o = orderById(it.o.id);
           if (o){ shareMark(o, it, now, got, bills); marked = true; }
           if (!got.includes("other") && !got.includes("bad")){ mine.sent++; res.sent++; }
@@ -13254,12 +13277,14 @@ function openSendToBuyer(ids){
         (e) => { if (panel.isConnected && !buyers) list.innerHTML = `<div class="item-sub" style="padding:8px">${esc(e.message)}</div>`; });
       if (stop) stop.addEventListener("click", () => {
         const now = Date.now(), m = Object.assign({}, S.settings.buyerAddrs);
-        let off = 0;
+        let off = 0, inv = 0;
         const keys = new Set();
-        ok.forEach(o => { const cur = orderById(o.id); if (cur && cur.shareTo && cur.shareTo.id){ const k = shareAddrKey(cur.shipAddr); if (k) keys.add(k); dropBuyerAddrs(m, Object.entries(m).filter(([, e]) => e && e.id === cur.shareTo.id && e.key === k).map(([ek]) => ek)); cur.shareTo = {off:true, at:now}; off++; } });
+        ok.forEach(o => { const cur = orderById(o.id); if (cur && cur.shareTo && cur.shareTo.id){ const k = shareAddrKey(cur.shipAddr); if (k) keys.add(k); dropBuyerAddrs(m, Object.entries(m).filter(([, e]) => e && e.id === cur.shareTo.id && e.key === k).map(([ek]) => ek)); if (cur.shareTold && cur.shareTold.onInv) inv++; cur.shareTo = {off:true, at:now}; off++; } });
         S.settings.buyerAddrs = m; persist(); close(); renderMain();
         const still = [...new Set(Object.values(m).filter(e => e && keys.has(e.key)).map(e => e.name || "another buyer"))];
-        toast(`Stopped sending ${plural(off, "order")}. The buyer's FAFO keeps what it already got. ` + (still.length ? `${off === 1 ? "Its address is" : "Their addresses are"} still kept for ${still.join(", ")}: orders there from now on go to them. Take ${still.length === 1 ? "that" : "those"} off in Settings → Orders sent to buyers to keep them here.` : `Future orders to ${off === 1 ? "its address" : "their addresses"} stay here.`));
+        toast(`Stopped sending ${plural(off, "order")}. The buyer's FAFO keeps what it already got. ` + (still.length ? `${off === 1 ? "Its address is" : "Their addresses are"} still kept for ${still.join(", ")}: orders there from now on go to them. Take ${still.length === 1 ? "that" : "those"} off in Settings → Orders sent to buyers to keep them here.` : `Future orders to ${off === 1 ? "its address" : "their addresses"} stay here.`)
+          // 1.9.161: stopping doesn't take one off an invoice, and FAFO sends no more of it, so the store canceling it can't.
+          + (inv ? ` ${inv === off ? (off === 1 ? "It stays" : "They stay") : plural(inv, "of them stays", "of them stay")} on the buyer's invoice: to take ${inv === 1 ? "it" : "them"} off, Waive ${inv === 1 ? "it" : "them"} on the Billing page (Settings, then Billing).` : ""));
       });
       send.addEventListener("click", async () => {
         const b = (buyers || []).find(x => x.id === pick); if (!b) return;
@@ -13281,14 +13306,17 @@ function openSendToBuyer(ids){
             // waiting to be picked, so only those from now on go.
             // strict: started over because another buyer had it, now or when the start kept here was set.
             // bill (1.9.161): future orders there go on their invoice, as Add to their invoice was ticked now.
-            m[k + "|" + b.id] = Object.assign({key:k, id:b.id, name, addr:a, at:had && +had.at && !others.length ? Math.min(+had.at, now) : now, set:now}, others.length || (had && had.strict) ? {strict:true} : {}, billIt ? {bill:true} : {});
+            // billFrom: when it started (orders given to the buyer before then aren't billed after the fact).
+            m[k + "|" + b.id] = Object.assign({key:k, id:b.id, name, addr:a, at:had && +had.at && !others.length ? Math.min(+had.at, now) : now, set:now}, others.length || (had && had.strict) ? {strict:true} : {},
+              billIt ? {bill:true, billFrom:had && had.bill && +had.billFrom && !others.length ? +had.billFrom : now} : {});
           }
           S.settings.buyerAddrs = m;
         }
         persist(); close(); renderMain();
         const res = await reportSharedOrders(new Set(ok.map(o => o.id))).catch(() => ({byBuyer:{}})), mine = res.byBuyer[b.id] || {sent:0, done:0, why:""};
         const there = mine.sent + mine.done;   // sent now, or already there with nothing new
-        const onInv = mine.billed ? ` ${mine.billed === n ? (n === 1 ? "It's" : "They're") : plural(mine.billed, "of them is", "of them are")} on their invoice now.` : "";
+        const onInv = (mine.billed ? ` ${mine.billed === n ? (n === 1 ? "It's" : "They're") : plural(mine.billed, "of them is", "of them are")} on their invoice now.` : "")
+          + (mine.notBilled ? ` ${mine.notBilled === n ? (n === 1 ? "It wasn't" : "They weren't") : plural(mine.notBilled, "of them wasn't", "of them weren't")} added to their invoice: on another buyer's, or not billed for them (Settings, then Billing).` : "");
         if (there >= n) toast((mine.sent ? `Sent ${plural(n, "order")} to ${name}. ${n === 1 ? "Its" : "Their"} updates go there too.` : `${n === 1 ? "It's" : "They're"} on ${name}'s Dashboard already. ${n === 1 ? "Its" : "Their"} updates go there too.`) + onInv);
         else if (!there) toast(`Couldn't send ${n === 1 ? "it" : "them"} to ${name}${mine.why ? ": " + mine.why : "."} FAFO tries again by itself.`, "err");
         else toast(`${plural(there, "order")} of ${n} went to ${name}${mine.why ? ": " + mine.why : ""}. FAFO tries the rest again by itself.`, "err");

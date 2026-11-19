@@ -187,7 +187,7 @@ try {
     assert.deepEqual(evs.map((e) => [e.orderNo, e.auto, !!e.bill]).sort(), [["902000000000003", true, true], ["902000000000004", true, false]]);
     const [o3, o4] = [await order("s3"), await order("s4")];
     assert.deepEqual([o3.shareTo.by, o3.shareTo.bill, o3.shareTold.billed], ["addr", true, 1]);
-    assert.deepEqual([o4.shareTo.by, o4.shareTo.bill, o4.shareTold.billed], ["addr", undefined, undefined]);
+    assert.deepEqual([o4.shareTo.by, o4.shareTo.bill, o4.shareTold.billed], ["addr", false, undefined], "kept as not billed, so the address billed later doesn't bill it after the fact");
   });
 
   await test("an answer the worker couldn't bill says nothing of the invoice and goes again; a worker before 1.9.161 isn't asked again", async () => {
@@ -224,6 +224,28 @@ try {
     await open(["s9", "s10"]);
     await pickBuyer(SAM);
     assert.equal(await send(), "Sent 2 orders to @sam.sample · Sam Sample. Their updates go there too. They're on their invoice now.");
+  });
+
+  await test("one the worker won't put on their invoice says so; Stop sending says what stays on an invoice", async () => {
+    await addOrder({ id: "s11" });
+    W.bill = () => "not";
+    await open(["s11"]);
+    await pickBuyer(SAM);
+    assert.equal(await send(), "Sent 1 order to @sam.sample · Sam Sample. Its updates go there too. It wasn't added to their invoice: on another buyer's, or not billed for them (Settings, then Billing).");
+    W.bill = () => "added";
+    // s1 went on Sam's invoice: stopping it leaves it there, and the toast says how to take it off.
+    await open(["s1"]);
+    const t = (await toasts()).length;
+    await page.click(`${P} #sb-stop`);
+    await until(async () => (await toasts()).length > t, "Stop sending's toast");
+    assert.match((await toasts()).slice(t).join(" | "), /It stays on the buyer's invoice: to take it off, Waive it on the Billing page \(Settings, then Billing\)\.$/);
+    assert.equal((await order("s1")).shareTo.off, true);
+    // s2 never went on an invoice: no such words.
+    await open(["s2"]);
+    const t2 = (await toasts()).length;
+    await page.click(`${P} #sb-stop`);
+    await until(async () => (await toasts()).length > t2, "Stop sending's toast");
+    assert.doesNotMatch((await toasts()).slice(t2).join(" | "), /invoice/);
   });
 
   await test("the page threw nothing", () => assert.deepEqual(errors, []));

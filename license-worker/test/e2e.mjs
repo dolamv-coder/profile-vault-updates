@@ -5669,18 +5669,35 @@ try {
     assert.deepEqual(t.bill, ["added"]);
     assert.deepEqual(await lineOf(tessKey, "TS-B2").then((x) => [x.amount, x.basis, x.basisFrom, x.basisTotal]), [1000, 5379, "total", "$59.98"]);
   });
-  await test("Add to their invoice: the store canceling it takes it off (sent with bill), never one already paid or another source's; an order already on their invoice, or on another buyer's, isn't added", async () => {
+  await test("Add to their invoice: the store canceling it takes it off, also one the owner moved to another buyer, never one paid or waived; an order already on their invoice, or on another buyer's, isn't added", async () => {
     const c = await shareTo(tessKey, [shareEv({ orderNo: "TS-B2", stage: "canceled", bill: true }), shareEv({ orderNo: "TS-NONE", stage: "canceled", bill: true })]);
     assert.deepEqual(c.bill, ["canceled", "none"]);
     assert.equal((await lineOf(tessKey, "TS-B2")).state, "canceled");
     // An order on their invoice already, from an alert for an account given to them: kept as it is.
-    const had = await shareTo(tessKey, [shareEv({ orderNo: "TB-1001", account: tessAcct, bill: true, sub: "$500.00" }), shareEv({ orderNo: "TB-1001", account: tessAcct, stage: "canceled", bill: true })]);
-    assert.deepEqual(had.bill, ["had", "none"], "an alert's line isn't the owner's to take off this way");
+    const had = await shareTo(tessKey, [shareEv({ orderNo: "TB-1001", account: tessAcct, bill: true, sub: "$500.00" })]);
+    assert.deepEqual(had.bill, ["had"]);
     assert.deepEqual(await lineOf(tessKey, "TB-1001").then((x) => [x.source, x.amount, x.state]), ["alert", 1000, "due"]);
     // On another buyer's invoice: not on this one's too.
     const other = await shareTo(ginaKey, [shareEv({ orderNo: "TB-1001", bill: true })]);
     assert.deepEqual(other.bill, ["not"]);
     assert.equal(await lineOf(ginaKey, "TB-1001"), undefined);
+    // Moved to another buyer (the review of 1.9.161): not on the second's invoice, and the store canceling it, sent to the
+    // second, takes it off the first's.
+    assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: "TS-MOVE", bill: true, sub: "$40.00" })])).bill, ["added"]);
+    assert.deepEqual((await shareTo(ginaKey, [shareEv({ orderNo: "TS-MOVE", bill: true, sub: "$40.00" })])).bill, ["not"]);
+    assert.deepEqual((await shareTo(ginaKey, [shareEv({ orderNo: "TS-MOVE", stage: "canceled", bill: true })])).bill, ["canceled"]);
+    assert.equal((await lineOf(tessKey, "TS-MOVE")).state, "canceled");
+    assert.equal(await lineOf(ginaKey, "TS-MOVE"), undefined);
+    // One paid or waived stays as it is.
+    for (const [no, col] of [["TS-PAID", "paid_at"], ["TS-WAIVED", "waived_at"]]) {
+      assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: no, bill: true, sub: "$40.00" })])).bill, ["added"]);
+      sqlRun(`UPDATE billing_lines SET ${col} = ${Date.now()} WHERE order_no = '${no}'`);
+      assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: no, stage: "canceled", bill: true })])).bill, ["none"], no);
+      assert.deepEqual(dbRows(`SELECT canceled_at FROM billing_lines WHERE order_no = '${no}'`).map((r) => r.canceled_at), [null], no);
+      // Taken out again, so the totals later tests count are as before.
+      sqlRun(`DELETE FROM billing_line_basis WHERE line_id IN (SELECT id FROM billing_lines WHERE order_no = '${no}')`);
+      sqlRun(`DELETE FROM billing_lines WHERE order_no = '${no}'`);
+    }
     // Taken off once it's done here, so the totals later tests count are as before.
     assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: "TS-B1", stage: "canceled", bill: true })])).bill, ["canceled"]);
     assert.equal((await lineOf(tessKey, "TS-B1")).state, "canceled");

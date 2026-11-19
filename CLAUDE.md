@@ -466,14 +466,17 @@ alone (every store's rows of one account) from reading the whole table. Only
   invoice or on another buyer's; `lineStmt`, source `owner`, so
   the buyer's Invoice says "Added by your seller"), on the account it was placed on (`acctHash`), the slot's profile when it's
   their slot's, priced by its amount before tax (`lineBasis`: the event's `sub`, else its total ÷ 1.115; Friends and Family
-  $5), due by the Sunday after. A `canceled` step with `bill` takes off that buyer's unpaid, unwaived line the owner put there
-  (`canceled_at`, `cancel_src` 'alert'; `expireFor` closes a pay session holding it). The answer adds `bill`, one per event
+  $5), due by the Sunday after. A `canceled` step with `bill` takes it off every buyer's invoice the owner or an alert put it
+  on, as POST /alerts' cancel does (`cancelStmt`: unpaid, unwaived lines, never a buyer's own report), so one the owner moved
+  to another buyer comes off the first's too (the review of 1.9.161); `expireFor` closes a pay session holding one. The answer
+  adds `bill`, one per event
   (null for one without `bill`): "added", "had" (already on their invoice, also when the same order came as an alert for an
   account given to them: one line per buyer, store and order number), "not", "off" (payments off), "canceled", "none", or null
   when writing it failed (the page sends it again). Nothing for an event the worker refuses (`bad`, `other`). A buyer's FAFO
   that reports a checkout on such an order still isn't billed for it (`billingCheckouts`). `e2e.mjs` sends Tess's orders with
   `sub` and with only a total, twice, cancels them, one already on her invoice from an alert, that one to Gina (on another
-  buyer's invoice), Gina as Friends and Family at $5, the owner's own FAFO, and payments off.
+  buyer's invoice), one moved to Gina and canceled there (off Tess's invoice), a paid and a waived one canceled (kept), Gina as
+  Friends and Family at $5, the owner's own FAFO, and payments off.
   Since 2026-11-07 (the owner's request: "make it to where the email gets forwarded to that specific buyer too… I choose to
   allow them to see the emails that are being used because these are my close friends"; their choices: to the buyer's own
   inbox, every email about the order, and the account shown) the account a shared order was placed on goes with it: D1
@@ -3174,25 +3177,36 @@ orders billed if it was ticked when the address was remembered; the worker secti
   invoice isn't added twice." (the buyer by the name they send slots under, else their Discord name, "their" before one is
   picked); and with Also send future orders ticked too, the note adds "Future orders sent there go on <buyer>'s invoice too."
 - **Kept:** Send with it ticked writes `bill: true` on each order's `shareTo` and on the remembered address's entry
-  (`buyerAddrs`), whose orders then carry it (`shareTargetOf`, and `shareMark` keeps it on the `shareTo` it writes). Unticked,
+  (`buyerAddrs`, with `billFrom`, when it started: kept while it stays billed for that buyer alone), whose orders FAFO adds from
+  then on carry it (`shareTargetOf`). `shareMark` writes `bill` true or false on the `shareTo` it gives a remembered address's
+  order, so an address billed later never bills one already given; one a FAFO before 1.9.161 gave (no `bill`) follows the
+  entry's `bill` if it was given from `billFrom` on (the review: a 1.9.160 device running meanwhile marks them first). Unticked,
   neither has it.
 - **Sent** (`sharePlan`): an order with `bill` that its buyer wasn't billed for yet (`shareTold.billed`) sends its step as it
   is now with `bill: true` and `sub` (`orderSubBeforeTax`), also when there's no new step (its step again, for the bill alone);
-  only that step asks, so an order already canceled when it goes is never added; and a `canceled` step goes with `bill`
-  whenever the order was billed or is to be, so a store cancel takes it off even after the box was unticked on a later send.
-  `shareMark` sets `shareTold.billed` once the worker answered for one of them (any answer but null), or always from a worker
-  before 1.9.161 (no `bill` list), which can't bill, so it isn't asked again. A new buyer starts over, the bill too.
-- **The toast** adds "It's on their invoice now." ("They're…", or "N of them is/are…") for those the worker added
-  (`reportSharedOrders`' `byBuyer[id].billed`).
+  only that step asks, so an order already canceled when it goes is never added. A `canceled` step goes with `bill` when the
+  order is to be billed or was on an invoice (`shareTold.onInv`, set by "added" or "had" and kept when the order moves to
+  another buyer), until the worker answered that cancel (`shareTold.cx`): a cancel whose write failed goes again, and one done
+  never goes with bill again, so sending it again for a new ship-to never cancels a line the owner charged again (both from the
+  review). `shareMark` reads each event's answer: a non-null one for the bill sets `billed` (and `onInv` for "added" or "had"),
+  for a cancel `billed` and `cx` (a canceled order is never added) and clears `onInv`; a worker before 1.9.161 (no `bill` list)
+  can't bill, so it isn't asked again. A new buyer starts over, the bill too.
+- **The toast** adds "It's on their invoice now." ("They're…", or "N of them is/are…") for those the worker added, and "It
+  wasn't added to their invoice: on another buyer's, or not billed for them (Settings, then Billing)." for "not"
+  (`reportSharedOrders`' `byBuyer[id].billed` and `notBilled`).
+- **Stop sending** doesn't take an order off an invoice, and FAFO sends no more of it, so a store cancel can't either: its
+  toast adds "It stays on the buyer's invoice: to take it off, Waive it on the Billing page (Settings, then Billing)." for those
+  on one (`onInv`).
 - **Settings → Orders sent to buyers** says that with Add to their invoice ticked (it starts ticked) each one goes on that
   buyer's invoice as a checkout, and a remembered address billed that way says "· goes on their invoice".
-- Stop sending doesn't take an order off an invoice: the Billing page's Waive does.
-- **Tests:** `send-to-buyer.test.mjs` (`sharePlan` and `shareMark` with `bill`, a remembered address's, the worker's answers per
-  event and the run's count; by `needBill` in the page, so it still passes on 1.9.160), and `send-bill.test.mjs`, which runs
-  the page in Chromium as the seller's own FAFO against a pretend worker (in CI after Target's optional inbox): the window, the
-  request, what's kept, a remembered address's orders with and without it, a worker that couldn't bill, one before 1.9.161, and
-  the toasts.
-- Orders' `shareTo` and `buyerAddrs` entries gain `bill`, and `shareTold` gains `billed`, which 1.9.112 keeps.
+- **Tests:** `send-to-buyer.test.mjs` (`sharePlan` and `shareMark` with `bill`, a remembered address's, cancels until answered
+  and across a move, an older FAFO's remembered-address orders and `billFrom`, the worker's answers per event and the run's
+  count; by `needBill` in the page, so it still passes on 1.9.160), and `send-bill.test.mjs`, which runs the page in Chromium
+  as the seller's own FAFO against a pretend worker (in CI after Target's optional inbox): the window, the request, what's kept,
+  a remembered address's orders with and without it, a worker that couldn't bill, one before 1.9.161, one it won't add, Stop
+  sending, and the toasts.
+- Orders' `shareTo` gains `bill`, `buyerAddrs` entries `bill` and `billFrom`, and `shareTold` `billed`, `cx` and `onInv`,
+  which 1.9.112 keeps.
 
 From 1.9.65, Settings → Web version & sync keeps a vault in step across the
 desktop app, the web version and other computers. The license worker stores
