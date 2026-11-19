@@ -3129,9 +3129,10 @@ alerts' license).
   nothing of inbox access (`imapSubmitNote`).
 - **The owner's words** say where its inbox passwords go now (`OWN_COSTCO_IMAP`: "on the logins' lines of the Costco slots
   you submit, for your bot to sign in"): Store logins' Inboxes line ("Its email and app password go …"), the web note under
-  it ("…leave it only when you press Test (…) and …", or with no license key "…, and leave it only …") and the desktop's
-  Settings → Email import lock line ("FAFO sends them to your email provider to sign in, and …"). A buyer's words are
-  1.9.159's.
+  it ("…leave it when you press Test (…) and …", or with no license key "…, and leave it …") and the desktop's Settings →
+  Email import lock line ("FAFO sends them to your email provider to sign in, and …"). Never "only" there: a sealed code for
+  Send somewhere else carries every store's inbox (`loginOut`), the owner's too (the review of 1.9.160). A buyer's words
+  are 1.9.159's.
 - An older page from the owner's FAFO sends Costco no imap file, so the worker has nothing to fill those lines from: the
   owner reloads the web version or restarts the desktop app into 1.9.160.
 - **Tests:** `imap-submit.test.mjs` (by `OWN_COSTCO_IMAP` in the page, so it still passes on 1.9.159): the owner's Costco

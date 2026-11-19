@@ -736,8 +736,8 @@ try {
     await page.waitForFunction(() => window.__t.isPremiumOwner());
     await view("logins"); await view("imap");
     const main = await text("#main");
-    assert.ok(main.includes("Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test (FAFO's server signs in with it and keeps nothing)"
-      + (OWN4 ? " and on the logins' lines of the Costco slots you submit, for your bot to sign in" : "") + "."), main.slice(0, 1200));
+    assert.ok(main.includes(OWN4 ? "Your inbox passwords are kept in your encrypted vault, and leave it when you press Test (FAFO's server signs in with it and keeps nothing) and on the logins' lines of the Costco slots you submit, for your bot to sign in."
+      : "Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test (FAFO's server signs in with it and keeps nothing)."), main.slice(0, 1200));
     assert.doesNotMatch(main, /with the slots you submit/);
     const t = await cardTest("ib-ok");
     assert.equal(t.body.email, "ok.sample@gmail.com");

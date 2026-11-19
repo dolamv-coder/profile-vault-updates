@@ -400,8 +400,9 @@ try {
     const tab = await imapTab();
     if (tab) await page.click('#side [data-id="imap"]');
     assert.doesNotMatch(await text("#main"), /FAFO sends your seller|leave it only with the slots|with the slots you submit/);
-    assert.ok((await text("#main")).includes("Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test (FAFO's server signs in with it and keeps nothing)"
-      + (OWN4 ? " and " + OWN_WORDS : "") + "."), "the web note");
+    assert.ok((await text("#main")).includes(OWN4 ? "Your inbox passwords are kept in your encrypted vault, and leave it when you press Test (FAFO's server signs in with it and keeps nothing) and " + OWN_WORDS + "."
+      : "Your inbox passwords are kept in your encrypted vault, and leave it only when you press Test (FAFO's server signs in with it and keeps nothing)."), "the web note");
+    if (OWN4) assert.doesNotMatch(await text("#main"), /leave it only/, "never \"only\" for the owner: a sealed code carries every store's inbox");
     if (OWN4) assert.ok((await text("#main")).includes("Its email and app password go " + OWN_WORDS + "."), "the Inboxes line");
     W.owner = false;
     await ev(() => window.__t.refreshPremium(true));
