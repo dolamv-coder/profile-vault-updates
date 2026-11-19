@@ -1,0 +1,1 @@
+Fixes Costco slots sent from the seller's own FAFO, which went out without each store login's inbox email and app password on its line. Nothing changes for the Costco slots buyers send.
