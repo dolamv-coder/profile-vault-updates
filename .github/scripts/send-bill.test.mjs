@@ -151,7 +151,7 @@ try {
     assert.equal(said, "Sent 1 order to @sam.sample · Sam Sample. Its updates go there too. It's on their invoice now.");
     const o = await order("s1");
     assert.deepEqual([o.shareTo.id, o.shareTo.by, o.shareTo.bill], [SAM, "hand", true]);
-    assert.equal(o.shareTold.billed, 1);
+    assert.equal(o.shareBill?.billed, 1);
     const ents = await ev(() => Object.values(window.__t.S.settings.buyerAddrs || {}));
     assert.deepEqual(ents.map((e) => [e.id, e.addr, e.bill]), [[SAM, "1 Sample St, Austin, TX 78701", true]]);
     const sec = await ev(() => { const d = document.createElement("div"); d.innerHTML = window.__t.sentBuyersSectionHTML(); return d.textContent.replace(/\s+/g, " ").trim(); });
@@ -170,7 +170,7 @@ try {
     assert.ok(sent.events.every((e) => !("bill" in e) && !("sub" in e)), JSON.stringify(sent.events));
     assert.equal(said, "Sent 1 order to @sam.sample · Sam Sample. Its updates go there too.");
     const o = await order("s2");
-    assert.equal(o.shareTo.bill, undefined); assert.equal(o.shareTold.billed, undefined);
+    assert.equal(o.shareTo.bill, undefined); assert.equal(o.shareBill?.billed, undefined);
     const e = await ev(() => Object.values(window.__t.S.settings.buyerAddrs).find((e) => e.addr.startsWith("2 Sample")));
     assert.equal(e.bill, undefined);
     await open(["s2"]);
@@ -186,8 +186,8 @@ try {
     const evs = W.shares.slice(n).flatMap((b) => b.events);
     assert.deepEqual(evs.map((e) => [e.orderNo, e.auto, !!e.bill]).sort(), [["902000000000003", true, true], ["902000000000004", true, false]]);
     const [o3, o4] = [await order("s3"), await order("s4")];
-    assert.deepEqual([o3.shareTo.by, o3.shareTo.bill, o3.shareTold.billed], ["addr", true, 1]);
-    assert.deepEqual([o4.shareTo.by, o4.shareTo.bill, o4.shareTold.billed], ["addr", false, undefined], "kept as not billed, so the address billed later doesn't bill it after the fact");
+    assert.deepEqual([o3.shareTo.by, o3.shareTo.bill, o3.shareBill?.billed], ["addr", true, 1]);
+    assert.deepEqual([o4.shareTo.by, o4.shareTo.bill, o4.shareBill?.billed], ["addr", false, undefined], "kept as not billed, so the address billed later doesn't bill it after the fact");
   });
 
   await test("an answer the worker couldn't bill says nothing of the invoice and goes again; a worker before 1.9.161 isn't asked again", async () => {
@@ -196,18 +196,18 @@ try {
     await open(["s5"]);
     await pickBuyer(SAM);
     assert.equal(await send(), "Sent 1 order to @sam.sample · Sam Sample. Its updates go there too.");
-    assert.equal((await order("s5")).shareTold.billed, undefined);
+    assert.equal(((await order("s5")).shareBill || {}).billed, undefined);
     W.bill = () => "added";
     const n = W.shares.length;
     await ev(() => window.__t.reportSharedOrders());
     assert.deepEqual(W.shares.slice(n).flatMap((b) => b.events).map((e) => [e.orderNo, e.stage, e.bill]), [["902000000000005", "placed", true]], "its step again, for the bill");
-    assert.equal((await order("s5")).shareTold.billed, 1);
+    assert.equal((await order("s5")).shareBill?.billed, 1);
     await addOrder({ id: "s6" });
     W.bill = "old";
     await open(["s6"]);
     await pickBuyer(SAM);
     assert.equal(await send(), "Sent 1 order to @sam.sample · Sam Sample. Its updates go there too.");
-    assert.equal((await order("s6")).shareTold.billed, 1, "an older worker can't bill: not asked again");
+    assert.equal((await order("s6")).shareBill?.billed, 1, "an older worker can't bill: not asked again");
     W.bill = () => "added";
   });
 
@@ -218,7 +218,7 @@ try {
     await pickBuyer(SAM);
     assert.match(await text(`${P} .item-sub`), /bill them for these checkouts\.$/);
     assert.equal(await send(), "Sent 2 orders to @sam.sample · Sam Sample. Their updates go there too. 1 of them is on their invoice now.");
-    assert.deepEqual([(await order("s7")).shareTold.billed, (await order("s8")).shareTold.billed], [1, 1]);
+    assert.deepEqual([(await order("s7")).shareBill?.billed, (await order("s8")).shareBill?.billed], [1, 1]);
     W.bill = () => "added";
     await addOrder({ id: "s9" }); await addOrder({ id: "s10" });
     await open(["s9", "s10"]);
