@@ -5702,6 +5702,20 @@ try {
     assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: "TS-B1", stage: "canceled", bill: true })])).bill, ["canceled"]);
     assert.equal((await lineOf(tessKey, "TS-B1")).state, "canceled");
   });
+  await test("Add to their invoice: a remembered address's order on one of the buyer's own accounts when it wasn't out as their slot isn't billed; out as their slot, sent by hand, or on another account, it is", async () => {
+    // tess.own@example.com is out as her Target slot (above): at Pokémon Center it's her own account, not a slot.
+    const pkc = (o) => shareEv(Object.assign({ store: "pokemoncenter", storeName: "Pokémon Center", bill: true, sub: "$40.00" }, o));
+    const auto = await shareTo(tessKey, [pkc({ orderNo: "TS-OWN1", auto: true, account: "Tess.Own@example.com" })]);
+    assert.deepEqual([auto.res, auto.bill], [["sent"], ["not"]], "sent to her Dashboard, never billed");
+    assert.equal(await lineOf(tessKey, "TS-OWN1"), undefined);
+    const inWin = await shareTo(tessKey, [shareEv({ orderNo: "TS-OWN2", auto: true, account: "tess.own@example.com", bill: true, sub: "$40.00" })]);
+    assert.deepEqual(inWin.bill, ["added"], "out as her slot that day");
+    assert.deepEqual((await shareTo(tessKey, [pkc({ orderNo: "TS-OWN3", account: "tess.own@example.com" })])).bill, ["added"], "the owner sent it by hand");
+    assert.deepEqual((await shareTo(tessKey, [pkc({ orderNo: "TS-OWN4", auto: true, account: "runner.acct@example.com" })])).bill, ["added"], "an account of the owner's");
+    // Taken off again, so the totals later tests count are as before.
+    for (const [no, st] of [["TS-OWN2", "target"], ["TS-OWN3", "pokemoncenter"], ["TS-OWN4", "pokemoncenter"]])
+      assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: no, store: st, stage: "canceled", bill: true })])).bill, ["canceled"], no);
+  });
   await test("Add to their invoice: Friends and Family pay $5 whatever the amount; the owner's own FAFO is never a buyer", async () => {
     const r = await shareTo(ginaKey, [shareEv({ orderNo: "GS-B1", bill: true, sub: "$250.00" })]);
     assert.deepEqual(r.bill, ["added"]);

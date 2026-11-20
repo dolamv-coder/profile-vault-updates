@@ -4197,7 +4197,7 @@ async function alertsShare(request, env, ctx) {
       else if (changed) { already++; updated++; res.push("updated"); }
       else { already++; res.push("already"); }
       bills.push(ev.bill === true ? await shareBill(env, billC, buyer.hash, { store, storeName: row.store_name, orderNo, item: row.item, qty: row.qty, at,
-        account: acct, profile, stage, sub: clip(ev.sub, 20), total: row.total }, gone) : null);
+        account: acct, profile, stage, sub: clip(ev.sub, 20), total: row.total, auto: ev.auto === true }, gone) : null);
     }
   } finally {
     if (gone.length) ctx.waitUntil(expireFor(env, billC, gone));
@@ -4219,7 +4219,9 @@ async function alertsShare(request, env, ctx) {
 // own report, nor one paid or waived. The owner's FAFO sends a cancel with bill until it's answered once, so one the owner charges
 // again stays. `gone` gets those lines, for the pay sessions holding them. The answer, per event: "added", "had" (already on
 // their invoice), "not" (not billed: why is the Billing page's), "off" (payments off), "canceled", "none" (nothing to take off),
-// or null (it failed: the owner's FAFO sends it again).
+// or null (it failed: the owner's FAFO sends it again). One a remembered address sent by itself (`auto`) on one of the buyer's own
+// accounts (billing_accounts: one they sent as a slot) on a day it wasn't out as their slot is their own checkout, which
+// nothing else bills either (billingCheckouts' rule): "not" (the third review of 1.9.161). One the owner sent by hand is.
 async function shareBill(env, c, hash, x, gone) {
   if (!c) return "off";
   try {
@@ -4229,10 +4231,15 @@ async function shareBill(env, c, hash, x, gone) {
       return results.length ? "canceled" : "none";
     }
     const d = realDay(x.at) ? x.at : day(c.now);
+    const ah = x.account ? await acctHash(x.account) : "";
+    if (x.auto && ah) {
+      const { results: wins } = await env.DB.prepare("SELECT store, acct_hash, sent_at, pulled_at FROM billing_accounts WHERE key_hash = ? AND acct_hash = ?").bind(hash, ah).all();
+      if (wins.length && !inWindow(wins, x.store, ah, d)) return "not";
+    }
     const out = await ownerOutcome(env, c, hash, { store: x.store, orderNo: x.orderNo, date: d });
     if (!out.ok) return out.why === "Already on the invoice" ? "had" : "not";
     const [r] = await env.DB.batch(lineStmt(env, c, { hash, store: x.store, storeName: x.storeName, orderNo: x.orderNo, item: x.item, qty: x.qty, orderAt: d,
-      acctHash: x.account ? await acctHash(x.account) : "", profile: x.profile, source: "owner", held: out.held, price: out.price, basis: lineBasis(x) }));
+      acctHash: ah, profile: x.profile, source: "owner", held: out.held, price: out.price, basis: lineBasis(x) }));
     return r.meta && r.meta.changes ? "added" : "had";
   } catch (e) { console.error("billing", e); return null; }
 }

@@ -50,7 +50,8 @@ const prelude = `let S = null; const MODE = "vault"; let OWNER = true; const UI 
   let SERVER = async () => ({ok:true, status:200, json:async () => ({ok:true})});
   const alertApi = (path, opts) => { calls.push([path, opts && opts.body ? JSON.parse(opts.body) : null]); if (opts && opts.signal) calls.push("signal"); return SERVER(path, opts && opts.body ? JSON.parse(opts.body) : null); };`;
 const api = new Function(prelude + code + `
-  return {setS:(s) => { S = s; }, getS:() => S, setOwner:(v) => { OWNER = v; }, setServer:(f) => { SERVER = f; }, calls, SHARE, W, OALERT, SELLER_DET_FROM,
+  return {shareKeepCancels:typeof shareKeepCancels === "function" ? shareKeepCancels : null, shareCxDue:typeof shareCxDue === "function" ? shareCxDue : null,
+    setS:(s) => { S = s; }, getS:() => S, setOwner:(v) => { OWNER = v; }, setServer:(f) => { SERVER = f; }, calls, SHARE, W, OALERT, SELLER_DET_FROM,
     shareAddrKey, shareTargetOf, sharePlan, shareMark, sellerDetailsApply, sellerSentPass, dropBuyerAddrs,
     forwardPlan, forwardFresh, forwardMark, forwardScope, forwardHad, fwdDest, forwardSharedMail, forwardSynced, FWD, PV, SYNCING, ORDER_MAIL, CAN_FORWARD, FWD_NOTE_RE, reportSharedOrders, sharedOrdersSynced, applySellerAlerts, pollSellerAlerts, jigChoices, pkcForms, shareDetOf};`)();
 
@@ -332,12 +333,28 @@ if (BILL) await test("Add to their invoice: a cancel goes with bill until the wo
   const n = order({ orderNo: "X3", stage: "canceled", shareTo: { id: "b1", name: "@sam", by: "hand" } });
   assert.ok(api.sharePlan([n], {}).get("b1")[0].events.every((e) => !e.bill));
   // A bill sent with no answer back (asked): its cancel goes with bill, as the worker may have added it.
-  const q = order({ orderNo: "X4", stage: "canceled", shareTo: { id: "b1", name: "@sam", by: "hand", bill: true }, shareBill: { id: "b1", asked: 1 },
+  const q = order({ orderNo: "X4", stage: "canceled", shareTo: { id: "b1", name: "@sam", by: "hand", bill: true }, shareBill: { asked: ["b1"] },
     shareTold: { id: "b1", steps: { placed: 1 }, det: "" } });
   it = api.sharePlan([q], {}).get("b1")[0];
   assert.deepEqual(it.events.map((e) => [e.stage, e.bill]), [["canceled", true]]);
   api.shareMark(q, it, T0, ["sent"], ["canceled"]);
   assert.deepEqual(q.shareBill, { id: "b1", billed: 1, cx: 1 });
+  // The third review: asked is the order's, kept across a move (ticked or not) and an unticked send, until that buyer's bill
+  // is answered or a cancel is.
+  for (const next of [{ id: "b2", name: "@kim", by: "hand" }, { id: "b2", name: "@kim", by: "hand", bill: true }, { id: "b1", name: "@sam", by: "hand" }]) {
+    const a = order({ orderNo: "X5" + seq, shareTo: next, shareBill: { asked: ["b1"] }, shareTold: { id: "b1", steps: { placed: 1 }, det: "" } });
+    const plan = api.sharePlan([a], {}).get(next.id)[0];
+    api.shareMark(a, plan, T0, plan.events.map(() => "sent"), plan.events.map((e) => (e.bill ? "not" : null)));
+    assert.deepEqual(a.shareBill.asked, ["b1"], JSON.stringify(next) + ": another buyer's answer, or none, doesn't settle b1's");
+    a.stage = "canceled";
+    assert.deepEqual(api.sharePlan([a], {}).get(next.id)[0].events.filter((e) => e.stage === "canceled").map((e) => e.bill), [true], JSON.stringify(next));
+  }
+  const b = order({ orderNo: "X6", shareTo: { id: "b1", name: "@sam", by: "hand", bill: true }, shareBill: { asked: ["b1"] }, shareTold: { id: "b1", steps: { placed: 1 }, det: "" } });
+  api.shareMark(b, api.sharePlan([b], {}).get("b1")[0], T0, ["already"], [null]);
+  assert.equal(b.shareBill.asked, undefined, "that buyer's answer read (null: nothing written) settles it");
+  const c2 = order({ orderNo: "X7", shareTo: { id: "b1", name: "@sam", by: "hand", bill: true }, shareBill: { asked: ["b1"] }, shareTold: { id: "b1", steps: { placed: 1 }, det: "" } });
+  api.shareMark(c2, api.sharePlan([c2], {}).get("b1")[0], T0, ["already"], ["?"]);
+  assert.deepEqual(c2.shareBill.asked, ["b1"], "an answer that couldn't be read settles nothing");
 });
 if (BILL) await test("Add to their invoice on a remembered address: its orders not given yet are billed, the same day's too; one given before stays as it was", () => {
   assert.deepEqual(api.shareTargetOf(order(), addrs({ bill: true })), { id: "b1", name: "@sam", by: "addr", bill: true });
@@ -414,10 +431,37 @@ if (BILL) await test("Add to their invoice: the worker's answer per event marks 
     const x = order({ id: "px" + ++seq, orderNo: "PX" + seq, shareTo: to });
     reset([x]); api.setServer(fail);
     await api.reportSharedOrders();
-    assert.deepEqual(x.shareBill, { id: "b1", asked: 1 }, String(fail));
+    assert.deepEqual(x.shareBill.asked, ["b1"], String(fail));
+    assert.equal(x.shareBill.billed, undefined);
     x.stage = "canceled"; x.shareTold = x.shareTold || { id: "b1", steps: { placed: 1 }, det: "" };
     assert.deepEqual(api.sharePlan([x], {}).get("b1")[0].events.filter((e) => e.stage === "canceled").map((e) => e.bill), [true]);
   }
+});
+if (BILL) await test("Add to their invoice: asked is noted before the request goes, so a lock mid-request keeps it; a billed order deleted while canceled still sends its cancel", async () => {
+  const to = { id: "b1", name: "@sam", by: "hand", bill: true };
+  const o = order({ id: "lk1", orderNo: "LK1", shareTo: to });
+  reset([o]);
+  let seen = null;
+  api.setServer(async () => { seen = JSON.parse(JSON.stringify(api.getS().orders[0].shareBill || null)); api.setS({ orders: [], settings: {} }); return ok({ ok: true, res: ["sent"], bill: ["added"] }); });
+  await api.reportSharedOrders();
+  assert.deepEqual(seen, { asked: ["b1"] }, "noted before it went");
+  assert.deepEqual(o.shareBill, { asked: ["b1"] }, "the vault locked meanwhile: the answer isn't applied, asked stays");
+  // Deleted while canceled, before its cancel went: it waits on this device and goes with bill.
+  const d = order({ id: "dl1", orderNo: "DL1", stage: "canceled", shareTo: to, shareBill: { id: "b1", billed: 1, onInv: 1 }, shareTold: { id: "b1", steps: { placed: 1 }, det: "" } });
+  reset([]);
+  api.getS().shareCancels = undefined;
+  api.shareKeepCancels([d, order({ id: "dl2", orderNo: "DL2", stage: "canceled", shareTo: to, shareBill: { id: "b1", billed: 1, cx: 1 } }), order({ id: "dl3", orderNo: "DL3", shareTo: to, shareBill: { id: "b1", onInv: 1 } })]);
+  assert.deepEqual(api.getS().shareCancels.map((c) => [c.oid, c.to, c.ev.stage, c.ev.bill, c.ev.orderNo, c.ev.shipTo]), [["dl1", "b1", "canceled", true, "DL1", "Sam Buyer"]], "only a canceled one on an invoice whose cancel wasn't answered");
+  api.setServer(async (path, body) => ok({ ok: true, res: body.events.map(() => "already"), bill: body.events.map(() => null) }));
+  await api.reportSharedOrders();
+  assert.deepEqual(posts().pop()[1].events.map((e) => [e.orderNo, e.stage, e.bill]), [["DL1", "canceled", true]]);
+  assert.equal(api.getS().shareCancels.length, 1, "the worker couldn't: it waits");
+  api.setServer(async (path, body) => ok({ ok: true, res: body.events.map(() => "already"), bill: body.events.map(() => "canceled") }));
+  await api.reportSharedOrders();
+  assert.equal(api.getS().shareCancels.length, 0, "answered: done");
+  api.calls.length = 0;
+  await api.reportSharedOrders(new Set(["x"]));
+  assert.equal(posts().length, 0);
 });
 await test("a buyer the worker refuses is noted, left an hour, and the others still go; a busy or unreachable worker stops them all until the next run", async () => {
   const orders = [order({ id: "a", orderNo: "A1", shareTo: { id: "b1", name: "@sam", by: "hand" } }), order({ id: "b", orderNo: "B1", shareTo: { id: "b2", name: "@kim", by: "hand" } })];

@@ -27,7 +27,7 @@ if (!HTML.includes('id="sb-bill"')) {
 }
 const END = "\ntry { if (window.pvDesktop && window.pvDesktop.appReady) window.pvDesktop.appReady(); } catch(e){}\n})();";
 assert.equal(HTML.split(END).length, 2, "couldn't find the end of the app's code");
-const PAGE = HTML.replace(END, "\nwindow.__t = {get S(){ return S; }, keepTypedLic, persist, render, refreshPremium, isPremiumOwner, openSendToBuyer, reportSharedOrders, sentBuyersSectionHTML, closeAllLayers};" + END);
+const PAGE = HTML.replace(END, "\nwindow.__t = {get S(){ return S; }, keepTypedLic, persist, render, refreshPremium, isPremiumOwner, openSendToBuyer, reportSharedOrders, sentBuyersSectionHTML, closeAllLayers, forgetOrders, unforgetOrders};" + END);
 let chromium;
 try { ({ chromium } = createRequire(import.meta.url)("playwright")); }
 catch (e) { console.error("This test needs Playwright: npm install --no-save playwright, then npx playwright install chromium"); process.exit(1); }
@@ -246,6 +246,30 @@ try {
     await page.click(`${P} #sb-stop`);
     await until(async () => (await toasts()).length > t2, "Stop sending's toast");
     assert.doesNotMatch((await toasts()).slice(t2).join(" | "), /invoice/);
+  });
+
+  await test("a billed order deleted while canceled, before its cancel went, still sends it with bill; Undo takes it back", async () => {
+    await addOrder({ id: "s12" });
+    await open(["s12"]);
+    await pickBuyer(SAM);
+    await send();
+    assert.equal((await order("s12")).shareBill?.onInv, 1);
+    // Canceled, then deleted before a run sent the cancel; Undo, then deleted again.
+    await ev(() => { const o = window.__t.S.orders.find((x) => x.id === "s12"); o.stage = "canceled"; o.status = "canceled"; });
+    // Deleted, then Undo (as the page's: the orders back, unforgetOrders), then deleted again.
+    const gone = await ev(() => { window.__undo = window.__t.forgetOrders(new Set(["s12"])); return window.__undo.length; });
+    assert.equal(gone, 1);
+    assert.deepEqual(await ev(() => (window.__t.S.shareCancels || []).map((c) => [c.oid, c.ev.stage, c.ev.bill])), [["s12", "canceled", true]]);
+    await ev(() => { window.__t.S.orders.push(...window.__undo); window.__t.unforgetOrders(window.__undo); });
+    assert.deepEqual(await ev(() => window.__t.S.shareCancels), [], "Undo takes the pending cancel back");
+    await ev(() => window.__t.forgetOrders(new Set(["s12"])));
+    const n = W.shares.length;
+    W.bill = () => "canceled";
+    await ev(() => window.__t.reportSharedOrders());
+    const evs = W.shares.slice(n).flatMap((b) => b.events);
+    assert.deepEqual(evs.map((e) => [e.orderNo, e.stage, e.bill]), [["9020000000000012", "canceled", true]]);
+    assert.deepEqual(await ev(() => window.__t.S.shareCancels), [], "answered: done");
+    W.bill = () => "added";
   });
 
   await test("the page threw nothing", () => assert.deepEqual(errors, []));
