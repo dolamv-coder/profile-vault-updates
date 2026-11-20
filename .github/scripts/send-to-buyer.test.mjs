@@ -463,6 +463,26 @@ if (BILL) await test("Add to their invoice: asked is noted before the request go
   await api.reportSharedOrders(new Set(["x"]));
   assert.equal(posts().length, 0);
 });
+if (BILL) await test("Add to their invoice: a deleted order's cancel goes to the buyer it goes to now (none after Stop sending), and a refusal or other answer settles asked", async () => {
+  const to = { id: "b1", name: "@sam", by: "hand", bill: true };
+  reset([]);
+  api.getS().settings.buyerAddrs = addrs({ bill: true });
+  // Its first bill's answer never came: no shareTold, no id on shareBill (the fourth review).
+  const a = order({ id: "k1", orderNo: "K1", stage: "canceled", shareTo: to, shareBill: { asked: ["b1"] } });
+  const b = order({ id: "k2", orderNo: "K2", stage: "canceled", shareBill: { asked: ["b1"] } });   // a remembered address's
+  const c = order({ id: "k3", orderNo: "K3", stage: "canceled", shareTo: { off: true, at: T0 }, shareBill: { id: "b1", billed: 1, onInv: 1 }, shareTold: { id: "b1", steps: { placed: 1 }, det: "" } });
+  const m = order({ id: "k4", orderNo: "K4", stage: "canceled", shareTo: { id: "b2", name: "@kim", by: "hand" }, shareBill: { id: "b1", billed: 1, onInv: 1 }, shareTold: { id: "b1", steps: { placed: 1 }, det: "" } });
+  api.shareKeepCancels([a, b, c, m]);
+  assert.deepEqual(api.getS().shareCancels.map((x) => [x.oid, x.to]), [["k1", "b1"], ["k2", "b1"], ["k4", "b2"]], "after Stop sending its line stays, as the toast said; moved: the buyer it goes to now");
+  // A 4xx the worker sends before writing anything, and an "other" answer, take that buyer off asked; a 5xx doesn't.
+  for (const [srv, want] of [[async () => no(410, "turned off"), undefined], [async () => no(400, "bad"), undefined], [async () => no(503, "later"), ["b1"]],
+    [async (path, body) => ok({ ok: true, res: body.events.map(() => "other"), bill: body.events.map(() => null) }), undefined]]) {
+    const x = order({ id: "r" + ++seq, orderNo: "R" + seq, shareTo: to });
+    reset([x]); api.setServer(srv);
+    await api.reportSharedOrders(new Set([x.id]));
+    assert.deepEqual((x.shareBill || {}).asked, want, String(srv));
+  }
+});
 await test("a buyer the worker refuses is noted, left an hour, and the others still go; a busy or unreachable worker stops them all until the next run", async () => {
   const orders = [order({ id: "a", orderNo: "A1", shareTo: { id: "b1", name: "@sam", by: "hand" } }), order({ id: "b", orderNo: "B1", shareTo: { id: "b2", name: "@kim", by: "hand" } })];
   reset(orders);

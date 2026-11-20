@@ -12818,6 +12818,7 @@ function sharePlan(orders, addrs, only){
 // before its answer was read (shareAsk, before the request): one whose answer never came (no connection, a 5xx, a body cut
 // off, a lock or a closed tab) stays, so the order's cancel goes with bill. "?" in bills: the answer couldn't be read.
 function shareMark(o, it, now, res, bills){
+  if ((res || []).includes("other") || (res || []).includes("bad")) shareUnask(o, it.to.id);
   if ((res || []).includes("other")){
     // Only while it's still that address's: a buyer picked by hand meanwhile stays.
     if (it.to.by === "addr" && (!o.shareTo || (o.shareTo.by === "addr" && o.shareTo.id === it.to.id))) o.shareTo = {off:true, why:"other", at:now};
@@ -13029,14 +13030,24 @@ function shareAsk(chunk){
     o.shareBill = Object.assign({}, prev, {asked:asked.concat(it.to.id)});
     n++;
   }
-  if (n) persist();
+  return n ? persist() : null;
+}
+// A request the worker refused before writing anything (a 4xx), or an order it answered "other" or "bad" for: that buyer's
+// bill was never written, so it comes off asked (the fourth review: Stop sending said it stayed on their invoice).
+function shareUnask(o, id){
+  const sb = o && o.shareBill;
+  if (!sb || !Array.isArray(sb.asked) || !sb.asked.includes(id)) return;
+  const asked = sb.asked.filter(x => x !== id), next = Object.assign({}, sb);
+  if (asked.length) next.asked = asked; else delete next.asked;
+  o.shareBill = next;
 }
 // A billed order deleted while canceled before its cancel went with bill (1.9.161): the cancel waits on this device
 // (S.shareCancels, never synced, like billCancels), so the worker still takes it off the invoice; Undo takes it back.
 function shareKeepCancels(gone){
   const add = [];
   for (const o of gone){
-    const sb = o.shareBill, to = (o.shareTold && o.shareTold.id) || (sb && sb.id);
+    // The buyer it goes to now, as sharePlan has it: none after Stop sending (its line stays, as its toast said).
+    const sb = o.shareBill, tgt = shareTargetOf(o, S.settings.buyerAddrs), to = tgt && tgt.id;
     if (o.stage !== "canceled" || !to || !o.orderNo || !shareCxDue(sb)) continue;
     add.push({oid:o.id, to, at:Date.now(), ev:Object.assign({stage:"canceled"}, shareBase(o, shareAcctOf(o), false), {bill:true, sub:""})});
   }
@@ -13080,7 +13091,8 @@ async function shareRun(only){
         const chunk = [];
         for (let n = 0; i < items.length && (!chunk.length || n + items[i].events.length <= 100); i++){ n += items[i].events.length; chunk.push(items[i]); }
         let r;
-        shareAsk(chunk);
+        await shareAsk(chunk);
+        if (S !== vault) return res;   // locked while it was saved: nothing goes
         try { r = await alertApi("/alerts/share", {method:"POST", body:JSON.stringify({to:id, events:chunk.flatMap(x => x.events)}), signal:shareTimeout()}); }
         catch(err){ mine.why = "Couldn't reach the license server."; res.failed.push([items[0].to.name, mine.why]); return res; }
         if (S !== vault) return res;   // locked meanwhile
@@ -13089,6 +13101,7 @@ async function shareRun(only){
           mine.why = ((await r.json().catch(() => ({}))).error) || "The license server couldn't take them just now.";
           if (S !== vault) return res;
           if ([400, 404, 410].includes(r.status)) SHARE.err[id] = {why:mine.why, at:Date.now()};   // that buyer: the others go on
+          if (r.status < 500){ chunk.forEach(it => { if (it.o) shareUnask(orderById(it.o.id), id); }); persist(); }   // refused before writing anything
           res.failed.push([items[0].to.name, mine.why]);
           if (r.status >= 500 || r.status === 429) return res;
           break;

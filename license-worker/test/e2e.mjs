@@ -5712,8 +5712,20 @@ try {
     assert.deepEqual(inWin.bill, ["added"], "out as her slot that day");
     assert.deepEqual((await shareTo(tessKey, [pkc({ orderNo: "TS-OWN3", account: "tess.own@example.com" })])).bill, ["added"], "the owner sent it by hand");
     assert.deepEqual((await shareTo(tessKey, [pkc({ orderNo: "TS-OWN4", auto: true, account: "runner.acct@example.com" })])).bill, ["added"], "an account of the owner's");
+    // On her invoice already (by hand above): a remembered address's send of it answers "had", not "not", so its cancel can
+    // still take it off (the fourth review).
+    assert.deepEqual((await shareTo(tessKey, [pkc({ orderNo: "TS-OWN3", auto: true, account: "tess.own@example.com" })])).bill, ["had"]);
+    // An account given to her: billed as an order alert would bill it, never after she pulled that slot (the fourth review).
+    const g = dbRows(`SELECT profile, batch FROM accounts WHERE key_hash = '${tessHash}' AND store = 'target' AND profile = 'Tess Given'`)[0];
+    sqlRun(`INSERT INTO billing_pulled (key_hash, store, profile, batch, pulled_at) VALUES ('${tessHash}', 'target', '${g.profile}', '${g.batch}', ${Date.now() - 3 * 86400000})`);
+    try {
+      assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: "TS-GIV1", auto: true, account: tessAcct, bill: true, sub: "$40.00" })])).bill, ["not"], "after she pulled it");
+      assert.equal(await lineOf(tessKey, "TS-GIV1"), undefined);
+      assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: "TS-GIV2", account: tessAcct, bill: true, sub: "$40.00" })])).bill, ["added"], "by hand it is");
+    } finally { sqlRun(`DELETE FROM billing_pulled WHERE key_hash = '${tessHash}' AND batch = '${g.batch}' AND profile = '${g.profile}'`); }
+    assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: "TS-GIV3", auto: true, account: tessAcct, bill: true, sub: "$40.00" })])).bill, ["added"], "not pulled: billed");
     // Taken off again, so the totals later tests count are as before.
-    for (const [no, st] of [["TS-OWN2", "target"], ["TS-OWN3", "pokemoncenter"], ["TS-OWN4", "pokemoncenter"]])
+    for (const [no, st] of [["TS-OWN2", "target"], ["TS-OWN3", "pokemoncenter"], ["TS-OWN4", "pokemoncenter"], ["TS-GIV2", "target"], ["TS-GIV3", "target"]])
       assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: no, store: st, stage: "canceled", bill: true })])).bill, ["canceled"], no);
   });
   await test("Add to their invoice: Friends and Family pay $5 whatever the amount; the owner's own FAFO is never a buyer", async () => {

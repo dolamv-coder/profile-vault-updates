@@ -4156,7 +4156,7 @@ async function alertsShare(request, env, ctx) {
       // address doesn't send it here (that account's own alert reaches its buyer). An account of the owner's own (their own
       // slots) doesn't stop it, nor one given out after the order (the rule POST /alerts goes by).
       const account = clip(ev.account, 120).toLowerCase();
-      let a = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) ? await env.DB.prepare("SELECT key_hash, profile, assigned_at FROM accounts WHERE email_norm = ? AND store = ? AND key_hash IS NOT NULL AND sent_at IS NOT NULL")
+      let a = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) ? await env.DB.prepare("SELECT key_hash, profile, assigned_at, batch FROM accounts WHERE email_norm = ? AND store = ? AND key_hash IS NOT NULL AND sent_at IS NOT NULL")
         .bind(account, store).first() : null;
       if (a && (a.key_hash === lic.hash || (at && at < new Date((a.assigned_at || 0) - 86400000).toISOString().slice(0, 10)))) a = null;
       if (a && a.key_hash !== buyer.hash && ev.auto === true) { other++; res.push("other"); bills.push(null); continue; }
@@ -4197,7 +4197,8 @@ async function alertsShare(request, env, ctx) {
       else if (changed) { already++; updated++; res.push("updated"); }
       else { already++; res.push("already"); }
       bills.push(ev.bill === true ? await shareBill(env, billC, buyer.hash, { store, storeName: row.store_name, orderNo, item: row.item, qty: row.qty, at,
-        account: acct, profile, stage, sub: clip(ev.sub, 20), total: row.total, auto: ev.auto === true }, gone) : null);
+        account: acct, profile, stage, sub: clip(ev.sub, 20), total: row.total, auto: ev.auto === true,
+        given: a && a.key_hash === buyer.hash ? a : null }, gone) : null);
     }
   } finally {
     if (gone.length) ctx.waitUntil(expireFor(env, billC, gone));
@@ -4219,9 +4220,11 @@ async function alertsShare(request, env, ctx) {
 // own report, nor one paid or waived. The owner's FAFO sends a cancel with bill until it's answered once, so one the owner charges
 // again stays. `gone` gets those lines, for the pay sessions holding them. The answer, per event: "added", "had" (already on
 // their invoice), "not" (not billed: why is the Billing page's), "off" (payments off), "canceled", "none" (nothing to take off),
-// or null (it failed: the owner's FAFO sends it again). One a remembered address sent by itself (`auto`) on one of the buyer's own
-// accounts (billing_accounts: one they sent as a slot) on a day it wasn't out as their slot is their own checkout, which
-// nothing else bills either (billingCheckouts' rule): "not" (the third review of 1.9.161). One the owner sent by hand is.
+// or null (it failed: the owner's FAFO sends it again). One a remembered address sent by itself (`auto`) that isn't on their
+// invoice already is billed by the rules that would bill it anyway, and "not" otherwise: on one of the buyer's own accounts
+// (billing_accounts: one they sent as a slot), only on a day it was out as their slot (billingCheckouts' rule; the third
+// review of 1.9.161); on an account given to them (`given`), as alertLine bills it (from the Eastern day given out, never
+// after they pulled that slot; the fourth review). One the owner sent by hand is billed whatever its account.
 async function shareBill(env, c, hash, x, gone) {
   if (!c) return "off";
   try {
@@ -4232,12 +4235,19 @@ async function shareBill(env, c, hash, x, gone) {
     }
     const d = realDay(x.at) ? x.at : day(c.now);
     const ah = x.account ? await acctHash(x.account) : "";
-    if (x.auto && ah) {
-      const { results: wins } = await env.DB.prepare("SELECT store, acct_hash, sent_at, pulled_at FROM billing_accounts WHERE key_hash = ? AND acct_hash = ?").bind(hash, ah).all();
-      if (wins.length && !inWindow(wins, x.store, ah, d)) return "not";
-    }
+    // On their invoice already answers "had" first, so its cancel can still take it off (the fourth review).
     const out = await ownerOutcome(env, c, hash, { store: x.store, orderNo: x.orderNo, date: d });
     if (!out.ok) return out.why === "Already on the invoice" ? "had" : "not";
+    if (x.auto && x.given) {
+      const g = x.given;
+      if (g.assigned_at && g.assigned_at >= etDayEnd(d)) return "not";
+      if ((await c.pulled(hash)).some((p) => p.store === x.store && p.profile === (g.profile || "") && p.batch === g.batch && p.pulled_at + TZ_SLACK_MS < dayStart(d))) return "not";
+    } else if (x.auto && ah) {
+      // A store typed as Costco is "other:costco" in a slot's row, and costco.com's orders "costco" (the fourth review).
+      const sk = (k) => k === "other:costco" ? "costco" : k;
+      const { results: wins } = await env.DB.prepare("SELECT store, acct_hash, sent_at, pulled_at FROM billing_accounts WHERE key_hash = ? AND acct_hash = ?").bind(hash, ah).all();
+      if (wins.length && !inWindow(wins.map((w) => Object.assign({}, w, { store: sk(w.store) })), sk(x.store), ah, d)) return "not";
+    }
     const [r] = await env.DB.batch(lineStmt(env, c, { hash, store: x.store, storeName: x.storeName, orderNo: x.orderNo, item: x.item, qty: x.qty, orderAt: d,
       acctHash: ah, profile: x.profile, source: "owner", held: out.held, price: out.price, basis: lineBasis(x) }));
     return r.meta && r.meta.changes ? "added" : "had";
