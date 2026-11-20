@@ -129,7 +129,10 @@
 //   POST /alerts/share         the sender only (app 1.9.138+): {to, events:[{store, storeName, orderNo, item, qty, total,
 //                              stage, at, account, auto, shipTo, shipAddr, tracking:[{number, carrier}], dates}]}: orders
 //                              the owner sends that buyer whatever account they were placed on, with the ship-to, tracking
-//                              and each step's date; {ok, sent, already, updated, bad, other, res: [one per event]}. Never billed.
+//                              and each step's date; {ok, sent, already, updated, bad, other, res: [one per event]}. Billed
+//                              only with bill (1.9.161: an event with bill:true, sub? puts the order on that buyer's invoice,
+//                              a canceled one takes it off any buyer's, as POST /alerts' cancel; then bill: [one per event,
+//                              null for those without])
 //                              From 1.9.139 the account it was placed on goes to the buyer too (GET /alerts' `account`)
 //   POST /alerts/forward/claim the sender only (app 1.9.139+, desktop 15): {to, ids:[24 hex]}: the store's emails about orders
 //                              sent to that buyer, by a hash of their Message-ID, claimed before the owner's FAFO forwards
@@ -4001,7 +4004,9 @@ async function alertsGet(request, env, url) {
 // page"). The owner's FAFO picks the buyer from GET /alerts/buyers and sends each order's steps with POST /alerts/share, kept
 // as that buyer's alerts whatever account the order was placed on (the same oid and row as an alert for an account given to
 // them, so the two are one order there), with the ship-to name and address and the tracking numbers (alert_details), and
-// never billed (the owner's choice). Details that change with no new step move the order's "update" row on, which only
+// never billed (the owner's choice) until 1.9.161: an event sent with `bill` (Send to buyer's Add to their invoice, ticked to
+// start; the owner, 2026-11-19: "Is there a way to invoice him automatically anytime I use the function send to buyer") puts
+// the order on that buyer's invoice as the Billing page's Add a checkout does (shareBill). Details that change with no new step move the order's "update" row on, which only
 // 1.9.138+ reads: older pages skip a step they don't know, and get the orders without the details. An order on an account given
 // to another buyer never goes to this one by a remembered address (auto): the alert for that account reaches its own buyer. Each
 // event's details and step are written together (one batch), so one that fails is written again whole.
@@ -4138,21 +4143,26 @@ async function alertsShare(request, env, ctx) {
   if (buyer.error) return json({ error: buyer.error }, buyer.status);
   if (buyer.hash === lic.hash) return json({ error: "That's your own FAFO." }, 400);
   const clip = (v, n) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, n);
-  const now = Date.now(), fresh = [], res = [];
+  const now = Date.now(), fresh = [], res = [], bills = [], gone = [];
+  // Add to their invoice (1.9.161): billing's context, only when payments are on and an event asks for it.
+  const billC = billingOn(env) && list.some((ev) => ev && ev.bill === true) ? billCtx(env, now) : null;
   let n = 0, already = 0, updated = 0, bad = 0, other = 0;
   try {
     for (const ev of list) {
       const store = clip(ev && ev.store, 64), stage = clip(ev && ev.stage, 12), orderNo = clip(ev && ev.orderNo, 40).toUpperCase();
       const at = /^\d{4}-\d{2}-\d{2}$/.test(String(ev && ev.at || "")) ? ev.at : "";
-      if (!store || !ALERT_STAGES.includes(stage) || !orderNo) { bad++; res.push("bad"); continue; }
+      if (!store || !ALERT_STAGES.includes(stage) || !orderNo) { bad++; res.push("bad"); bills.push(null); continue; }
       // The account it was placed on: given to this buyer, its slot's profile goes with it; given to another, a remembered
       // address doesn't send it here (that account's own alert reaches its buyer). An account of the owner's own (their own
       // slots) doesn't stop it, nor one given out after the order (the rule POST /alerts goes by).
       const account = clip(ev.account, 120).toLowerCase();
-      let a = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) ? await env.DB.prepare("SELECT key_hash, profile, assigned_at FROM accounts WHERE email_norm = ? AND store = ? AND key_hash IS NOT NULL AND sent_at IS NOT NULL")
+      let a = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) ? await env.DB.prepare("SELECT key_hash, profile, assigned_at, batch FROM accounts WHERE email_norm = ? AND store = ? AND key_hash IS NOT NULL AND sent_at IS NOT NULL")
         .bind(account, store).first() : null;
+      // Add to their invoice (1.9.161) goes by the account given to this buyer whatever the order's date, so one from before it
+      // was given out isn't billed as an account of the owner's (the fifth review).
+      const givenRow = a && a.key_hash === buyer.hash && a.key_hash !== lic.hash ? a : null;
       if (a && (a.key_hash === lic.hash || (at && at < new Date((a.assigned_at || 0) - 86400000).toISOString().slice(0, 10)))) a = null;
-      if (a && a.key_hash !== buyer.hash && ev.auto === true) { other++; res.push("other"); continue; }
+      if (a && a.key_hash !== buyer.hash && ev.auto === true) { other++; res.push("other"); bills.push(null); continue; }
       const profile = a && a.key_hash === buyer.hash ? String(a.profile || "") : "";
       const oid = (await sha256Hex(`${buyer.hash}|${store}|${orderNo}`)).slice(0, 20);
       const row = { id: randomId(12), key_hash: buyer.hash, oid, store, store_name: clip(ev.storeName, 40) || store, profile,
@@ -4189,15 +4199,62 @@ async function alertsShare(request, env, ctx) {
       if (out[stepAt].meta && out[stepAt].meta.changes) { fresh.push(row); res.push("sent"); }
       else if (changed) { already++; updated++; res.push("updated"); }
       else { already++; res.push("already"); }
+      bills.push(ev.bill === true ? await shareBill(env, billC, buyer.hash, { store, storeName: row.store_name, orderNo, item: row.item, qty: row.qty, at,
+        account: acct, profile, stage, sub: clip(ev.sub, 20), total: row.total, auto: ev.auto === true,
+        given: givenRow }, gone) : null);
     }
   } finally {
+    if (gone.length) ctx.waitUntil(expireFor(env, billC, gone));
     // Steps already written get their Discord post even when a later one failed.
     if (fresh.length) ctx.waitUntil(alertWebhooks(env, fresh).catch((e) => console.error("alert webhooks", e)));
   }
   ctx.waitUntil(env.DB.batch([env.DB.prepare("DELETE FROM alerts WHERE created_at < ?").bind(now - ALERT_KEEP_MS),
     env.DB.prepare("DELETE FROM alert_details WHERE updated_at < ?").bind(now - ALERT_KEEP_MS),
     env.DB.prepare("DELETE FROM alert_accounts WHERE updated_at < ?").bind(now - ALERT_KEEP_MS)]).catch(() => {}));
-  return json({ ok: true, sent: fresh.length, already, updated, bad, other, res });
+  return json(Object.assign({ ok: true, sent: fresh.length, already, updated, bad, other, res }, bills.some((x) => x !== null) || list.some((ev) => ev && ev.bill === true) ? { bill: bills } : {}));
+}
+
+// Add to their invoice (1.9.161): an order the owner sent a buyer with `bill` goes on that buyer's invoice as the Billing page's
+// Add a checkout puts one there (ownerOutcome: their exemption, Friends and Family's $5 and from when, a monthly plan's days, an
+// order on another buyer's invoice or already on theirs; lineStmt: priced by its amount before tax, due by the Sunday after),
+// as the owner's (source 'owner': "Added by your seller" on their Invoice), on the account it was placed on. A canceled step takes
+// it off, free, as POST /alerts' cancel does (cancelStmt): every buyer's unpaid, unwaived line for it that the owner or an alert
+// put there, so one the owner moved to another buyer comes off the first's invoice too (the review of 1.9.161); never a buyer's
+// own report, nor one paid or waived. The owner's FAFO sends a cancel with bill until it's answered once, so one the owner charges
+// again stays. `gone` gets those lines, for the pay sessions holding them. The answer, per event: "added", "had" (already on
+// their invoice), "not" (not billed: why is the Billing page's), "off" (payments off), "canceled", "none" (nothing to take off),
+// or null (it failed: the owner's FAFO sends it again). One a remembered address sent by itself (`auto`) that isn't on their
+// invoice already is billed by the rules that would bill it anyway, and "not" otherwise: on one of the buyer's own accounts
+// (billing_accounts: one they sent as a slot), only on a day it was out as their slot (billingCheckouts' rule; the third
+// review of 1.9.161); on an account given to them (`given`), as alertLine bills it (from the Eastern day given out, never
+// after they pulled that slot; the fourth review). One the owner sent by hand is billed whatever its account.
+async function shareBill(env, c, hash, x, gone) {
+  if (!c) return "off";
+  try {
+    if (x.stage === "canceled") {
+      const { results } = await cancelStmt(env, c, x.store, x.orderNo).all();
+      gone.push(...results.map((r) => r.id));
+      return results.length ? "canceled" : "none";
+    }
+    const d = realDay(x.at) ? x.at : day(c.now);
+    const ah = x.account ? await acctHash(x.account) : "";
+    // On their invoice already answers "had" first, so its cancel can still take it off (the fourth review).
+    const out = await ownerOutcome(env, c, hash, { store: x.store, orderNo: x.orderNo, date: d });
+    if (!out.ok) return out.why === "Already on the invoice" ? "had" : "not";
+    if (x.auto && x.given) {
+      const g = x.given;
+      if (g.assigned_at && g.assigned_at >= etDayEnd(d)) return "not";
+      if ((await c.pulled(hash)).some((p) => p.store === x.store && p.profile === (g.profile || "") && p.batch === g.batch && p.pulled_at + TZ_SLACK_MS < dayStart(d))) return "not";
+    } else if (x.auto && ah) {
+      // A store typed as Costco is "other:costco" in a slot's row, and costco.com's orders "costco" (the fourth review).
+      const sk = (k) => k === "other:costco" ? "costco" : k;
+      const { results: wins } = await env.DB.prepare("SELECT store, acct_hash, sent_at, pulled_at FROM billing_accounts WHERE key_hash = ? AND acct_hash = ?").bind(hash, ah).all();
+      if (wins.length && !inWindow(wins.map((w) => Object.assign({}, w, { store: sk(w.store) })), sk(x.store), ah, d)) return "not";
+    }
+    const [r] = await env.DB.batch(lineStmt(env, c, { hash, store: x.store, storeName: x.storeName, orderNo: x.orderNo, item: x.item, qty: x.qty, orderAt: d,
+      acctHash: ah, profile: x.profile, source: "owner", held: out.held, price: out.price, basis: lineBasis(x) }));
+    return r.meta && r.meta.changes ? "added" : "had";
+  } catch (e) { console.error("billing", e); return null; }
 }
 
 function alertText(a) {

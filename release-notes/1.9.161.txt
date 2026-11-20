@@ -1,0 +1,1 @@
+Orders your seller sends to your FAFO with Send to buyer can now go on your invoice as checkouts, marked Added by your seller and priced like your other checkouts. If the store cancels one, it comes off your invoice.
