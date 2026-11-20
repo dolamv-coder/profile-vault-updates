@@ -411,10 +411,12 @@ request; before, `orbit-slots-<date>-<time>-Kim-target-aycd.json`):
   (Pokémon Center gets one too), and only when there's a line. This worker checks it (each line an email and a password, no more
   lines than the store's slots; an older FAFO's Costco one too, which it reads into Costco's logins file and doesn't post) and
   keeps nothing of it.
-- `Kim-target-skus.txt` (FAFO 1.9.142 and later, since 2026-11-12, at your request): the products on your
-  Interests list (below) the buyer had ticked for that store when they sent the batch, one SKU per line, in
-  your list's order. It comes right after the store's other files, and only when they ticked any there. The
-  message itself doesn't mention it (you chose "A file only"); you approve or decline it with the batch.
+- `Kim-target-shikari-skus.txt` and `Kim-target-valor-skus.txt` (FAFO 1.9.142 and later, since 2026-11-12, at your
+  request): the products on your Interests list (below) the buyer had ticked for that store when they sent the batch,
+  in your list's order: Shikari's one SKU per line, then Valor's all on one line with a comma between each
+  (`88897899,89444931,88897898`; since 2026-11-20, when the first was named `Kim-target-skus.txt`). They come right
+  after the store's other files, and only when they ticked any there. The message itself doesn't mention them (you
+  chose "A file only"); you approve or decline them with the batch.
 
 The app sends each store's slots as that CSV: this worker reads it to give out accounts and, for apps
 before 1.9.87, to make the AYCD list, and posts it as the Shikari CSV (Costco's as the Hayha file). From 2026-10-06 to 2026-10-09 it
@@ -830,7 +832,7 @@ curl.exe -H "Authorization: Bearer YOUR_ADMIN_TOKEN" https://orbit-license.orbit
 From FAFO 1.9.142 (2026-11-12, at your request), every buyer's FAFO has an **Interests** tab, between IMAP and
 Submit, listing the products you'd run on their profiles: each with its picture, its name, what's in it and its SKU,
 under its set, and a box to tick. Each batch they send then carries the SKUs they've ticked for each of its stores,
-as `Kim-target-skus.txt` beside that store's other files (above): a new list with every batch, from the ticks
+as `Kim-target-shikari-skus.txt` and `Kim-target-valor-skus.txt` beside that store's other files (above): a new list with every batch, from the ticks
 at that moment.
 
 - **Your FAFO edits the list** (the one that sends order alerts, as for Premium buyers): **Edit list** on Interests
@@ -868,8 +870,9 @@ batch of slots. They come to the same channel as batches, in one message:
 -# @kim · license …ABCD
 ```
 
-with one `Kim-target-skus.txt` (and `Kim-pokemon-center-skus.txt`) per store with picks, named and written as a batch's
-SKU files are (one SKU per line, in your list's order; only products on your list now at that store). The name is the
+with `Kim-target-shikari-skus.txt` and `Kim-target-valor-skus.txt` (and Pokémon Center's two) per store with picks, named and
+written as a batch's SKU files are (Shikari's one SKU per line, Valor's with commas, in your list's order; only products on
+your list now at that store). The name is the
 one they typed in Submit's window, else their Discord name, else the license (`license …ABCD`, for a key made by hand,
 with no line under it). A buyer who unticks everything and sends sends `🎯 **Kim** cleared their Interests: no products
 picked`, with no file.
@@ -909,9 +912,10 @@ prices are included before tax."; the details below are defaults chosen for the 
 | --- | --- |
 | under $50.00 (under $1 too) | $5 |
 | $50.00 to $99.99 | $10 |
-| $100.00 to $149.99 | $15 |
-| $150.00 to $199.99 | $20 |
-| $200.00 and over | $25 |
+| $100.00 and over | $15 |
+
+(Since 2026-11-20, at your request: "Under $50: $5, $50 to $99.99: $10, $100 and over: $15". Until then $15 went up to
+$149.99, then $20 to $199.99 and $25 from $200. Checkouts already on an invoice keep what they were billed at.)
 
 - **The amount it goes by** (its *basis*), first that's known: the order's amount before tax the FAFO sends (`sub`, from
   FAFO 1.9.154: the store email's Subtotal when FAFO read one, else quantity × unit price); else only its total with tax

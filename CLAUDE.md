@@ -195,7 +195,7 @@ The release feed for installed copies of Orbit. It is not the full source tree.
   (`{store, storeKey, kind:"imap", text}`), one `email:app password` line per inbox (never for Use Assigned Account), which
   the worker posts as `<buyer>-<store>-imap.txt`, through the same `POST /submissions` and `DISCORD_WEBHOOK_URL` as the
   slots, right after the store's logins file, or its Shikari CSV when there's none (Pokémon Center gets one too; Costco none
-  since 2026-11-19, below), before its `-skus.txt`, counted in Discord's 10 a message and in the batch's `bytes`. The worker places it there whatever order it's
+  since 2026-11-19, below), before its SKU files, counted in Discord's 10 a message and in the batch's `bytes`. The worker places it there whatever order it's
   sent in, and refuses the batch (400 `files`) for one with no profiles file of its store (by `store` and `storeKey`), a
   second for a store, a line that isn't an email-shaped address (254 characters at most), a colon and a password with
   something but spaces in it (200 at most) (`imapLineOk`, `imapOk`; line breaks at the end are fine), or more lines than
@@ -547,8 +547,12 @@ alone (every store's rows of one account) from reading the whole table. Only
     list shows.
   - **`/submissions`** takes `interests` (`{storeKey: [sku]}`, page 1.9.142+). For each store the batch sends profiles
     for, the list's items at that store that were ticked go, in the list's order (`batchSkus`).
-    - They go as `<buyer>-<store>-skus.txt`, one SKU per line, right after that store's other files. The message doesn't
-      change.
+    - They go right after that store's other files, as two files with the same SKUs in the same order (`skuFiles`; the
+      owner, 2026-11-20, with a screenshot of a buyer's `-target-skus.txt`: "add another sku list labeled Valor. Must have a
+      comma after each sku. Like this 88897899,89444931,…", then "Label the original sku list Shikari Sku"):
+      `<buyer>-<store>-shikari-skus.txt`, one SKU per line with CRLF between (named `<buyer>-<store>-skus.txt` until then),
+      then `<buyer>-<store>-valor-skus.txt`, all on one line with a comma between each and none after the last, as the
+      owner's example. The message doesn't change.
     - Anything malformed, or a list that can't be read, sends no file rather than failing the batch.
   - **Sent on their own** (2026-11-17, the owner: "Include a submit button in Interests, that way buyers doesn't have to
     unsubmit and submit their profiles again. Submit can directly send sku numbers to FAFO's discord"; page 1.9.155):
@@ -557,7 +561,8 @@ alone (every store's rows of one account) from reading the whole table. Only
     - It keeps the SKUs on the current list at their store, in the list's order (`interestWants`, `interestKept`, which
       `batchSkus` also uses), and posts one message to `DISCORD_WEBHOOK_URL`: "🎯 **<buyer>** sent their Interests: Target 4
       · Pokémon Center 2" (a second line names the Discord name and the license's last four), with a file per store named
-      as batches name theirs (`buyerSlug`, `storeSlug`: `<buyer>-<store>-skus.txt`), or "… cleared their Interests: no
+      and written as batches name and write theirs (`buyerSlug`, `storeSlug`, `skuFiles`: `<buyer>-<store>-shikari-skus.txt`
+      and `-valor-skus.txt`), or "… cleared their Interests: no
       products picked" with none.
     - The same picks as the last post (`interestSig`: the first 16 hex of SHA-256 of the kept picks as JSON, store keys
       sorted, empty stores left out) answer `same` and post nothing. 20 posts a day per license (`INTEREST_SENDS_PER_DAY`,
@@ -697,7 +702,11 @@ alone (every store's rows of one account) from reading the whole table. Only
   On 2026-11-16 (the owner: "Friends and family are always $5. Orders that is before $1-49.99, $5. 50-99.99, $10.
   $100-149.99, $15. 150-199.99, $20. Anything over 200 is $25. All prices are included before tax."; the details below
   are defaults chosen for the owner) a checkout is **priced by the order's amount before tax** (worker and page 1.9.154):
-  - **Tiers** (`PRICE_TIERS`, `tierPrice`): $5 under $50, $10 from $50, $15 from $100, $20 from $150 and $25 from $200.
+  - **Tiers** (`PRICE_TIERS`, `tierPrice`): $5 under $50, $10 from $50 and $15 from $100, since 2026-11-20 (the owner:
+    "Fee per checkout, based on the order total before tax, at every retailer: Under $50: $5, $50 to $99.99: $10, $100 and
+    over: $15. let's change the fee for checkouts"); from 2026-11-16 to then, $5 under $50, $10 from $50, $15 from $100, $20
+    from $150 and $25 from $200. Worker only: pages 1.9.154+ show `GET /billing`'s `prices.tiers` (the plan card's "$5–$15",
+    its rows, the footer), and lines already on an invoice keep the amount they were written with, $20 and $25 too.
     Friends and Family pay `PRICE_FAMILY`, $5, whatever the amount; the owner's own FAFO is never charged.
   - **What a line is priced on** (`basis`, in cents, `lineBasis`):
     - the page's `sub` (on POST /alerts events and POST /billing/checkouts orders, page 1.9.154: the email's Subtotal,

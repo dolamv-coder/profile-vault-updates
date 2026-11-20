@@ -4604,7 +4604,7 @@ try {
     assert.equal(dbRows("SELECT COUNT(*) AS n FROM interest_pics")[0].n, 0, "an upload over a day old that nothing shows goes");
     assert.equal((await iPut(bobKey, { rev: irev, items: [iItem("88897899", "Sample", { pic: iUp })] })).status, 400, "and can't be used without uploading it again");
   });
-  await test("interests: a batch carries the SKUs ticked for each of its stores, on the list, in its order, after that store's files", async () => {
+  await test("interests: a batch carries the SKUs ticked for each of its stores, on the list, in its order, after that store's files: Shikari's one a line, then Valor's with commas", async () => {
     const r = await iPut(bobKey, { rev: irev, items: [iItem("88897899", "Sample Elite Trainer Box"), iItem("100-10001", "Sample PC Bundle", { store: "pokemoncenter" }),
       iItem("88897898", "Sample Booster Box"), iItem("100-10002", "Sample PC Tin", { store: "pokemoncenter" }), iItem("1011407490", "Sample Tin"), iItem("88897904", "Sample Collection")] });
     assert.equal(r.status, 200); irev = r.body.rev;
@@ -4612,11 +4612,13 @@ try {
     const interests = { target: ["1011407490", "88897899", "88897899", "99999999", "100-10001"], pokemoncenter: ["100-10002"], walmart: ["12345678"] };
     const stores = [{ name: "Target", n: 2 }, { name: "Pokémon Center", n: 1 }];
     const s = await iSubmit(files, { interests, stores });
-    assert.deepEqual(s.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-skus.txt",
-      "Gina-pokemon-center-aycd.json", "Gina-pokemon-center-shikari.csv", "Gina-pokemon-center-skus.txt"]);
+    assert.deepEqual(s.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-shikari-skus.txt", "Gina-target-valor-skus.txt",
+      "Gina-pokemon-center-aycd.json", "Gina-pokemon-center-shikari.csv", "Gina-pokemon-center-shikari-skus.txt", "Gina-pokemon-center-valor-skus.txt"]);
     const sk = s.files.filter((f) => f.name.endsWith("-skus.txt"));
-    assert.deepEqual(sk.map((f) => f.text), ["88897899\r\n1011407490", "100-10002"], "the list's order, once each, only that store's, only what's on the list");
+    assert.deepEqual(sk.map((f) => f.text), ["88897899\r\n1011407490", "88897899,1011407490", "100-10002", "100-10002"],
+      "the list's order, once each, only that store's, only what's on the list: one a line, then on one line with a comma between (none at the end)");
     assert.ok(sk.every((f) => /^text\/plain/.test(f.type)));
+    assert.ok(!s.files.some((f) => /-target-skus\.txt$/.test(f.name)), "the old name is gone");
     assert.deepEqual(s.d.skus, { target: 2, pokemoncenter: 1 });
     // The message is as it was without them (the owner chose a file only).
     const plainBatch = await iSubmit(files, { stores });
@@ -4636,21 +4638,21 @@ try {
       assert.equal(s.d.skus, undefined);
     }
   });
-  await test("interests: with more than 10 files, each store's SKUs still follow its files into the next message", async () => {
+  await test("interests: with more than 10 files, each store's SKUs still follow its files into the next message, Valor's after Shikari's", async () => {
     const files = [
       iFile("Walmart", "walmart", ["Gina W1"]), iFile("Walmart", "walmart", ["Gina W1"], "logins"),
-      iFile("Best Buy", "bestbuy", ["Gina B1"]), iFile("Best Buy", "bestbuy", ["Gina B1"], "logins"),
+      iFile("Best Buy", "bestbuy", ["Gina B1"]), iFile("Kohl's", "kohls", ["Gina K1"]),
       iFile("Pokémon Center", "pokemoncenter", ["Gina P1"]),
       iFile("Target", "target", ["Gina T1"]), iFile("Target", "target", ["Gina T1"], "logins"),
     ];
     const s = await iSubmit(files, { interests: { target: ["88897898"], pokemoncenter: ["100-10001", "100-10002"] } });
     assert.equal(s.posts.length, 2, "two messages");
     assert.deepEqual(s.posts.map((m) => m.files.map((f) => f.name)), [
-      ["Gina-walmart-aycd.json", "Gina-walmart-shikari.csv", "Gina-walmart-logins.txt", "Gina-best-buy-aycd.json", "Gina-best-buy-shikari.csv", "Gina-best-buy-logins.txt",
-        "Gina-pokemon-center-aycd.json", "Gina-pokemon-center-shikari.csv", "Gina-pokemon-center-skus.txt", "Gina-target-aycd.json"],
-      ["Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-skus.txt"]]);
-    assert.match(s.posts[1].content, /^-# More files for the batch from \*\*Gina\*\* · @gina · license …\w{4} \(11–13 of 13\)\.$/);
-    assert.deepEqual(s.files.filter((f) => f.name.endsWith("-skus.txt")).map((f) => f.text), ["100-10001\r\n100-10002", "88897898"]);
+      ["Gina-walmart-aycd.json", "Gina-walmart-shikari.csv", "Gina-walmart-logins.txt", "Gina-best-buy-aycd.json", "Gina-best-buy-shikari.csv", "Gina-kohl-s-aycd.json",
+        "Gina-kohl-s-shikari.csv", "Gina-pokemon-center-aycd.json", "Gina-pokemon-center-shikari.csv", "Gina-pokemon-center-shikari-skus.txt"],
+      ["Gina-pokemon-center-valor-skus.txt", "Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-shikari-skus.txt", "Gina-target-valor-skus.txt"]]);
+    assert.match(s.posts[1].content, /^-# More files for the batch from \*\*Gina\*\* · @gina · license …\w{4} \(11–16 of 16\)\.$/);
+    assert.deepEqual(s.files.filter((f) => f.name.endsWith("-skus.txt")).map((f) => f.text), ["100-10001\r\n100-10002", "100-10001,100-10002", "88897898", "88897898"]);
     assert.deepEqual(s.d.skus, { pokemoncenter: 2, target: 1 });
   });
   await test("interests: beside a store typed as Target (before 1.9.94), Target's SKUs follow Target's own files, by its key", async () => {
@@ -4659,18 +4661,18 @@ try {
     const logins = (names) => ({ ...iFile("Target", "target", names, "logins"), storeKey: undefined });
     const typedFirst = await iSubmit([typed(["Gina O1"]), iFile("Target", "target", ["Gina T2"]), logins(["Gina T2"])], { interests: { target: ["88897899"] } });
     assert.deepEqual(typedFirst.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv",
-      "Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-skus.txt"], "the typed store's group first: still sent");
-    assert.equal(typedFirst.files.at(-1).text, "88897899");
+      "Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-shikari-skus.txt", "Gina-target-valor-skus.txt"], "the typed store's group first: still sent");
+    assert.deepEqual(typedFirst.files.slice(-2).map((f) => f.text), ["88897899", "88897899"]);
     assert.deepEqual(typedFirst.d.skus, { target: 1 });
     const targetFirst = await iSubmit([iFile("Target", "target", ["Gina T3"]), logins(["Gina T3"]), typed(["Gina O2"])], { interests: { target: ["88897899"] } });
-    assert.deepEqual(targetFirst.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-skus.txt",
+    assert.deepEqual(targetFirst.files.map((f) => f.name), ["Gina-target-aycd.json", "Gina-target-shikari.csv", "Gina-target-logins.txt", "Gina-target-shikari-skus.txt", "Gina-target-valor-skus.txt",
       "Gina-target-aycd.json", "Gina-target-shikari.csv"], "right after Target's logins, not after the typed store's files");
   });
 
   console.log("\nInterests sent from the Interests page (page 1.9.155, 2026-11-17)");
   // The owner: "Include a submit button in Interests, that way buyers doesn't have to unsubmit and submit their profiles
   // again. Submit can directly send sku numbers to FAFO's discord." POST /interests/send posts a buyer's picks on their own:
-  // one message, with the <buyer>-<store>-skus.txt files a batch has. Zoe is a buyer of her own here, so Gina's answers stay
+  // one message, with the SKU files a batch has (<buyer>-<store>-shikari-skus.txt and -valor-skus.txt). Zoe is a buyer of her own here, so Gina's answers stay
   // `sent: null`; Bob's FAFO is the owner's. The list is the one saved above: Target 88897899, 88897898, 1011407490 and
   // 88897904, Pokémon Center 100-10001 and 100-10002, in that order.
   let zoeKey, zoeLast;   // Zoe's last post: {at, sig}
@@ -4702,7 +4704,7 @@ try {
     assert.equal((await fetchOnce(BASE + "/interests/send", { headers: { authorization: "Bearer " + zoeKey } })).status, 404, "POST only");
     assert.equal((await fetchOnce(BASE + "/interests/send", { method: "OPTIONS" })).status, 204);
   });
-  await test("interests send: the SKUs ticked that the list has go per store, in the list's order, as <buyer>-<store>-skus.txt files in one message", async () => {
+  await test("interests send: the SKUs ticked that the list has go per store, in the list's order, as <buyer>-<store>-shikari-skus.txt and -valor-skus.txt files in one message", async () => {
     const before = webhookPosts.length, t0 = Date.now();
     // Out of the list's order, one twice, a number, one the list doesn't have, one of the other store's, malformed ones, and a
     // store the list doesn't have first.
@@ -4718,8 +4720,9 @@ try {
     assert.equal(webhookPosts.length, before + 1); assert.equal(posts.length, 1, "one message");
     const m = posts[0];
     assert.equal(m.content, `🎯 **Zoë Sample** sent their Interests: Target 4 · Pokémon Center 2${zoeTail()}`);
-    assert.deepEqual(m.files.map((f) => [f.name, f.text]), [["Zoe-Sample-target-skus.txt", "88897899\r\n88897898\r\n1011407490\r\n88897904"],
-      ["Zoe-Sample-pokemon-center-skus.txt", "100-10001\r\n100-10002"]]);
+    assert.deepEqual(m.files.map((f) => [f.name, f.text]), [["Zoe-Sample-target-shikari-skus.txt", "88897899\r\n88897898\r\n1011407490\r\n88897904"],
+      ["Zoe-Sample-target-valor-skus.txt", "88897899,88897898,1011407490,88897904"],
+      ["Zoe-Sample-pokemon-center-shikari-skus.txt", "100-10001\r\n100-10002"], ["Zoe-Sample-pokemon-center-valor-skus.txt", "100-10001,100-10002"]]);
     assert.ok(m.files.every((f) => /^text\/plain/.test(f.type)));
     assert.deepEqual(m.allowed_mentions, { parse: [] });
     const row = sendRow(zoeKey);
@@ -4753,7 +4756,7 @@ try {
     const m = sendPosts(before);
     assert.equal(m.length, 1);
     assert.equal(m[0].content, `🎯 **Zoë Sample** sent their Interests: Target 2${zoeTail()}`, "only the stores with picks");
-    assert.deepEqual(m[0].files.map((f) => [f.name, f.text]), [["Zoe-Sample-target-skus.txt", "88897899\r\n1011407490"]]);
+    assert.deepEqual(m[0].files.map((f) => [f.name, f.text]), [["Zoe-Sample-target-shikari-skus.txt", "88897899\r\n1011407490"], ["Zoe-Sample-target-valor-skus.txt", "88897899,1011407490"]]);
     assert.equal(sendRow(zoeKey).n, 2);
     zoeLast = { at: r.body.at, sig: r.body.sig };
     assert.deepEqual((await iGet(zoeKey)).body.sent, zoeLast);
@@ -4767,27 +4770,27 @@ try {
     assert.equal(mine.content, `🎯 **Gina** sent their Interests: Target 2${zoeTail()}`);
     const batch = await iSubmit([iFile("Target", "target", ["Gina Send1"])], { interests: { target: ["1011407490", "88897898"] } });
     assert.deepEqual(mine.files.map((f) => [f.name, f.text, f.type]), batch.files.filter((f) => f.name.endsWith("-skus.txt")).map((f) => [f.name, f.text, f.type]));
-    assert.deepEqual(mine.files.map((f) => f.name), ["Gina-target-skus.txt"]);
+    assert.deepEqual(mine.files.map((f) => f.name), ["Gina-target-shikari-skus.txt", "Gina-target-valor-skus.txt"]);
     assert.equal(sendRow(ginaKey), null, "slot batches send their SKUs as before, and don't count here");
     // No name: their Discord name, with the license on the line under it.
     const b2 = webhookPosts.length;
     assert.equal((await sendI(zoeKey, { interests: { pokemoncenter: ["100-10002"] } })).status, 200);
     const m2 = sendPosts(b2)[0];
     assert.equal(m2.content, `🎯 **zoe** sent their Interests: Pokémon Center 1\n-# license …${zoeKey.slice(-4)}`);
-    assert.deepEqual(m2.files.map((f) => [f.name, f.text]), [["zoe-pokemon-center-skus.txt", "100-10002"]]);
+    assert.deepEqual(m2.files.map((f) => [f.name, f.text]), [["zoe-pokemon-center-shikari-skus.txt", "100-10002"], ["zoe-pokemon-center-valor-skus.txt", "100-10002"]], "one SKU: no comma");
     // Markdown in a name shows as typed, and a name is 60 characters at most, as a batch's.
     const b3 = webhookPosts.length, long = "Sam_*Sample*_" + "x".repeat(80);
     assert.equal((await sendI(zoeKey, { name: long, interests: { target: ["88897904"] } })).status, 200);
     const m3 = sendPosts(b3)[0];
     assert.equal(m3.content, "🎯 **Sam\\_\\*Sample\\*\\_" + "x".repeat(47) + "** sent their Interests: Target 1" + zoeTail());
-    assert.deepEqual(m3.files.map((f) => f.name), ["Sam-Sample-" + "x".repeat(19) + "-target-skus.txt"]);
+    assert.deepEqual(m3.files.map((f) => f.name), ["Sam-Sample-" + "x".repeat(19) + "-target-shikari-skus.txt", "Sam-Sample-" + "x".repeat(19) + "-target-valor-skus.txt"]);
     // A key made by hand has no Discord name: the license, and nothing more to tell it by.
     const b4 = webhookPosts.length;
     const h = await sendI(GH_KEY, { interests: { target: ["88897899"] } });
     assert.equal(h.status, 200, JSON.stringify(h.body));
     const m4 = sendPosts(b4)[0];
     assert.equal(m4.content, "🎯 **license …KEY2** sent their Interests: Target 1");
-    assert.deepEqual(m4.files.map((f) => [f.name, f.text]), [["license-KEY2-target-skus.txt", "88897899"]]);
+    assert.deepEqual(m4.files.map((f) => [f.name, f.text]), [["license-KEY2-target-shikari-skus.txt", "88897899"], ["license-KEY2-target-valor-skus.txt", "88897899"]]);
     assert.deepEqual((await iGet(GH_KEY)).body.sent, { at: h.body.at, sig: sigOf({ target: ["88897899"] }) }, "each license its own");
     assert.equal(sendRow(zoeKey).n, 5);
     zoeLast = (await iGet(zoeKey)).body.sent;
@@ -4922,9 +4925,10 @@ try {
       yFile("Pokémon Center", "pokemoncenter", ["Yuri Four"]), { store: "Pokémon Center", kind: "logins", text: `four.pc@example.com:${Y_PW[3]}` }, yFile("Pokémon Center", "pokemoncenter", null, "imap", pcImap)];
     const s = await ySubmit(files, { interests: { target: ["88897898"], pokemoncenter: ["100-10001"] }, stores: [{ name: "Target", n: 3 }, { name: "Pokémon Center", n: 1 }] });
     yBatches.push(s.d.id);
-    assert.equal(s.posts.length, 1);
-    assert.deepEqual(s.files.map((f) => f.name), ["Yuri-target-aycd.json", "Yuri-target-shikari.csv", "Yuri-target-logins.txt", "Yuri-target-imap.txt", "Yuri-target-skus.txt",
-      "Yuri-pokemon-center-aycd.json", "Yuri-pokemon-center-shikari.csv", "Yuri-pokemon-center-imap.txt", "Yuri-pokemon-center-skus.txt"]);
+    assert.equal(s.posts.length, 2, "11 files: two messages");
+    assert.deepEqual(s.files.map((f) => f.name), ["Yuri-target-aycd.json", "Yuri-target-shikari.csv", "Yuri-target-logins.txt", "Yuri-target-imap.txt", "Yuri-target-shikari-skus.txt",
+      "Yuri-target-valor-skus.txt", "Yuri-pokemon-center-aycd.json", "Yuri-pokemon-center-shikari.csv", "Yuri-pokemon-center-imap.txt", "Yuri-pokemon-center-shikari-skus.txt",
+      "Yuri-pokemon-center-valor-skus.txt"]);
     const im = s.files.filter((f) => f.name.endsWith("-imap.txt"));
     assert.deepEqual(im.map((f) => f.text), [tgtImap, pcImap], "exactly as sent");
     assert.ok(im.every((f) => /^text\/plain/.test(f.type)));
@@ -5002,8 +5006,8 @@ try {
     assert.deepEqual(s.posts.map((m) => m.files.map((f) => f.name)), [
       ["Yuri-walmart-aycd.json", "Yuri-walmart-shikari.csv", "Yuri-walmart-logins.txt", "Yuri-walmart-imap.txt", "Yuri-best-buy-aycd.json", "Yuri-best-buy-shikari.csv",
         "Yuri-best-buy-logins.txt", "Yuri-best-buy-imap.txt", "Yuri-target-aycd.json", "Yuri-target-shikari.csv"],
-      ["Yuri-target-logins.txt", "Yuri-target-imap.txt", "Yuri-target-skus.txt"]]);
-    assert.match(s.posts[1].content, /^-# More files for the batch from \*\*Yuri\*\* · @yuri · license …\w{4} \(11–13 of 13\)\.$/);
+      ["Yuri-target-logins.txt", "Yuri-target-imap.txt", "Yuri-target-shikari-skus.txt", "Yuri-target-valor-skus.txt"]]);
+    assert.match(s.posts[1].content, /^-# More files for the batch from \*\*Yuri\*\* · @yuri · license …\w{4} \(11–14 of 14\)\.$/);
     assert.deepEqual(s.files.filter((f) => f.name.endsWith("-imap.txt")).map((f) => f.text), ["w.inbox@example.com:" + Y_PW[0], "b.inbox@example.com:" + Y_PW[0], "t.inbox@example.com:" + Y_PW[0]]);
   });
   await test("inbox access: counted in the batch's bytes, and kept nowhere in the database", async () => {
@@ -5082,7 +5086,7 @@ try {
     yBatches.push(s.d.id);
     assert.equal(s.posts.length, 1);
     assert.deepEqual(s.files.map((f) => f.name), ["Sam-Sample-target-aycd.json", "Sam-Sample-target-shikari.csv", "Sam-Sample-target-logins.txt", "Sam-Sample-target-imap.txt",
-      "Sam-Sample-target-skus.txt", "Sam-Sample-costco-aycd.json", "Sam-Sample-costco-profile-hayha.Hayha", "Sam-Sample-costco-logins.txt"],
+      "Sam-Sample-target-shikari-skus.txt", "Sam-Sample-target-valor-skus.txt", "Sam-Sample-costco-aycd.json", "Sam-Sample-costco-profile-hayha.Hayha", "Sam-Sample-costco-logins.txt"],
       "no Costco Shikari CSV or imap file; Target's still there");
     const hay = s.files.find((f) => f.name.endsWith("-hayha.Hayha"));
     assert.equal(hayhaFixed(hay.text), coHayha("Sam Q Sample", true), "exactly as the page's HayhaAIO 2.0 export, with the app's name on card and Only one checkout");
@@ -5545,8 +5549,9 @@ try {
   // The Billing page's box for the price when an order's amount isn't known (2026-11-16; the price per checkout until then).
   const BOX_RE = (value) => new RegExp(`<label for="price">Price when the amount isn't known</label>[\\s\\S]*?<input id="price" name="price" value="${value}"[^>]*>[\\s\\S]*?value="price">Save</button></div>\\s*<p class="hint">For checkouts FAFO can't tell the amount of \\(a buyer's FAFO that hasn't updated, or one you add without an amount\\)\\. From now on; ones already on an invoice keep their price\\. Friends and Family always pay \\$5\\.</p>`);
   // The tiers by the order's amount before tax, as GET /billing gives them (prices.tiers), and the Billing page's words for them.
-  const TIERS = [{ below: 5000, price: 500 }, { below: 10000, price: 1000 }, { below: 15000, price: 1500 }, { below: 20000, price: 2000 }, { below: null, price: 2500 }];
-  const TIER_LIST = "$5 under $50, $10 from $50, $15 from $100, $20 from $150 and $25 from $200", TIER_WORDS = TIER_LIST + ", by the order's amount before tax";
+  // Since 2026-11-20 (the owner: "Under $50: $5, $50 to $99.99: $10, $100 and over: $15"), three; until then five, up to $25 from $200.
+  const TIERS = [{ below: 5000, price: 500 }, { below: 10000, price: 1000 }, { below: null, price: 1500 }];
+  const TIER_LIST = "$5 under $50, $10 from $50 and $15 from $100", TIER_WORDS = TIER_LIST + ", by the order's amount before tax";
   const alerts = async (events) => { const r = await api("/alerts", bobKey, { events }); assert.equal(r.status, 200); return r.json(); };
   await test("payments on: the first request notes when, and with no price saved the price per checkout is $10 (the channel hears $5 → $10 once); buyers approved before are Friends and Family (who always pay $5, with no plan to pick), keys made by hand too, and the FAFO that sends order alerts is the owner's", async () => {
     const p0 = webhookPosts.length;
@@ -6850,11 +6855,12 @@ try {
   });
   // The price by the order's amount before tax (2026-11-16, the owner: "Friends and family are always $5. Orders that is
   // before $1-49.99, $5. 50-99.99, $10. $100-149.99, $15. 150-199.99, $20. Anything over 200 is $25. All prices are included
-  // before tax."). The box's price is $7.50 here (above), so a line at it is one whose amount wasn't known.
+  // before tax."), then on 2026-11-20: "Under $50: $5, $50 to $99.99: $10, $100 and over: $15". The box's price is $7.50 here
+  // (above), so a line at it is one whose amount wasn't known.
   await test("the price by the order's amount before tax: an order alert's `sub` takes its tier at each boundary (over its total), and isn't kept with the alert", async () => {
     const cases = [["UT-50C", "0.50", 500, 50], ["UT-4999", "49.99", 500, 4999], ["UT-5000", "$50.00", 1000, 5000], ["UT-9999", "99.99", 1000, 9999], ["UT-10000", "100", 1500, 10000],
-      ["UT-14999", "149.99", 1500, 14999], ["UT-15000", "$150", 2000, 15000], ["UT-19999", "$199.99", 2000, 19999], ["UT-20000", "200.00", 2500, 20000], ["UT-BIG", "$1,234.56", 2500, 123456],
-      ["UT-MAX", "$100,000.00", 2500, 10000000]];
+      ["UT-14999", "149.99", 1500, 14999], ["UT-15000", "$150", 1500, 15000], ["UT-19999", "$199.99", 1500, 19999], ["UT-20000", "200.00", 1500, 20000], ["UT-BIG", "$1,234.56", 1500, 123456],
+      ["UT-MAX", "$100,000.00", 1500, 10000000]];
     const t0 = Date.now() - 1;
     const r = await alerts(cases.map(([no, sub]) => billEv({ account: umaAcct, orderNo: no, sub, total: "$500.00" })));
     assert.equal(r.sent, cases.length, "every alert reaches the buyer");
@@ -6874,7 +6880,7 @@ try {
     const st = await billOf(umaKey);
     assert.deepEqual(priced(st, "UT-T6418"), [1000, 5756, "total"], "$64.18 / 1.115 = $57.56: $10");
     assert.deepEqual(priced(st, "UT-T5500"), [500, 4933, "total"], "$55.00 / 1.115 = $49.33: $5, tax never pushing it up a tier");
-    assert.deepEqual(priced(st, "UT-T1115"), [2500, 100000, "total"]);
+    assert.deepEqual(priced(st, "UT-T1115"), [1500, 100000, "total"]);
     assert.deepEqual(basisRows("UT-T6418"), [{ basis: 5756, basis_from: "total", total: "$64.18" }], "the total it came from, as written here");
     assert.deepEqual(basisRows("UT-T1115"), [{ basis: 100000, basis_from: "total", total: "$1,115.00" }]);
     assert.deepEqual(priced(st, "UT-NONE"), [750, null, null], "the box's price");
@@ -6899,7 +6905,7 @@ try {
     assert.deepEqual(r, { ok: true, added: 10, canceled: 0, ignored: 0 });
     const st = await billOf(umaKey);
     assert.deepEqual(priced(st, "UR-SUB"), [1500, 12000, "sub"]);
-    assert.deepEqual(priced(st, "UR-TOTAL"), [2500, 20628, "total"], "$230.00 / 1.115 = $206.28");
+    assert.deepEqual(priced(st, "UR-TOTAL"), [1500, 20628, "total"], "$230.00 / 1.115 = $206.28");
     assert.deepEqual(priced(st, "UR-NONE"), [750, null, null], "a FAFO before 1.9.154 sends neither: the price when the amount isn't known");
     for (let i = 0; i < 7; i++) assert.deepEqual([priced(st, "UR-BAD-" + i), basisRows("UR-BAD-" + i)], [[750, null, null], []], "UR-BAD-" + i);
   });
@@ -6929,12 +6935,12 @@ try {
         [[500, 25000, "family", null], [500, 16143, "family", null], [500, 19999, "family", null], [500, 50000, "family", null]], "their $5 lines from before, as Friends and Family's");
       assert.deepEqual(["VF-A1", "VF-A2", "VF-A3", "VF-PASTE-4", "VF-ADD-0"].map((no) => [line(no).amount, line(no).basis, line(no).basisFrom, line(no).basisTotal]),
         [[500, 5379, "family", null], ...Array(4).fill([500, null, "family", null])], "and those whose amount wasn't known (their FAFO's report, Add, Paste): Friends and Family's, not \"amount not known\"");
-      assert.deepEqual(priced(st, "VT-CHG"), [2500, 25000, "sub"], "one from after Charge: $25, its tier");
+      assert.deepEqual(priced(st, "VT-CHG"), [1500, 25000, "sub"], "one from after Charge: $15, its tier");
       const view = unescape(await (await fetchOnce(`${offLink}&b=${vb}`)).text());
       rowNote(view, "VT-SUB", "Due", "$5", "Friends and Family price");
       rowNote(view, "VT-ADD", "Due", "$5", "Friends and Family price");
       for (const no of ["VF-A1", "VF-A2", "VF-A3", "VF-PASTE-4", "VF-ADD-0"]) rowNote(view, no, "Due", "$5", "Friends and Family price");
-      rowNote(view, "VT-CHG", "Due", "$25", "on $250.00 before tax");
+      rowNote(view, "VT-CHG", "Due", "$15", "on $250.00 before tax");
     } finally {
       await billPost(offLink, { action: "family", key: vicHash, b: vb });
       sqlRun("DELETE FROM billing_line_basis WHERE line_id IN (SELECT id FROM billing_lines WHERE order_no = 'VT-CHG')");
@@ -6958,14 +6964,14 @@ try {
     }
     assert.equal(await lineOf(umaKey, "OWN-AMT-BAD"), undefined, "nothing added");
     const st = await billOf(umaKey);
-    assert.deepEqual(["OWN-AMT-1", "OWN-AMT-2", "OWN-AMT-3", "OWN-AMT-4"].map((no) => priced(st, no)), [[1500, 12000, "owner"], [750, null, null], [750, null, null], [2500, 123456, "owner"]]);
+    assert.deepEqual(["OWN-AMT-1", "OWN-AMT-2", "OWN-AMT-3", "OWN-AMT-4"].map((no) => priced(st, no)), [[1500, 12000, "owner"], [750, null, null], [750, null, null], [1500, 123456, "owner"]]);
     const view = unescape(await (await fetchOnce(`${offLink}&b=${ub}`)).text());
     const note = (no, amount, text) => assert.ok(new RegExp(`#${no}<br>[^\\n]*</td>\\s*<td><span[^>]*>Due</span><br><span[^>]*>due [^<]+</span></td><td>${amount.replace(/[$.]/g, "\\$&")}<br><span style="font-size:12px">${text.replace(/[$.()]/g, "\\$&")}</span></td>`).test(view), `${no}: ${text}`);
     note("OWN-AMT-1", "$15", "on $120.00 before tax");
     note("OWN-AMT-2", "$7.50", "amount not known");
     note("UT-4999", "$5", "on $49.99 before tax");
     note("UT-T6418", "$10", "on about $57.56 before tax (from the $64.18 total)");
-    note("UT-MAX", "$25", "on $100,000.00 before tax");
+    note("UT-MAX", "$15", "on $100,000.00 before tax");
     note("UR-NONE", "$7.50", "amount not known");
     // The date and when it's due stay on one line each, beside the amount's note (the second review: "2026-11-" over "16").
     assert.ok(view.includes(`<tr><td style="white-space:nowrap">${today}</td><td class="em">Target #OWN-AMT-1<br>`), "the date doesn't wrap");
@@ -6981,10 +6987,10 @@ try {
     assert.equal(pv.status, 200);
     const row = (no, info, outcome) => assert.ok(new RegExp(`<span style="font-size:12px">${`Target · #${no} · ${today}${info ? " · " + info : ""}`.replace(/[$.]/g, "\\$&")}</span></td>(?:(?!</tr>)[\\s\\S])*?<td( style="color:#5fd39a")?>${outcome.replace(/[$.()]/g, "\\$&")}</td></tr>`).test(pv.text), `${no}: ${outcome}\n${pv.text.slice(-5000)}`);
     row("PASTE-A1", "$59.98", "Will add · $10 · on $59.98 before tax");
-    row("PASTE-A2", "$1,234.56", "Will add · $25 · on $1,234.56 before tax");
+    row("PASTE-A2", "$1,234.56", "Will add · $15 · on $1,234.56 before tax");
     row("PASTE-A3", "", "Will add · $7.50 · amount not known");
     row("PASTE-A4", "", "No slot out with this email on that date");
-    row("PASTE-A5", "$99,999.00", "Will add · $25 · on $99,999.00 before tax");
+    row("PASTE-A5", "$99,999.00", "Will add · $15 · on $99,999.00 before tax");
     row("102003004006", "", "Will add · $7.50 · amount not known");
     row("VF-PASTE-9", "$250.00", "Will add · $5 (Friends and Family) · on $250.00 before tax");
     assert.ok(pv.text.includes(">Add 6 checkouts<"));
@@ -6992,7 +6998,7 @@ try {
     assert.deepEqual([doneOf(add.location), errOf(add.location)], ["Added 6 checkouts.", "1 line weren't added (preview them to see why)."]);
     const st = await billOf(umaKey);
     assert.deepEqual(["PASTE-A1", "PASTE-A2", "PASTE-A3", "PASTE-A5", "102003004006"].map((no) => priced(st, no)),
-      [[1000, 5998, "owner"], [2500, 123456, "owner"], [750, null, null], [2500, 9999900, "owner"], [750, null, null]]);
+      [[1000, 5998, "owner"], [1500, 123456, "owner"], [750, null, null], [1500, 9999900, "owner"], [750, null, null]]);
     assert.deepEqual(priced(await billOf(vicKey), "VF-PASTE-9"), [500, 25000, "family"], "Friends and Family's, with the amount read");
     const html = unescape(await (await fetchOnce(offLink)).text());
     assert.ok(html.includes("A dollar amount on a line (like $59.98) is taken as the order's amount before tax and prices it by its tier; without one, it's $7.50."), html.slice(-4000));
@@ -7001,10 +7007,10 @@ try {
   const pasteRow = (html, no, info, outcome) => assert.ok(new RegExp(`<span style="font-size:12px">${`Target · #${no} · ${today}${info ? " · " + info : ""}`.replace(/[$.]/g, "\\$&")}</span></td>(?:(?!</tr>)[\\s\\S])*?<td( style="color:#5fd39a")?>${outcome.replace(/[$.()]/g, "\\$&")}</td></tr>`).test(html), `${no}: ${outcome}\n${html.slice(-5000)}`);
   await test("Billing page: a pasted \"$\" amount right after a minus sign or a dash, or in brackets, is a discount, never the order's amount (the next one counts); a spaced dash is a separator; one running into a letter or digit is no amount", async () => {
     const lines = [[`Target PASTE-D1 uma.one@example.com Discount -$5.00 | Total $64.18 ${today}`, "$64.18", "Will add · $10 · on $64.18 before tax"],
-      [`Target PASTE-D2 uma.one@example.com Success - Target - $150.00 ${today}`, "$150.00", "Will add · $20 · on $150.00 before tax"],
+      [`Target PASTE-D2 uma.one@example.com Success - Target - $150.00 ${today}`, "$150.00", "Will add · $15 · on $150.00 before tax"],
       [`Target PASTE-D3 uma.one@example.com Credit –$20.00, −$3.50, then $45.10 ${today}`, "$45.10", "Will add · $5 · on $45.10 before tax"],
       [`Target PASTE-D4 uma.one@example.com Refund ($5.00) ${today}`, "", "Will add · $7.50 · amount not known"],
-      [`Target PASTE-D5 uma.one@example.com ( $5.00) $210.00 ${today}`, "$210.00", "Will add · $25 · on $210.00 before tax"],
+      [`Target PASTE-D5 uma.one@example.com ( $5.00) $210.00 ${today}`, "$210.00", "Will add · $15 · on $210.00 before tax"],
       [`Target PASTE-D6 uma.one@example.com $1e5 ${today}`, "", "Will add · $7.50 · amount not known"],
       [`Target PASTE-D7 uma.one@example.com $5.00USD ${today}`, "", "Will add · $7.50 · amount not known"],
       [`Target PASTE-D8 uma.one@example.com $1e5 then $120.00 ${today}`, "$120.00", "Will add · $15 · on $120.00 before tax"]];
@@ -7016,7 +7022,7 @@ try {
     const add = await billPost(offLink, { action: "paste-add", paste, store: "target", date: today });
     assert.deepEqual([doneOf(add.location), errOf(add.location)], ["Added 8 checkouts.", null]);
     const st = await billOf(umaKey);
-    assert.deepEqual(lines.map((l, i) => priced(st, "PASTE-D" + (i + 1))), [[1000, 6418, "owner"], [2000, 15000, "owner"], [500, 4510, "owner"], [750, null, null], [2500, 21000, "owner"],
+    assert.deepEqual(lines.map((l, i) => priced(st, "PASTE-D" + (i + 1))), [[1000, 6418, "owner"], [1500, 15000, "owner"], [500, 4510, "owner"], [750, null, null], [1500, 21000, "owner"],
       [750, null, null], [750, null, null], [1500, 12000, "owner"]]);
   });
   // A line their FAFO reported, taken over by an order alert or the owner (2026-11-16, the 1.9.154 review): one priced with no
@@ -7036,26 +7042,26 @@ try {
     const paste = [`Target UR-RP-P1 uma.one@example.com $180.00 ${today}`, `Target UR-RP-N1 uma.one@example.com ${today}`].join("\n");
     const pv = await billPost(offLink, { action: "paste-preview", paste, store: "target", date: today });
     const html = unescape(pv.text);
-    pasteRow(html, "UR-RP-P1", "$180.00", "Will take over their FAFO's report · $20 · on $180.00 before tax");
+    pasteRow(html, "UR-RP-P1", "$180.00", "Will take over their FAFO's report · $15 · on $180.00 before tax");
     pasteRow(html, "UR-RP-N1", "", "Will take over their FAFO's report · keeps $7.50 · amount not known");
     assert.ok(html.includes(">Add 2 checkouts<"));
     assert.deepEqual(doneOf((await billPost(offLink, { action: "paste-add", paste, store: "target", date: today })).location), "Added 2 checkouts.");
     // Add a checkout: with an amount, and without (which keeps it).
     const add = (order, amount) => billPost(offLink, { action: "add", key: umaHash, b: ub, store: "target", order, date: today, ...(amount ? { amount } : {}) });
-    assert.equal(doneOf((await add("UR-RP-A1", "180.00")).location), "Took over their FAFO's report of Target #UR-RP-A1 at $20 (on $180.00 before tax).");
+    assert.equal(doneOf((await add("UR-RP-A1", "180.00")).location), "Took over their FAFO's report of Target #UR-RP-A1 at $15 (on $180.00 before tax).");
     assert.equal(doneOf((await add("UR-RP-B1")).location), "Took over their FAFO's report of Target #UR-RP-B1, which keeps $7.50 (amount not known).");
     // Order alerts: by its sub, and by its total ($230.00 / 1.115 = $206.28).
     await alerts([billEv({ account: umaAcct, orderNo: "UR-RP-S1", sub: "180.00" }), billEv({ account: umaAcct, orderNo: "UR-RP-T1", total: "$230.00" })]);
     const st = await billOf(umaKey);
-    assert.deepEqual(nos.map((no) => takeOf(st, no)), [[2000, 18000, "owner", null, "owner"], [750, null, null, null, "owner"], [2000, 18000, "owner", null, "owner"],
-      [750, null, null, null, "owner"], [2000, 18000, "sub", null, "alert"], [2500, 20628, "total", "$230.00", "alert"]]);
+    assert.deepEqual(nos.map((no) => takeOf(st, no)), [[1500, 18000, "owner", null, "owner"], [750, null, null, null, "owner"], [1500, 18000, "owner", null, "owner"],
+      [750, null, null, null, "owner"], [1500, 18000, "sub", null, "alert"], [1500, 20628, "total", "$230.00", "alert"]]);
     assert.deepEqual(nos.map((no) => st.lines.find((l) => l.orderNo === no).id), nos.map((no) => id[no]), "the same lines, taken over");
     assert.deepEqual(nos.map((no) => basisOn(id[no])), [[{ basis: 18000, basis_from: "owner", total: "" }], [], [{ basis: 18000, basis_from: "owner", total: "" }], [],
       [{ basis: 18000, basis_from: "sub", total: "" }], [{ basis: 20628, basis_from: "total", total: "$230.00" }]], "the basis on each line taken over with an amount, and only there");
     assert.equal(orphans(), o0, "none on a line that isn't there (the take-over's new id never went in)");
     const view = unescape(await (await fetchOnce(`${offLink}&b=${ub}`)).text());
-    rowNote(view, "UR-RP-P1", "Due", "$20", "on $180.00 before tax");
-    rowNote(view, "UR-RP-T1", "Due", "$25", "on about $206.28 before tax (from the $230.00 total)");
+    rowNote(view, "UR-RP-P1", "Due", "$15", "on $180.00 before tax");
+    rowNote(view, "UR-RP-T1", "Due", "$15", "on about $206.28 before tax (from the $230.00 total)");
     rowNote(view, "UR-RP-N1", "Due", "$7.50", "amount not known");
   });
   await test("a line taken over keeps the amount and basis their FAFO's report was written with when it had an amount: by Add a checkout, Paste or an order alert, and the check and Add say the amount given isn't used", async () => {
@@ -7124,7 +7130,7 @@ try {
     }
     assert.equal(dbRows(`SELECT status FROM billing_payments WHERE id = '${p.body.pay}'`)[0].status, "expired");
     await alerts([billEv({ account: umaAcct, orderNo: "UR-PAY-X1", sub: "180.00" })]);
-    assert.deepEqual([takeOf(await billOf(umaKey), "UR-PAY-X1"), basisOn(id["UR-PAY-X1"])], [[2000, 18000, "sub", null, "alert"], [{ basis: 18000, basis_from: "sub", total: "" }]], "the page gone: re-priced");
+    assert.deepEqual([takeOf(await billOf(umaKey), "UR-PAY-X1"), basisOn(id["UR-PAY-X1"])], [[1500, 18000, "sub", null, "alert"], [{ basis: 18000, basis_from: "sub", total: "" }]], "the page gone: re-priced");
   });
   // Paying (the second review): the owed lines are read, then Stripe is asked about an open page, then the claim goes in. A
   // take-over could re-price a line in between (it can't once the claim holds it), which would charge its old amount: the

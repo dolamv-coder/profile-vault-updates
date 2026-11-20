@@ -37,7 +37,8 @@
 //                              posted, or null
 //   POST /interests/send       a buyer's FAFO (page 1.9.155; the owner, 2026-11-17: "Include a submit button in Interests"):
 //                              {interests:{storeKey:[sku]}, name}, 32 KB at most: the SKUs ticked that the list has, posted
-//                              to DISCORD_WEBHOOK_URL as <buyer>-<store>-skus.txt files, or a note that none are picked:
+//                              to DISCORD_WEBHOOK_URL as <buyer>-<store>-shikari-skus.txt (one a line) and
+//                              -valor-skus.txt (commas) files per store, or a note that none are picked:
 //                              {ok, at, counts:{storeKey:n}, sig}; {ok, same:true, at, sig} for the picks the last post
 //                              had (nothing posted); 429 {error:"limit", limit:20} past 20 posts a day; 502
 //                              {error:"discord"}; 403 for the owner's FAFO. sig: the first 16 hex of the SHA-256 of the
@@ -47,7 +48,7 @@
 //   POST /interests/pic        the owner's FAFO only: {data:"data:image/(webp|jpeg|png);base64,..."}, 150 KB at most: {ref}
 //   GET  /interests/pic/REF    a picture the list shows, with no license (an <img> can't send one)
 //   POST /submissions takes `interests` too: {storeKey: [sku]}, the products ticked; each store's go with the batch as
-//                              <buyer>-<store>-skus.txt, after that store's other files
+//                              <buyer>-<store>-shikari-skus.txt and -valor-skus.txt, after that store's other files
 // Inbox test (page 1.9.149; the owner, 2026-11-14: "how come I can't test the connection while on the website?"):
 //   POST /inbox/test           {email, password, host, port} (license Bearer): signs in to that inbox over IMAP (TLS, port
 //                              993 only), opens INBOX read-only (EXAMINE) and signs out, as the desktop's Test does:
@@ -868,7 +869,7 @@ async function webhookEdit(env, messageId, payload) {
 
 const md = (s) => String(s).replace(/([\\*_~`|>\[\]()])/g, "\\$1");
 
-// Files posted to the channel are named after the buyer and the store (the owner's request, 2026-10-09): Kim-target-skus.txt.
+// Files posted to the channel are named after the buyer and the store (the owner's request, 2026-10-09): Kim-target-aycd.json.
 // The buyer's part is the name they sent with, else their Discord name, accents taken off, as letters, digits and hyphens,
 // else license-XXXX; the store's is its name the same way, in lower case (pokemon-center). Batches (POST /submissions) and
 // Interests sent on their own (POST /interests/send) name them alike.
@@ -876,6 +877,16 @@ const asciiOf = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]
 const slugOf = (t) => asciiOf(t).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
 const buyerSlug = (name, username, last4) => slugOf(name) || slugOf(username) || `license-${last4}`;
 const storeSlug = (store) => asciiOf(store).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "store";
+// A store's ticked SKUs (Interests) go as two files, one after the other, the same SKUs in the same order (the owner,
+// 2026-11-20, with a screenshot of Sirrendrr-target-skus.txt: "add another sku list labeled Valor. Must have a comma after
+// each sku. Like this 88897899,89444931,…,1012363468", then "Label the original sku list Shikari Sku"): Shikari's, one SKU
+// a line with CRLF between, as the one list was before (Kim-target-shikari-skus.txt, named Kim-target-skus.txt until then),
+// and Valor's, all on one line with a comma between each and none after the last, as the owner's example
+// (Kim-target-valor-skus.txt). `stem` is the buyer and the store, as the store's other files have them.
+const skuFiles = (stem, skus) => [
+  { name: `${stem}-shikari-skus.txt`, text: skus.join("\r\n"), type: "text/plain" },
+  { name: `${stem}-valor-skus.txt`, text: skus.join(","), type: "text/plain" },
+];
 
 // ---- signed key list -------------------------------------------------------------
 
@@ -1651,8 +1662,8 @@ async function submission(request, env, url, ctx) {
       if (!used.has(store)) { let y = x, i = 2; while ([...used.values()].includes(y)) y = `${x}-${i++}`; used.set(store, y); }
       return used.get(store);
     };
-    // A store's ticked SKUs, one per line, go right after its last file (Kim-target-skus.txt), so its files stay together
-    // however many messages the batch takes. A file's store is its group's key, as batchSkus has them, not its name, which
+    // A store's ticked SKUs go right after its last file (Kim-target-shikari-skus.txt, then Kim-target-valor-skus.txt:
+    // skuFiles), so its files stay together however many messages the batch takes. A file's store is its group's key, as batchSkus has them, not its name, which
     // two groups can share (a store typed as "Target" before 1.9.94, beside Target); a logins file carries no key, and is
     // the group of the profiles file before it, as an inbox access file is (it comes after them).
     const skusSent = new Set();
@@ -1668,7 +1679,7 @@ async function submission(request, env, url, ctx) {
       const key = !keys.slice(i + 1).includes(keys[i]) && keys[i];
       if (!key || !skus.has(key) || skusSent.has(key)) return [one];
       skusSent.add(key);
-      return [one, { name: `${buyer}-${label(f.store)}-skus.txt`, text: skus.get(key).join("\r\n"), type: "text/plain" }];
+      return [one, ...skuFiles(`${buyer}-${label(f.store)}`, skus.get(key))];
     });
   } else attach = [csv !== null ? { name: base + ".csv", text: excelSafe(csv), type: "text/csv" } : { name: base + ".txt", text: code }];
   // The owner approves the batch from its message (submissionReview), and the app shows the buyer whether they have.
@@ -4770,6 +4781,10 @@ const checkoutPrice = async (env, key = "checkout") => key === "family" ? PRICE_
 // 150-199.99, $20. Anything over 200 is $25. All prices are included before tax." The defaults chosen for the owner: an
 // order under $1 is $5 too, and exactly $50.00 is $10 (each tier from its first cent). Friends and Family still always pay
 // $5 (PRICE_FAMILY), whatever the amount, and the owner's own FAFO is never charged.
+// On 2026-11-20 the owner changed the tiers: "Fee per checkout, based on the order total before tax, at every retailer:
+// Under $50: $5, $50 to $99.99: $10, $100 and over: $15. let's change the fee for checkouts". So $15 is the most a
+// checkout costs now, where $20 (from $150) and $25 (from $200) were. A line already on an invoice keeps the amount it was
+// written with, as for every change of price; only checkouts added from then on take the new tiers.
 // The amount a line is priced on (its basis, in cents), first that's known: the order's amount before tax the page sent
 // (`sub`: the store email's Subtotal when FAFO read one, else qty × unit price); else only its total with tax (`total`), less
 // the most US sales tax can be (TAX_MAX, 11.5%), so tax never pushes an order into a higher tier (shipping still counts);
@@ -4780,8 +4795,8 @@ const checkoutPrice = async (env, key = "checkout") => key === "family" ? PRICE_
 // one), and its basis goes in billing_line_basis (a new table: db:init can't add columns), written in the batch of the
 // line's INSERT, only for the line that INSERT made or re-priced. Friends and Family's always has one, "family" (their $5,
 // whatever the amount, which is kept for information, or 0 when none is known).
-const PRICE_TIERS = Object.freeze([{ below: 5000, price: 500 }, { below: 10000, price: 1000 }, { below: 15000, price: 1500 },
-  { below: 20000, price: 2000 }, { below: null, price: 2500 }].map((t) => Object.freeze(t)));
+const PRICE_TIERS = Object.freeze([{ below: 5000, price: 500 }, { below: 10000, price: 1000 }, { below: null, price: 1500 }]
+  .map((t) => Object.freeze(t)));
 const TAX_MAX = 0.115, MONEY_MAX = 10000000;   // 11.5%; an amount over $100,000 is no amount
 const tierPrice = (basis) => PRICE_TIERS.find((t) => t.below == null || basis < t.below).price;
 // A dollar amount as the page sends it ("59.98", "$59.98", "1,234.56"; 20 characters at most), in cents: an optional "$",
@@ -7008,7 +7023,8 @@ async function pictureFind(request, env, ctx, url) {
 // with picture. Create checkbox for buyer to tick. These skus will be imported along with buyer's submission of profiles."
 // The owner's FAFO (the one allowed to send order alerts, ownerHash) keeps one list here, which every buyer's FAFO shows;
 // the ticks stay in each buyer's vault, and Submit sends the ones ticked then with each batch (the owner chose "A file
-// only": a <buyer>-<store>-skus.txt beside the store's other files, and no change to the message). Until the owner first
+// only": a <buyer>-<store>-skus.txt beside the store's other files, and no change to the message; since 2026-11-20 two,
+// -shikari-skus.txt and -valor-skus.txt: skuFiles). Until the owner first
 // saves the list, it's INTEREST_SEED, the SKUs they gave. Each item's picture is the owner's upload (pic, kept here by
 // its hash) or, with none, its TCGplayer product's (tcg), fetched from TCGplayer's image servers the first time a page
 // asks and kept. Pictures are served without a license, as an <img> can't send one, and only those the list shows.
@@ -7291,7 +7307,7 @@ async function batchSkus(env, files, sent) {
 // have to unsubmit and submit their profiles again. Submit can directly send sku numbers to FAFO's discord." Until then a
 // buyer's ticks reached the owner only with a batch of slots (batchSkus above), so sending new picks meant pulling slots and
 // submitting them again. POST /interests/send posts the picks on their own: one message to the channel batches go to, with
-// the same <buyer>-<store>-skus.txt file per store a batch has. D1 interest_sends keeps per license only the day's count of
+// the same SKU files per store a batch has (skuFiles). D1 interest_sends keeps per license only the day's count of
 // posts (for the limit), when the last one went and its picks' sig, so the same picks again post nothing and each of the
 // buyer's devices can tell from GET /interests (`sent`) whether its picks changed since. The picks themselves aren't kept.
 // Slot batches send their SKUs as before, and don't count here.
@@ -7346,9 +7362,9 @@ async function interestsSend(request, env) {
   const who = [name && username ? `@${md(username)}` : "", name || username ? `license …${w.lic.last4}` : ""].filter(Boolean).join(" · ");
   const content = (kept.size ? `🎯 **${md(shown)}** sent their Interests: ${[...kept].map(([k, v]) => `${md(accountStoreName(k))} ${v.length}`).join(" · ")}`
     : `🎯 **${md(shown)}** cleared their Interests: no products picked`) + (who ? `\n-# ${who}` : "");
-  // Named as a batch names its SKU files, one SKU per line.
+  // Named and written as a batch's SKU files: Shikari's, then Valor's, per store (skuFiles).
   const buyer = buyerSlug(name, username, w.lic.last4);
-  const files = [...kept].map(([k, v]) => ({ name: `${buyer}-${storeSlug(accountStoreName(k))}-skus.txt`, text: v.join("\r\n"), type: "text/plain" }));
+  const files = [...kept].flatMap(([k, v]) => skuFiles(`${buyer}-${storeSlug(accountStoreName(k))}`, v));
   let id = null;
   try { id = await webhookPost(env, { content }, files); } catch (e) { console.error("webhook", e); }
   if (!id) {
