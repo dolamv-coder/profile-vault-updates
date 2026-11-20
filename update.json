@@ -1,10 +1,10 @@
 {
-  "version": "1.9.160",
-  "url": "index-1.9.160.html",
-  "sha256": "4979fe35c8e43c0dfa2b306c76ad540a5e2ab22f687f75f08cb13595329ff4c8",
-  "signature": "r92rJCZovLVMhSPLlWSsS8ub3igbheYLBCwQlNgvM9At5vgr87tB3xX7JGk7MCRfH2vEdDKYua730ZS2uxQ2BA==",
+  "version": "1.9.161",
+  "url": "index-1.9.161.html",
+  "sha256": "8b3ff12dfa8c19193a9d4140da63dd9d61166064da3ce99f57a15f473852d023",
+  "signature": "tCLw2HRYqomnt5B1kU98IsBdwc4qMF40iRVq46dufZty1RcEm3+TVvWo0BFqzUttv8dRHKRzg+wX5WtgT9FxBg==",
   "minAppVersion": "0",
-  "notes": "Fixes Costco slots sent from the seller's own FAFO, which went out without each store login's inbox email and app password on its line. Nothing changes for the Costco slots buyers send.",
+  "notes": "Orders your seller sends to your FAFO with Send to buyer can now go on your invoice as checkouts, marked Added by your seller and priced like your other checkouts. If the store cancels one, it comes off your invoice.",
   "installerUrl": "",
-  "publishedAt": "2026-11-19T07:54:13.100Z"
+  "publishedAt": "2026-11-20T13:56:07.054Z"
 }
