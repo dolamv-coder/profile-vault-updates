@@ -4158,6 +4158,9 @@ async function alertsShare(request, env, ctx) {
       const account = clip(ev.account, 120).toLowerCase();
       let a = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account) ? await env.DB.prepare("SELECT key_hash, profile, assigned_at, batch FROM accounts WHERE email_norm = ? AND store = ? AND key_hash IS NOT NULL AND sent_at IS NOT NULL")
         .bind(account, store).first() : null;
+      // Add to their invoice (1.9.161) goes by the account given to this buyer whatever the order's date, so one from before it
+      // was given out isn't billed as an account of the owner's (the fifth review).
+      const givenRow = a && a.key_hash === buyer.hash && a.key_hash !== lic.hash ? a : null;
       if (a && (a.key_hash === lic.hash || (at && at < new Date((a.assigned_at || 0) - 86400000).toISOString().slice(0, 10)))) a = null;
       if (a && a.key_hash !== buyer.hash && ev.auto === true) { other++; res.push("other"); bills.push(null); continue; }
       const profile = a && a.key_hash === buyer.hash ? String(a.profile || "") : "";
@@ -4198,7 +4201,7 @@ async function alertsShare(request, env, ctx) {
       else { already++; res.push("already"); }
       bills.push(ev.bill === true ? await shareBill(env, billC, buyer.hash, { store, storeName: row.store_name, orderNo, item: row.item, qty: row.qty, at,
         account: acct, profile, stage, sub: clip(ev.sub, 20), total: row.total, auto: ev.auto === true,
-        given: a && a.key_hash === buyer.hash ? a : null }, gone) : null);
+        given: givenRow }, gone) : null);
     }
   } finally {
     if (gone.length) ctx.waitUntil(expireFor(env, billC, gone));

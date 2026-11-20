@@ -5724,6 +5724,14 @@ try {
       assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: "TS-GIV2", account: tessAcct, bill: true, sub: "$40.00" })])).bill, ["added"], "by hand it is");
     } finally { sqlRun(`DELETE FROM billing_pulled WHERE key_hash = '${tessHash}' AND batch = '${g.batch}' AND profile = '${g.profile}'`); }
     assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: "TS-GIV3", auto: true, account: tessAcct, bill: true, sub: "$40.00" })])).bill, ["added"], "not pulled: billed");
+    // An order from days before the account was given out: not billed by a remembered address, as an order alert wouldn't be
+    // (the fifth review: it was billed as an account of the owner's).
+    const gaWas = dbRows(`SELECT assigned_at FROM accounts WHERE key_hash = '${tessHash}' AND store = 'target' AND profile = 'Tess Given'`)[0].assigned_at;
+    sqlRun(`UPDATE accounts SET assigned_at = ${Date.now() + 3 * 86400000} WHERE key_hash = '${tessHash}' AND store = 'target' AND profile = 'Tess Given'`);
+    try {
+      assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: "TS-GIV4", auto: true, account: tessAcct, bill: true, sub: "$40.00" })])).bill, ["not"]);
+      assert.equal(await lineOf(tessKey, "TS-GIV4"), undefined);
+    } finally { sqlRun(`UPDATE accounts SET assigned_at = ${gaWas} WHERE key_hash = '${tessHash}' AND store = 'target' AND profile = 'Tess Given'`); }
     // Taken off again, so the totals later tests count are as before.
     for (const [no, st] of [["TS-OWN2", "target"], ["TS-OWN3", "pokemoncenter"], ["TS-OWN4", "pokemoncenter"], ["TS-GIV2", "target"], ["TS-GIV3", "target"]])
       assert.deepEqual((await shareTo(tessKey, [shareEv({ orderNo: no, store: st, stage: "canceled", bill: true })])).bill, ["canceled"], no);

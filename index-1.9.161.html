@@ -12818,7 +12818,7 @@ function sharePlan(orders, addrs, only){
 // before its answer was read (shareAsk, before the request): one whose answer never came (no connection, a 5xx, a body cut
 // off, a lock or a closed tab) stays, so the order's cancel goes with bill. "?" in bills: the answer couldn't be read.
 function shareMark(o, it, now, res, bills){
-  if ((res || []).includes("other") || (res || []).includes("bad")) shareUnask(o, it.to.id);
+  if (it.askedNow && ((res || []).includes("other") || (res || []).includes("bad"))) shareUnask(o, it.to.id);
   if ((res || []).includes("other")){
     // Only while it's still that address's: a buyer picked by hand meanwhile stays.
     if (it.to.by === "addr" && (!o.shareTo || (o.shareTo.by === "addr" && o.shareTo.id === it.to.id))) o.shareTo = {off:true, why:"other", at:now};
@@ -12833,7 +12833,7 @@ function shareMark(o, it, now, res, bills){
     const a = Array.isArray(bills) ? bills[i] : "old";
     if (a === "?") return;
     if (e.stage === "canceled"){ if (a != null){ cx = true; onInv = false; asked = []; } return; }
-    asked = asked.filter(x => x !== it.to.id);   // answered (null: the worker wrote nothing)
+    if (a != null || it.askedNow) asked = asked.filter(x => x !== it.to.id);   // answered (null: this request wrote nothing; an earlier one's stays)
     if (a != null){ billed = true; if (a === "added" || a === "had") onInv = true; }
   });
   if (it.to.bill && it.steps.includes("canceled")) billed = true;   // canceled: never added from now on
@@ -13026,14 +13026,17 @@ function shareAsk(chunk){
     if (!it.o || !it.events.some(e => e.bill && e.stage !== "canceled")) continue;
     const o = orderById(it.o.id); if (!o) continue;
     const prev = o.shareBill || {}, asked = Array.isArray(prev.asked) ? prev.asked : [];
-    if (asked.includes(it.to.id)) continue;
+    if (asked.includes(it.to.id)) continue;   // an earlier request's, whose answer was never read: it stays until one is
     o.shareBill = Object.assign({}, prev, {asked:asked.concat(it.to.id)});
+    it.askedNow = true;
     n++;
   }
   return n ? persist() : null;
 }
 // A request the worker refused before writing anything (a 4xx), or an order it answered "other" or "bad" for: that buyer's
-// bill was never written, so it comes off asked (the fourth review: Stop sending said it stayed on their invoice).
+// bill was never written by it, so the asked this request added comes off (the fourth review: Stop sending said it stayed on
+// their invoice). Only that one (it.askedNow): an earlier request's, whose answer was never read, may have written it (the
+// fifth review).
 function shareUnask(o, id){
   const sb = o && o.shareBill;
   if (!sb || !Array.isArray(sb.asked) || !sb.asked.includes(id)) return;
@@ -13101,7 +13104,7 @@ async function shareRun(only){
           mine.why = ((await r.json().catch(() => ({}))).error) || "The license server couldn't take them just now.";
           if (S !== vault) return res;
           if ([400, 404, 410].includes(r.status)) SHARE.err[id] = {why:mine.why, at:Date.now()};   // that buyer: the others go on
-          if (r.status < 500){ chunk.forEach(it => { if (it.o) shareUnask(orderById(it.o.id), id); }); persist(); }   // refused before writing anything
+          if (r.status < 500){ chunk.forEach(it => { if (it.o && it.askedNow) shareUnask(orderById(it.o.id), id); }); persist(); }   // refused before writing anything
           res.failed.push([items[0].to.name, mine.why]);
           if (r.status >= 500 || r.status === 429) return res;
           break;

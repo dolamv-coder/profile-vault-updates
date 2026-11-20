@@ -477,14 +477,16 @@ alone (every store's rows of one account) from reading the whole table. Only
   their invoice already ("had" comes first, so its cancel still takes it off) is billed by the rules that would bill it anyway,
   else "not": on one of the buyer's own accounts (one they sent as a slot, `billing_accounts`), only on a day it was out as
   their slot (`inWindow`, a store typed as Costco read as `costco`; the third review); on an account given to them, as
-  `alertLine` bills it (from the Eastern day it was given, never after they pulled that slot; the fourth review). One the
-  owner sent by hand is billed whatever its account. Nothing for an event the worker refuses (`bad`, `other`). A buyer's FAFO
+  `alertLine` bills it (from the Eastern day it was given, never after they pulled that slot; the fourth review), by the
+  account's row whatever the order's date (`givenRow`: alertsShare's own date check would drop an older order's, which was
+  then billed as an account of the owner's; the fifth review). One the owner sent by hand is billed whatever its account. Nothing for an event the worker refuses (`bad`, `other`). A buyer's FAFO
   that reports a checkout on such an order still isn't billed for it (`billingCheckouts`). `e2e.mjs` sends Tess's orders with
   `sub` and with only a total, twice, cancels them, one already on her invoice from an alert, that one to Gina (on another
   buyer's invoice), one moved to Gina and canceled there (off Tess's invoice), a paid and a waived one canceled (kept), a
   remembered address's order on her own account out of its slot window (not billed) and in it, by hand and on another account
   (billed), one already on her invoice ("had"), one on her given account after she pulled that slot (not billed; by hand it is)
-  and before, Gina as Friends and Family at $5, the owner's own FAFO, and payments off.
+  and before, one from days before it was given out (not billed), Gina as Friends and Family at $5, the owner's own FAFO, and
+  payments off.
   Since 2026-11-07 (the owner's request: "make it to where the email gets forwarded to that specific buyer too… I choose to
   allow them to see the emails that are being used because these are my close friends"; their choices: to the buyer's own
   inbox, every email about the order, and the account shown) the account a shared order was placed on goes with it: D1
@@ -3196,9 +3198,11 @@ orders billed if it was ticked when the address was remembered; the worker secti
   nothing is ever added; `onInv`, it's on an invoice ("added" or "had"), kept when the order moves to another buyer, until a
   cancel is answered; `cx`, a cancel was answered, for the order whoever it's with; `asked`, the buyers a bill went to whose
   answer wasn't read: noted before each request and saved, the request waiting for the save (`shareAsk`), taken off once that
-  buyer's answer is read (null: the worker wrote nothing), or a refusal before it wrote anything (a 4xx, or "other" or "bad":
-  `shareUnask`), so no connection, a 5xx, a body cut off ("?"), a lock or a closed tab leave it, the worker maybe having added
-  it, and kept across a move or an unticked send (the third and fourth reviews).
+  buyer's answer is read, or a refusal before it wrote anything (a 4xx, or "other" or "bad": `shareUnask`), but only the
+  `asked` that request added (`it.askedNow`): one an earlier request left, whose answer was never read, stays until a real
+  answer (null too only settles this request's), as the worker may have written it (the fifth review). So no connection, a
+  5xx, a body cut off ("?"), a lock or a closed tab leave it, and it's kept across a move or an unticked send (the third and
+  fourth reviews).
 - **Sent** (`sharePlan`): an order with `bill` that its buyer wasn't billed for yet sends its step as it is now with `bill:
   true` and `sub` (`orderSubBeforeTax`), also when there's no new step (its step again, for the bill alone); only that step
   asks, and never a `canceled` one, so an order canceled before it was billed is never added. A `canceled` step goes with
@@ -3223,7 +3227,7 @@ orders billed if it was ticked when the address was remembered; the worker secti
 - **Tests:** `send-to-buyer.test.mjs` (`sharePlan` and `shareMark` with `bill`, the marks kept through an older page's
   `shareTold`, an order canceled before it was billed, cancels until answered, once for the order and across a move, `asked`
   noted before the request (a lock mid-request), kept across a move and an unticked send and after no answer, settled by a 4xx
-  or "other", a deleted order's pending cancel (to the buyer it goes to now, none after Stop sending), a remembered address's orders (the same day's too) and an older FAFO's with `billFrom`, the worker's
+  or "other" only when that request added it, a deleted order's pending cancel (to the buyer it goes to now, none after Stop sending), a remembered address's orders (the same day's too) and an older FAFO's with `billFrom`, the worker's
   answers per event and the run's count; by `needBill` in the page, so it still passes on 1.9.160), and `send-bill.test.mjs`, which runs the page in Chromium
   as the seller's own FAFO against a pretend worker (in CI after Target's optional inbox): the window, the request, what's kept,
   a remembered address's orders with and without it, a worker that couldn't bill, one before 1.9.161, one it won't add, Stop
